@@ -1,0 +1,26 @@
+# Rust build artifacts
+/target/
+
+# Boot image artifacts
+*.iso
+*.img
+/jinn.iso
+/boot/kernel.elf
+/iso_stage/
+/limine_tmp/
+
+# Temporary files
+*.log
+*.tmp
+*.swp
+*~
+
+# IDE/editor
+.vscode/
+.idea/
+
+# Misc binaries
+*.bin
+*.exe
+*.dll
+*.zip
