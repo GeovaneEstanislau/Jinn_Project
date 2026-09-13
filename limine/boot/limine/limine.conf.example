@@ -1,0 +1,33 @@
+timeout 5
+default_entry: 1
+interface_branding_colour: c6a0f6
+interface_help_colour: c6a0f6
+interface_help_colour_bright: c6a0f6
+remember_last_entry: yes
+#term_font_scale: 2x2
+term_background: CC000000
+term_foreground: FFFFFF
+term_margin: 100
+quiet: no
+wallpaper: boot():/limine/wallpaper.jpg
+
+/KaOS Linux
+    comment: KaOS with the linux kernel
+    protocol: linux
+    kernel_path: boot():/vmlinuz-linux
+    kernel_cmdline: quiet root=UUID=xxxxx-xxxxx-xxxxx-xxxxx resume=UUID=xxxxx-xxxxx-xxxxx rw
+    module_path: boot():/initramfs-linux.img
+
+/KaOS Linux Fallback
+    comment: KaOS with the linux kernel, fallback
+    protocol: linux
+    kernel_path: boot():/vmlinuz-linux
+    kernel_cmdline: quiet root=UUID=xxxxx-xxxxx-xxxxx-xxxxx resume=UUID=xxxxx-xxxxx-xxxxx rw
+    module_path: boot():/initramfs-linux-fallback.img
+
+#/KaOS Linux Next
+#    comment: KaOS with the linux-next kernel
+#    protocol: linux
+#    kernel_path: boot():/vmlinuz-linux-next
+#    kernel_cmdline: quiet root=UUID=xxxxx-xxxxx-xxxxx-xxxxx resume=UUID=xxxxx-xxxxx-xxxxx rw
+#    module_path: boot():/initramfs-linux-next.img

@@ -1,0 +1,17 @@
+[package]
+name = "jinn"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+# no dependencies for v0.0.1
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+codegen-units = 1
+debug = false
+lto = true
