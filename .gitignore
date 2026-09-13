@@ -1,0 +1,10 @@
+target/
+.vs/
+.cargo/
+temp_limine/
+temp_limine_protocol/
+*.iso
+*.log
+*.swp
+*.pdb
+iso_root/
