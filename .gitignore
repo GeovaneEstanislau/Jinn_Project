@@ -3,7 +3,6 @@ target/
 .cargo/
 temp_limine/
 temp_limine_protocol/
-*.iso
 *.log
 *.swp
 *.pdb
