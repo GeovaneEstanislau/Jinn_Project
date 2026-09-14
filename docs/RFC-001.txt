@@ -1,0 +1,189 @@
+RFC-0001
+
+Arquitetura do Microkernel Atlas
+
+Status: Proposta
+
+Versão: 0.1
+
+Autor: Comunidade Atlas OS
+
+---
+
+Resumo
+
+Este documento define a arquitetura do microkernel Atlas.
+
+O Atlas foi concebido para ser um sistema operacional orientado a serviços, modular, previsível e resiliente a falhas.
+
+O kernel deve permanecer pequeno, auditável e responsável apenas pelas funções essenciais necessárias para a operação do sistema.
+
+---
+
+Objetivos
+
+O microkernel Atlas deve:
+
+- Ser pequeno e simples.
+- Possuir superfície mínima de ataque.
+- Isolar falhas.
+- Facilitar atualizações.
+- Permitir substituição de componentes.
+- Servir de base para sistemas de diferentes portes.
+
+---
+
+Filosofia
+
+O kernel não deve executar tarefas que possam ser executadas por serviços externos.
+
+Princípio:
+
+"Se pode ser executado fora do kernel, deve ser executado fora do kernel."
+
+---
+
+Componentes do Kernel
+
+Scheduler Core
+
+Responsável por:
+
+- Escalonamento de processos.
+- Distribuição entre núcleos.
+- Priorização.
+- Afinidade de CPU.
+
+---
+
+IPC Core
+
+Responsável por:
+
+- Comunicação entre módulos.
+- Entrega de mensagens.
+- Filas de eventos.
+- Sincronização.
+
+Toda comunicação entre serviços deverá passar pelo IPC.
+
+---
+
+Security Core
+
+Responsável por:
+
+- Controle de permissões.
+- Validação de mensagens.
+- Isolamento entre processos.
+- Gerenciamento de capacidades.
+
+O modelo de segurança segue a filosofia de confiança mínima.
+
+---
+
+Memory Core
+
+Responsável apenas por:
+
+- Paginação.
+- Espaço de endereçamento.
+- Mapeamento de memória.
+- Proteção de páginas.
+
+Políticas avançadas de memória devem ser executadas fora do kernel.
+
+---
+
+Componentes Proibidos no Kernel
+
+Os seguintes componentes não devem ser incorporados ao kernel:
+
+- Sistema de arquivos.
+- Rede.
+- Drivers.
+- Interface gráfica.
+- Áudio.
+- Bluetooth.
+- Serviços de IA.
+- Serviços de virtualização.
+
+Todos devem ser implementados como serviços independentes.
+
+---
+
+Modelo de Serviços
+
+Cada serviço deve possuir:
+
+- Processo isolado.
+- Espaço de memória próprio.
+- Canal IPC.
+- Supervisor de integridade.
+
+Falhas devem resultar apenas no encerramento do serviço afetado.
+
+---
+
+Supervisor de Serviços
+
+O Supervisor de Serviços é responsável por:
+
+- Detectar falhas.
+- Reiniciar serviços.
+- Registrar logs.
+- Aplicar políticas de recuperação.
+
+O Supervisor não faz parte do kernel.
+
+---
+
+Princípio da Composição
+
+O sistema operacional é uma coleção de componentes independentes.
+
+Cada instalação do Atlas pode possuir conjuntos distintos de serviços.
+
+Exemplos:
+
+Servidor:
+
+- Filesystem Service
+- Network Service
+
+Desktop:
+
+- Filesystem Service
+- Network Service
+- GPU Service
+- Audio Service
+
+IoT:
+
+- Sensor Service
+- Network Service
+
+---
+
+Princípio da Removibilidade
+
+Todo componente externo ao kernel deve poder ser:
+
+- Atualizado.
+- Reiniciado.
+- Removido.
+- Substituído.
+
+Sem reinicialização completa do sistema.
+
+---
+
+Objetivo Inicial
+
+Versão 0.1 do kernel:
+
+- Boot funcional.
+- Scheduler básico.
+- IPC funcional.
+- Memory Core.
+- Logs do kernel.
