@@ -413,7 +413,36 @@ impl Scheduler {
             }
         }
 
-        // Escalonamento por prioridade (Round-Robin dentro de cada nível)
+        // --- MOTOR PREDITIVO (FASE 3.3): Pre-warming de Cache L1/L2 ---
+        // Se a tarefa que acabou de ser interrompida tiver uma forte afinidade IPC
+        // registrada pelo motor, nós "furamos a fila" do Round-Robin e executamos
+        // a tarefa parceira imediatamente. Os dados trocados ainda estão quentes no cache!
+        if let Some(cur) = self.current {
+            if let Some(pred) = crate::predictive::get_prediction(cur) {
+                let aff_pid = pred.affinity_pid;
+                if aff_pid < MAX_TASKS && aff_pid != cur {
+                    if let Some(aff_task) = &mut self.tasks[aff_pid] {
+                        if aff_task.state == TaskState::Ready {
+                            // Hit heurístico! Escalonamento por afinidade.
+                            self.current = Some(aff_pid);
+                            aff_task.state = TaskState::Running;
+                            CURRENT_TASK.store(aff_pid as i32, Ordering::SeqCst);
+
+                            if aff_task.ring == Ring::User {
+                                gdt::set_kernel_stack(aff_task.kstack_top as u64);
+                            }
+                            let current_cr3 = paging::current_cr3();
+                            if current_cr3 != aff_task.pml4_phys {
+                                unsafe { paging::load_cr3(aff_task.pml4_phys); }
+                            }
+                            return aff_task.saved_rsp;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Escalonamento padrão por prioridade (Round-Robin)
         for priority in [TaskPriority::RealTime, TaskPriority::Normal, TaskPriority::Idle] {
             let start = self.current.unwrap_or(usize::MAX);
             for delta in 1..=MAX_TASKS {
