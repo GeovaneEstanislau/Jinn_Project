@@ -143,6 +143,7 @@ pub fn send(msg: Message) -> Result<(), &'static str> {
     let mut table = IPC.lock();
     if !table.active[pid] { return Err("ipc: recipient not registered"); }
     if !table.queues[pid].push(msg) { return Err("ipc: queue full"); }
+    crate::telemetry::record_ipc_tx(msg.pid_from as usize);
     Ok(())
 }
 
@@ -150,7 +151,11 @@ pub fn send(msg: Message) -> Result<(), &'static str> {
 pub fn recv(pid: usize) -> Option<Message> {
     if pid >= MAX_PROCS { return None; }
     let mut table = IPC.lock();
-    table.queues[pid].pop()
+    let msg = table.queues[pid].pop();
+    if msg.is_some() {
+        crate::telemetry::record_ipc_rx(pid);
+    }
+    msg
 }
 
 /// Returns `true` if there are pending messages for `pid`.

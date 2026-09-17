@@ -82,6 +82,7 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         "uptime" => cmd_uptime(w),
 
         // ── Sistema ───────────────────────────────────────────────────────────
+        "metrics" => cmd_metrics(w),
         "reboot" => cmd_reboot(w),
 
         _ => {
@@ -470,3 +471,31 @@ fn write_padded_decimal(w: &mut Writer, n: usize, width: usize) {
     w.write_decimal(n);
 }
 
+
+/// metrics � Monitoramento em tempo real (Fase 3.1)
+fn cmd_metrics(w: &mut Writer) {
+    w.set_color(crate::vga::Color::LightCyan, crate::vga::Color::Black);
+    w.write_line("PID   CPU Ticks   IPC TX      IPC RX      Page Faults");
+    w.write_line("-------------------------------------------------------");
+    w.set_color(crate::vga::Color::LightGray, crate::vga::Color::Black);
+
+    let sched = crate::scheduler::get();
+    for i in 0..crate::telemetry::MAX_METRICS {
+        if let Some((ticks, tx, rx, pf)) = crate::telemetry::get_metrics(i) {
+            // S� imprime se houver alguma atividade ou se a tarefa existir no escalonador.
+            let is_active = i < crate::scheduler::MAX_TASKS && sched.tasks[i].is_some();
+            if is_active || ticks > 0 || tx > 0 || rx > 0 || pf > 0 {
+                write_padded_decimal(w, i, 3);
+                w.write_string("   ");
+                write_padded_decimal(w, ticks as usize, 9);
+                w.write_string("   ");
+                write_padded_decimal(w, tx as usize, 8);
+                w.write_string("   ");
+                write_padded_decimal(w, rx as usize, 8);
+                w.write_string("   ");
+                write_padded_decimal(w, pf as usize, 11);
+                w.write_line("");
+            }
+        }
+    }
+}

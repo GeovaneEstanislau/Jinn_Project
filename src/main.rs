@@ -20,6 +20,7 @@ pub mod scheduler;
 pub mod shell;
 pub mod syscall;
 pub mod syscall_user;
+pub mod telemetry;
 pub mod timer;
 pub mod user_processes;
 pub mod vfs;

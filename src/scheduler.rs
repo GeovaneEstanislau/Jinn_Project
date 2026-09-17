@@ -404,6 +404,7 @@ impl Scheduler {
 
         // Salva RSP da tarefa atual
         if let Some(cur) = self.current {
+            crate::telemetry::record_cpu_tick(cur);
             if let Some(task) = &mut self.tasks[cur] {
                 task.saved_rsp = curr_frame_ptr;
                 if task.state == TaskState::Running {
