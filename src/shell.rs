@@ -1,4 +1,4 @@
-﻿/// Jinn OS â€” Shell do Kernel (Ring 0)
+/// Jinn OS â€” Shell do Kernel (Ring 0)
 ///
 /// Executa no contexto do kernel (Ring 0) com acesso direto Ã s APIs internas.
 /// Este shell NÃƒO usa syscalls â€” ele chama as funÃ§Ãµes do kernel diretamente,
@@ -83,6 +83,7 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
 
         // â”€â”€ Sistema â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         "metrics" => cmd_metrics(w),
+        "predict" => cmd_predict(w),
         "reboot" => cmd_reboot(w),
 
         _ => {
@@ -494,6 +495,42 @@ fn cmd_metrics(w: &mut Writer) {
                 write_padded_decimal(w, rx as usize, 8);
                 w.write_string("   ");
                 write_padded_decimal(w, pf as usize, 11);
+                w.write_line("");
+            }
+        }
+    }
+}
+
+/// predict - Visualizar Motor Preditivo (Fase 3.2)
+fn cmd_predict(w: &mut Writer) {
+    w.set_color(crate::vga::Color::Magenta, crate::vga::Color::Black);
+    w.write_line("=== Jinn OS: Heuristica do Motor Preditivo ===");
+    w.set_color(crate::vga::Color::LightGray, crate::vga::Color::Black);
+    w.write_line("PID   Tipo        Afinidade Recomendada (Cache)");
+    w.write_line("------------------------------------------------");
+
+    let sched = crate::scheduler::get();
+    for i in 0..crate::scheduler::MAX_TASKS {
+        if sched.tasks[i].is_some() {
+            if let Some(pred) = crate::predictive::get_prediction(i) {
+                write_padded_decimal(w, i, 3);
+                w.write_string("   ");
+                
+                if pred.io_bound {
+                    w.set_color(crate::vga::Color::LightGreen, crate::vga::Color::Black);
+                    w.write_string("I/O Bound   ");
+                } else {
+                    w.set_color(crate::vga::Color::Yellow, crate::vga::Color::Black);
+                    w.write_string("CPU Bound   ");
+                }
+                w.set_color(crate::vga::Color::LightGray, crate::vga::Color::Black);
+
+                if pred.affinity_pid != usize::MAX {
+                    w.write_string("PID ");
+                    w.write_decimal(pred.affinity_pid);
+                } else {
+                    w.write_string("Nenhuma isolada");
+                }
                 w.write_line("");
             }
         }

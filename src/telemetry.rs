@@ -1,5 +1,4 @@
-#![no_std]
-
+﻿
 use core::sync::atomic::{AtomicU64, Ordering};
 
 pub const MAX_METRICS: usize = 64;

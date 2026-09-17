@@ -21,6 +21,7 @@ pub mod shell;
 pub mod syscall;
 pub mod syscall_user;
 pub mod telemetry;
+pub mod predictive;
 pub mod timer;
 pub mod user_processes;
 pub mod vfs;
@@ -139,6 +140,10 @@ pub extern "C" fn _start() -> ! {
     ipc::register(u2_pid);
     let u3_pid = sched.add_user_task("ipc-echo[U3]",  user_processes::processo_ipc_echo);
     ipc::register(u3_pid);
+    
+    // Inicia Motor Preditivo em Kernel Space
+    sched.add_task("predict-eng[K]", predictive::analyze_telemetry_loop);
+
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
