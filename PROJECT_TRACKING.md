@@ -1,4 +1,4 @@
-﻿# 🎯 JINN OS — DASHBOARD DE PROGRESSO
+# 🎯 JINN OS — DASHBOARD DE PROGRESSO
 
 > **Status:** 🟡 Em Desenvolvimento | **Versão:** 0.0.1 | **Data:** 2026-08-17
 
@@ -98,17 +98,17 @@
 
 ---
 
-### 🟡 FASE 2: Serviços Básicos (0%)
+### 🟡 FASE 2: Serviços Básicos (15%)
 
 **Objetivo:** Implementar serviços centrais em user-space
 
-#### 2.1 IPC Funcional (NÃO INICIADO)
-- ⏳ Message passing
+#### 2.1 IPC Funcional (EM PROGRESSO 🟡)
+- ✅ Message passing (implementado em Phase 1/2)
 - ⏳ Channel management
 - ⏳ Capability system
 
-#### 2.2 Serviços Centrais (NÃO INICIADO)
-- ⏳ Driver Manager (driver-manager)
+#### 2.2 Serviços Centrais (EM PROGRESSO 🟡)
+- ✅ Driver Manager (driver-manager + IRQ Routing IPC)
 - ⏳ Process Supervisor (process-supervisor)
 - ⏳ Cache Manager (cache-manager)
 - ⏳ Filesystem Service (filesystem-service)
