@@ -262,3 +262,12 @@ pub unsafe fn sys_spawn_user(fn_ptr: usize) -> i64 {
 pub unsafe fn sys_waitpid(pid: u64) -> i64 {
     syscall3(10, pid, 0, 0)
 }
+
+// ── Syscall 11 — register_irq ────────────────────────────────────────────────
+
+/// Registra o processo atual para receber mensagens IPC quando a `irq_num`
+/// de hardware for disparada.
+#[inline(always)]
+pub unsafe fn sys_register_irq(irq_num: u8) -> i64 {
+    syscall3(11, irq_num as u64, 0, 0)
+}

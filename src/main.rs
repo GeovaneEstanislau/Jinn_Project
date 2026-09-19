@@ -22,6 +22,7 @@ pub mod syscall;
 pub mod syscall_user;
 pub mod telemetry;
 pub mod predictive;
+pub mod driver_manager;
 pub mod timer;
 pub mod user_processes;
 pub mod vfs;
@@ -91,9 +92,8 @@ pub extern "C" fn _start() -> ! {
     w.write_string("[+] PIC legado + PIT Timer (100Hz)...");
     interrupts::pic::remap();
     crate::timer::init();
-    interrupts::pic::unmask_irq(0);    // IRQ0 = Timer (preempcao futura)
-    // IRQ1 (teclado) NAO habilitado: o shell usa polling direto em 0x60/0x64
-    // Isso evita conflito entre o IRQ handler e o loop de polling do shell.
+    interrupts::pic::unmask_irq(0);    // IRQ0 = Timer
+    interrupts::pic::unmask_irq(1);    // IRQ1 = Teclado (Roteado via IPC)
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
@@ -140,6 +140,8 @@ pub extern "C" fn _start() -> ! {
     ipc::register(u2_pid);
     let u3_pid = sched.add_user_task("ipc-echo[U3]",  user_processes::processo_ipc_echo);
     ipc::register(u3_pid);
+    let kbd_pid = sched.add_user_task("kbd-drv[U3]", user_processes::processo_keyboard_driver);
+    ipc::register(kbd_pid);
     
     // Inicia Motor Preditivo em Kernel Space
     sched.add_task("predict-eng[K]", predictive::analyze_telemetry_loop);

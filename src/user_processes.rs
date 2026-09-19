@@ -165,3 +165,83 @@ unsafe fn write_u64_decimal(mut n: u64) {
     }
     sys_write(1, buf[i..].as_ptr(), (20 - i) as u64);
 }
+
+// ── Processo 4: Keyboard Driver ───────────────────────────────────────────────
+
+/// Shifted US-QWERTY Scancode Set 1 → ASCII (Ring 3).
+static SCANCODE_MAP_NORMAL_R3: [u8; 88] = [
+    0,     0x1B,  b'1',  b'2',  b'3',  b'4',  b'5',  b'6',  b'7',  b'8',  b'9',  b'0',  b'-',  b'=',  0x08,  b'\t',
+    b'q',  b'w',  b'e',  b'r',  b't',  b'y',  b'u',  b'i',  b'o',  b'p',  b'[',  b']',  b'\n', 0,     b'a',  b's',
+    b'd',  b'f',  b'g',  b'h',  b'j',  b'k',  b'l',  b';',  b'\'', b'`',  0,     b'\\', b'z',  b'x',  b'c',  b'v',
+    b'b',  b'n',  b'm',  b',',  b'.',  b'/',  0,     b'*',  0,     b' ',  0,     0,     0,     0,     0,     0,
+    0,     0,     0,     0,     0,     0,     0,     b'7',  b'8',  b'9',  b'-',  b'4',  b'5',  b'6',  b'+',  b'1',
+    b'2',  b'3',  b'0',  b'.',  0,     0,     0,     0,
+];
+
+static SCANCODE_MAP_SHIFT_R3: [u8; 88] = [
+    0,     0x1B,  b'!',  b'@',  b'#',  b'$',  b'%',  b'^',  b'&',  b'*',  b'(',  b')',  b'_',  b'+',  0x08,  b'\t',
+    b'Q',  b'W',  b'E',  b'R',  b'T',  b'Y',  b'U',  b'I',  b'O',  b'P',  b'{',  b'}',  b'\n', 0,     b'A',  b'S',
+    b'D',  b'F',  b'G',  b'H',  b'J',  b'K',  b'L',  b':',  b'"',  b'~',  0,     b'|',  b'Z',  b'X',  b'C',  b'V',
+    b'B',  b'N',  b'M',  b'<',  b'>',  b'?',  0,     b'*',  0,     b' ',  0,     0,     0,     0,     0,     0,
+    0,     0,     0,     0,     0,     0,     0,     b'7',  b'8',  b'9',  b'-',  b'4',  b'5',  b'6',  b'+',  b'1',
+    b'2',  b'3',  b'0',  b'.',  0,     0,     0,     0,
+];
+
+/// **Driver de Teclado em User-Space (Ring 3)**
+///
+/// Prova do conceito de Microkernel: o processo registra IRQ 1.
+/// O Kernel capta a interrupção de hardware e manda via IPC.
+/// Este driver lê a mensagem IPC, traduz o scancode para ASCII e envia para `stdin` via `sys_write(0)`.
+pub fn processo_keyboard_driver() {
+    unsafe {
+        let pid = sys_getpid();
+        sys_write_str(b"[Ring 3] kbd-driver: PID=");
+        write_u64_decimal(pid);
+        sys_write_str(b" assumindo IRQ 1 (Teclado)!\n");
+
+        if sys_register_irq(1) < 0 {
+            sys_write_str(b"[!] kbd-driver falhou ao registrar IRQ 1.\n");
+            sys_exit(1);
+        }
+
+        let mut shift_down = false;
+        let mut caps_lock = false;
+
+        let mut buf = [0u8; 128];
+        loop {
+            let bytes_lidos = sys_ipc_recv(buf.as_mut_ptr(), buf.len() as u64);
+            if bytes_lidos > 0 {
+                let tag_ptr = buf.as_ptr().add(8) as *const u32;
+                let tag = core::ptr::read_unaligned(tag_ptr);
+
+                if tag == 0x180 { // TAG_IRQ
+                    let sc = buf[16]; // payload[0]
+                    
+                    let is_release = (sc & 0x80) != 0;
+                    let make_code = sc & 0x7F;
+
+                    match make_code {
+                        0x2A | 0x36 => { shift_down = !is_release; } // Shift L/R
+                        0x3A if !is_release => { caps_lock = !caps_lock; }
+                        code if !is_release && (code as usize) < SCANCODE_MAP_NORMAL_R3.len() => {
+                            let shifted = shift_down ^ (caps_lock && code >= 0x10 && code <= 0x32);
+                            let ch = if shifted {
+                                SCANCODE_MAP_SHIFT_R3[code as usize]
+                            } else {
+                                SCANCODE_MAP_NORMAL_R3[code as usize]
+                            };
+                            
+                            if ch != 0 {
+                                // Envia caractere ao kernel (keyboard_buffer)
+                                sys_write(0, &ch as *const u8, 1);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            } else {
+                sys_yield();
+            }
+        }
+    }
+}

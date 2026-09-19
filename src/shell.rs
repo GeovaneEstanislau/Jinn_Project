@@ -393,28 +393,12 @@ pub fn run(w: &mut Writer) -> ! {
             continue;
         }
 
-        // Fallback de polling: lÃª porta 0x64 diretamente (Ring 0 pode)
-        unsafe {
-            let status: u8;
-            core::arch::asm!(
-                "in al, dx",
-                out("al") status,
-                in("dx") 0x64u16,
-                options(nomem, nostack)
-            );
-            if (status & 1) != 0 {
-                let sc: u8;
-                core::arch::asm!(
-                    "in al, dx",
-                    out("al") sc,
-                    in("dx") 0x60u16,
-                    options(nomem, nostack)
-                );
-                w.write_byte(b'*'); crate::interrupts::ps2_keyboard::process_scancode(sc);
-                continue;
-            }
-        }
-
+        // Antigamente, o Shell fazia polling direto das portas 0x60 e 0x64.
+        // Agora, o teclado dispara a IRQ1, que manda mensagem IPC para o 
+        // Keyboard Driver em Ring 3, que traduz o scancode e injeta via
+        // syscall sys_write(0), preenchendo o `keyboard_buffer`.
+        
+        // Apenas cede o quantum da boot-thread enquanto não há teclas (economiza CPU).
         core::hint::spin_loop();
     }
 }

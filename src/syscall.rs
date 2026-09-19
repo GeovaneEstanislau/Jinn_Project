@@ -57,6 +57,7 @@ pub extern "C" fn syscall_dispatch(
         8  => sys_free_page(arg0 as u64),
         9  => sys_spawn(arg0, arg1 as *const u8, arg2),
         10 => sys_waitpid(arg0),
+        11 => sys_register_irq(arg0 as u8),
         _  => ENOSYS,
     }
 }
@@ -79,6 +80,13 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
     if len > 65536 { return EINVAL; }
 
     match fd {
+        0 => {
+            let slice = unsafe { core::slice::from_raw_parts(buf, len) };
+            for &byte in slice {
+                crate::keyboard_buffer::push(byte);
+            }
+            len as isize
+        }
         1 | 2 => {
             let slice = unsafe { core::slice::from_raw_parts(buf, len) };
             let mut w = crate::vga::Writer::new();
@@ -209,4 +217,9 @@ fn sys_waitpid(pid: usize) -> isize {
 #[inline]
 pub fn invoke(nr: usize, arg0: usize, arg1: usize, arg2: usize) -> isize {
     syscall_dispatch(nr, arg0, arg1, arg2)
+}
+
+fn sys_register_irq(irq_num: u8) -> isize {
+    let pid = scheduler::current_pid();
+    crate::driver_manager::register_irq(irq_num, pid)
 }

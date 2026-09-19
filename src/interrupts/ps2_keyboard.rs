@@ -1,4 +1,4 @@
-﻿/// PS/2 Keyboard Driver
+/// PS/2 Keyboard Driver
 ///
 /// Inicialização correta do controlador PS/2 i8042.
 /// Usa polling direto (sem IRQ) da porta 0x60/0x64.
@@ -170,6 +170,18 @@ pub extern "C" fn kbd_irq_handler() {
     unsafe {
         let sc = inb(KBD_DATA);
         pic::send_eoi(1);
-        process_scancode(sc);
+        
+        // Verifica se há um driver de usuário registrado para a IRQ 1 (Teclado)
+        if let Some(pid) = crate::driver_manager::get_irq_pid(1) {
+            let mut payload = [0u8; 64];
+            payload[0] = sc;
+            // 0x180 = TAG_IRQ (identificador de mensagem de IRQ de hardware)
+            let msg = crate::ipc::Message::new(0, pid as u32, 0x180, &payload);
+            let _ = crate::ipc::send(msg); // Ignora erro se a fila do driver encher
+        } else {
+            // Se nenhum processo em Ring 3 registrou a IRQ 1, processamos internamente
+            // como um fallback de segurança.
+            process_scancode(sc);
+        }
     }
 }
