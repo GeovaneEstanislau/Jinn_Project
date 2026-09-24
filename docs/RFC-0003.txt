@@ -1,0 +1,219 @@
+RFC-0003
+
+jinn IPC (Inter Process Communication)
+
+Status: Proposta
+
+Versão: 0.1
+
+Autor: Comunidade jinn
+
+---
+
+Resumo
+
+Este documento define o protocolo de comunicação entre processos e serviços do jinn.
+
+Toda interação entre módulos externos ao kernel deverá ocorrer através do jinn IPC.
+
+O IPC é considerado um componente central da arquitetura jinn.
+
+---
+
+Objetivos
+
+O jinn IPC deve:
+
+- Ser rápido.
+- Ser seguro.
+- Ser simples.
+- Ser escalável.
+- Minimizar cópias de memória.
+- Permitir comunicação assíncrona.
+
+---
+
+Filosofia
+
+Nenhum serviço possui acesso direto a outro serviço.
+
+Toda comunicação ocorre através de mensagens.
+
+---
+
+Estrutura da Mensagem
+
+Message Header
+
+- Message ID
+- Source ID
+- Destination ID
+- Type
+- Priority
+- Timestamp
+- Payload Size
+
+Payload
+
+- Dados da mensagem
+
+---
+
+Tipos de Mensagem
+
+REQUEST
+
+Solicita uma operação.
+
+Exemplo:
+
+Filesystem ← Abrir Arquivo
+
+---
+
+RESPONSE
+
+Retorna resultado.
+
+Exemplo:
+
+Arquivo aberto
+
+---
+
+EVENT
+
+Notificação.
+
+Exemplo:
+
+USB conectado
+
+---
+
+STREAM
+
+Fluxo contínuo.
+
+Exemplo:
+
+Áudio
+Vídeo
+Rede
+
+---
+
+CONTROL
+
+Controle interno.
+
+Exemplo:
+
+Iniciar Serviço
+Parar Serviço
+Reiniciar Serviço
+
+---
+
+Comunicação Assíncrona
+
+Por padrão:
+
+Todo IPC é assíncrono.
+
+Fluxo:
+
+Serviço A
+↓
+Envia mensagem
+↓
+Continua executando
+↓
+Recebe resposta posteriormente
+
+---
+
+Filas de Mensagem
+
+Cada serviço possui:
+
+Incoming Queue
+
+Outgoing Queue
+
+Priority Queue
+
+---
+
+Prioridades
+
+Nível 0
+
+Kernel
+
+---
+
+Nível 1
+
+Serviços críticos
+
+---
+
+Nível 2
+
+Serviços comuns
+
+---
+
+Nível 3
+
+Aplicações
+
+---
+
+Shared Memory
+
+Mensagens grandes não devem ser copiadas.
+
+O jinn IPC deverá permitir:
+
+Shared Memory Regions
+
+Fluxo:
+
+Kernel cria região
+
+↓
+
+Serviços compartilham ponteiro
+
+↓
+
+Transferência sem cópia
+
+---
+
+Segurança
+
+Toda mensagem deve ser validada.
+
+Verificações:
+
+- Origem
+- Destino
+- Permissões
+- Integridade
+
+---
+
+Objetivo Inicial
+
+Versão 0.1
+
+Implementar:
+
+- REQUEST
+- RESPONSE
+- EVENT
+
+Demais recursos serão adicionados posteriormente.

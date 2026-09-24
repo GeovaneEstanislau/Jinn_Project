@@ -1,0 +1,146 @@
+Jinn OS - Passo a passo para instalar o ambiente e dar boot no sistema
+====================================================================
+
+Resumo:
+- Este projeto é um kernel bare-metal em Rust para x86_64.
+- Ele precisa de Rust nightly, target x86_64-unknown-none, QEMU e Limine.
+- O boot é feito com ISO gerada por scripts do próprio projeto.
+
+1) Instalar o Rust
+------------------
+
+Abra um PowerShell novo e execute:
+
+    winget install --id Rustlang.Rustup -e
+
+Feche o terminal e abra outro.
+
+Depois, rode:
+
+    rustup toolchain install nightly
+    rustup default nightly
+    rustup target add x86_64-unknown-none
+
+Confirme com:
+
+    rustc --version
+    cargo --version
+
+Se os comandos retornarem versões, o Rust foi instalado corretamente.
+
+2) Instalar o QEMU
+------------------
+
+No PowerShell, execute:
+
+    winget install --id QEMU.QEMU -e
+
+Após a instalação, confirme:
+
+    qemu-system-x86_64 --version
+
+3) Instalar o Git para obter mkisofs
+-------------------------------------
+
+O script de execução procura mkisofs, genisoimage ou oscdimg.
+A forma mais simples é instalar o Git for Windows, que inclui mkisofs:
+
+    winget install --id Git.Git -e
+
+Depois, reinicie o PowerShell e teste:
+
+    Get-Command mkisofs
+
+Se o comando existir, está pronto.
+
+Se não existir, pode ser necessário adicionar o caminho do Git no PATH ou usar MSYS2.
+
+4) Compilar o kernel
+--------------------
+
+Entre na pasta do projeto:
+
+    cd D:\Projetos\Jinn
+
+Compile:
+
+    cargo build --release --target x86_64-unknown-none
+
+Se tudo estiver certo, o build vai gerar o binário do kernel em target/x86_64-unknown-none/release/jinn.
+
+5) Rodar o boot do sistema
+-------------------------
+
+No diretório do projeto:
+
+    powershell -ExecutionPolicy Bypass -File .\scripts\run.ps1
+
+Esse script faz o seguinte:
+- localiza ou baixa o Limine
+- gera uma ISO bootável
+- inicia o QEMU com a ISO
+- tenta arrancar o kernel em modo bare-metal
+
+6) Se o script falhar por falta de mkisofs
+------------------------------------------
+
+Teste isto:
+
+    Get-Command mkisofs
+    Get-Command genisoimage
+    Get-Command oscdimg
+
+Se nenhum estiver disponível, instale o Git ou o MSYS2:
+
+    winget install --id MSYS2.MSYS2 -e
+
+Depois rode no MSYS2:
+
+    pacman -S mingw-w64-x86_64-cdrtools
+
+Ou instale o Windows ADK, que traz o oscdimg.
+
+7) Se o build falhar
+--------------------
+
+Veja a mensagem exata do erro e verifique se:
+- Rust nightly está instalado
+- O target x86_64-unknown-none foi adicionado
+- O cargo está no PATH
+- O projeto foi aberto dentro da pasta correta
+
+8) Estrutura relevante do projeto
+---------------------------------
+
+- README.md
+- scripts/build.ps1
+- scripts/run.ps1
+- src/main.rs
+- Cargo.toml
+- rust-toolchain.toml
+
+Esses arquivos definem o fluxo real de build e boot do sistema.
+
+9) Observação importante
+------------------------
+
+Este projeto não é um programa normal para rodar no Windows.
+Ele é um kernel experimental para x86_64 em modo bare-metal.
+Por isso ele precisa de um ambiente específico para compilar e bootar.
+
+10) Checklist final
+-------------------
+
+Antes de testar o boot, confirme:
+
+- [ ] Rust nightly instalado
+- [ ] target x86_64-unknown-none instalado
+- [ ] QEMU instalado
+- [ ] mkisofs/genisoimage/oscdimg disponível
+- [ ] cargo build passou
+- [ ] script run.ps1 executou sem erro
+- [ ] QEMU abriu e o sistema iniciou
+
+Se a etapa final falhar, me envie a mensagem do erro exato e eu te ajudo a corrigir o ponto específico.
+
+Fim.
