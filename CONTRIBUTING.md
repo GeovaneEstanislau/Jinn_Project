@@ -21,7 +21,7 @@ rustup component add rust-src llvm-tools-preview
 ### 2. Clonar e Compilar
 
 ```powershell
-git clone https://github.com/SEU_USUARIO/jinn-os
+git clone https://github.com/GeovaneEstanislau/Jinn_Project
 cd jinn-os
 .\scripts\build.ps1       # Compila o binário ELF do kernel
 .\scripts\make_iso.ps1    # Empacota em uma imagem ISO9660
