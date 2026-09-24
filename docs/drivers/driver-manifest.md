@@ -51,5 +51,3 @@ Recomendações:
 
 Integração com `Driver Manager`:
 - O `Driver Manager` deve ler o manifesto, validar capacidades requisitadas, prover IOMMU/DMAs e expor endpoints de controle.
-
-Próximo: quero transformar isso em um template YAML e um exemplo real em `docs/examples/`. Posso prosseguir com isso agora.
