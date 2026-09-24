@@ -15,9 +15,3 @@ Prioridade baixa
 - `examples/driver-sample.md` — exemplo completo verificável de driver simples.
 - `contributing.md` — como contribuir com docs e código.
 
-Próximos passos:
-1. Escrever `driver-manifest.md` (esqueleto e exemplos).
-2. Escrever `service-api-spec.md` com um template de mensagens IPC (Cap'n Proto/Flatbuffers).
-3. Implementar um exemplo em `examples/`.
-
-Se aprovar, começo pelo `driver-manifest.md` e gero também um exemplo de manifesto.
