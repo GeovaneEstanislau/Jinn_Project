@@ -30,7 +30,7 @@ Este diretório contém a documentação técnica do Jinn OS, organizada por arq
 - [Audio Service](drivers/audio-service.md)
 - [GPU Service](drivers/gpu-service.md)
 
-## Estrutura Recomendada
+## Estrutura do Diretório
 
 - `architecture/` — visão arquitetural e documentos gerais do Jinn.
 - `kernel/` — componentes do microkernel do Jinn.
