@@ -34,6 +34,7 @@ Este diretório contém a documentação técnica do Jinn OS, organizada por arq
 
 - `architecture/` — visão arquitetural e documentos gerais do Jinn.
 - `kernel/` — componentes do microkernel do Jinn.
-- `services/` — serviços em espaço de usuário e drivers.
+- `services/` — serviços executados em espaço de usuário.
+- `drivers/` — componentes relacionados aos drivers do sistema.
 - `rfc/` — propostas formais e especificações.
 - `roadmap/` — planejamento de evolução e prioridades.
