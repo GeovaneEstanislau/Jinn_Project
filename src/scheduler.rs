@@ -200,13 +200,8 @@ impl Scheduler {
 
     /// Cria uma tarefa de **usuário (Ring 3)**.
     ///
-    /// A tarefa executa em Ring 3 com acesso restrito ao hardware.
-    /// Precisa de syscalls para comunicar com o kernel.
-    ///
-    /// Requisitos:
-    /// - O frame de `iretq` usará `USER_CODE_SEL` e `USER_DATA_SEL`.
-    /// - Uma pilha de usuário é alocada via frame físico e mapeada com flag `USER`.
-    /// - O TSS.RSP0 é atualizado para a pilha de kernel desta tarefa.
+    /// Este kernel usa processos em Ring 3 com pontos de entrada em código
+    /// normal do kernel, não um carregamento de ELF bruto no escalonador.
     pub fn add_user_task(&mut self, name: &'static str, entry: fn()) -> usize {
         self.add_task_inner(name, entry, Ring::User, TaskPriority::Normal)
     }
@@ -240,94 +235,31 @@ impl Scheduler {
         let mut id = self.next_id;
         while id < MAX_TASKS {
             if self.tasks[id].is_none() {
-                // ── 1. Page Table (Isolamento) ─────────────────────────────────
-                let pml4_phys = match ring {
-                    Ring::Kernel => paging::current_cr3(), // Kernel compartilha o mesmo espaço
-                    Ring::User   => paging::clone_kernel_pml4(), // Usuário ganha seu próprio PML4
-                };
+                let pml4_phys = paging::current_cr3();
 
-                // ── 2. Pilha de kernel (sempre Ring 0) ────────────────────────
-                // Usamos a pilha estática de BSS. O topo precisa ser alinhado a 16 bytes.
                 let kstack_base = unsafe { KSTACKS[id].as_ptr() as usize };
                 let kstack_top  = (kstack_base + KSTACK_SIZE) & !15;
 
-                // ── 3. Pilha de usuário (Ring 3) ou reutilizar a de kernel ─────
-                let (user_rsp, cs_sel, ss_sel) = match ring {
-                    Ring::Kernel => {
-                        // Ring 0: CS/SS lidos dos registradores atuais
-                        let (cs, ss) = read_cs_ss();
-                        (kstack_top, cs as u64, ss as u64)
-                    }
-                    Ring::User => {
-                        // Ring 3: aloca e mapeia uma pilha de usuário em SEU PRÓPRIO PML4
-                        let ustack_top = self.setup_user_stack(id, pml4_phys);
-                        (
-                            ustack_top,
-                            gdt::USER_CODE_SEL as u64,
-                            gdt::USER_DATA_SEL as u64,
-                        )
-                    }
-                };
-
-                // Precisamos também mapear o código de usuário no PML4 da tarefa.
-                // Atualmente `entry` aponta para código no HHDM (Ring 0).
-                // Precisamos garantir que a página que contém `entry` seja acessível em Ring 3.
-                // Como não temos um ELF loader ainda, vamos mapear o frame físico onde
-                // `entry` reside com permissões USER_RW (idealmente KERNEL_RO | USER, mas USER_RW é mais fácil).
-                if ring == Ring::User {
-                    let entry_virt = entry as u64;
-                    // Limine mapeia o código do kernel na higher half. Vamos apenas pegar o endereço
-                    // físico correspondente (assumindo que virt_to_phys funcione para o HHDM ou kernel virt).
-                    // Para simplificar e evitar page faults, o `clone_kernel_pml4` já copiou todo o kernel
-                    // para a nova page table. O problema é que o Limine marcou isso como Ring 0.
-                    // Nós precisaremos que a CPU consiga fazer fetch do código Ring 3.
-                    // Vamos tentar alterar a permissão da página específica do `entry`.
-                    // Nota: para um OS completo, carregaríamos um ELF binário.
-                    let pml4 = paging::phys_to_virt(pml4_phys) as *mut paging::PageTable;
-                    unsafe { paging::make_page_user(pml4, entry_virt); }
-                }
-
-                // ── 4. Frame de iretq na pilha de KERNEL ──────────────────────
-                // Layout (do topo da pilha para baixo):
-                //   SS, RSP_usuário, RFLAGS, CS, RIP
-                //
-                // Para Ring 0: SS e RSP apontam para a própria pilha de kernel.
-                // Para Ring 3: SS = USER_DATA_SEL, RSP = topo da pilha de usuário.
-                let entry_addr = entry as usize;
+                let (cs, ss) = read_cs_ss();
+                
                 let mut sp = kstack_top;
-
-                // RFLAGS: IF=1 (interrupções habilitadas), IOPL=0
                 let rflags: u64 = 0x202;
 
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(ss_sel); }         // SS
-                let abi_rsp = user_rsp - 8; sp -= 8; unsafe { (sp as *mut u64).write_volatile(abi_rsp as u64); }// RSP
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(rflags); }          // RFLAGS
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(cs_sel); }          // CS
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(entry_addr as u64);}// RIP
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(ss as u64); }
+                let abi_rsp = kstack_top - 8; sp -= 8; unsafe { (sp as *mut u64).write_volatile(abi_rsp as u64); }
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(rflags); }
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(cs as u64); }
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(entry as u64);}
 
-                // ATENÇÃO: O irq_common (stubs.s) faz `add rsp, 16` antes do `iretq`
-                // para limpar o vector e o dummy error code deixados pelo irq_stub.
-                // Como nós vamos pular direto para o final do irq_common na primeira
-                // preempção, precisamos simular esses 16 bytes aqui, senão o `add rsp, 16`
-                // vai engolir nosso RIP e CS, causando um crash (General Protection Fault
-                // silencioso ou Page Fault)!
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); } // error_code (dummy)
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); } // vector (dummy)
+                // Dummy vector and error code
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
 
-                // ── 5. Frame de registradores GPR (15 registradores) ──────────
-                // O stub de contexto salva/restaura: R15, R14, R13, R12, R11, R10,
-                // R9, R8, RDI, RSI, RBP, RBX, RDX, RCX, RAX
                 for _ in 0..15 {
                     sp -= 8;
                     unsafe { (sp as *mut u64).write_volatile(0); }
                 }
 
-                // ── 6. Atualiza TSS.RSP0 se for Ring 3 ───────────────────────
-                if ring == Ring::User {
-                    gdt::set_kernel_stack(kstack_top as u64);
-                }
-
-                // Quantum inicial baseado na prioridade
                 let quantum = match priority {
                     TaskPriority::RealTime => QUANTUM_REALTIME,
                     TaskPriority::Normal   => QUANTUM_NORMAL,
@@ -353,7 +285,6 @@ impl Scheduler {
             }
             id += 1;
         }
-        // Sem slots disponíveis — retorna 0 (tarefa do kernel idle)
         0
     }
 

@@ -2,6 +2,30 @@
 
 Data: 2026-08-20
 
+## Atualização — 2026-10-01
+
+Esta atualização substitui as conclusões de execução abaixo, que descrevem o estado de 20/08/2026.
+
+### Causas encontradas e corrigidas
+
+- O framebuffer do Limine já chega como endereço virtual mapeado (`reported_addr` soma o HHDM). `src/vga.rs` somava o HHDM novamente e falhava em `clear_screen`; agora usa `fb.address` diretamente.
+- O kernel inicializa PIT + PIC legado para IRQ0, mas o dispatcher enviava EOI ao APIC não inicializado. Isso causava uma page fault em `0xb0` após iniciar o scheduler; o EOI agora vai ao PIC.
+- `exception_common` lia vetor e código de erro em ordem inversa. O diagnóstico da page fault aparecia incorretamente como `#2 NMI`; a ordem foi corrigida.
+
+### Validação atual
+
+- `py -3 .\scripts\run.py --no-run`: build do kernel e do app, cópia dos artefatos e geração da ISO concluídos.
+- Boot da ISO em QEMU por 8 segundos: framebuffer, GDT, IDT, PIC/PIT, teclado, memória, heap, VFS, IPC e scheduler inicializados; shell e processos Ring 3 executaram. O rastreamento não registrou novas exceções. O QEMU foi encerrado pelo limite do teste, pois o sistema permanece em execução.
+
+### Diagnóstico do VirtualBox
+
+- O log disponível é de 20/08/2026 e mostra a VM anexada a `D:/Projetos/Jinn/jinn.iso`.
+- Esse caminho não existe no ambiente atual. A ISO atual está em `E:\Projetos\Jinn\jinn.iso`.
+- O mesmo log informa arquitetura de guest `x86` e `Enable64bit=0`, incompatível com este kernel `x86_64`.
+- `VBoxManage list vms` não encontrou VMs registradas no perfil atual; portanto, ainda não foi possível testar esta ISO no VirtualBox nesta sessão.
+
+Para repetir o teste, registre/abra a VM correta como guest de 64 bits, habilite a virtualização de hardware, anexe `E:\Projetos\Jinn\jinn.iso` como unidade óptica e inicialize pelo CD/DVD. O log da nova execução deve ser coletado para confirmar o resultado no VirtualBox.
+
 ## Resumo executivo
 
 O projeto já passou por várias validações importantes, mas ainda não está confirmado como bootando corretamente em QEMU/VirtualBox.

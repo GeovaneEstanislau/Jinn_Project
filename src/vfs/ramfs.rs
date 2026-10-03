@@ -9,7 +9,7 @@
 ///   - Directory entries are stored as a flat array of (name, inode) pairs.
 ///   - All operations are O(n) over inodes/entries — acceptable for kernel /dev.
 
-use super::{FileSystem, NodeType, Stat, VfsError, VfsResult, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC};
+use super::{FileSystem, NodeType, Stat, VfsError, VfsResult, O_CREAT, O_TRUNC};
 use crate::memory::SpinLock;
 
 const MAX_INODES:     usize = 64;

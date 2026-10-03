@@ -1,14 +1,14 @@
-/// Jinn OS — Global Descriptor Table (GDT) e Task State Segment (TSS)
-///
-/// Em 64-bits (Long Mode), a GDT é majoritariamente ignorada para proteção de memória
-/// (feita pela Paginação), mas ainda é estritamente necessária para:
-///
-/// 1. Transição de privilégios (Ring 0 <-> Ring 3)
-/// 2. Carregar o TSS (Task State Segment)
-///
-/// O TSS no Long Mode não salva mais registradores (como fazia em 32-bits).
-/// Sua única função real é dizer à CPU qual é o endereço da Pilha do Kernel (RSP0)
-/// quando ocorrer uma interrupção (hardware ou syscall) vinda do Ring 3 (Userspace).
+// Jinn OS — Global Descriptor Table (GDT) e Task State Segment (TSS)
+//
+// Em 64-bits (Long Mode), a GDT é majoritariamente ignorada para proteção de memória
+// (feita pela Paginação), mas ainda é estritamente necessária para:
+//
+// 1. Transição de privilégios (Ring 0 <-> Ring 3)
+// 2. Carregar o TSS (Task State Segment)
+//
+// O TSS no Long Mode não salva mais registradores (como fazia em 32-bits).
+// Sua única função real é dizer à CPU qual é o endereço da Pilha do Kernel (RSP0)
+// quando ocorrer uma interrupção (hardware ou syscall) vinda do Ring 3 (Userspace).
 
 // ── Função de flush do CS (via global_asm para evitar restrições de labels) ───────
 //
@@ -34,6 +34,7 @@ core::arch::global_asm!(
 );
 
 extern "C" {
+    #[allow(dead_code)]
     /// Flush do registrador CS via far return. Ver `global_asm!` acima.
     fn gdt_flush_cs();
 }
@@ -48,7 +49,7 @@ impl GdtEntry {
     /// Cria um descritor de segmento para Long Mode.
     pub const fn new(limit: u32, base: u32, access: u8, flags: u8) -> Self {
         let mut e = 0u64;
-        e |= (limit as u64 & 0xFFFF);
+        e |= limit as u64 & 0xFFFF;
         e |= (base as u64 & 0x00FF_FFFF) << 16;
         e |= (access as u64) << 40;
         e |= ((limit as u64 >> 16) & 0xF) << 48;

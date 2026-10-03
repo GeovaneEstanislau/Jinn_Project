@@ -2,7 +2,6 @@
 # Each stub pushes the interrupt vector number onto the stack, aligns the frame,
 # and calls the central Rust dispatcher: interrupt_dispatch(vector: u64, frame: *mut InterruptFrame).
 
-.intel_syntax noprefix
 .section .text
 
 # ── Helper macro: exception WITH error code ──────────────────────────────────
@@ -89,9 +88,9 @@ irq_stub 47    # IRQ15 — ATA Secondary
 
 # ── Common exception handler ──────────────────────────────────────────────────
 exception_common:
-    # Stack at this point: [error_code, vector, rip, cs, rflags, rsp, ss]
-    mov rdi, [rsp + 8]   # vector
-    mov rsi, [rsp]       # error code
+    # Stack at this point: [vector, error_code, rip, cs, rflags, rsp, ss]
+    mov rdi, [rsp]       # vector
+    mov rsi, [rsp + 8]   # error code
     mov rdx, rsp         # frame pointer (arg3)
 
     mov rbp, rsp

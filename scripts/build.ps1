@@ -34,4 +34,22 @@ $isoBootDir = Join-Path -Path (Get-Location) "iso_root\boot"
 New-Item -ItemType Directory -Force -Path $isoBootDir | Out-Null
 Copy-Item -Path $elfPath -Destination (Join-Path $isoBootDir "kernel.elf") -Force
 
-Write-Host "Build completed. ELF copied to $bootDir\kernel.elf and $isoBootDir\kernel.elf"
+# --- Build ola-mundo ---
+Write-Host "Building ola-mundo app..."
+Set-Location -Path "apps\ola-mundo"
+& cargo build --release
+if ($LASTEXITCODE -ne 0) {
+    throw "App ola-mundo build failed."
+}
+Set-Location -Path "..\.."
+
+$appElfPath = "apps\ola-mundo\target\x86_64-unknown-none\release\ola-mundo"
+if (-not (Test-Path $appElfPath)) {
+    throw "App ELF not found: $appElfPath"
+}
+
+$isoAppsDir = Join-Path -Path (Get-Location) "iso_root\apps"
+New-Item -ItemType Directory -Force -Path $isoAppsDir | Out-Null
+Copy-Item -Path $appElfPath -Destination (Join-Path $isoAppsDir "ola-mundo.elf") -Force
+
+Write-Host "Build completed. Kernel and Apps copied to iso_root"

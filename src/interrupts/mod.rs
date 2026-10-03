@@ -26,9 +26,9 @@ use crate::timer;
 pub extern "C" fn irq_dispatch(vector: u64, _frame: *mut usize) -> usize {
     match vector {
         32 => {
-            // IRQ0 — APIC Timer Tick
+            // IRQ0 — PIT timer via legacy PIC
             timer::tick();
-            apic::send_eoi();
+            pic::send_eoi(0);
             
             // --- DEBUG INDICATOR ---
             unsafe {

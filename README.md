@@ -74,6 +74,7 @@ O Jinn OS é construído sobre três pilares principais:
 
 - [Rust nightly](https://rustup.rs/) com a target `x86_64-unknown-none`
 - `cargo` com suporte a `-Zbuild-std`
+- Python 3.10+ para os scripts de automação do projeto
 
 ```powershell
 rustup toolchain install nightly
@@ -81,14 +82,24 @@ rustup target add x86_64-unknown-none --toolchain nightly
 rustup component add rust-src --toolchain nightly
 ```
 
-### Compilar e Gerar a ISO
+### Automatizar build e geração da ISO
 
-O Jinn OS utiliza scripts nativos em PowerShell, sem depender de ferramentas externas em C/C++:
+O workflow oficial do projeto agora é em Python, mantendo os passos reproduzíveis em Windows, Linux e macOS:
 
-```powershell
-.\scripts\build.ps1
-.\scripts\make_iso.ps1
+```bash
+python scripts/build.py
+python scripts/run.py
 ```
+
+Os scripts também aceitam parâmetros úteis para automação e depuração:
+
+```bash
+python scripts/build.py --help
+python scripts/run.py --help
+python scripts/run.py --no-run
+```
+
+Para compatibilidade, os wrappers em PowerShell continuam presentes, mas o caminho preferencial é Python.
 
 A ISO será gerada como `jinn.iso` e é inicializável no VirtualBox ou QEMU.
 
@@ -96,6 +107,12 @@ A ISO será gerada como `jinn.iso` e é inicializável no VirtualBox ou QEMU.
 
 ```bash
 qemu-system-x86_64 -cdrom jinn.iso -m 128M -serial stdio
+```
+
+O launcher do projeto também pode iniciar a VM automaticamente:
+
+```bash
+python scripts/run.py
 ```
 
 ---

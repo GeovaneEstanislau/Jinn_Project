@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use core::alloc::{GlobalAlloc, Layout};
+use core::alloc::Layout;
 use core::cell::UnsafeCell;
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -57,138 +57,11 @@ impl<'a, T> Drop for SpinLockGuard<'a, T> {
     }
 }
 
-// ── Physical Page Frame Allocator (Bitmap) ───────────────────────────────────
-pub struct PageFrameAllocator {
-    bitmap: [u64; BITMAP_WORDS],
-    total_frames: usize,
-    free_frames: usize,
-    used_frames: usize,
-    initialized: bool,
-}
+// ── Physical Page Frame Allocator (Buddy) ────────────────────────────────────
+use crate::memory::buddy::BuddyAllocator;
 
-impl PageFrameAllocator {
-    pub const fn new() -> Self {
-        PageFrameAllocator {
-            bitmap: [!0u64; BITMAP_WORDS], // 1 = allocated/reserved, 0 = free
-            total_frames: 0,
-            free_frames: 0,
-            used_frames: 0,
-            initialized: false,
-        }
-    }
+static FRAME_ALLOCATOR: SpinLock<BuddyAllocator> = SpinLock::new(BuddyAllocator::new());
 
-    pub fn init(&mut self) {
-        // 1. Initially mark all frames as reserved
-        for word in self.bitmap.iter_mut() {
-            *word = !0u64;
-        }
-
-        self.total_frames = 0;
-        self.free_frames = 0;
-        self.used_frames = 0;
-
-        // 2. Query Limine Memory Map and free usable regions
-        let entry_count = crate::limine::memmap_entries_count();
-        for i in 0..entry_count {
-            if let Some(entry) = crate::limine::get_memmap_entry(i) {
-                let start_frame = (entry.base as usize) / PAGE_SIZE;
-                let frame_count = (entry.length as usize) / PAGE_SIZE;
-                let end_frame = (start_frame + frame_count).min(MAX_FRAMES);
-
-                if entry.typ == crate::limine::LIMINE_MEMMAP_USABLE {
-                    for f in start_frame..end_frame {
-                        self.set_free(f);
-                        self.free_frames += 1;
-                        self.total_frames += 1;
-                    }
-                } else {
-                    self.total_frames += frame_count.min(MAX_FRAMES.saturating_sub(start_frame));
-                    self.used_frames += frame_count.min(MAX_FRAMES.saturating_sub(start_frame));
-                }
-            }
-        }
-
-        // 3. Reserve lower 1 MiB (first 256 frames) to protect BIOS/IVT/BDA/VGA
-        for f in 0..256.min(MAX_FRAMES) {
-            if self.is_free(f) {
-                self.set_used(f);
-                self.free_frames = self.free_frames.saturating_sub(1);
-                self.used_frames += 1;
-            }
-        }
-
-        // 4. Reserve kernel physical memory area
-        if let Some((kphys, _)) = crate::limine::kernel_address() {
-            let kernel_start_frame = (kphys as usize) / PAGE_SIZE;
-            let kernel_frame_count = (16 * 1024 * 1024) / PAGE_SIZE; // 16 MB reservation
-            for f in kernel_start_frame..(kernel_start_frame + kernel_frame_count).min(MAX_FRAMES) {
-                if self.is_free(f) {
-                    self.set_used(f);
-                    self.free_frames = self.free_frames.saturating_sub(1);
-                    self.used_frames += 1;
-                }
-            }
-        }
-
-        self.initialized = true;
-    }
-
-    #[inline]
-    fn is_free(&self, frame: usize) -> bool {
-        if frame >= MAX_FRAMES {
-            return false;
-        }
-        let word = frame / 64;
-        let bit = frame % 64;
-        (self.bitmap[word] & (1 << bit)) == 0
-    }
-
-    #[inline]
-    fn set_free(&mut self, frame: usize) {
-        if frame < MAX_FRAMES {
-            let word = frame / 64;
-            let bit = frame % 64;
-            self.bitmap[word] &= !(1 << bit);
-        }
-    }
-
-    #[inline]
-    fn set_used(&mut self, frame: usize) {
-        if frame < MAX_FRAMES {
-            let word = frame / 64;
-            let bit = frame % 64;
-            self.bitmap[word] |= 1 << bit;
-        }
-    }
-
-    pub fn alloc_frame(&mut self) -> Option<u64> {
-        for word_idx in 0..BITMAP_WORDS {
-            let word = self.bitmap[word_idx];
-            if word != !0u64 {
-                let bit_idx = (!word).trailing_zeros() as usize;
-                let frame_idx = word_idx * 64 + bit_idx;
-                if frame_idx < MAX_FRAMES {
-                    self.bitmap[word_idx] |= 1 << bit_idx;
-                    self.free_frames = self.free_frames.saturating_sub(1);
-                    self.used_frames += 1;
-                    return Some((frame_idx * PAGE_SIZE) as u64);
-                }
-            }
-        }
-        None
-    }
-
-    pub fn free_frame(&mut self, paddr: u64) {
-        let frame_idx = (paddr as usize) / PAGE_SIZE;
-        if frame_idx < MAX_FRAMES && !self.is_free(frame_idx) {
-            self.set_free(frame_idx);
-            self.free_frames += 1;
-            self.used_frames = self.used_frames.saturating_sub(1);
-        }
-    }
-}
-
-static FRAME_ALLOCATOR: SpinLock<PageFrameAllocator> = SpinLock::new(PageFrameAllocator::new());
 
 // ── Kernel Dynamic Heap Allocator (Free List) ────────────────────────────────
 #[repr(C)]
@@ -224,7 +97,7 @@ impl KernelHeap {
         let mut fa = FRAME_ALLOCATOR.lock();
 
         for _ in 0..frames_count {
-            if let Some(paddr) = fa.alloc_frame() {
+            if let Some(paddr) = fa.alloc(0) {
                 let vaddr = (paddr + hhdm) as *mut u8;
                 self.add_free_region(vaddr, PAGE_SIZE);
                 self.total_heap_bytes += PAGE_SIZE;
@@ -329,11 +202,11 @@ pub fn init() {
 }
 
 pub fn alloc_frame() -> Option<u64> {
-    FRAME_ALLOCATOR.lock().alloc_frame()
+    FRAME_ALLOCATOR.lock().alloc(0)
 }
 
 pub fn free_frame(paddr: u64) {
-    FRAME_ALLOCATOR.lock().free_frame(paddr)
+    FRAME_ALLOCATOR.lock().free(paddr, 0)
 }
 
 pub fn total_frames() -> usize {

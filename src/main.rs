@@ -30,6 +30,23 @@ use vga::{Color, Writer};
 const KERNEL_NAME:    &str = "Jinn Microkernel";
 const KERNEL_VERSION: &str = "0.0.3-userspace";
 
+fn serial_write_byte(byte: u8) {
+    unsafe {
+        core::arch::asm!(
+            "out dx, al",
+            in("dx") 0x3f8u16,
+            in("al") byte,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+}
+
+fn serial_write(message: &[u8]) {
+    for &byte in message {
+        serial_write_byte(byte);
+    }
+}
+
 #[alloc_error_handler]
 fn alloc_error(_layout: core::alloc::Layout) -> ! {
     let mut w = Writer::new();
@@ -57,8 +74,17 @@ fn panic(info: &PanicInfo) -> ! {
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    serial_write_byte(b'J');
+    serial_write_byte(b'I');
+    serial_write_byte(b'N');
+    serial_write_byte(b'N');
+    serial_write_byte(b'\n');
+
+    serial_write(b"VGA writer\n");
     let mut w = Writer::new();
+    serial_write(b"VGA clear\n");
     w.clear_screen();
+    serial_write(b"VGA ready\n");
 
     w.set_color(Color::Yellow, Color::Black);
     w.write_line("================================================================================");
@@ -72,13 +98,17 @@ pub extern "C" fn _start() -> ! {
     w.set_color(Color::LightGray, Color::Black);
 
     w.write_string("[+] GDT e TSS (Ring 3 Ready)...");
+    serial_write(b"GDT start\n");
     gdt::init();
+    serial_write(b"GDT done\n");
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
 
     w.write_string("[+] IDT (48 vetores)...");
+    serial_write(b"IDT start\n");
     interrupts::idt::init();
+    serial_write(b"IDT done\n");
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);

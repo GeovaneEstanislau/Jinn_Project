@@ -12,11 +12,27 @@
 /// - SMP (CPU core count and bootstrap processor ID)
 
 #[used]
-#[link_section = ".requests"]
+#[link_section = ".limine_requests_start_marker"]
+static LIMINE_REQUESTS_START_MARKER: [u64; 4] = [
+    0xf6b8f4b39de7d1ae,
+    0xfab91a6940fcb9cf,
+    0x785c6ed015d3e316,
+    0x181e920a7852b9d9,
+];
+
+#[used]
+#[link_section = ".limine_requests"]
 static LIMINE_BASE_REVISION: [u64; 3] = [
     0xf9562b2d5c95a6c8, // magic[0]
     0x6a7b384944536bdc, // magic[1]
     0,                  // revision = 0 (compatible with all Limine >= v2)
+];
+
+#[used]
+#[link_section = ".limine_requests_end_marker"]
+static LIMINE_REQUESTS_END_MARKER: [u64; 2] = [
+    0xadc0e0531bb10d03,
+    0x9572709f31764c62,
 ];
 
 // Common magic numbers for all Limine requests
@@ -41,11 +57,61 @@ pub struct LimineBootloaderInfoRequest {
 unsafe impl Sync for LimineBootloaderInfoRequest {}
 
 #[used]
-#[link_section = ".requests"]
+#[link_section = ".limine_requests"]
 pub static LIMINE_BOOTLOADER_INFO_REQUEST: LimineBootloaderInfoRequest = LimineBootloaderInfoRequest {
     id: [COMMON_MAGIC_0, COMMON_MAGIC_1, 0xf55038d8e2a1202f, 0x279426fcf5f59740],
     revision: 0,
     response: core::ptr::null(),
+};
+
+// ── Entry Point Request ──────────────────────────────────────────────────────
+#[repr(C)]
+pub struct LimineEntryPointResponse {
+    pub revision: u64,
+}
+
+#[repr(C)]
+pub struct LimineEntryPointRequest {
+    pub id: [u64; 4],
+    pub revision: u64,
+    pub response: *const LimineEntryPointResponse,
+    pub entry: unsafe extern "C" fn() -> !,
+}
+
+unsafe impl Sync for LimineEntryPointRequest {}
+
+#[used]
+#[link_section = ".limine_requests"]
+pub static LIMINE_ENTRY_POINT_REQUEST: LimineEntryPointRequest = LimineEntryPointRequest {
+    id: [COMMON_MAGIC_0, COMMON_MAGIC_1, 0x13d86c035a1cd3e1, 0x2b0caa89d8f3026a],
+    revision: 0,
+    response: core::ptr::null(),
+    entry: crate::_start,
+};
+
+// ── Stack Size Request ────────────────────────────────────────────────────────
+#[repr(C)]
+pub struct LimineStackSizeResponse {
+    pub revision: u64,
+}
+
+#[repr(C)]
+pub struct LimineStackSizeRequest {
+    pub id: [u64; 4],
+    pub revision: u64,
+    pub response: *const LimineStackSizeResponse,
+    pub stack_size: u64,
+}
+
+unsafe impl Sync for LimineStackSizeRequest {}
+
+#[used]
+#[link_section = ".limine_requests"]
+pub static LIMINE_STACK_SIZE_REQUEST: LimineStackSizeRequest = LimineStackSizeRequest {
+    id: [COMMON_MAGIC_0, COMMON_MAGIC_1, 0x224ef0460a8e8926, 0xe1cb0fc25f46ea3d],
+    revision: 0,
+    response: core::ptr::null(),
+    stack_size: 65536,
 };
 
 // ── HHDM (Higher-Half Direct Map) Request ────────────────────────────────────
@@ -65,7 +131,7 @@ pub struct LimineHhdmRequest {
 unsafe impl Sync for LimineHhdmRequest {}
 
 #[used]
-#[link_section = ".requests"]
+#[link_section = ".limine_requests"]
 pub static LIMINE_HHDM_REQUEST: LimineHhdmRequest = LimineHhdmRequest {
     id: [COMMON_MAGIC_0, COMMON_MAGIC_1, 0x48dcf1cb8ad2b852, 0x63984e959a98244b],
     revision: 0,
@@ -107,7 +173,7 @@ pub struct LimineMemmapRequest {
 unsafe impl Sync for LimineMemmapRequest {}
 
 #[used]
-#[link_section = ".requests"]
+#[link_section = ".limine_requests"]
 pub static LIMINE_MEMMAP_REQUEST: LimineMemmapRequest = LimineMemmapRequest {
     id: [COMMON_MAGIC_0, COMMON_MAGIC_1, 0x67cf3d9d378a806f, 0xe304acdfc50c3c62],
     revision: 0,
@@ -132,7 +198,7 @@ pub struct LimineKernelAddressRequest {
 unsafe impl Sync for LimineKernelAddressRequest {}
 
 #[used]
-#[link_section = ".requests"]
+#[link_section = ".limine_requests"]
 pub static LIMINE_KERNEL_ADDRESS_REQUEST: LimineKernelAddressRequest = LimineKernelAddressRequest {
     // Executable Address Request ID
     id: [COMMON_MAGIC_0, COMMON_MAGIC_1, 0x71ba76863cc55f63, 0xb2644a48c516a487],
@@ -157,7 +223,7 @@ pub struct LimineRsdpRequest {
 unsafe impl Sync for LimineRsdpRequest {}
 
 #[used]
-#[link_section = ".requests"]
+#[link_section = ".limine_requests"]
 pub static LIMINE_RSDP_REQUEST: LimineRsdpRequest = LimineRsdpRequest {
     id: [COMMON_MAGIC_0, COMMON_MAGIC_1, 0xc5e77b6b397e7b43, 0x27637845accdcf3c],
     revision: 0,
@@ -202,7 +268,7 @@ pub struct LimineFramebufferRequest {
 unsafe impl Sync for LimineFramebufferRequest {}
 
 #[used]
-#[link_section = ".requests"]
+#[link_section = ".limine_requests"]
 pub static LIMINE_FRAMEBUFFER_REQUEST: LimineFramebufferRequest = LimineFramebufferRequest {
     id: [COMMON_MAGIC_0, COMMON_MAGIC_1, 0x9d5827dcd881dd75, 0xa3148604f6fab11b],
     revision: 0,

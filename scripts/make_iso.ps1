@@ -89,14 +89,24 @@ $rootDirSector     = 22
 $bootDirSector     = 23
 $efiDirSector      = 24
 $efiBootDirSector  = 25
+$appsDirSector     = 26
 
-$currentFileSector = 26
+$currentFileSector = 27
 
 # Mapeamento de arquivos para setores
 $limineCdSector  = $currentFileSector; $currentFileSector += [int][Math]::Ceiling($limineCdBytes.Length / $SECTOR_SIZE)
 $limineSysSector = $currentFileSector; $currentFileSector += [int][Math]::Ceiling($limineSysBytes.Length / $SECTOR_SIZE)
 $limineCfgSector = $currentFileSector; $currentFileSector += [int][Math]::Ceiling($limineCfgBytes.Length / $SECTOR_SIZE)
 $kernelElfSector = $currentFileSector; $currentFileSector += [int][Math]::Ceiling($kernelElfBytes.Length / $SECTOR_SIZE)
+
+$olaMundoPath = Join-Path $projectRoot "iso_root\apps\ola-mundo.elf"
+if (Test-Path $olaMundoPath) {
+    $olaMundoBytes = [System.IO.File]::ReadAllBytes($olaMundoPath)
+    $olaMundoSector = $currentFileSector; $currentFileSector += [int][Math]::Ceiling($olaMundoBytes.Length / $SECTOR_SIZE)
+} else {
+    $olaMundoBytes = $null
+    $olaMundoSector = 0
+}
 
 $bootx64Sector = 0
 if ($hasEfi) {
@@ -288,14 +298,16 @@ function Add-PathTableEntry($ms, [string]$name, [uint32]$sector, [uint16]$parent
 }
 
 Add-PathTableEntry $pL "" $rootDirSector 1 $false
+Add-PathTableEntry $pL "APPS" $appsDirSector 1 $false
 Add-PathTableEntry $pL "BOOT" $bootDirSector 1 $false
 Add-PathTableEntry $pL "EFI" $efiDirSector 1 $false
-Add-PathTableEntry $pL "BOOT" $efiBootDirSector 3 $false
+Add-PathTableEntry $pL "BOOT" $efiBootDirSector 4 $false
 
 Add-PathTableEntry $pM "" $rootDirSector 1 $true
+Add-PathTableEntry $pM "APPS" $appsDirSector 1 $true
 Add-PathTableEntry $pM "BOOT" $bootDirSector 1 $true
 Add-PathTableEntry $pM "EFI" $efiDirSector 1 $true
-Add-PathTableEntry $pM "BOOT" $efiBootDirSector 3 $true
+Add-PathTableEntry $pM "BOOT" $efiBootDirSector 4 $true
 
 $pLBytes = $pL.ToArray(); [Array]::Copy($pLBytes, 0, $iso, ($pathTableLSector * $SECTOR_SIZE), $pLBytes.Length)
 $pMBytes = $pM.ToArray(); [Array]::Copy($pMBytes, 0, $iso, ($pathTableMSector * $SECTOR_SIZE), $pMBytes.Length)
@@ -306,10 +318,24 @@ $cur = $rOff
 $cur += Write-DirRecord $iso $cur $rootDirSector $SECTOR_SIZE $true (New-Object byte[] 1) # .
 $dotdotName = [byte[]]@(1)
 $cur += Write-DirRecord $iso $cur $rootDirSector $SECTOR_SIZE $true $dotdotName            # ..
+$cur += Write-DirRecord $iso $cur $appsDirSector $SECTOR_SIZE $true ([System.Text.Encoding]::ASCII.GetBytes("APPS"))
 $cur += Write-DirRecord $iso $cur $bootDirSector $SECTOR_SIZE $true ([System.Text.Encoding]::ASCII.GetBytes("BOOT"))
 $cur += Write-DirRecord $iso $cur $efiDirSector $SECTOR_SIZE $true ([System.Text.Encoding]::ASCII.GetBytes("EFI"))
 
-# Full Level 2 and 8.3 names for Limine compatibility
+# ── 7. Sector 26: APPS Directory ──────────────────────────────────────────────
+$aOff = $appsDirSector * $SECTOR_SIZE
+$cur = $aOff
+$cur += Write-DirRecord $iso $cur $appsDirSector $SECTOR_SIZE $true (New-Object byte[] 1) # .
+$cur += Write-DirRecord $iso $cur $rootDirSector $SECTOR_SIZE $true $dotdotName            # ..
+if ($olaMundoBytes) {
+    $cur += Write-DirRecord $iso $cur $olaMundoSector $olaMundoBytes.Length $false ([System.Text.Encoding]::ASCII.GetBytes("OLA-MUND.ELF;1"))
+}
+
+# ── 8. Sector 23: BOOT Directory ──────────────────────────────────────────────
+$bOff = $bootDirSector * $SECTOR_SIZE
+$cur = $bOff
+$cur += Write-DirRecord $iso $cur $bootDirSector $SECTOR_SIZE $true (New-Object byte[] 1) # .
+$cur += Write-DirRecord $iso $cur $rootDirSector $SECTOR_SIZE $true $dotdotName            # ..
 $cur += Write-DirRecord $iso $cur $kernelElfSector $kernelElfBytes.Length $false ([System.Text.Encoding]::ASCII.GetBytes("KERNEL.ELF;1"))
 $cur += Write-DirRecord $iso $cur $limineCdSector $limineCdBytes.Length $false ([System.Text.Encoding]::ASCII.GetBytes("LIMINE-BIOS-CD.BIN;1"))
 $cur += Write-DirRecord $iso $cur $limineCdSector $limineCdBytes.Length $false ([System.Text.Encoding]::ASCII.GetBytes("LIMINE_B.BIN;1"))
@@ -318,22 +344,14 @@ $cur += Write-DirRecord $iso $cur $limineSysSector $limineSysBytes.Length $false
 $cur += Write-DirRecord $iso $cur $limineCfgSector $limineCfgBytes.Length $false ([System.Text.Encoding]::ASCII.GetBytes("LIMINE.CONF;1"))
 $cur += Write-DirRecord $iso $cur $limineCfgSector $limineCfgBytes.Length $false ([System.Text.Encoding]::ASCII.GetBytes("LIMINE.CON;1"))
 
-# ── 7. Sector 23: BOOT Directory ──────────────────────────────────────────────
-$bOff = $bootDirSector * $SECTOR_SIZE
-$cur = $bOff
-$cur += Write-DirRecord $iso $cur $bootDirSector $SECTOR_SIZE $true (New-Object byte[] 1) # .
-$cur += Write-DirRecord $iso $cur $rootDirSector $SECTOR_SIZE $true $dotdotName            # ..
-$cur += Write-DirRecord $iso $cur $limineSysSector $limineSysBytes.Length $false ([System.Text.Encoding]::ASCII.GetBytes("LIMINE-BIOS.SYS;1"))
-$cur += Write-DirRecord $iso $cur $limineCfgSector $limineCfgBytes.Length $false ([System.Text.Encoding]::ASCII.GetBytes("LIMINE.CONF;1"))
-
-# ── 8. Sector 24: EFI Directory ───────────────────────────────────────────────
+# ── 9. Sector 24: EFI Directory ───────────────────────────────────────────────
 $eOff = $efiDirSector * $SECTOR_SIZE
 $cur = $eOff
 $cur += Write-DirRecord $iso $cur $efiDirSector $SECTOR_SIZE $true (New-Object byte[] 1)
 $cur += Write-DirRecord $iso $cur $rootDirSector $SECTOR_SIZE $true $dotdotName
 $cur += Write-DirRecord $iso $cur $efiBootDirSector $SECTOR_SIZE $true ([System.Text.Encoding]::ASCII.GetBytes("BOOT"))
 
-# ── 9. Sector 25: EFI/BOOT Directory ──────────────────────────────────────────
+# ── 10. Sector 25: EFI/BOOT Directory ──────────────────────────────────────────
 $ebOff = $efiBootDirSector * $SECTOR_SIZE
 $cur = $ebOff
 $cur += Write-DirRecord $iso $cur $efiBootDirSector $SECTOR_SIZE $true (New-Object byte[] 1)
@@ -342,7 +360,7 @@ if ($hasEfi) {
     $cur += Write-DirRecord $iso $cur $bootx64Sector $bootx64Bytes.Length $false ([System.Text.Encoding]::ASCII.GetBytes("BOOTX64.EFI;1"))
 }
 
-# ── 10. Copiar Conteudo dos Arquivos ──────────────────────────────────────────
+# ── 11. Copiar Conteudo dos Arquivos ──────────────────────────────────────────
 [Array]::Copy($limineCdBytes, 0, $iso, ($limineCdSector * $SECTOR_SIZE), $limineCdBytes.Length)
 Write-Host ('    [OK] LIMINE_B.BIN -> Setor ' + $limineCdSector + ' (' + $limineCdBytes.Length + ' bytes)')
 [Array]::Copy($limineSysBytes, 0, $iso, ($limineSysSector * $SECTOR_SIZE), $limineSysBytes.Length)
@@ -351,6 +369,11 @@ Write-Host ('    [OK] LIMINE_B.SYS -> Setor ' + $limineSysSector + ' (' + $limin
 Write-Host ('    [OK] LIMINE.CON   -> Setor ' + $limineCfgSector + ' (' + $limineCfgBytes.Length + ' bytes)')
 [Array]::Copy($kernelElfBytes, 0, $iso, ($kernelElfSector * $SECTOR_SIZE), $kernelElfBytes.Length)
 Write-Host ('    [OK] KERNEL.ELF   -> Setor ' + $kernelElfSector + ' (' + $kernelElfBytes.Length + ' bytes)')
+
+if ($olaMundoBytes) {
+    [Array]::Copy($olaMundoBytes, 0, $iso, ($olaMundoSector * $SECTOR_SIZE), $olaMundoBytes.Length)
+    Write-Host ('    [OK] OLA-MUND.ELF -> Setor ' + $olaMundoSector + ' (' + $olaMundoBytes.Length + ' bytes)')
+}
 
 if ($hasEfi) {
     [Array]::Copy($bootx64Bytes, 0, $iso, ($bootx64Sector * $SECTOR_SIZE), $bootx64Bytes.Length)

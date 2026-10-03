@@ -29,21 +29,23 @@ Jinn is an experimental operating system written in Rust for `x86_64`, designed 
 ## How to build
 
 1. Install Rust and `nightly`:
-   ```powershell
+   ```bash
    rustup toolchain install nightly
    ```
 2. Add the bare-metal target:
-   ```powershell
+   ```bash
    rustup target add x86_64-unknown-none
    ```
-3. Build the kernel:
-   ```powershell
-   cargo build --release --target x86_64-unknown-none
+3. Build the kernel with the project automation scripts:
+   ```bash
+   python scripts/build.py
    ```
+
+The project now prefers Python-based automation over PowerShell for cross-platform reproducibility.
 
 ## How to run
 
-- Use `scripts/run.ps1` to generate the ISO and run it in QEMU.
+- Use `python scripts/run.py` to generate the ISO and run it in QEMU.
 - The script can download Limine binaries automatically if they are not present.
 - The file `iso_root/boot/jinn_kernel/jinn` is generated during build/ISO creation and should not be included in the repository.
 

@@ -20,6 +20,7 @@ pub const KERNEL_RO:  u64 = PRESENT | NO_EXEC;
 pub const USER_RW:    u64 = PRESENT | WRITABLE | USER;
 
 const PAGE_MASK: u64 = 0x000F_FFFF_FFFF_F000;
+#[allow(dead_code)]
 const PAGE_SIZE: usize = 4096;
 
 // ── Page Table Entry ──────────────────────────────────────────────────────────

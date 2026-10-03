@@ -473,7 +473,7 @@ pub fn run(w: &mut Writer) -> ! {
                     in("dx") 0x60u16,
                     options(nomem, nostack)
                 );
-                w.write_byte(b'*'); crate::interrupts::ps2_keyboard::process_scancode(sc);
+                crate::interrupts::ps2_keyboard::process_scancode(sc);
                 continue;
             }
         }

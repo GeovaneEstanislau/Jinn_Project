@@ -102,10 +102,12 @@ pub fn init_and_flush() {
         ps2_wait_read();
         let mut cfg = inb(KBD_DATA);
 
-        // Modifica: habilita porta 1, desabilita tradução (já em Set 1)
+        // Modifica: habilita porta 1 e reativa a tradução do teclado para Set 1.
+        // Isso é crucial porque o teclado virtual em QEMU/VirtualBox costuma gerar Set 2;
+        // sem a tradução, o kernel interpreta valores errados e a shell mostra caracteres estranhos.
         cfg &= !(1 << 4); // Bit 4 = Port 1 clock disable → clear para HABILITAR
-        cfg &= !(1 << 6); // Bit 6 = Translation enable → clear
-        cfg |=  (1 << 0); // Bit 0 = Port 1 IRQ enable (para IRQ futuro)
+        cfg |= 1 << 6;    // Bit 6 = Translation enable → set para converter Set 2 -> Set 1
+        cfg |= 1 << 0;    // Bit 0 = Port 1 IRQ enable (para IRQ futuro)
 
         // Passo 4: Escreve o byte de configuração de volta
         ps2_wait_write();

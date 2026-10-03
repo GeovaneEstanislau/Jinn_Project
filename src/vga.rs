@@ -289,6 +289,7 @@ impl Writer {
             let glyph = crate::font::get_glyph(ch);
             let fg = color_to_u32_fb(self.fg_color, fb);
             let bg = color_to_u32_fb(self.bg_color, fb);
+            let fb_base = fb.address;
 
             let x_base = col * 8;
             let y_base = row * 8;
@@ -313,7 +314,7 @@ impl Writer {
                     let pixel_offset = y * (fb.pitch as usize) + x * ((fb.bpp as usize) / 8);
                     unsafe {
                         core::ptr::write_volatile(
-                            fb.address.add(pixel_offset) as *mut u32,
+                            fb_base.add(pixel_offset) as *mut u32,
                             color,
                         );
                     }
@@ -378,11 +379,12 @@ impl Writer {
             if let Some(fb) = self.fb.as_mut() {
                 let pitch = fb.pitch as usize;
                 let bytes_to_copy = ((fb.height as usize) - 8) * pitch;
+                let fb_base = fb.address;
 
                 unsafe {
                     core::ptr::copy(
-                        fb.address.add(8 * pitch),
-                        fb.address,
+                        fb_base.add(8 * pitch),
+                        fb_base,
                         bytes_to_copy,
                     );
                 }
@@ -395,6 +397,7 @@ impl Writer {
     fn clear_row(&mut self, row: usize) {
         if let Some(fb) = self.fb.as_mut() {
             let bg = color_to_u32_fb(self.bg_color, fb);
+            let fb_base = fb.address;
             let y_base = row * 8;
             for y_offset in 0..8 {
                 let y = y_base + y_offset;
@@ -405,7 +408,7 @@ impl Writer {
                     let pixel_offset = y * (fb.pitch as usize) + x * ((fb.bpp as usize) / 8);
                     unsafe {
                         core::ptr::write_volatile(
-                            fb.address.add(pixel_offset) as *mut u32,
+                            fb_base.add(pixel_offset) as *mut u32,
                             bg,
                         );
                     }

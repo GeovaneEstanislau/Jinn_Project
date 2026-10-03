@@ -91,7 +91,7 @@ impl KernelHeap {
     unsafe fn try_alloc_free_list(&self, layout: Layout) -> *mut u8 {
         let align = layout.align().max(MIN_ALIGN);
         let size  = (layout.size() + MIN_ALIGN - 1) & !(MIN_ALIGN - 1);
-        let min_size = size.max(core::mem::size_of::<FreeNode>());
+        let _min_size = size.max(core::mem::size_of::<FreeNode>());
 
         let head = &mut *self.free_list.get();
         let mut prev: *mut *mut FreeNode = head as *mut _;

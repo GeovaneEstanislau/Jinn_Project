@@ -6,11 +6,13 @@ const APIC_BASE_MASK: u64 = 0xFFFF_FFFF_FFFF_F000;
 const APIC_GLOBAL_ENABLE: u64 = 1 << 11;
 
 // APIC Registers (Offsets from APIC Base)
+#[allow(dead_code)]
 const APIC_ID: u32 = 0x020;
 const APIC_EOI: u32 = 0x0B0;
 const APIC_SPURIOUS: u32 = 0x0F0;
 const APIC_TIMER: u32 = 0x320;
 const APIC_TIMER_INIT_CNT: u32 = 0x380;
+#[allow(dead_code)]
 const APIC_TIMER_CUR_CNT: u32 = 0x390;
 const APIC_TIMER_DIV: u32 = 0x3E0;
 
@@ -29,6 +31,7 @@ unsafe fn wrmsr(msr: u32, val: u64) {
     asm!("wrmsr", in("eax") low, in("edx") high, in("ecx") msr, options(nomem, nostack));
 }
 
+#[allow(dead_code)]
 unsafe fn read_apic(offset: u32) -> u32 {
     let ptr = (APIC_BASE_VADDR + offset as u64) as *const u32;
     core::ptr::read_volatile(ptr)
@@ -58,7 +61,7 @@ pub fn init() {
     }
 }
 
-pub fn init_timer(vector: u8, freq_hz: u32) {
+pub fn init_timer(vector: u8, _freq_hz: u32) {
     unsafe {
         // Divider = 16
         write_apic(APIC_TIMER_DIV, 0x3);

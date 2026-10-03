@@ -42,8 +42,8 @@ unsafe fn io_wait() {
 pub fn remap() {
     unsafe {
         // Save existing masks
-        let m1 = inb(PIC1_DATA);
-        let m2 = inb(PIC2_DATA);
+        let _m1 = inb(PIC1_DATA);
+        let _m2 = inb(PIC2_DATA);
 
         // ICW1: start initialisation, ICW4 needed
         outb(PIC1_CMD,  0x11); io_wait();
@@ -81,8 +81,8 @@ pub fn unmask_irq(irq: u8) {
             let mask = inb(PIC2_DATA) & !(1 << (irq - 8));
             outb(PIC2_DATA, mask);
             // Also unmask IRQ2 on PIC1 (the cascade line)
-            let m1 = inb(PIC1_DATA) & !(1 << 2);
-            outb(PIC1_DATA, m1);
+            let _m1 = inb(PIC1_DATA) & !(1 << 2);
+            outb(PIC1_DATA, _m1);
         }
     }
 }

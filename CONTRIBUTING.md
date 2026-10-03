@@ -8,7 +8,7 @@ Obrigado pelo seu interesse! O Jinn OS é um microkernel bare-metal x86_64 escri
 
 ### 1. Configurar o ambiente
 
-```powershell
+```bash
 # Instalar a versão nightly do Rust
 rustup toolchain install nightly
 rustup default nightly
@@ -16,15 +16,18 @@ rustup default nightly
 # Adicionar a arquitetura bare-metal
 rustup target add x86_64-unknown-none
 rustup component add rust-src llvm-tools-preview
+
+# Python 3.10+ é o caminho oficial de automação do projeto
+python --version
 ```
 
 ### 2. Clonar e Compilar
 
-```powershell
+```bash
 git clone https://github.com/SEU_USUARIO/jinn-os
 cd jinn-os
-.\scripts\build.ps1       # Compila o binário ELF do kernel
-.\scripts\make_iso.ps1    # Empacota em uma imagem ISO9660
+python scripts/build.py      # Compila o binário ELF do kernel
+python scripts/run.py --no-run  # Gera a ISO sem iniciar a VM
 ```
 
 ### 3. Executar
@@ -70,8 +73,13 @@ src/
     ├── mod.rs           # Traits do VFS, tabela de montagem e resolução de paths
     └── ramfs.rs         # Sistema de arquivos em memória RAM (/dev/*)
 scripts/
-├── build.ps1            # Script wrapper para compilar o kernel
-└── make_iso.ps1         # Construtor nativo de ISO9660 em PowerShell
+├── build.py             # Build do kernel e provisionamento do ELF
+├── run.py               # Build + ISO + execução do QEMU
+├── create_iso.py        # Utilitário de geração de ISO em Python
+├── create_github_issues.py  # Automação para GitHub Issues
+├── build.ps1            # Compatibilidade (opcional, legado)
+├── run.ps1              # Compatibilidade (opcional, legado)
+└── make_iso.ps1         # Compatibilidade (opcional, legado)
 ```
 
 ---
