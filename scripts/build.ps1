@@ -37,13 +37,13 @@ Copy-Item -Path $elfPath -Destination (Join-Path $isoBootDir "kernel.elf") -Forc
 # --- Build ola-mundo ---
 Write-Host "Building ola-mundo app..."
 Set-Location -Path "apps\ola-mundo"
-& cargo build --release
+& cargo build --release -Zjson-target-spec -Zbuild-std=core --target x86_64-jinn-user.json
 if ($LASTEXITCODE -ne 0) {
     throw "App ola-mundo build failed."
 }
 Set-Location -Path "..\.."
 
-$appElfPath = "apps\ola-mundo\target\x86_64-unknown-none\release\ola-mundo"
+$appElfPath = "apps\ola-mundo\target\x86_64-jinn-user\release\ola-mundo"
 if (-not (Test-Path $appElfPath)) {
     throw "App ELF not found: $appElfPath"
 }

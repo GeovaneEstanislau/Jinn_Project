@@ -1,6 +1,7 @@
 # run.ps1 - Gera a ISO com Limine e inicia o QEMU
 param(
-    [switch]$NoRun
+    [switch]$NoRun,
+    [string]$IsoPath = "jinn.iso"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -68,33 +69,56 @@ $bootx64EfiCandidates = @(
 )
 $bootx64Efi = $bootx64EfiCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
-# Se não encontrou, baixa diretamente da release mais recente
-if (-not $limineBin) {
-    Write-Host "Binário não encontrado. Consultando a última release do Limine no GitHub..."
+# Baixa os componentes oficiais do Limine quando não existem no clone.
+if (-not $limineCdBin -or -not $limineSys) {
+    Write-Host "Componentes do Limine ausentes. Consultando a última release no GitHub..."
     $apiUrl  = "https://api.github.com/repos/limine-bootloader/limine/releases/latest"
     $release = Invoke-RestMethod -Uri $apiUrl -Headers @{'User-Agent' = 'PowerShell'}
-    $tag     = $release.tag_name
-    Write-Host "Última release: $tag"
-
-    # URL direta do binário pré-compilado na release
-    $binUrl  = "https://github.com/limine-bootloader/limine/releases/download/$tag/limine-bios-x86_64.bin"
-    $destBin = Join-Path $projectRoot "limine-bios-x86_64.bin"
-
-    Write-Host "Baixando $binUrl ..."
-    Invoke-WebRequest -Uri $binUrl -OutFile $destBin -Headers @{'User-Agent' = 'PowerShell'}
-
-    if (-not (Test-Path $destBin)) {
-        Write-Error "Falha ao baixar o binário Limine."
+    $asset   = $release.assets | Where-Object { $_.name -eq "limine-binary.zip" } | Select-Object -First 1
+    if (-not $asset) {
+        Write-Error "A release do Limine não contém o pacote limine-binary.zip."
         exit 1
     }
-    $limineBin = $destBin
-    Write-Host "Download concluído: $limineBin"
+
+    $downloadPath = Join-Path $env:TEMP ("jinn-limine-" + [guid]::NewGuid().ToString() + ".zip")
+    $extractPath = Join-Path $env:TEMP ("jinn-limine-" + [guid]::NewGuid().ToString())
+    try {
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $downloadPath -Headers @{'User-Agent' = 'PowerShell'}
+        Expand-Archive -LiteralPath $downloadPath -DestinationPath $extractPath -Force
+        $payloadPath = Join-Path $extractPath "limine-binary"
+        $limineDir = Join-Path $projectRoot "limine"
+        New-Item -ItemType Directory -Path $limineDir -Force | Out-Null
+
+        foreach ($fileName in @("limine-bios-cd.bin", "limine-bios.sys", "BOOTX64.EFI")) {
+            $sourcePath = Join-Path $payloadPath $fileName
+            if (Test-Path $sourcePath) {
+                Copy-Item -LiteralPath $sourcePath -Destination (Join-Path $limineDir $fileName) -Force
+            }
+        }
+    } finally {
+        Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $extractPath -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    $limineCdBin = Join-Path $projectRoot "limine\limine-bios-cd.bin"
+    $limineSys = Join-Path $projectRoot "limine\limine-bios.sys"
+    $bootx64Efi = Join-Path $projectRoot "limine\BOOTX64.EFI"
+    $limineBin = $limineCdBin
+}
+
+if (-not (Test-Path $limineCdBin) -or -not (Test-Path $limineSys)) {
+    Write-Error "Componentes BIOS do Limine não foram encontrados após a instalação."
+    exit 1
 }
 
 # ------------------------------------------------------------------
 # 3) Definir caminhos de trabalho
 # ------------------------------------------------------------------
-$isoPath = Join-Path $projectRoot "jinn.iso"
+$isoPath = if ([System.IO.Path]::IsPathRooted($IsoPath)) {
+    $IsoPath
+} else {
+    Join-Path $projectRoot $IsoPath
+}
 
 # Remove ISO anterior
 if (Test-Path $isoPath) { Remove-Item $isoPath -Force }

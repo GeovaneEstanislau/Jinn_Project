@@ -1,0 +1,12 @@
+[build]
+target = "x86_64-jinn-user.json"
+
+[target.x86_64-jinn-user]
+linker = "rust-lld"
+rustflags = [
+  "-Zunstable-options",
+  "-C",
+  "link-arg=-nostdlib",
+  "-C",
+  "link-arg=-static",
+]

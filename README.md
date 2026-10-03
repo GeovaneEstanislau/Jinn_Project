@@ -70,49 +70,25 @@ O Jinn OS é construído sobre três pilares principais:
 
 ## Como Compilar
 
-### Pré-requisitos
-
-- [Rust nightly](https://rustup.rs/) com a target `x86_64-unknown-none`
-- `cargo` com suporte a `-Zbuild-std`
-- Python 3.10+ para os scripts de automação do projeto
+Requisitos: Rust nightly com `rust-src`, `xorriso` (ou `mkisofs`/`oscdimg`) para gerar a ISO e QEMU ou VirtualBox para executá-la. O launcher baixa os binários oficiais do Limine quando necessário.
 
 ```powershell
-rustup toolchain install nightly
+rustup toolchain install nightly --component rust-src --component llvm-tools-preview
 rustup target add x86_64-unknown-none --toolchain nightly
-rustup component add rust-src --toolchain nightly
 ```
 
-### Automatizar build e geração da ISO
+Compile e gere a ISO sem iniciar uma VM:
 
-O workflow oficial do projeto agora é em Python, mantendo os passos reproduzíveis em Windows, Linux e macOS:
-
-```bash
-python scripts/build.py
-python scripts/run.py
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run.ps1 -NoRun
 ```
 
-Os scripts também aceitam parâmetros úteis para automação e depuração:
+O comando gera `jinn.iso`; sem `-NoRun`, o launcher inicia o QEMU. Para escolher outra saída, use `-IsoPath nome.iso`.
 
-```bash
-python scripts/build.py --help
-python scripts/run.py --help
-python scripts/run.py --no-run
-```
+Para compilar sem gerar a ISO:
 
-Para compatibilidade, os wrappers em PowerShell continuam presentes, mas o caminho preferencial é Python.
-
-A ISO será gerada como `jinn.iso` e é inicializável no VirtualBox ou QEMU.
-
-### Executar no QEMU
-
-```bash
-qemu-system-x86_64 -cdrom jinn.iso -m 128M -serial stdio
-```
-
-O launcher do projeto também pode iniciar a VM automaticamente:
-
-```bash
-python scripts/run.py
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
 ```
 
 ---

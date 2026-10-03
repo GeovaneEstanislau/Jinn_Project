@@ -1,6 +1,6 @@
 # Contribuindo para o Jinn OS
 
-Obrigado pelo seu interesse! O Jinn OS é um microkernel bare-metal x86_64 escrito em Rust, feito no Brasil para o mundo. O projeto valoriza contribuições que sigam a filosofia de alta performance e código limpo.
+Obrigado pelo interesse no Jinn OS, um kernel bare-metal x86_64 escrito em Rust.
 
 ---
 
@@ -8,35 +8,32 @@ Obrigado pelo seu interesse! O Jinn OS é um microkernel bare-metal x86_64 escri
 
 ### 1. Configurar o ambiente
 
-```bash
+```powershell
 # Instalar a versão nightly do Rust
-rustup toolchain install nightly
-rustup default nightly
+rustup toolchain install nightly --component rust-src --component llvm-tools-preview
 
-# Adicionar a arquitetura bare-metal
-rustup target add x86_64-unknown-none
-rustup component add rust-src llvm-tools-preview
-
-# Python 3.10+ é o caminho oficial de automação do projeto
-python --version
+# Instalar os componentes necessários ao build
+rustup target add x86_64-unknown-none --toolchain nightly
 ```
 
 ### 2. Clonar e Compilar
 
 ```bash
-git clone https://github.com/SEU_USUARIO/jinn-os
-cd jinn-os
-python scripts/build.py      # Compila o binário ELF do kernel
-python scripts/run.py --no-run  # Gera a ISO sem iniciar a VM
+git clone https://github.com/GeovaneEstanislau/Jinn_Project.git
+cd Jinn_Project
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run.ps1 -NoRun
 ```
 
 ### 3. Executar
 
-**VirtualBox**: Anexe o arquivo `jinn.iso` como um CD-ROM (Boot em BIOS, modo 64-bits).
+O launcher baixa os binários do Limine se eles ainda não estiverem no clone. A criação da ISO requer `xorriso`, `mkisofs` ou `oscdimg`.
+
+**VirtualBox**: Anexe `jinn.iso` como CD-ROM e use uma VM x86_64.
 
 **QEMU**:
-```bash
-qemu-system-x86_64 -cdrom jinn.iso -m 128M -no-reboot -d int,cpu_reset 2>qemu.log
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run.ps1
 ```
 
 ---
@@ -44,42 +41,11 @@ qemu-system-x86_64 -cdrom jinn.iso -m 128M -no-reboot -d int,cpu_reset 2>qemu.lo
 ## Estrutura de Código
 
 ```
-src/
-├── main.rs              # Ponto de entrada (_start) e sequência de boot
-├── limine.rs            # Bindings do protocolo de boot Limine
-├── vga.rs               # Renderizador de texto via Framebuffer
-├── font.rs              # Dados da fonte em bitmap
-├── cpu.rs               # Detecção de recursos da CPU (CPUID, MSR)
-├── timer.rs             # Contador global de ticks
-├── pit.rs               # Driver legado PIT (mantido como referência)
-├── keyboard_buffer.rs   # Fila lock-free circular do teclado
-├── shell.rs             # Shell interativo do kernel
-├── scheduler.rs         # Escalonador Preemptivo (Round-Robin)
-├── ipc.rs               # Passagem de mensagens entre processos (IPC)
-├── syscall.rs           # Tabela de dispatch das chamadas de sistema
-├── interrupts/
-│   ├── mod.rs           # Dispatcher de IRQs e Exceções
-│   ├── idt.rs           # Configuração da Tabela de Descritores de Interrupção
-│   ├── pic.rs           # Controlador 8259 PIC (desativado via software)
-│   ├── apic.rs          # Driver do Local APIC + APIC Timer
-│   ├── ps2_keyboard.rs  # Tratamento de interrupção do Teclado PS/2
-│   └── stubs.s          # Stubs em Assembly para os 48 vetores de interrupção
-├── memory/
-│   ├── mod.rs           # Índice do módulo de memória
-│   ├── alloc.rs         # Alocador de Frames Físicos (Bitmap)
-│   ├── paging.rs        # Paginação de 4 níveis x86_64 (PML4)
-│   └── heap.rs          # Alocador de Heap Customizado (Bump + Free List)
-└── vfs/
-    ├── mod.rs           # Traits do VFS, tabela de montagem e resolução de paths
-    └── ramfs.rs         # Sistema de arquivos em memória RAM (/dev/*)
-scripts/
-├── build.py             # Build do kernel e provisionamento do ELF
-├── run.py               # Build + ISO + execução do QEMU
-├── create_iso.py        # Utilitário de geração de ISO em Python
-├── create_github_issues.py  # Automação para GitHub Issues
-├── build.ps1            # Compatibilidade (opcional, legado)
-├── run.ps1              # Compatibilidade (opcional, legado)
-└── make_iso.ps1         # Compatibilidade (opcional, legado)
+src/                 Código do kernel
+apps/ola-mundo/      App bare-metal de exemplo
+scripts/build.ps1    Build do kernel e do app
+scripts/run.ps1      Criação da ISO e execução opcional no QEMU
+iso_root/limine.conf Configuração de boot
 ```
 
 ---
