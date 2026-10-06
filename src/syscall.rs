@@ -175,19 +175,19 @@ fn sys_free_page(phys: u64) -> isize {
 }
 
 /// `spawn(fn_ptr, name_ptr, ring_flag)` — Spawn a new task.
-/// ring_flag: 0 = Ring 0 (kernel task), 3 = Ring 3 (user task).
+/// ring_flag: 0 = Ring 0 (kernel task only for now).
+/// Ring 3 spawn via syscall é desabilitado até termos um mecanismo
+/// para passar dados ELF do espaço de usuário (ex: via filesystem).
 fn sys_spawn(fn_ptr: usize, _name_ptr: *const u8, ring_flag: usize) -> isize {
+    if ring_flag == 3 {
+        // Spawn de processo Ring 3 via syscall não é mais suportado diretamente.
+        // O processo precisa ser carregado via ELF (módulo Limine ou futuro filesystem).
+        return -1;
+    }
     let entry: fn() = unsafe { core::mem::transmute(fn_ptr) };
     let sched = scheduler::get();
-    let pid = if ring_flag == 3 {
-        let pid = sched.add_user_task("spawned-u3", entry);
-        ipc::register(pid);
-        pid
-    } else {
-        let pid = sched.add_task("spawned-k0", entry);
-        ipc::register(pid);
-        pid
-    };
+    let pid = sched.add_task("spawned-k0", entry);
+    ipc::register(pid);
     pid as isize
 }
 

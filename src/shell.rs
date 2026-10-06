@@ -242,38 +242,46 @@ fn cmd_ps(w: &mut Writer) {
     w.set_color(Color::LightGray, Color::Black);
 }
 
-/// `spawn <demo>` — Inicia um processo de usuário predefinido.
+/// `spawn <demo>` — Inicia um processo de usuário a partir do módulo ELF carregado.
 fn cmd_spawn(w: &mut Writer, args: &str) {
     let kind = args.trim();
-    let (name, entry) = match kind {
-        "hello" | "ola" | "hello-world" => {
-            ("ola-mundo[U3]", crate::user_processes::processo_ola_mundo as fn())
-        }
-        "counter" | "contador" => {
-            ("contador[U3]", crate::user_processes::processo_contador as fn())
-        }
-        "ipc" | "echo" => {
-            ("ipc-echo[U3]", crate::user_processes::processo_ipc_echo as fn())
-        }
-        "wait" | "wait-demo" => {
-            ("wait-demo[U3]", crate::user_processes::processo_wait_demo as fn())
-        }
-        _ => {
+    if kind.is_empty() {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_line("Uso: spawn <nome>  (ex: spawn ola-mundo)");
+        w.set_color(Color::LightGray, Color::Black);
+        return;
+    }
+
+    // Buscar o módulo ELF carregado pelo Limine
+    let elf_data = match crate::limine::get_module(0) {
+        Some(data) => data,
+        None => {
             w.set_color(Color::LightRed, Color::Black);
-            w.write_line("Uso: spawn <hello|counter|ipc|wait>");
+            w.write_line("[ERRO] Nenhum modulo ELF carregado pelo bootloader.");
             w.set_color(Color::LightGray, Color::Black);
             return;
         }
     };
 
+    let name: &'static str = match kind {
+        "hello" | "ola" | "ola-mundo" => "ola-mundo[U3]",
+        _ => "user-app[U3]",
+    };
+
     let sched = scheduler::get();
-    let pid = sched.add_user_task(name, entry);
+    let pid = sched.add_user_task(name, elf_data);
+    if pid == 0 {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_line("[ERRO] Falha ao carregar processo ELF.");
+        w.set_color(Color::LightGray, Color::Black);
+        return;
+    }
     crate::ipc::register(pid);
 
     w.set_color(Color::LightGreen, Color::Black);
     w.write_string("[OK] Processo de usuario criado: PID=");
     w.write_decimal(pid);
-    w.write_string(" (demo: ");
+    w.write_string(" (");
     w.write_string(name);
     w.write_line(")");
     w.set_color(Color::LightGray, Color::Black);

@@ -275,6 +275,53 @@ pub static LIMINE_FRAMEBUFFER_REQUEST: LimineFramebufferRequest = LimineFramebuf
     response: core::ptr::null(),
 };
 
+// ── Module Request ───────────────────────────────────────────────────────────
+// Permite que o kernel acesse módulos carregados pelo bootloader (ex: ola-mundo.elf).
+// O Limine lê a diretiva `module_path` do limine.conf e carrega o arquivo na RAM.
+
+#[repr(C)]
+pub struct LimineFile {
+    pub revision: u64,
+    pub address:  *const u8,
+    pub size:     u64,
+    pub path:     *const u8,
+    pub cmdline:  *const u8,
+    pub media_type:     u32,
+    pub _unused:        u32,
+    pub tftp_ip:        u32,
+    pub tftp_port:      u32,
+    pub partition_index: u32,
+    pub mbr_disk_id:    u32,
+    pub gpt_disk_uuid:  [u8; 16],
+    pub gpt_part_uuid:  [u8; 16],
+    pub part_uuid:      [u8; 16],
+}
+
+#[repr(C)]
+pub struct LimineModuleResponse {
+    pub revision:     u64,
+    pub module_count: u64,
+    pub modules:      *const *const LimineFile,
+}
+
+#[repr(C)]
+pub struct LimineModuleRequest {
+    pub id:       [u64; 4],
+    pub revision: u64,
+    pub response: *const LimineModuleResponse,
+}
+
+unsafe impl Sync for LimineModuleRequest {}
+
+#[used]
+#[link_section = ".limine_requests"]
+pub static LIMINE_MODULE_REQUEST: LimineModuleRequest = LimineModuleRequest {
+    id: [COMMON_MAGIC_0, COMMON_MAGIC_1, 0x3e7e279702be32af, 0x5c41f990e7da69ac],
+    revision: 0,
+    response: core::ptr::null(),
+};
+
+
 // ── Safe Query Functions ────────────────────────────────────────────────────
 // All response pointer reads use read_volatile so the compiler cannot
 // constant-fold them to null() even with opt-level=3 + lto=true.
@@ -411,6 +458,47 @@ pub fn get_memmap_entry(index: usize) -> Option<LimineMemmapEntry> {
         } else {
             Some(*entry_ptr)
         }
+    }
+}
+
+/// Retorna o número de módulos carregados pelo bootloader.
+pub fn module_count() -> usize {
+    unsafe {
+        let resp = core::ptr::read_volatile(&LIMINE_MODULE_REQUEST.response);
+        if resp.is_null() {
+            0
+        } else {
+            core::ptr::read_volatile(&(*resp).module_count) as usize
+        }
+    }
+}
+
+/// Retorna um slice de bytes com o conteúdo do módulo no índice `index`.
+/// O módulo é o binário ELF carregado pelo Limine via `module_path` no limine.conf.
+pub fn get_module(index: usize) -> Option<&'static [u8]> {
+    unsafe {
+        let resp = core::ptr::read_volatile(&LIMINE_MODULE_REQUEST.response);
+        if resp.is_null() {
+            return None;
+        }
+        let count = core::ptr::read_volatile(&(*resp).module_count) as usize;
+        if index >= count {
+            return None;
+        }
+        let modules_ptr = core::ptr::read_volatile(&(*resp).modules);
+        if modules_ptr.is_null() {
+            return None;
+        }
+        let file_ptr = *modules_ptr.add(index);
+        if file_ptr.is_null() {
+            return None;
+        }
+        let address = core::ptr::read_volatile(&(*file_ptr).address);
+        let size    = core::ptr::read_volatile(&(*file_ptr).size) as usize;
+        if address.is_null() || size == 0 {
+            return None;
+        }
+        Some(core::slice::from_raw_parts(address, size))
     }
 }
 

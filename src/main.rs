@@ -169,13 +169,32 @@ pub extern "C" fn _start() -> ! {
     // O Shell (Ring 0) como task normal do escalonador
     let _shell_pid = sched.add_task("shell[K]", shell::task_entry);
 
-    // Processos de usuário (Ring 3)
-    let u1_pid = sched.add_user_task("ola-mundo[U3]", user_processes::processo_ola_mundo);
-    ipc::register(u1_pid);
-    let u2_pid = sched.add_user_task("contador[U3]",  user_processes::processo_contador);
-    ipc::register(u2_pid);
-    let u3_pid = sched.add_user_task("ipc-echo[U3]",  user_processes::processo_ipc_echo);
-    ipc::register(u3_pid);
+    // Processos de usuário (Ring 3) — carregados via ELF Loader
+    let mod_count = limine::module_count();
+    w.write_string("\n    Modulos Limine: ");
+    w.write_decimal(mod_count);
+    w.write_line("");
+
+    if mod_count > 0 {
+        if let Some(elf_data) = limine::get_module(0) {
+            w.write_string("    ELF modulo[0]: ");
+            w.write_decimal(elf_data.len());
+            w.write_line(" bytes");
+            let u1_pid = sched.add_user_task("ola-mundo[U3]", elf_data);
+            if u1_pid > 0 {
+                ipc::register(u1_pid);
+                w.write_string("    Processo Ring 3 criado: PID ");
+                w.write_decimal(u1_pid);
+                w.write_line("");
+            } else {
+                w.set_color(Color::LightRed, Color::Black);
+                w.write_line("    [ERRO] Falha ao carregar ELF para Ring 3!");
+                w.set_color(Color::LightGray, Color::Black);
+            }
+        }
+    } else {
+        w.write_line("    (Nenhum modulo ELF carregado pelo bootloader)");
+    }
     
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");

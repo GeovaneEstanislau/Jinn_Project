@@ -36,12 +36,13 @@ Copy-Item -Path $elfPath -Destination (Join-Path $isoBootDir "kernel.elf") -Forc
 
 # --- Build ola-mundo ---
 Write-Host "Building ola-mundo app..."
-Set-Location -Path "apps\ola-mundo"
-& cargo build --release -Zjson-target-spec -Zbuild-std=core --target x86_64-jinn-user.json
+Push-Location "apps\ola-mundo"
+& cargo +nightly build --release -Zjson-target-spec -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem
 if ($LASTEXITCODE -ne 0) {
+    Pop-Location
     throw "App ola-mundo build failed."
 }
-Set-Location -Path "..\.."
+Pop-Location
 
 $appElfPath = "apps\ola-mundo\target\x86_64-jinn-user\release\ola-mundo"
 if (-not (Test-Path $appElfPath)) {

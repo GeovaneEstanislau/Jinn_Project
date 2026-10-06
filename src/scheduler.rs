@@ -198,12 +198,77 @@ impl Scheduler {
         self.add_task_inner(name, entry, Ring::Kernel, TaskPriority::Normal)
     }
 
-    /// Cria uma tarefa de **usuário (Ring 3)**.
+    /// Cria uma tarefa de **usuário (Ring 3)** a partir de um executável ELF.
     ///
-    /// Este kernel usa processos em Ring 3 com pontos de entrada em código
-    /// normal do kernel, não um carregamento de ELF bruto no escalonador.
-    pub fn add_user_task(&mut self, name: &'static str, entry: fn()) -> usize {
-        self.add_task_inner(name, entry, Ring::User, TaskPriority::Normal)
+    /// Aloca um novo PML4 isolado, carrega os segmentos PT_LOAD do ELF com
+    /// flags USER, aloca a pilha de usuário e configura o frame `iretq`
+    /// apontando para o `e_entry` do binário.
+    pub fn add_user_task(&mut self, name: &'static str, elf_data: &[u8]) -> usize {
+        let mut id = self.next_id;
+        while id < MAX_TASKS {
+            if self.tasks[id].is_none() {
+                // 1. Espaço de endereçamento isolado
+                let pml4_phys = paging::clone_kernel_pml4();
+
+                // 2. Carregar o ELF no PML4 do processo
+                let entry_virt = match crate::elf::load_elf(elf_data, pml4_phys) {
+                    Ok(entry) => entry,
+                    Err(_) => {
+                        unsafe { paging::free_user_pml4(pml4_phys); }
+                        return 0;
+                    }
+                };
+
+                // 3. Pilha de kernel (Ring 0)
+                let kstack_base = unsafe { KSTACKS[id].as_ptr() as usize };
+                let kstack_top  = (kstack_base + KSTACK_SIZE) & !15;
+
+                // 4. Pilha de usuário (Ring 3) mapeada no PML4 isolado
+                let user_rsp = self.setup_user_stack(id, pml4_phys);
+                let cs_sel = gdt::USER_CODE_SEL as u64;
+                let ss_sel = gdt::USER_DATA_SEL as u64;
+
+                // 5. Frame iretq na pilha de kernel
+                let mut sp = kstack_top;
+                let rflags: u64 = 0x202; // IF=1
+
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(ss_sel); }
+                let abi_rsp = user_rsp - 8;
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(abi_rsp as u64); }
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(rflags); }
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(cs_sel); }
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(entry_virt); }
+
+                // Dummy vector + error code (consumidos pelo irq_common)
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+
+                // 6. Registradores GPR zerados (15 regs)
+                for _ in 0..15 {
+                    sp -= 8;
+                    unsafe { (sp as *mut u64).write_volatile(0); }
+                }
+
+                self.tasks[id] = Some(Task {
+                    id,
+                    name,
+                    state:     TaskState::Ready,
+                    priority:  TaskPriority::Normal,
+                    ring:      Ring::User,
+                    saved_rsp: sp,
+                    kstack_top,
+                    pml4_phys,
+                    exit_code: 0,
+                    cpu_ticks: 0,
+                    ctx_switches: 0,
+                    quantum_remaining: QUANTUM_NORMAL,
+                });
+                self.next_id = id + 1;
+                return id;
+            }
+            id += 1;
+        }
+        0
     }
 
     /// Cria uma tarefa com prioridade específica.
