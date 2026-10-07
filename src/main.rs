@@ -10,6 +10,7 @@ pub mod cpu;
 pub mod elf;
 pub mod font;
 pub mod gdt;
+pub mod gui;
 pub mod interrupts;
 pub mod ipc;
 pub mod keyboard_buffer;
@@ -203,6 +204,13 @@ pub extern "C" fn _start() -> ! {
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line("[SUCCESS] Jinn OS pronto - entregando controle ao Escalonador.");
     w.set_color(Color::LightGray, Color::Black);
+
+    // INICIALIZA A GUI E DESENHA UMA JANELA DE TESTE
+    gui::init();
+    gui::draw_window(700, 50, 300, 200, "Jinn OS - Info");
+    gui::draw_string_at("Desenvolvido em Rust", 710, 80, Color::Black, Some(Color::LightGray));
+    gui::draw_string_at("Modo Grafico Ativo", 710, 100, Color::DarkGray, Some(Color::LightGray));
+    gui::draw_string_at("Res: 1024x768", 710, 120, Color::Blue, Some(Color::LightGray));
 
     // Habilita interrupções. O APIC Timer vai disparar (IRQ0) e a primeira 
     // preempção vai abandonar a pilha de boot e iniciar as tasks (começando pelo shell).

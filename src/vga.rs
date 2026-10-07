@@ -34,7 +34,7 @@ impl ColorCode {
     }
 }
 
-fn color_to_u32_fb(color: Color, fb: &crate::limine::LimineFramebuffer) -> u32 {
+pub fn color_to_u32_fb(color: Color, fb: &crate::limine::LimineFramebuffer) -> u32 {
     let (r, g, b) = match color {
         Color::Black => (0x00, 0x00, 0x00),
         Color::Blue => (0x00, 0x00, 0xAA),
