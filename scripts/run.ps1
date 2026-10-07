@@ -206,6 +206,14 @@ if (Test-Path $kernelELF) {
     Write-Warning "Kernel não encontrado em $kernelELF. A ISO pode não bootar o kernel."
 }
 
+# Aplicativos de usuário (Ring 3) compilados no iso_root/apps
+$isoAppsDir = Join-Path $projectRoot "iso_root\apps"
+if (Test-Path $isoAppsDir) {
+    $stageAppsDir = Join-Path $bootStage "apps"
+    New-Item -ItemType Directory -Path $stageAppsDir -Force | Out-Null
+    Copy-Item -Path "$isoAppsDir\*" -Destination $stageAppsDir -Recurse -Force
+}
+
 # ------------------------------------------------------------------
 # 6) Gerar a ISO com El Torito (BIOS boot via Limine)
 # ------------------------------------------------------------------
