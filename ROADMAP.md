@@ -54,15 +54,17 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
 - [x] **Renderização de Cursor com Restauração de Fundo**:
   - Sprite de seta de cursor desenhado em tempo real.
   - Salvamento e restauração automática do fundo sob o cursor para evitar degradação gráfica.
-- [ ] **Double Buffering / Backbuffer na RAM**:
-  - Alocação de backbuffer linear na memória RAM para eliminar flickering e tearing.
-  - Rotina de cópia rápida em lote (`swap_buffers` / `flush`) para o Linear Framebuffer do Limine.
-- [ ] **Compositor & Gerenciador de Janelas**:
-  - Estrutura `Window` com ID, retângulo `(x, y, w, h)`, título e estado de foco.
-  - Z-Order (janela ativa desenhada no topo).
-  - Detecção de clique e arrasto na barra de título para mover janelas.
-  - Suporte a eventos de mouse (click, drag, hover).
-- [ ] **Terminal Gráfico**:
+- [x] **Double Buffering / Backbuffer na RAM**:
+  - Alocação de backbuffer linear (3 MiB) na memória RAM eliminando flickering e tearing.
+  - Rotina de cópia rápida em lote (`swap_buffers`) para o Linear Framebuffer do Limine.
+- [x] **Compositor & Gerenciador de Janelas**:
+  - Estrutura `Window` com ID, retângulo `(x, y, w, h)`, título, linhas de conteúdo e estado de foco.
+  - Z-Order com elevação de janela ativa para o topo (`bring_to_front`).
+  - Detecção de clique e arrasto na barra de título em tempo real com o mouse.
+  - Fechamento de janelas pelo botão vermelho `[X]`.
+  - Barra de tarefas inferior (Taskbar) com botão Iniciar e indicadores.
+  - Comando interativo `gui` / `desktop` no shell do kernel.
+- [ ] **Terminal Gráfico Interativo com Teclado na Janela**:
   - Janela de terminal renderizando o Shell do Jinn OS dentro da interface gráfica.
 
 ---

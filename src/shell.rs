@@ -82,6 +82,9 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         "sched" => cmd_sched(w),
         "uptime" => cmd_uptime(w),
 
+        // ── Interface Gráfica ─────────────────────────────────────────────────
+        "gui" | "desktop" | "startx" => cmd_gui(w),
+
         // ── Sistema ───────────────────────────────────────────────────────────
         "reboot" => cmd_reboot(w),
 
@@ -113,11 +116,20 @@ fn cmd_help(w: &mut Writer) {
     w.write_line("  spawn <demo>   — inicia processo de usuario (hello|counter|ipc|wait)");
     w.write_line("  sched          — estatisticas do escalonador");
     w.write_line("  uptime         — ticks de timer desde o boot");
+    w.write_line("  gui            — inicia a interface grafica com janelas e mouse (alias: desktop)");
     w.write_line("  reboot         — reinicia o sistema (triple fault)");
     w.write_line("");
     w.set_color(Color::DarkGray, Color::Black);
     w.write_line("  [K] = privilegio Ring 0 — acesso direto ao kernel");
     w.set_color(Color::LightGray, Color::Black);
+}
+
+/// `gui` / `desktop` — Inicia o ambiente gráfico interativo com janelas e mouse.
+fn cmd_gui(w: &mut Writer) {
+    w.set_color(Color::LightCyan, Color::Black);
+    w.write_line("Iniciando ambiente grafico Jinn Desktop...");
+    w.set_color(Color::LightGray, Color::Black);
+    crate::gui::run_desktop();
 }
 
 /// `uname` — Nome e versão do kernel.
@@ -473,7 +485,7 @@ pub fn run(w: &mut Writer) -> ! {
                 in("dx") 0x64u16,
                 options(nomem, nostack)
             );
-            if (status & 1) != 0 {
+            if (status & 1) != 0 && (status & 0x20) == 0 {
                 let sc: u8;
                 core::arch::asm!(
                     "in al, dx",
