@@ -133,6 +133,13 @@ pub extern "C" fn _start() -> ! {
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
 
+    w.write_string("[+] PS/2 Mouse (IRQ 12)...");
+    interrupts::ps2_mouse::init();
+    interrupts::pic::unmask_irq(12);
+    w.set_color(Color::LightGreen, Color::Black);
+    w.write_line(" OK");
+    w.set_color(Color::LightGray, Color::Black);
+
     w.write_string("[+] Alocador Fisico...");
     memory::init();
     w.set_color(Color::LightGreen, Color::Black);
@@ -211,6 +218,10 @@ pub extern "C" fn _start() -> ! {
     gui::draw_string_at("Desenvolvido em Rust", 710, 80, Color::Black, Some(Color::LightGray));
     gui::draw_string_at("Modo Grafico Ativo", 710, 100, Color::DarkGray, Some(Color::LightGray));
     gui::draw_string_at("Res: 1024x768", 710, 120, Color::Blue, Some(Color::LightGray));
+    gui::draw_string_at("Mouse PS/2 Ativo (IRQ 12)", 710, 140, Color::LightGreen, Some(Color::LightGray));
+
+    // Renderiza o cursor na posição central da tela (512, 384)
+    gui::update_cursor(512, 384);
 
     // Habilita interrupções. O APIC Timer vai disparar (IRQ0) e a primeira 
     // preempção vai abandonar a pilha de boot e iniciar as tasks (começando pelo shell).

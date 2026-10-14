@@ -12,6 +12,7 @@
 pub mod idt;
 pub mod pic;
 pub mod ps2_keyboard;
+pub mod ps2_mouse;
 pub mod apic;
 
 use crate::timer;
@@ -55,6 +56,11 @@ pub extern "C" fn irq_dispatch(vector: u64, _frame: *mut usize) -> usize {
         33 => {
             // IRQ1 — PS/2 Keyboard (EOI sent inside the handler)
             ps2_keyboard::kbd_irq_handler();
+            0
+        }
+        44 => {
+            // IRQ12 — PS/2 Mouse (EOI sent inside handler)
+            ps2_mouse::mouse_irq_handler();
             0
         }
         34..=47 => {
