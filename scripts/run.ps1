@@ -69,6 +69,18 @@ $bootx64EfiCandidates = @(
 )
 $bootx64Efi = $bootx64EfiCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
+$limineUefiCdCandidates = @(
+    (Join-Path $projectRoot "limine\usr\share\limine\limine-uefi-cd.bin"),
+    (Join-Path $projectRoot "limine\limine-uefi-cd.bin")
+)
+$limineUefiCd = $limineUefiCdCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+$limineExeCandidates = @(
+    (Join-Path $projectRoot "limine\usr\bin\limine.exe"),
+    (Join-Path $projectRoot "limine\limine.exe")
+)
+$limineExe = $limineExeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+
 # Baixa os componentes oficiais do Limine quando não existem no clone.
 if (-not $limineCdBin -or -not $limineSys) {
     Write-Host "Componentes do Limine ausentes. Consultando a última release no GitHub..."
@@ -191,6 +203,9 @@ Copy-Item -Path (Join-Path $projectRoot "iso_root\limine.conf") -Destination $bo
 if ($limineSys) {
     Copy-Item -Path $limineSys -Destination $bootStage -Force
 }
+if ($limineUefiCd) {
+    Copy-Item -Path $limineUefiCd -Destination $bootStage -Force
+}
 if ($bootx64Efi) {
     Copy-Item -Path $bootx64Efi -Destination (Join-Path $bootStage "EFI\BOOT\BOOTX64.EFI") -Force
 }
@@ -225,35 +240,33 @@ $mkisoArgs = @(
     "-quiet",
     $bootStage
 )
-if ($bootx64Efi) {
-    $mkisoArgs = @(
-        "-o", $isoPath,
-        "-b", $limineBinName,
-        "-no-emul-boot", "-boot-load-size", "4", "-boot-info-table",
-        "-e", "EFI/BOOT/BOOTX64.EFI", "-no-emul-boot",
-        "-quiet",
-        $bootStage
-    )
-}
 
 if ((Split-Path $mkiso -Leaf) -eq "xorriso.exe" -or $mkiso -eq "xorriso") {
     $isoPathUnix = (& "C:\msys64\usr\bin\cygpath.exe" -u $isoPath).Trim()
     $bootStageUnix = (& "C:\msys64\usr\bin\cygpath.exe" -u $bootStage).Trim()
     $env:MSYS_NO_PATHCONV = "1"
-    $mkisoArgs = @(
-        "-as", "mkisofs", "-o", $isoPathUnix,
-        "-b", $limineBinName,
-        "-no-emul-boot", "-boot-load-size", "4", "-boot-info-table",
-        "-quiet",
-        $bootStageUnix
-    )
-    if ($bootx64Efi) {
+    
+    if ($limineUefiCd) {
         $mkisoArgs = @(
-            "-as", "mkisofs", "-o", $isoPathUnix,
+            "-as", "mkisofs",
+            "-R", "-r", "-J",
             "-b", $limineBinName,
             "-no-emul-boot", "-boot-load-size", "4", "-boot-info-table",
-            "-e", "EFI/BOOT/BOOTX64.EFI", "-no-emul-boot",
+            "-hfsplus", "-apm-block-size", "2048",
+            "--efi-boot", "limine-uefi-cd.bin",
+            "-efi-boot-part", "--efi-boot-image", "--protective-msdos-label",
             "-quiet",
+            "-o", $isoPathUnix,
+            $bootStageUnix
+        )
+    } else {
+        $mkisoArgs = @(
+            "-as", "mkisofs",
+            "-R", "-r", "-J",
+            "-b", $limineBinName,
+            "-no-emul-boot", "-boot-load-size", "4", "-boot-info-table",
+            "-quiet",
+            "-o", $isoPathUnix,
             $bootStageUnix
         )
     }
@@ -266,6 +279,12 @@ if (-not (Test-Path $isoPath)) {
     Write-Error "Geração da ISO falhou."
     exit 1
 }
+
+if ($limineExe) {
+    Write-Host "Instalando MBR do Limine com limine.exe bios-install para compatibilidade total..."
+    & $limineExe bios-install $isoPath
+}
+
 Write-Host "ISO gerada com sucesso."
 
 # ------------------------------------------------------------------
