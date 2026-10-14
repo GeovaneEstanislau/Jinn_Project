@@ -205,9 +205,6 @@ pub extern "C" fn mouse_irq_handler() {
 
                 // Botões: bit 0 = Left, bit 1 = Right, bit 2 = Middle
                 mouse.buttons = flags & 0x07;
-
-                // Atualiza a renderização do cursor na tela
-                crate::gui::update_cursor(mouse.x, mouse.y);
             }
             _ => {
                 mouse.cycle = 0;

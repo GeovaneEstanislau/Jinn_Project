@@ -12,27 +12,11 @@
 /// - SMP (CPU core count and bootstrap processor ID)
 
 #[used]
-#[link_section = ".limine_requests_start_marker"]
-static LIMINE_REQUESTS_START_MARKER: [u64; 4] = [
-    0xf6b8f4b39de7d1ae,
-    0xfab91a6940fcb9cf,
-    0x785c6ed015d3e316,
-    0x181e920a7852b9d9,
-];
-
-#[used]
 #[link_section = ".limine_requests"]
 static LIMINE_BASE_REVISION: [u64; 3] = [
     0xf9562b2d5c95a6c8, // magic[0]
     0x6a7b384944536bdc, // magic[1]
     0,                  // revision = 0 (compatible with all Limine >= v2)
-];
-
-#[used]
-#[link_section = ".limine_requests_end_marker"]
-static LIMINE_REQUESTS_END_MARKER: [u64; 2] = [
-    0xadc0e0531bb10d03,
-    0x9572709f31764c62,
 ];
 
 // Common magic numbers for all Limine requests
@@ -316,7 +300,7 @@ unsafe impl Sync for LimineModuleRequest {}
 #[used]
 #[link_section = ".limine_requests"]
 pub static LIMINE_MODULE_REQUEST: LimineModuleRequest = LimineModuleRequest {
-    id: [COMMON_MAGIC_0, COMMON_MAGIC_1, 0x3e7e279702be32af, 0x5c41f990e7da69ac],
+    id: [COMMON_MAGIC_0, COMMON_MAGIC_1, 0x3e7e279702be32af, 0xca1c4f3bd1280cee],
     revision: 0,
     response: core::ptr::null(),
 };

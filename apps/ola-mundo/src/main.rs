@@ -24,9 +24,8 @@ unsafe fn sys_write(fd: u64, buf: *const u8, len: u64) -> i64 {
 
 #[inline(always)]
 unsafe fn sys_exit(code: i32) -> ! {
-    syscall3(0, code as u64, 0, 0);
     loop {
-        asm!("hlt");
+        syscall3(0, code as u64, 0, 0);
     }
 }
 

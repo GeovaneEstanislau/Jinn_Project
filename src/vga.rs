@@ -90,6 +90,11 @@ impl Writer {
         self.bg_color = bg;
     }
 
+    pub fn set_position(&mut self, row: usize, col: usize) {
+        self.row_position = row;
+        self.column_position = col;
+    }
+
     pub fn clear_screen(&mut self) {
         let rows = self.max_rows();
         for row in 0..rows {

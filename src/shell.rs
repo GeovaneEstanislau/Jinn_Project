@@ -451,6 +451,7 @@ fn cmd_reboot(w: &mut Writer) -> ! {
 /// Ponto de entrada do shell como uma task (Ring 0).
 pub fn task_entry() {
     let mut w = Writer::new();
+    w.set_position(21, 0);
     run(&mut w);
 }
 
