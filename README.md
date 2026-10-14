@@ -21,20 +21,24 @@ O Jinn OS é construído sobre três pilares principais:
 |---|---|
 | Bootloader Limine (BIOS + UEFI) | ✅ |
 | Renderizador de texto Framebuffer (fonte customizada) | ✅ |
+| Primitivas Gráficas 2D & Janelas (`gui.rs`) | 🚧 Em Andamento |
 | x86_64 IDT (48 vetores) | ✅ |
 | Local APIC + Timer (100 Hz) | ✅ |
-| Escalonador Preemptivo Round-Robin | ✅ |
+| Escalonador Preemptivo Round-Robin com Prioridades | ✅ |
 | Alocador de Frames Físicos (Bitmap) | ✅ |
 | Paginação de 4 Níveis (PML4) | ✅ |
 | Kernel Heap Próprio (Bump + Free List) | ✅ |
 | Driver de Teclado PS/2 | ✅ |
+| Driver de Mouse PS/2 | 🚧 Em Andamento |
 | Shell Interativo | ✅ |
 | IPC (Filas de mensagens lock-free) | ✅ |
-| Interface de Syscalls (10 chamadas) | ✅ |
+| Interface de Syscalls (10 chamadas via `int 0x80`) | ✅ |
 | VFS + ramfs (`/dev/`) | ✅ |
-| Espaço do Usuário (Ring 3) | 🚧 Em Andamento |
+| Carregador ELF64 & Isolamento Ring 3 | ✅ |
 | Pilha de Rede | 🔜 Planejado |
-| Driver Ext2 / FAT32 | 🔜 Planejado |
+| Driver Ext2 / FAT32 / AHCI | 🔜 Planejado ([Issue #30](https://github.com/GeovaneEstanislau/Jinn_Project/issues/30)) |
+
+> 🗺️ **Consulte o nosso plano de desenvolvimento detalhado em [ROADMAP.md](ROADMAP.md).**
 
 ---
 
@@ -44,10 +48,11 @@ O Jinn OS é construído sobre três pilares principais:
 ┌────────────────────────────────────────────────────────────┐
 │                  Espaço do Usuário (Ring 3)                │
 │                  ┌─────────┐  ┌─────────┐  ┌───────────┐   │
-│                  │  App A  │  │  App B  │  │  Shell    │   │
-└──────────────────┴────┬────┴──┴────┬────┴──┴─────┬─────┘───┘
-                         │ int 0x80  │              │
-┌────────────────────────▼──────────▼──────────────▼─────────┐
+│                  │App (ELF)│  │  App B  │  │  Shell    │   │
+│                  └────┬────┘  └────┬────┘  └─────┬─────┘   │
+└───────────────────────┼────────────┼─────────────┼─────────┘
+                        │  int 0x80  │             │
+┌───────────────────────▼────────────▼─────────────▼─────────┐
 │              Camada de Syscalls (syscall.rs)               │
 │  exit │ write │ read │ yield │ getpid │ ipc_send │ spawn   │
 ├────────────────────────────────────────────────────────────┤
@@ -59,10 +64,13 @@ O Jinn OS é construído sobre três pilares principais:
 │  Preemptivo      │  Paginação (PML4)   │                   │
 │  Prioridades     │  Heap Customizado   │                   │
 ├──────────────────┴─────────────────────┴───────────────────┤
-│           Subsistema de Interrupções (interrupts/)         │
-│      IDT  │  Local APIC  │  Teclado PS/2   │  PIC(off)     │
+│         Subsistema Gráfico & GUI (gui.rs, vga.rs, font.rs) │
+│      Janelas  │  Retângulos  │  Fontes  │  Linear Framebuffer │
 ├────────────────────────────────────────────────────────────┤
-│         Abstração de Hardware (limine.rs, cpu.rs, vga.rs)  │
+│           Subsistema de Interrupções (interrupts/)         │
+│      IDT  │  Local APIC  │  Teclado PS/2   │  Mouse (IRQ12)│
+├────────────────────────────────────────────────────────────┤
+│         Abstração de Hardware (limine.rs, cpu.rs, elf.rs)  │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -100,9 +108,15 @@ Uma vez iniciado, o shell interativo (`jinn>`) suporta:
 | Comando | Descrição |
 |---|---|
 | `help` | Lista os comandos disponíveis |
-| `uname` | Mostra o nome e a versão do kernel |
-| `meminfo` | Mostra as estatísticas da memória física e do heap |
-| `clear` | Limpa a tela |
+| `uname` | Mostra o nome, versão e arquitetura do kernel |
+| `meminfo` | Mostra estatísticas da memória física e heap do kernel |
+| `ps` / `tasks` | Lista todas as tarefas em execução no escalonador |
+| `spawn <nome>` | Inicia um processo em Ring 3 a partir do ELF carregado |
+| `kill <pid>` | Finaliza uma tarefa pelo seu PID |
+| `sched` | Estatísticas detalhadas do escalonador preemptivo |
+| `uptime` | Tempo de atividade em ticks do APIC Timer |
+| `reboot` | Reinicia a máquina de forma segura |
+| `clear` / `cls` | Limpa o console de texto |
 
 ---
 
