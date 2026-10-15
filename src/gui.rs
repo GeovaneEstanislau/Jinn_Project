@@ -25,6 +25,7 @@ const DEFAULT_HEIGHT: usize = 768;
 pub const COLOR_DESKTOP: u32      = 0x0016_202C; // Azul ardósia escuro
 pub const COLOR_TASKBAR: u32      = 0x0010_171E; // Barra inferior escura
 pub const COLOR_START_BTN: u32    = 0x0000_7ACC; // Azul VSCode / Jinn
+pub const COLOR_START_HOVER: u32  = 0x0002_84C7; // Azul claro hover
 pub const COLOR_WIN_BG: u32       = 0x00EA_EEF2; // Corpo da janela (cinza claro moderno)
 pub const COLOR_WIN_TITLE_ACT: u32= 0x001B_4965; // Barra de título ativa
 pub const COLOR_WIN_TITLE_INA: u32= 0x004A_5568; // Barra de título inativa
@@ -33,6 +34,15 @@ pub const COLOR_WHITE: u32        = 0x00FF_FFFF;
 pub const COLOR_BLACK: u32        = 0x0000_0000;
 pub const COLOR_TEXT_DARK: u32    = 0x001A_202C;
 pub const COLOR_ACCENT_GREEN: u32 = 0x0038_A169;
+pub const COLOR_ACCENT_BLUE: u32  = 0x0031_82CE;
+pub const COLOR_MENU_BG: u32      = 0x001E_293B; // Fundo azul escuro do menu iniciar
+pub const COLOR_MENU_HEADER: u32  = 0x000F_172A; // Topo do menu
+pub const COLOR_MENU_HOVER: u32   = 0x0033_4155; // Item em hover
+pub const COLOR_MENU_BORDER: u32  = 0x0047_5569;
+pub const COLOR_BAR_FG: u32       = 0x0010_B981; // Verde esmeralda para barra de progresso
+pub const COLOR_BAR_BG: u32       = 0x00CB_D5E1; // Fundo suave para barra
+pub const COLOR_BAR_BORDER: u32   = 0x0094_A3B8; // Borda da barra
+pub const COLOR_BTN_BG: u32       = 0x0025_63EB; // Botão de ação (azul clássico)
 
 // Sprite do cursor de mouse (11x16)
 const CURSOR_W: usize = 11;
@@ -95,12 +105,18 @@ struct WindowManager {
     windows: [Option<Window>; MAX_WINDOWS],
     order: [usize; MAX_WINDOWS], // Z-order: 0 = fundo, 2 = topo
     prev_buttons: u8,
+    start_menu_open: bool,
+    should_exit: bool,
+    spawn_count: usize,
 }
 
 static mut WM: WindowManager = WindowManager {
     windows: [None, None, None],
     order: [0, 1, 2],
     prev_buttons: 0,
+    start_menu_open: false,
+    should_exit: false,
+    spawn_count: 0,
 };
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
@@ -263,6 +279,111 @@ pub fn draw_string_bb(text: &str, x: usize, y: usize, fg: u32, bg: Option<u32>) 
     }
 }
 
+/// Algoritmo de Bresenham para traçado de linhas 2D
+pub fn draw_line_bb(mut x0: isize, mut y0: isize, x1: isize, y1: isize, color: u32) {
+    let dx = (x1 - x0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let dy = -(y1 - y0).abs();
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx + dy;
+
+    loop {
+        if x0 >= 0 && (x0 as usize) < DEFAULT_WIDTH && y0 >= 0 && (y0 as usize) < DEFAULT_HEIGHT {
+            draw_pixel_bb(x0 as usize, y0 as usize, color);
+        }
+        if x0 == x1 && y0 == y1 { break; }
+        let e2 = 2 * err;
+        if e2 >= dy {
+            err += dy;
+            x0 += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
+/// Contorno retangular de 1 pixel
+pub fn draw_rect_outline_bb(x: usize, y: usize, width: usize, height: usize, color: u32) {
+    if width == 0 || height == 0 { return; }
+    let end_x = (x + width).min(DEFAULT_WIDTH);
+    let end_y = (y + height).min(DEFAULT_HEIGHT);
+
+    for cx in x..end_x {
+        draw_pixel_bb(cx, y, color);
+        if end_y > y {
+            draw_pixel_bb(cx, end_y - 1, color);
+        }
+    }
+    for cy in y..end_y {
+        draw_pixel_bb(x, cy, color);
+        if end_x > x {
+            draw_pixel_bb(end_x - 1, cy, color);
+        }
+    }
+}
+
+/// Barra de progresso com porcentagem visual e borda
+pub fn draw_progress_bar_bb(
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    current: usize,
+    total: usize,
+    fg_color: u32,
+    bg_color: u32,
+    border_color: u32,
+) {
+    fill_rect_bb(x, y, width, height, bg_color);
+    draw_rect_outline_bb(x, y, width, height, border_color);
+
+    if total > 0 && width > 2 && height > 2 {
+        let fill_w = ((width - 2) * current.min(total)) / total;
+        if fill_w > 0 {
+            fill_rect_bb(x + 1, y + 1, fill_w, height - 2, fg_color);
+        }
+    }
+}
+
+fn format_num(mut val: usize, buf: &mut [u8]) -> usize {
+    if val == 0 {
+        buf[0] = b'0';
+        return 1;
+    }
+    let mut i = 0;
+    let mut tmp = [0u8; 20];
+    while val > 0 && i < 20 {
+        tmp[i] = b'0' + (val % 10) as u8;
+        val /= 10;
+        i += 1;
+    }
+    for j in 0..i {
+        buf[j] = tmp[i - 1 - j];
+    }
+    i
+}
+
+fn draw_label_and_num(label: &str, num: usize, suffix: &str, x: usize, y: usize, fg: u32, bg: Option<u32>) {
+    let mut buf = [0u8; 64];
+    let mut len = 0;
+    for b in label.bytes() {
+        if len < 40 { buf[len] = b; len += 1; }
+    }
+    let mut num_buf = [0u8; 20];
+    let nlen = format_num(num, &mut num_buf);
+    for b in &num_buf[..nlen] {
+        if len < 55 { buf[len] = *b; len += 1; }
+    }
+    for b in suffix.bytes() {
+        if len < 64 { buf[len] = b; len += 1; }
+    }
+    if let Ok(s) = core::str::from_utf8(&buf[..len]) {
+        draw_string_bb(s, x, y, fg, bg);
+    }
+}
+
 // ── Cópia Rápida Backbuffer → VRAM (Swap Buffers) ─────────────────────────────
 
 pub fn swap_buffers() {
@@ -299,8 +420,12 @@ pub fn swap_buffers() {
 // ── Renderização Completa do Compositor ────────────────────────────────────────
 
 pub fn render_desktop(mouse_x: usize, mouse_y: usize) {
-    // 1. Limpa o fundo do Desktop
+    // 1. Limpa o fundo do Desktop com tom elegante
     fill_rect_bb(0, 0, DEFAULT_WIDTH, DEFAULT_HEIGHT, COLOR_DESKTOP);
+
+    // Marca d'água elegante no canto inferior direito
+    draw_string_bb("Jinn OS Microkernel v0.0.3", DEFAULT_WIDTH - 240, DEFAULT_HEIGHT - 64, 0x0024_3348, None);
+    draw_string_bb("x86_64 Preemptive Desktop", DEFAULT_WIDTH - 240, DEFAULT_HEIGHT - 48, 0x0024_3348, None);
 
     // 2. Renderiza as janelas em Z-order (da do fundo para a do topo)
     unsafe {
@@ -314,8 +439,8 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize) {
                 let is_active = win_idx == top_idx;
                 let title_color = if is_active { COLOR_WIN_TITLE_ACT } else { COLOR_WIN_TITLE_INA };
 
-                // Moldura externa (sombra/borda preta de 1px)
-                fill_rect_bb(win.x.saturating_sub(1), win.y.saturating_sub(1), win.width + 2, win.height + 2, 0x000F172A);
+                // Moldura externa (sombra/borda de 1px)
+                draw_rect_outline_bb(win.x.saturating_sub(1), win.y.saturating_sub(1), win.width + 2, win.height + 2, 0x000F_172A);
 
                 // Barra de título
                 fill_rect_bb(win.x, win.y, win.width, 24, title_color);
@@ -332,10 +457,49 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize) {
                 // Corpo da janela
                 fill_rect_bb(win.x, win.y + 24, win.width, win.height.saturating_sub(24), COLOR_WIN_BG);
 
-                // Linhas de texto do conteúdo
-                for i in 0..win.line_count {
-                    let line_y = win.y + 36 + (i * 18);
-                    draw_string_bb(win.lines[i], win.x + 12, line_y, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
+                // Conteúdo específico da janela
+                if win.id == 0 {
+                    // ── Janela 0: Monitor de Sistema Dinâmico ──────────────
+                    draw_string_bb("--- Recursos do Kernel (Ring 0) ---", win.x + 12, win.y + 36, COLOR_WIN_TITLE_ACT, Some(COLOR_WIN_BG));
+                    let ticks = crate::timer::ticks();
+                    draw_label_and_num("Tempo Ativo    : ", (ticks / 100) as usize, " s (100 Hz APIC)", win.x + 12, win.y + 58, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
+                    draw_label_and_num("Tarefas Ativas : ", crate::scheduler::get().task_count(), " processos", win.x + 12, win.y + 78, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
+                    draw_label_and_num("Preempcoes APIC: ", crate::scheduler::sched_ticks() as usize, " ticks", win.x + 12, win.y + 98, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
+
+                    let total_mb = crate::memory::total_bytes() / (1024 * 1024);
+                    let used_mb = crate::memory::used_bytes() / (1024 * 1024);
+                    draw_label_and_num("Memoria RAM    : ", used_mb, " MB / ", win.x + 12, win.y + 118, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
+                    draw_label_and_num("", total_mb, " MB", win.x + 204, win.y + 118, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
+
+                    // Barra de progresso visual de memória
+                    draw_progress_bar_bb(win.x + 12, win.y + 138, win.width - 24, 16, used_mb, total_mb, COLOR_BAR_FG, COLOR_BAR_BG, COLOR_BAR_BORDER);
+
+                    draw_string_bb("Paginacao PML4 | Scheduler Preemptivo", win.x + 12, win.y + 164, COLOR_ACCENT_GREEN, Some(COLOR_WIN_BG));
+                    draw_string_bb("Seguranca: Ring 0 (Kernel) / Ring 3 (User)", win.x + 12, win.y + 184, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
+                } else if win.id == 1 {
+                    // ── Janela 1: Terminal Interativo ──────────────────────
+                    for i in 0..4 {
+                        let line_y = win.y + 36 + (i * 18);
+                        draw_string_bb(win.lines[i], win.x + 12, line_y, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
+                    }
+                    let line_y = win.y + 36 + (4 * 18);
+                    if wm.spawn_count > 0 {
+                        draw_label_and_num("[OK] ola-mundo executado! Total: ", wm.spawn_count, " apps Ring 3.", win.x + 12, line_y, COLOR_ACCENT_GREEN, Some(COLOR_WIN_BG));
+                    } else {
+                        draw_string_bb(win.lines[4], win.x + 12, line_y, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
+                    }
+
+                    // Botão interativo de spawn
+                    let btn_y = win.y + win.height - 34;
+                    fill_rect_bb(win.x + 12, btn_y, 230, 24, COLOR_BTN_BG);
+                    draw_rect_outline_bb(win.x + 12, btn_y, 230, 24, 0x0093_C5FD);
+                    draw_string_bb("+ Executar ola-mundo (U3)", win.x + 20, btn_y + 4, COLOR_WHITE, Some(COLOR_BTN_BG));
+                } else {
+                    // ── Janela 2: Sobre o Jinn OS ─────────────────────────
+                    for i in 0..win.line_count {
+                        let line_y = win.y + 36 + (i * 20);
+                        draw_string_bb(win.lines[i], win.x + 12, line_y, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
+                    }
                 }
             }
         }
@@ -344,15 +508,77 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize) {
     // 3. Barra de Tarefas (Taskbar) na parte inferior
     let taskbar_y = DEFAULT_HEIGHT - 32;
     fill_rect_bb(0, taskbar_y, DEFAULT_WIDTH, 32, COLOR_TASKBAR);
+    draw_line_bb(0, taskbar_y as isize, DEFAULT_WIDTH as isize, taskbar_y as isize, 0x0033_4155);
 
-    // Botão Iniciar [ Jinn OS ]
-    fill_rect_bb(6, taskbar_y + 4, 100, 24, COLOR_START_BTN);
-    draw_string_bb(" Jinn OS", 12, taskbar_y + 8, COLOR_WHITE, Some(COLOR_START_BTN));
+    unsafe {
+        let wm = &*core::ptr::addr_of!(WM);
 
-    // Relógio / Info no canto direito da barra de tarefas
-    draw_string_bb("1024x768 | Mouse PS/2 Ativo | Modo Grafico", DEFAULT_WIDTH - 380, taskbar_y + 8, 0x0094_A3B8, Some(COLOR_TASKBAR));
+        // Botão Iniciar [ Jinn OS ]
+        let is_start_hover = mouse_x >= 6 && mouse_x <= 116 && mouse_y >= taskbar_y + 4 && mouse_y <= taskbar_y + 28;
+        let start_bg = if is_start_hover || wm.start_menu_open { COLOR_START_HOVER } else { COLOR_START_BTN };
+        fill_rect_bb(6, taskbar_y + 4, 110, 24, start_bg);
+        draw_rect_outline_bb(6, taskbar_y + 4, 110, 24, 0x0060_A5FA);
+        draw_string_bb("  Jinn OS", 14, taskbar_y + 8, COLOR_WHITE, Some(start_bg));
 
-    // 4. Renderiza o cursor do mouse no topo de tudo
+        // Abas das Janelas na Barra de Tarefas
+        let tab_defs = [
+            (" Monitor ", 126, 0),
+            (" Terminal", 232, 1),
+            (" Sobre   ", 338, 2),
+        ];
+
+        for &(label, tab_x, win_id) in tab_defs.iter() {
+            let is_open = wm.windows[win_id].map(|w| w.is_open).unwrap_or(false);
+            let tab_bg = if is_open { 0x001E_293B } else { 0x000F_172A };
+            let tab_fg = if is_open { COLOR_WHITE } else { 0x0064_748B };
+            fill_rect_bb(tab_x, taskbar_y + 4, 96, 24, tab_bg);
+            draw_rect_outline_bb(tab_x, taskbar_y + 4, 96, 24, 0x0033_4155);
+            draw_string_bb(label, tab_x + 8, taskbar_y + 8, tab_fg, Some(tab_bg));
+        }
+
+        // Relógio / Info no canto direito da barra de tarefas
+        let secs = (crate::timer::ticks() / 100) as usize;
+        draw_label_and_num("Uptime: ", secs, "s | 1024x768", DEFAULT_WIDTH - 240, taskbar_y + 8, 0x0094_A3B8, Some(COLOR_TASKBAR));
+
+        // 4. Menu Iniciar Popup (se ativo)
+        if wm.start_menu_open {
+            let menu_x = 6;
+            let menu_y = taskbar_y - 210;
+            let menu_w = 240;
+            let menu_h = 206;
+
+            // Sombra do menu
+            fill_rect_bb(menu_x + 2, menu_y + 2, menu_w, menu_h, 0x000A_0F1D);
+            // Corpo do menu
+            fill_rect_bb(menu_x, menu_y, menu_w, menu_h, COLOR_MENU_BG);
+            draw_rect_outline_bb(menu_x, menu_y, menu_w, menu_h, COLOR_MENU_BORDER);
+
+            // Cabeçalho do menu
+            fill_rect_bb(menu_x + 1, menu_y + 1, menu_w - 2, 28, COLOR_MENU_HEADER);
+            draw_string_bb("Jinn OS v0.0.3 Desktop", menu_x + 12, menu_y + 8, COLOR_WHITE, Some(COLOR_MENU_HEADER));
+
+            // Itens do menu
+            let items = [
+                "1. Monitor de Sistema",
+                "2. Terminal Interativo",
+                "3. Executar ola-mundo (U3)",
+                "4. Sobre o Jinn OS",
+                "5. Reiniciar Maquina",
+                "6. Sair para Shell (ESC)",
+            ];
+
+            for (idx, &item) in items.iter().enumerate() {
+                let item_y = menu_y + 32 + (idx * 28);
+                let is_hover = mouse_x >= menu_x && mouse_x <= menu_x + menu_w && mouse_y >= item_y && mouse_y < item_y + 28;
+                let item_bg = if is_hover { COLOR_MENU_HOVER } else { COLOR_MENU_BG };
+                let item_fg = if is_hover { COLOR_WHITE } else { 0x00E2_E8F0 };
+                fill_rect_bb(menu_x + 1, item_y, menu_w - 2, 28, item_bg);
+                draw_string_bb(item, menu_x + 14, item_y + 6, item_fg, Some(item_bg));
+            }
+        }
+    }
+
+    // 5. Renderiza o cursor do mouse no topo de tudo
     for (cy, line) in CURSOR_BITMAP.iter().enumerate() {
         for (cx, ch) in line.bytes().enumerate() {
             let px = mouse_x + cx;
@@ -365,7 +591,7 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize) {
         }
     }
 
-    // 5. Envia o frame final da RAM para a memória de vídeo (VRAM)
+    // 6. Envia o frame final da RAM para a memória de vídeo (VRAM)
     swap_buffers();
 }
 
@@ -403,18 +629,86 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) {
 
         // Se acabou de clicar com o botão esquerdo (transição de 0 para 1)
         if left_clicked && !prev_left_clicked && !dragging_any {
-            // Percorre as janelas da frente para trás (ordem inversa de Z-order)
+            let taskbar_y = DEFAULT_HEIGHT - 32;
+
+            // 1. Clique no Botão Iniciar [ Jinn OS ]
+            if mouse_x >= 6 && mouse_x <= 116 && mouse_y >= taskbar_y + 4 && mouse_y <= taskbar_y + 28 {
+                wm.start_menu_open = !wm.start_menu_open;
+                return;
+            }
+
+            // 2. Clique dentro do Menu Iniciar
+            if wm.start_menu_open {
+                let menu_x = 6;
+                let menu_y = taskbar_y - 210;
+                let menu_w = 240;
+                if mouse_x >= menu_x && mouse_x <= menu_x + menu_w && mouse_y >= menu_y && mouse_y < taskbar_y {
+                    let item_idx = (mouse_y.saturating_sub(menu_y + 32)) / 28;
+                    match item_idx {
+                        0 => {
+                            // Monitor de Sistema
+                            if let Some(w) = wm.windows[0].as_mut() { w.is_open = true; }
+                            bring_to_front(0);
+                        }
+                        1 => {
+                            // Terminal Interativo
+                            if let Some(w) = wm.windows[1].as_mut() { w.is_open = true; }
+                            bring_to_front(1);
+                        }
+                        2 => {
+                            // Executar ola-mundo
+                            spawn_user_app();
+                        }
+                        3 => {
+                            // Sobre o Jinn OS
+                            if let Some(w) = wm.windows[2].as_mut() { w.is_open = true; }
+                            bring_to_front(2);
+                        }
+                        4 => {
+                            // Reiniciar Maquina via triple fault
+                            reboot_machine();
+                        }
+                        5 => {
+                            // Sair para o Shell
+                            wm.should_exit = true;
+                        }
+                        _ => {}
+                    }
+                    wm.start_menu_open = false;
+                    return;
+                } else {
+                    // Clique fora do menu fecha o menu
+                    wm.start_menu_open = false;
+                }
+            }
+
+            // 3. Clique nas Abas da Barra de Tarefas
+            if mouse_y >= taskbar_y + 4 && mouse_y <= taskbar_y + 28 {
+                let tab_defs = [(126, 0), (232, 1), (338, 2)];
+                for &(tx, win_id) in tab_defs.iter() {
+                    if mouse_x >= tx && mouse_x <= tx + 96 {
+                        if let Some(w) = wm.windows[win_id].as_mut() {
+                            w.is_open = !w.is_open;
+                            if w.is_open {
+                                bring_to_front(win_id);
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+
+            // 4. Clique dentro de Janelas (arrasto, fechar ou botão de ação)
             let mut clicked_win_idx = None;
             for i in (0..MAX_WINDOWS).rev() {
                 let win_idx = wm.order[i];
                 if let Some(win) = wm.windows[win_idx] {
                     if !win.is_open { continue; }
 
-                    // Verifica clique na janela
                     if mouse_x >= win.x && mouse_x < win.x + win.width &&
                        mouse_y >= win.y && mouse_y < win.y + win.height {
-                        
-                        // Verifica se clicou no botão de Fechar [X]
+
+                        // Botão de fechar [X]
                         let btn_x = win.x + win.width - 22;
                         let btn_y = win.y + 3;
                         if mouse_x >= btn_x && mouse_x < btn_x + 18 &&
@@ -425,7 +719,18 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) {
                             return;
                         }
 
-                        // Se clicou na barra de título (y até y + 24), inicia arrasto
+                        // Botão de ação na janela do Terminal (Window 1)
+                        if win_idx == 1 {
+                            let btn_action_y = win.y + win.height - 34;
+                            if mouse_x >= win.x + 12 && mouse_x <= win.x + 242 &&
+                               mouse_y >= btn_action_y && mouse_y <= btn_action_y + 24 {
+                                spawn_user_app();
+                                bring_to_front(1);
+                                return;
+                            }
+                        }
+
+                        // Barra de título: inicia arrasto
                         if mouse_y < win.y + 24 {
                             if let Some(w) = wm.windows[win_idx].as_mut() {
                                 w.is_dragging = true;
@@ -446,6 +751,32 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) {
             }
         }
     }
+}
+
+fn spawn_user_app() {
+    unsafe {
+        let wm = &mut *core::ptr::addr_of_mut!(WM);
+        if let Some(elf_data) = crate::limine::get_module(0) {
+            let sched = crate::scheduler::get();
+            let pid = sched.add_user_task("ola-mundo[U3]", elf_data);
+            if pid > 0 {
+                crate::ipc::register(pid);
+                wm.spawn_count += 1;
+                if let Some(w) = wm.windows[1].as_mut() {
+                    w.is_open = true;
+                }
+                bring_to_front(1);
+            }
+        }
+    }
+}
+
+fn reboot_machine() -> ! {
+    unsafe {
+        let null_idt: [u8; 10] = [0u8; 10];
+        core::arch::asm!("lidt [{}]", "int 3", in(reg) null_idt.as_ptr(), options(nostack));
+    }
+    loop { core::hint::spin_loop(); }
 }
 
 fn bring_to_front(target_idx: usize) {
@@ -470,6 +801,16 @@ fn bring_to_front(target_idx: usize) {
 // ── Loop Principal do Ambiente Gráfico ────────────────────────────────────────
 
 pub fn run_desktop() {
+    unsafe {
+        let wm = &mut *core::ptr::addr_of_mut!(WM);
+        wm.should_exit = false;
+    }
+
+    let mut last_mx = usize::MAX;
+    let mut last_my = usize::MAX;
+    let mut last_btn = 0xFF;
+    let mut last_ticks = 0u64;
+
     loop {
         // 1. Verifica se o usuário pressionou ESC (0x1B) para sair de volta para o Shell
         if let Some(ch) = crate::keyboard_buffer::pop() {
@@ -489,24 +830,44 @@ pub fn run_desktop() {
                     break;
                 }
             }
+
+            let wm = &*core::ptr::addr_of!(WM);
+            if wm.should_exit {
+                break;
+            }
         }
 
         // 2. Obtém coordenadas e botões atuais do mouse
         let (mx, my, buttons) = crate::interrupts::ps2_mouse::get_state();
+        let current_ticks = crate::timer::ticks();
 
         // 3. Processa interação e arrasto de janelas
         handle_mouse(mx, my, buttons);
 
-        // 4. Renderiza a cena completa no Backbuffer e faz Swap para a tela
-        render_desktop(mx, my);
+        // 4. Só re-renderiza se houve movimento do mouse, clique ou passou 10 ticks (100ms)
+        let state_changed = mx != last_mx || my != last_my || buttons != last_btn;
+        let time_changed  = current_ticks.saturating_sub(last_ticks) >= 10;
 
-        // 5. Cede uma fatia curta de CPU para que outras threads e timers rodem
-        core::hint::spin_loop();
+        if state_changed || time_changed {
+            last_mx = mx;
+            last_my = my;
+            last_btn = buttons;
+            last_ticks = current_ticks;
+
+            // Renderiza a cena completa no Backbuffer e faz Swap para a tela
+            render_desktop(mx, my);
+        } else {
+            // Cede uma fatia curta de CPU para que outras threads e timers rodem
+            core::hint::spin_loop();
+        }
     }
 
     // Ao sair, limpa a tela para restaurar o console de texto
     let mut writer = crate::vga::Writer::new();
     writer.clear_screen();
+    writer.set_color(crate::vga::Color::LightCyan, crate::vga::Color::Black);
+    writer.write_line("Retornou ao Shell do Kernel [Ring 0].");
+    writer.set_color(crate::vga::Color::LightGray, crate::vga::Color::Black);
 }
 
 // ── Funções de Compatibilidade Legadas ────────────────────────────────────────
