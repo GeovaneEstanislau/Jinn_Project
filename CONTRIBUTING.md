@@ -27,7 +27,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run.ps1 -NoRun
 
 ### 3. Executar
 
-O launcher baixa os binários do Limine se eles ainda não estiverem no clone. A criação da ISO requer `xorriso`, `mkisofs` ou `oscdimg`.
+O launcher baixa os binários do Limine se eles ainda não estiverem no clone. A criação da ISO requer `mkisofs`, `genisoimage` ou `xorriso`. No Windows, `oscdimg` também é aceito como alternativa.
 
 **VirtualBox**: Anexe `jinn.iso` como CD-ROM e use uma VM x86_64.
 
