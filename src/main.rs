@@ -7,6 +7,7 @@ extern crate alloc;
 use core::panic::PanicInfo;
 
 pub mod cpu;
+pub mod drivers;
 pub mod elf;
 pub mod font;
 pub mod gdt;
@@ -136,6 +137,12 @@ pub extern "C" fn _start() -> ! {
     w.write_string("[+] PS/2 Mouse (IRQ 12)...");
     interrupts::ps2_mouse::init();
     interrupts::pic::unmask_irq(12);
+    w.set_color(Color::LightGreen, Color::Black);
+    w.write_line(" OK");
+    w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string("[+] IDE / ATA Controller...");
+    drivers::ide::init();
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);

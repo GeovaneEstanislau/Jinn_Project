@@ -99,6 +99,50 @@ pub struct Window {
     pub line_count: usize,
 }
 
+#[derive(Clone, Copy)]
+pub struct TerminalBuffer {
+    pub history: [[u8; 46]; 6],
+    pub history_lens: [usize; 6],
+    pub history_colors: [u32; 6],
+    pub history_count: usize,
+    pub input: [u8; 36],
+    pub input_len: usize,
+}
+
+impl TerminalBuffer {
+    pub const fn new() -> Self {
+        Self {
+            history: [[0; 46]; 6],
+            history_lens: [0; 6],
+            history_colors: [0; 6],
+            history_count: 0,
+            input: [0; 36],
+            input_len: 0,
+        }
+    }
+
+    pub fn push_line(&mut self, text: &str, color: u32) {
+        if self.history_count >= 6 {
+            for i in 0..5 {
+                self.history[i] = self.history[i + 1];
+                self.history_lens[i] = self.history_lens[i + 1];
+                self.history_colors[i] = self.history_colors[i + 1];
+            }
+            self.history_count = 5;
+        }
+
+        let idx = self.history_count;
+        let bytes = text.as_bytes();
+        let copy_len = bytes.len().min(46);
+        for j in 0..copy_len {
+            self.history[idx][j] = bytes[j];
+        }
+        self.history_lens[idx] = copy_len;
+        self.history_colors[idx] = color;
+        self.history_count += 1;
+    }
+}
+
 const MAX_WINDOWS: usize = 3;
 
 struct WindowManager {
@@ -108,6 +152,117 @@ struct WindowManager {
     start_menu_open: bool,
     should_exit: bool,
     spawn_count: usize,
+    terminal: TerminalBuffer,
+}
+
+impl WindowManager {
+    pub fn terminal_handle_key(&mut self, ch: u8) {
+        match ch {
+            b'\n' | b'\r' => {
+                let len = self.terminal.input_len;
+                if len > 0 {
+                    let mut input_copy = [0u8; 36];
+                    let copy_len = len.min(36);
+                    for i in 0..copy_len {
+                        input_copy[i] = self.terminal.input[i];
+                    }
+
+                    // Ecoa o comando digitado no terminal gráfico
+                    let mut echo_buf = [0u8; 46];
+                    let prefix = b"> ";
+                    echo_buf[0] = prefix[0];
+                    echo_buf[1] = prefix[1];
+                    let echo_len = copy_len.min(44);
+                    for i in 0..echo_len {
+                        echo_buf[2 + i] = input_copy[i];
+                    }
+                    if let Ok(s) = core::str::from_utf8(&echo_buf[..2 + echo_len]) {
+                        self.terminal.push_line(s, 0x0094_A3B8);
+                    }
+
+                    let cmd_str = match core::str::from_utf8(&input_copy[..copy_len]) {
+                        Ok(s) => s.trim(),
+                        Err(_) => "",
+                    };
+
+                    // Processa comandos internos do terminal gráfico
+                    match cmd_str {
+                        "help" => {
+                            self.terminal.push_line("Cmds: help, clear, spawn, ps, uptime, reboot", 0x0038_BDF8);
+                        }
+                        "clear" => {
+                            self.terminal.history_count = 0;
+                        }
+                        "spawn" | "run" => {
+                            spawn_user_app();
+                            self.terminal.push_line("[OK] ola-mundo spawned (Ring 3)!", 0x0022_C55E);
+                        }
+                        "ps" => {
+                            let count = crate::scheduler::get().task_count();
+                            let mut buf = [0u8; 32];
+                            let s = "Tarefas ativas: ";
+                            buf[..s.len()].copy_from_slice(s.as_bytes());
+                            buf[s.len()] = b'0' + ((count % 10) as u8);
+                            if let Ok(msg) = core::str::from_utf8(&buf[..s.len() + 1]) {
+                                self.terminal.push_line(msg, 0x00F8_FAFC);
+                            }
+                        }
+                        "uptime" => {
+                            let secs = crate::timer::ticks() / 100;
+                            let mut buf = [0u8; 32];
+                            let s = "Uptime: ";
+                            buf[..s.len()].copy_from_slice(s.as_bytes());
+                            let mut pos = s.len();
+                            let mut n = secs;
+                            if n == 0 {
+                                buf[pos] = b'0';
+                                pos += 1;
+                            } else {
+                                let start = pos;
+                                while n > 0 && pos < 28 {
+                                    buf[pos] = b'0' + (n % 10) as u8;
+                                    n /= 10;
+                                    pos += 1;
+                                }
+                                buf[start..pos].reverse();
+                            }
+                            buf[pos] = b' ';
+                            buf[pos + 1] = b's';
+                            pos += 2;
+                            if let Ok(msg) = core::str::from_utf8(&buf[..pos]) {
+                                self.terminal.push_line(msg, 0x00F8_FAFC);
+                            }
+                        }
+                        "reboot" => {
+                            reboot_machine();
+                        }
+                        "exit" => {
+                            self.should_exit = true;
+                        }
+                        _ => {
+                            self.terminal.push_line("Comando nao encontrado. Use 'help'.", 0x00F8_7171);
+                        }
+                    }
+
+                    self.terminal.input_len = 0;
+                }
+            }
+            0x08 => {
+                // Backspace
+                if self.terminal.input_len > 0 {
+                    self.terminal.input_len -= 1;
+                }
+            }
+            b if (0x20..=0x7E).contains(&b) => {
+                if self.terminal.input_len < 36 {
+                    let idx = self.terminal.input_len;
+                    self.terminal.input[idx] = b;
+                    self.terminal.input_len += 1;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 static mut WM: WindowManager = WindowManager {
@@ -117,6 +272,7 @@ static mut WM: WindowManager = WindowManager {
     start_menu_open: false,
     should_exit: false,
     spawn_count: 0,
+    terminal: TerminalBuffer::new(),
 };
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
@@ -182,24 +338,24 @@ fn init_default_windows() {
         wm.windows[1] = Some(Window {
             id: 1,
             title: "Terminal Interativo (Ring 3 Ready)",
-            x: 480,
-            y: 100,
-            width: 440,
-            height: 220,
+            x: 470,
+            y: 80,
+            width: 460,
+            height: 240,
             is_open: true,
             is_dragging: false,
             drag_offset_x: 0,
             drag_offset_y: 0,
             lines: [
-                "jinn@kernel:~# ps",
-                "PID 0: idle[K]        - Estado: Ready",
-                "PID 1: shell[K]       - Estado: Running",
-                "PID 2: ola-mundo[U3]  - Estado: Pronto (Ring 3)",
-                "jinn@kernel:~# spawn ola-mundo",
-                "[OK] Processo isolado carregado com sucesso!",
+                "", "", "", "", "", "",
             ],
-            line_count: 6,
+            line_count: 0,
         });
+
+        // Inicializa mensagens do terminal gráfico
+        wm.terminal.push_line("Jinn OS Terminal v0.0.3 (Ring 0 / Ring 3)", 0x0038_BDF8);
+        wm.terminal.push_line("Digite 'help' para comandos ou use o mouse.", 0x0094_A3B8);
+        wm.terminal.push_line("Comandos: spawn, ps, uptime, clear, reboot", 0x0060_A5FA);
 
         // Janela 2: Sobre o Jinn OS
         wm.windows[2] = Some(Window {
@@ -478,22 +634,53 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize) {
                     draw_string_bb("Seguranca: Ring 0 (Kernel) / Ring 3 (User)", win.x + 12, win.y + 184, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
                 } else if win.id == 1 {
                     // ── Janela 1: Terminal Interativo ──────────────────────
-                    for i in 0..4 {
-                        let line_y = win.y + 36 + (i * 18);
-                        draw_string_bb(win.lines[i], win.x + 12, line_y, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
+                    let term_box_x = win.x + 8;
+                    let term_box_y = win.y + 28;
+                    let term_box_w = win.width - 16;
+                    let term_box_h = win.height - 68;
+
+                    // Caixa escura estilizada do terminal
+                    fill_rect_bb(term_box_x, term_box_y, term_box_w, term_box_h, 0x000F_172A);
+                    draw_rect_outline_bb(term_box_x, term_box_y, term_box_w, term_box_h, 0x001E_293B);
+
+                    // Renderiza linhas do histórico
+                    for i in 0..wm.terminal.history_count {
+                        let len = wm.terminal.history_lens[i];
+                        if len > 0 {
+                            if let Ok(line_str) = core::str::from_utf8(&wm.terminal.history[i][..len]) {
+                                let line_y = term_box_y + 8 + (i * 18);
+                                draw_string_bb(line_str, term_box_x + 8, line_y, wm.terminal.history_colors[i], Some(0x000F_172A));
+                            }
+                        }
                     }
-                    let line_y = win.y + 36 + (4 * 18);
-                    if wm.spawn_count > 0 {
-                        draw_label_and_num("[OK] ola-mundo executado! Total: ", wm.spawn_count, " apps Ring 3.", win.x + 12, line_y, COLOR_ACCENT_GREEN, Some(COLOR_WIN_BG));
-                    } else {
-                        draw_string_bb(win.lines[4], win.x + 12, line_y, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
+
+                    // Renderiza Prompt interativo com buffer atual
+                    let prompt_y = term_box_y + term_box_h - 22;
+                    draw_string_bb("jinn> ", term_box_x + 8, prompt_y, 0x0038_BDF8, Some(0x000F_172A));
+                    let input_len = wm.terminal.input_len;
+                    if input_len > 0 {
+                        if let Ok(input_str) = core::str::from_utf8(&wm.terminal.input[..input_len]) {
+                            draw_string_bb(input_str, term_box_x + 56, prompt_y, 0x00F8_FAFC, Some(0x000F_172A));
+                        }
+                    }
+
+                    // Cursor piscante quando a janela está ativa (no topo)
+                    if is_active {
+                        let cursor_x = term_box_x + 56 + (input_len * 8);
+                        if (crate::timer::ticks() % 50) < 25 {
+                            draw_char_bb(b'_', cursor_x, prompt_y, 0x0038_BDF8, Some(0x000F_172A));
+                        }
                     }
 
                     // Botão interativo de spawn
                     let btn_y = win.y + win.height - 34;
-                    fill_rect_bb(win.x + 12, btn_y, 230, 24, COLOR_BTN_BG);
-                    draw_rect_outline_bb(win.x + 12, btn_y, 230, 24, 0x0093_C5FD);
-                    draw_string_bb("+ Executar ola-mundo (U3)", win.x + 20, btn_y + 4, COLOR_WHITE, Some(COLOR_BTN_BG));
+                    fill_rect_bb(win.x + 8, btn_y, 220, 24, COLOR_BTN_BG);
+                    draw_rect_outline_bb(win.x + 8, btn_y, 220, 24, 0x0093_C5FD);
+                    draw_string_bb("+ Executar ola-mundo (U3)", win.x + 14, btn_y + 4, COLOR_WHITE, Some(COLOR_BTN_BG));
+
+                    if wm.spawn_count > 0 {
+                        draw_label_and_num("Apps: ", wm.spawn_count, " PIDs", win.x + 236, btn_y + 6, COLOR_ACCENT_GREEN, Some(COLOR_WIN_BG));
+                    }
                 } else {
                     // ── Janela 2: Sobre o Jinn OS ─────────────────────────
                     for i in 0..win.line_count {
@@ -812,23 +999,17 @@ pub fn run_desktop() {
     let mut last_ticks = 0u64;
 
     loop {
-        // 1. Verifica se o usuário pressionou ESC (0x1B) para sair de volta para o Shell
-        if let Some(ch) = crate::keyboard_buffer::pop() {
-            if ch == 0x1B {
-                break;
-            }
-        }
-
-        // Lê porta PS/2 caso a interrupção não tenha pego
+        // 1. Lê porta PS/2 caso a interrupção não tenha pego e alimenta o buffer
         unsafe {
             let status: u8;
             core::arch::asm!("in al, dx", out("al") status, in("dx") 0x64u16, options(nomem, nostack));
             if (status & 1) != 0 && (status & 0x20) == 0 {
                 let sc: u8;
                 core::arch::asm!("in al, dx", out("al") sc, in("dx") 0x60u16, options(nomem, nostack));
-                if sc == 0x01 { // Scancode ESC
+                if sc == 0x01 { // Scancode ESC: sair do desktop
                     break;
                 }
+                crate::interrupts::ps2_keyboard::process_scancode(sc);
             }
 
             let wm = &*core::ptr::addr_of!(WM);
@@ -837,15 +1018,31 @@ pub fn run_desktop() {
             }
         }
 
-        // 2. Obtém coordenadas e botões atuais do mouse
+        // 2. Processa caracteres do teclado para a janela de Terminal
+        let mut key_pressed = false;
+        while let Some(ch) = crate::keyboard_buffer::pop() {
+            if ch == 0x1B {
+                return;
+            }
+            unsafe {
+                let wm = &mut *core::ptr::addr_of_mut!(WM);
+                let top_idx = wm.order[MAX_WINDOWS - 1];
+                if top_idx == 1 {
+                    wm.terminal_handle_key(ch);
+                    key_pressed = true;
+                }
+            }
+        }
+
+        // 3. Obtém coordenadas e botões atuais do mouse
         let (mx, my, buttons) = crate::interrupts::ps2_mouse::get_state();
         let current_ticks = crate::timer::ticks();
 
-        // 3. Processa interação e arrasto de janelas
+        // 4. Processa interação e arrasto de janelas
         handle_mouse(mx, my, buttons);
 
-        // 4. Só re-renderiza se houve movimento do mouse, clique ou passou 10 ticks (100ms)
-        let state_changed = mx != last_mx || my != last_my || buttons != last_btn;
+        // 5. Re-renderiza se houve movimento do mouse, clique, digitação ou passou 10 ticks (100ms)
+        let state_changed = mx != last_mx || my != last_my || buttons != last_btn || key_pressed;
         let time_changed  = current_ticks.saturating_sub(last_ticks) >= 10;
 
         if state_changed || time_changed {

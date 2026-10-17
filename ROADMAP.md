@@ -10,8 +10,8 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
 ## 📌 Visão Geral das Fases
 
 * **Fase 1 (Concluída ✅)**: Fundação do Microkernel, Paginação PML4, Preempção com APIC Timer, Syscalls via `int 0x80`, IPC lock-free, Carregador ELF64 e Isolamento Real em Ring 3.
-* **Fase 2 (Em Andamento 🚧)**: Primitivas 2D, Driver de Mouse PS/2, Renderização de Cursor, Double Buffering e Compositor de Janelas ([Issue #32](https://github.com/GeovaneEstanislau/Jinn_Project/issues/32)).
-* **Fase 3 (Planejado 🔜)**: Driver de Disco (IDE/AHCI SATA), Sistema de Arquivos (Ext2/FAT32) e montagem VFS ([Issue #30](https://github.com/GeovaneEstanislau/Jinn_Project/issues/30)).
+* **Fase 2 (Concluída ✅)**: Primitivas 2D, Driver de Mouse PS/2, Renderização de Cursor, Double Buffering, Compositor de Janelas e Terminal Interativo ([Issue #32](https://github.com/GeovaneEstanislau/Jinn_Project/issues/32)).
+* **Fase 3 (Em Andamento 🚧)**: Driver de Disco (IDE/ATA PIO Mode), MBR, Sistema de Arquivos (Ext2/FAT32) e montagem VFS ([Issue #30](https://github.com/GeovaneEstanislau/Jinn_Project/issues/30)).
 * **Fase 4 (Em Andamento 🚧)**: Melhorias de DX, scripts de build multiplataforma e CI no GitHub Actions ([Issue #31](https://github.com/GeovaneEstanislau/Jinn_Project/issues/31) e [Issue #33](https://github.com/GeovaneEstanislau/Jinn_Project/issues/33)).
 * **Fase 5 (Futuro 📋)**: Suporte a SMP (Multiprocessamento), Driver de Rede (e1000/VirtIO) e Stack TCP/IP em Ring 3 ([Issue #34](https://github.com/GeovaneEstanislau/Jinn_Project/issues/34) e [Issue #35](https://github.com/GeovaneEstanislau/Jinn_Project/issues/35)).
 
@@ -26,8 +26,9 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
 - [x] **Tabela de Descritores Globais (GDT) & TSS**: Configuração de segmentos para Kernel (Ring 0) e Usuário (Ring 3), com TSS configurada para troca segura de pilhas (`src/gdt.rs`).
 - [x] **Interrupções & Temporizador**: IDT completa (48 vetores), Local APIC Timer calibrado a 100 Hz, PIC legado desativado (`src/interrupts/`).
 - [x] **Escalonador Preemptivo**: Escalonador preemptivo com suporte a prioridades (RealTime, Normal, Idle) e alternância de tarefas acionada pelo timer (`src/scheduler.rs`).
+- [x] **Dormência a Custo Zero de CPU (`sys_sleep` e `TaskState::Sleeping`)**: Processos podem suspender execução temporizada consumindo 0 ciclos de CPU; a CPU repousa em `hlt` quando não há tarefas prontas.
 - [x] **IPC (Inter-Process Communication)**: Mensageria assíncrona baseada em filas lock-free para comunicação entre processos (`src/ipc.rs`).
-- [x] **Camada de Syscalls**: Despacho via `int 0x80` (`sys_exit`, `sys_write`, `sys_read`, `sys_yield`, `sys_getpid`, `sys_ipc_send`, `sys_ipc_recv`).
+- [x] **Camada de Syscalls**: Despacho via `int 0x80` (`sys_exit`, `sys_write`, `sys_read`, `sys_yield`, `sys_getpid`, `sys_ipc_send`, `sys_ipc_recv`, `sys_alloc_page`, `sys_free_page`, `sys_spawn`, `sys_waitpid`, `sys_sleep`).
 - [x] **Carregador ELF64 & Isolamento de Ring 3**:
   - Leitura de binários ELF64 com parsing de cabeçalhos e segmentos `PT_LOAD`.
   - Alocação de PML4 dedicado por processo (espaço de endereçamento isolado).
@@ -37,15 +38,16 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
 
 ---
 
-## 🎨 Fase 2: Interface Gráfica (GUI) & Subsistema de Entrada (Em Andamento 🚧)
+## 🎨 Fase 2: Interface Gráfica (GUI) & Subsistema de Entrada (Concluída ✅)
 
-> 📌 **Discussão e Colaboração:** Participe na [Issue #32: Criar Interface Gráfica (GUI) e Compositor](https://github.com/GeovaneEstanislau/Jinn_Project/issues/32).
+> 📌 **Discussão e Colaboração:** Concluída na [Issue #32: Criar Interface Gráfica (GUI) e Compositor](https://github.com/GeovaneEstanislau/Jinn_Project/issues/32).
 
 - [x] **Primitivas Gráficas 2D (`src/gui.rs`)**:
   - `draw_pixel(x, y, color)` e `read_pixel(x, y)`.
   - `fill_rect(x, y, width, height, color)`.
+  - `draw_line_bb` (Algoritmo de Bresenham) e `draw_rect_outline_bb`.
+  - `draw_progress_bar_bb` e helpers de formatação decimal sem alocador dinâmico.
   - `draw_char_at` e `draw_string_at` com fonte bitmap 8x8 customizada.
-  - Renderização de janelas com molduras, barra de título e botão de fechar (`draw_window`).
 - [x] **Driver de Mouse PS/2 (`src/interrupts/ps2_mouse.rs`)**:
   - Habilitada a porta auxiliar do controlador i8042.
   - Tratamento de interrupção IRQ 12 (vetor 44 na IDT).
@@ -57,29 +59,38 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
 - [x] **Double Buffering / Backbuffer na RAM**:
   - Alocação de backbuffer linear (3 MiB) na memória RAM eliminando flickering e tearing.
   - Rotina de cópia rápida em lote (`swap_buffers`) para o Linear Framebuffer do Limine.
+  - Throttling inteligente a 60 FPS orientado a eventos (movimento, cliques, teclado ou heartbeat de 100ms).
 - [x] **Compositor & Gerenciador de Janelas**:
   - Estrutura `Window` com ID, retângulo `(x, y, w, h)`, título, linhas de conteúdo e estado de foco.
   - Z-Order com elevação de janela ativa para o topo (`bring_to_front`).
   - Detecção de clique e arrasto na barra de título em tempo real com o mouse.
   - Fechamento de janelas pelo botão vermelho `[X]`.
-  - Barra de tarefas inferior (Taskbar) com botão Iniciar e indicadores.
+  - Barra de tarefas inferior (Taskbar) com botão Iniciar `[ Jinn OS ]` e abas clicáveis.
+  - Menu Iniciar funcional com 6 opções interativas (Monitor, Terminal, Spawn U3, Sobre, Reboot, Exit).
+  - Monitor de Sistema dinâmico com Uptime, contagem de tarefas e barra gráfica de uso de RAM.
   - Comando interativo `gui` / `desktop` no shell do kernel.
-- [ ] **Terminal Gráfico Interativo com Teclado na Janela**:
-  - Janela de terminal renderizando o Shell do Jinn OS dentro da interface gráfica.
+- [x] **Terminal Gráfico Interativo com Teclado na Janela**:
+  - Janela de terminal renderizando console dinâmico dentro da interface gráfica.
+  - Entrada de teclado PS/2 em tempo real, buffer de digitação, cursor piscante e histórico com cores.
+  - Comandos integrados no terminal da GUI: `help`, `spawn`, `ps`, `uptime`, `clear`, `reboot`, `exit`.
 
 ---
 
-## 💽 Fase 3: Armazenamento & Sistema de Arquivos Real (Planejado 🔜)
+## 💽 Fase 3: Armazenamento & Sistema de Arquivos Real (Em Andamento 🚧)
 
 > 📌 **Discussão e Colaboração:** Participe na [Issue #30: Implementar Filesystem Real e Drivers de Disco](https://github.com/GeovaneEstanislau/Jinn_Project/issues/30).
 
-- [ ] **Drivers de Armazenamento**:
-  - Driver de disco IDE (PIO mode) para máxima compatibilidade em emuladores e máquinas virtuais.
+- [x] **Driver de Armazenamento IDE/ATA (Primary Bus)**:
+  - Driver em modo PIO (Portas 0x1F0-0x1F7 / 0x3F6) para discos IDE/ATA e dispositivos ATAPI (`src/drivers/ide.rs`).
+  - Identificação de drives via comando `0xEC` (IDENTIFY) com extração de modelo, serial e capacidade em MB.
+  - Leitura de setores físicos LBA28 (512 bytes) e parsing de partições MBR (LBA 0).
+  - Comando interativo `disk` no shell do kernel inspecionando o barramento primário.
+- [ ] **Drivers Adicionais**:
   - Driver AHCI SATA para discos modernos.
   - Detecção e enumeração de dispositivos no barramento PCI.
 - [ ] **Sistema de Arquivos**:
   - Implementação de leitura em sistema de arquivos Ext2 ou FAT32.
-  - Reconhecimento de tabelas de partição MBR e GPT.
+  - Reconhecimento de tabelas de partição GPT.
 - [ ] **Integração com o VFS**:
   - Montagem de sistema de arquivos raiz (`/`).
   - Carregamento sob demanda de binários ELF a partir do disco (`/bin/`).

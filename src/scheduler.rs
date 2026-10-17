@@ -102,6 +102,8 @@ pub enum TaskState {
     Running,
     /// Bloqueada esperando I/O ou IPC.
     Blocked,
+    /// Dormindo até determinado tick do timer (custo zero CPU).
+    Sleeping(u64),
     /// Bloqueada esperando outra tarefa terminar (waitpid).
     WaitingOn(usize),
     /// Finalizada mas não coletada (código de saída disponível).
@@ -430,6 +432,13 @@ impl Scheduler {
         }
     }
 
+    /// Coloca uma tarefa em estado Sleeping até o tick especificado.
+    pub fn sleep_task(&mut self, pid: usize, wake_tick: u64) {
+        if let Some(Some(task)) = self.tasks.get_mut(pid) {
+            task.state = TaskState::Sleeping(wake_tick);
+        }
+    }
+
     /// Bloqueia a tarefa atual até que `target_pid` termine (Zombie).
     ///
     /// Se o alvo já é Zombie, retorna imediatamente sem bloquear.
@@ -556,6 +565,18 @@ impl Scheduler {
     pub fn preempt(&mut self, curr_frame_ptr: usize) -> usize {
         // Incrementa contador de preempções
         SCHED_TICKS.fetch_add(1, Ordering::Relaxed);
+
+        // Acorda tarefas cujo tempo de sleep expirou (custo zero de CPU durante o repouso)
+        let current_ticks = crate::timer::ticks();
+        for slot in self.tasks.iter_mut() {
+            if let Some(task) = slot {
+                if let TaskState::Sleeping(wake_tick) = task.state {
+                    if current_ticks >= wake_tick {
+                        task.state = TaskState::Ready;
+                    }
+                }
+            }
+        }
 
         // Contabiliza tick de CPU e verifica quantum da tarefa atual
         let mut force_switch = false;
@@ -713,6 +734,7 @@ impl Scheduler {
                 TaskState::Ready        => "Pronto",
                 TaskState::Running      => "Executando",
                 TaskState::Blocked      => "Bloqueado",
+                TaskState::Sleeping(_)  => "Dormindo",
                 TaskState::WaitingOn(_) => "Esperando",
                 TaskState::Zombie       => "Zombie",
                 TaskState::Completed    => "Concluido",

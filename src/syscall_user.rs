@@ -262,3 +262,14 @@ pub unsafe fn sys_spawn_user(fn_ptr: usize) -> i64 {
 pub unsafe fn sys_waitpid(pid: u64) -> i64 {
     syscall3(10, pid, 0, 0)
 }
+
+// ── Syscall 11 — sleep ───────────────────────────────────────────────────────
+
+/// Coloca a tarefa atual em estado de dormência por pelo menos `ms` milissegundos.
+///
+/// Durante o sono, o escalonador remove a tarefa da fila de prontos,
+/// garantindo que ela consuma rigorosamente **0 ciclos de CPU**.
+#[inline(always)]
+pub unsafe fn sys_sleep(ms: u64) -> i64 {
+    syscall3(11, ms, 0, 0)
+}

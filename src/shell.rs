@@ -85,6 +85,9 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         // ── Interface Gráfica ─────────────────────────────────────────────────
         "gui" | "desktop" | "startx" => cmd_gui(w),
 
+        // ── Armazenamento / Discos ─────────────────────────────────────────────
+        "disk" | "disks" | "ata" => cmd_disk(w),
+
         // ── Sistema ───────────────────────────────────────────────────────────
         "reboot" => cmd_reboot(w),
 
@@ -116,6 +119,7 @@ fn cmd_help(w: &mut Writer) {
     w.write_line("  spawn <demo>   — inicia processo de usuario (hello|counter|ipc|wait)");
     w.write_line("  sched          — estatisticas do escalonador");
     w.write_line("  uptime         — ticks de timer desde o boot");
+    w.write_line("  disk           — detecta discos IDE/ATA e particoes MBR (alias: ata)");
     w.write_line("  gui            — inicia a interface grafica com janelas e mouse (alias: desktop)");
     w.write_line("  reboot         — reinicia o sistema (triple fault)");
     w.write_line("");
@@ -229,6 +233,7 @@ fn cmd_ps(w: &mut Writer) {
             scheduler::TaskState::Ready     => ("Pronto   ", Color::White),
             scheduler::TaskState::Running   => ("Executando", Color::LightGreen),
             scheduler::TaskState::Blocked   => ("Bloqueado", Color::LightRed),
+            scheduler::TaskState::Sleeping(_) => ("Dormindo ", Color::LightBlue),
             scheduler::TaskState::WaitingOn(_) => ("Esperando", Color::LightCyan),
             scheduler::TaskState::Zombie    => ("Zombie   ", Color::Yellow),
             scheduler::TaskState::Completed => ("Concluido", Color::DarkGray),
@@ -429,6 +434,116 @@ fn cmd_uptime(w: &mut Writer) {
     w.write_decimal(frac as usize);
     w.write_line("s a 100Hz)");
     w.set_color(Color::LightGray, Color::Black);
+}
+
+/// `disk` — Identifica e inspeciona discos IDE/ATA e tabela de particoes MBR.
+fn cmd_disk(w: &mut Writer) {
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_line("=== Sub-sistema de Armazenamento IDE/ATA (Primary Bus) ===");
+    w.set_color(Color::LightGray, Color::Black);
+
+    let mut found = 0;
+    for drive in 0..=1 {
+        let drive_name = if drive == 0 { "Master (0)" } else { "Slave (1)" };
+        w.set_color(Color::LightCyan, Color::Black);
+        w.write_string("IDE Primary ");
+        w.write_string(drive_name);
+        w.write_string(": ");
+
+        match crate::drivers::ide::identify(drive) {
+            Ok(info) => {
+                found += 1;
+                w.set_color(Color::LightGreen, Color::Black);
+                if info.is_atapi {
+                    w.write_string("Dispositivo ATAPI (CD-ROM/DVD)");
+                } else {
+                    w.write_string("Disco Rigido ATA");
+                }
+                w.write_line("");
+                w.set_color(Color::LightGray, Color::Black);
+
+                // Modelo
+                w.write_string("  Modelo   : ");
+                if let Ok(model_str) = core::str::from_utf8(&info.model) {
+                    w.write_line(model_str.trim());
+                } else {
+                    w.write_line("N/A");
+                }
+
+                // Serial
+                w.write_string("  Serial   : ");
+                if let Ok(ser_str) = core::str::from_utf8(&info.serial) {
+                    w.write_line(ser_str.trim());
+                } else {
+                    w.write_line("N/A");
+                }
+
+                // Capacidade
+                w.write_string("  Capacidade: ");
+                w.write_decimal(info.size_mb as usize);
+                w.write_string(" MB (");
+                w.write_decimal(info.sectors_lba28 as usize);
+                w.write_line(" setores LBA28)");
+
+                // Inspeciona MBR
+                match crate::drivers::ide::read_mbr(drive) {
+                    Ok(mbr) => {
+                        if mbr.is_valid {
+                            w.set_color(Color::LightCyan, Color::Black);
+                            w.write_line("  Particoes MBR (Setor 0 valido):");
+                            w.set_color(Color::LightGray, Color::Black);
+                            let mut part_count = 0;
+                            for (idx, part_opt) in mbr.partitions.iter().enumerate() {
+                                if let Some(part) = part_opt {
+                                    part_count += 1;
+                                    w.write_string("    [P");
+                                    w.write_decimal(idx + 1);
+                                    w.write_string("] ");
+                                    if part.bootable {
+                                        w.set_color(Color::LightGreen, Color::Black);
+                                        w.write_string("*BOOT* ");
+                                        w.set_color(Color::LightGray, Color::Black);
+                                    }
+                                    w.write_string(crate::drivers::ide::partition_type_name(part.partition_type));
+                                    w.write_string(" | LBA ");
+                                    w.write_decimal(part.start_lba as usize);
+                                    w.write_string("..+");
+                                    w.write_decimal(part.sector_count as usize);
+                                    w.write_string(" (");
+                                    w.write_decimal(part.size_mb as usize);
+                                    w.write_line(" MB)");
+                                }
+                            }
+                            if part_count == 0 {
+                                w.write_line("    (Nenhuma particao definida no MBR)");
+                            }
+                        } else {
+                            w.set_color(Color::DarkGray, Color::Black);
+                            w.write_line("  Setor 0: Sem assinatura de boot MBR (0x55AA)");
+                            w.set_color(Color::LightGray, Color::Black);
+                        }
+                    }
+                    Err(e) => {
+                        w.set_color(Color::LightRed, Color::Black);
+                        w.write_string("  Falha ao ler MBR: ");
+                        w.write_line(e);
+                        w.set_color(Color::LightGray, Color::Black);
+                    }
+                }
+            }
+            Err(e) => {
+                w.set_color(Color::DarkGray, Color::Black);
+                w.write_line(e);
+                w.set_color(Color::LightGray, Color::Black);
+            }
+        }
+    }
+
+    if found == 0 {
+        w.set_color(Color::DarkGray, Color::Black);
+        w.write_line("Nenhum drive IDE conectado no canal primario.");
+        w.set_color(Color::LightGray, Color::Black);
+    }
 }
 
 /// `reboot` — Reinicia via triple fault (técnica de debug em bare-metal).

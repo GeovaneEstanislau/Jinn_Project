@@ -23,6 +23,11 @@ unsafe fn sys_write(fd: u64, buf: *const u8, len: u64) -> i64 {
 }
 
 #[inline(always)]
+unsafe fn sys_sleep(ms: u64) -> i64 {
+    syscall3(11, ms, 0, 0)
+}
+
+#[inline(always)]
 unsafe fn sys_exit(code: i32) -> ! {
     loop {
         syscall3(0, code as u64, 0, 0);
@@ -31,9 +36,14 @@ unsafe fn sys_exit(code: i32) -> ! {
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    let msg = b"ola-mundo\n";
+    let msg1 = b"[U3] ola-mundo ativo em Ring 3!\n";
+    let msg2 = b"[U3] Entrando em sono (sys_sleep 500ms - 0% CPU)...\n";
+    let msg3 = b"[U3] Acordou com sucesso! Encerrando processo.\n";
     unsafe {
-        let _ = sys_write(1, msg.as_ptr(), msg.len() as u64);
+        let _ = sys_write(1, msg1.as_ptr(), msg1.len() as u64);
+        let _ = sys_write(1, msg2.as_ptr(), msg2.len() as u64);
+        let _ = sys_sleep(500);
+        let _ = sys_write(1, msg3.as_ptr(), msg3.len() as u64);
         sys_exit(0);
     }
 }

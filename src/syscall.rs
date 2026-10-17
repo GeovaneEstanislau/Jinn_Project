@@ -57,6 +57,7 @@ pub extern "C" fn syscall_dispatch(
         8  => sys_free_page(arg0 as u64),
         9  => sys_spawn(arg0, arg1 as *const u8, arg2),
         10 => sys_waitpid(arg0),
+        11 => sys_sleep(arg0),
         _  => ENOSYS,
     }
 }
@@ -223,6 +224,18 @@ fn sys_waitpid(pid: usize) -> isize {
         Some(code) => code as isize,
         None => EINVAL, // Tarefa não encontrada
     }
+}
+
+/// `sleep(ms)` — Coloca a tarefa atual em estado de dormência por pelo menos `ms` milissegundos.
+/// A tarefa consome rigorosamente 0 ciclos de CPU enquanto dorme.
+fn sys_sleep(ms: usize) -> isize {
+    // 100 Hz timer = 10 ms por tick
+    let ticks = (ms as u64 + 9) / 10;
+    let wake_tick = crate::timer::ticks().saturating_add(ticks);
+    let pid = scheduler::current_pid();
+    scheduler::get().sleep_task(pid, wake_tick);
+    sys_yield();
+    0
 }
 
 // ── Kernel-internal invoke ────────────────────────────────────────────────────
