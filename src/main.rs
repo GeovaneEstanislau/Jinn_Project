@@ -141,6 +141,15 @@ pub extern "C" fn _start() -> ! {
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
 
+    w.write_string("[+] Barramento PCI...");
+    drivers::pci::init();
+    w.set_color(Color::LightGreen, Color::Black);
+    w.write_line(" OK");
+    w.set_color(Color::LightGray, Color::Black);
+    w.write_string("    Dispositivos PCI   : ");
+    w.write_decimal(drivers::pci::device_count());
+    w.write_line(" encontrados");
+
     w.write_string("[+] IDE / ATA Controller...");
     drivers::ide::init();
     w.set_color(Color::LightGreen, Color::Black);

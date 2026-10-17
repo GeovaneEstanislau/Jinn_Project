@@ -85,14 +85,23 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
   - Identificação de drives via comando `0xEC` (IDENTIFY) com extração de modelo, serial e capacidade em MB.
   - Leitura de setores físicos LBA28 (512 bytes) e parsing de partições MBR (LBA 0).
   - Comando interativo `disk` no shell do kernel inspecionando o barramento primário.
-- [ ] **Drivers Adicionais**:
-  - Driver AHCI SATA para discos modernos.
-  - Detecção e enumeração de dispositivos no barramento PCI.
-- [ ] **Sistema de Arquivos**:
-  - Implementação de leitura em sistema de arquivos Ext2 ou FAT32.
+- [x] **Detecção e Enumeração do Barramento PCI (`src/drivers/pci.rs`)**:
+  - Varredura de barramentos PCI via Mecanismo de Configuração #1 (Portas `0xCF8` / `0xCFC`).
+  - Mapeamento de Vendor ID, Device ID, Classes (Storage, Network, Display, Bridge) e Base Address Registers (BARs).
+  - Comando interativo `lspci` (alias `pci`) no shell listando todos os dispositivos do sistema.
+- [x] **Sistema de Arquivos FAT32 (`src/vfs/fat32.rs`)**:
+  - Leitura do Boot Sector / BIOS Parameter Block (BPB) da partição.
+  - Navegação e encadeamento de clusters na tabela FAT32.
+  - Leitura e listagem de entradas de diretório no formato 8.3 e extração de atributos.
+  - Implementação completa do trait `vfs::FileSystem` permitindo leitura de arquivos e diretórios.
+- [x] **Integração com o VFS e Comandos de Shell**:
+  - Comando `mount_fat [lba]`: Montagem de partições FAT32 em `/disk`.
+  - Comando `ls [path]`: Listagem de arquivos e diretórios em qualquer caminho do VFS (`/`, `/dev`, `/disk`).
+  - Comando `cat <file>`: Leitura de conteúdo de arquivos texto em qualquer sistema de arquivos montado.
+  - Comando `mounts`: Exibição de todos os pontos de montagem ativos.
+- [ ] **Drivers Adicionais & Expansão de Armazenamento**:
+  - Driver AHCI SATA para discos modernos em modo DMA.
   - Reconhecimento de tabelas de partição GPT.
-- [ ] **Integração com o VFS**:
-  - Montagem de sistema de arquivos raiz (`/`).
   - Carregamento sob demanda de binários ELF a partir do disco (`/bin/`).
 
 ---

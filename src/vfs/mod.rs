@@ -7,6 +7,7 @@
 /// Mount table: up to MAX_MOUNTS filesystems can be mounted at once.
 /// Path resolution is prefix-based: the longest matching mount point wins.
 
+pub mod fat32;
 pub mod ramfs;
 
 use crate::memory::SpinLock;
@@ -178,4 +179,26 @@ pub fn write(path: &str, handle: u64, offset: u64, buf: &[u8]) -> VfsResult<usiz
     let table = MOUNTS.lock();
     let (fs, _) = table.resolve(path).ok_or(VfsError::NotFound)?;
     fs.write(handle, offset, buf)
+}
+
+pub fn readdir<F>(path: &str, mut cb: F) -> VfsResult<()>
+where
+    F: FnMut(&str, NodeType),
+{
+    let table = MOUNTS.lock();
+    let (fs, rel) = table.resolve(path).ok_or(VfsError::NotFound)?;
+    fs.readdir(rel, &mut cb);
+    Ok(())
+}
+
+pub fn list_mounts<F>(mut cb: F)
+where
+    F: FnMut(&str, &'static str),
+{
+    let table = MOUNTS.lock();
+    for e in table.entries.iter().flatten() {
+        if let Ok(prefix) = core::str::from_utf8(&e.prefix[..e.prefix_len]) {
+            cb(prefix, e.fs.name());
+        }
+    }
 }

@@ -88,6 +88,15 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         // ── Armazenamento / Discos ─────────────────────────────────────────────
         "disk" | "disks" | "ata" => cmd_disk(w),
 
+        // ── Barramento de Hardware ─────────────────────────────────────────────
+        "lspci" | "pci" => cmd_lspci(w),
+
+        // ── Sistema de Arquivos (VFS & FAT32) ──────────────────────────────────
+        "ls" | "dir" => cmd_ls(w, args),
+        "cat" => cmd_cat(w, args),
+        "mounts" => cmd_mounts(w),
+        "mount_fat" => cmd_mount_fat(w, args),
+
         // ── Sistema ───────────────────────────────────────────────────────────
         "reboot" => cmd_reboot(w),
 
@@ -120,6 +129,11 @@ fn cmd_help(w: &mut Writer) {
     w.write_line("  sched          — estatisticas do escalonador");
     w.write_line("  uptime         — ticks de timer desde o boot");
     w.write_line("  disk           — detecta discos IDE/ATA e particoes MBR (alias: ata)");
+    w.write_line("  lspci          — lista dispositivos no barramento PCI (alias: pci)");
+    w.write_line("  ls [path]      — lista conteudo de diretorio no VFS (ex: ls /dev)");
+    w.write_line("  cat <file>     — exibe conteudo de arquivo no VFS");
+    w.write_line("  mounts         — lista pontos de montagem ativos no VFS");
+    w.write_line("  mount_fat [lba]— monta particao FAT32 do disco em /disk");
     w.write_line("  gui            — inicia a interface grafica com janelas e mouse (alias: desktop)");
     w.write_line("  reboot         — reinicia o sistema (triple fault)");
     w.write_line("");
@@ -543,6 +557,220 @@ fn cmd_disk(w: &mut Writer) {
         w.set_color(Color::DarkGray, Color::Black);
         w.write_line("Nenhum drive IDE conectado no canal primario.");
         w.set_color(Color::LightGray, Color::Black);
+    }
+}
+
+/// `lspci` — Lista todos os dispositivos detectados no barramento PCI.
+fn cmd_lspci(w: &mut Writer) {
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_line("=== Dispositivos PCI Detectados (Config Space #1) ===");
+    w.set_color(Color::LightGray, Color::Black);
+
+    let devs = crate::drivers::pci::devices();
+    if devs.is_empty() {
+        w.write_line("Nenhum dispositivo PCI detectado.");
+        return;
+    }
+
+    for dev_opt in devs.iter() {
+        if let Some(dev) = dev_opt {
+            w.set_color(Color::DarkGray, Color::Black);
+            w.write_string("[");
+            if dev.bus < 10 { w.write_string("0"); }
+            w.write_decimal(dev.bus as usize);
+            w.write_string(":");
+            if dev.slot < 10 { w.write_string("0"); }
+            w.write_decimal(dev.slot as usize);
+            w.write_string(".");
+            w.write_decimal(dev.func as usize);
+            w.write_string("] ");
+
+            w.set_color(Color::LightCyan, Color::Black);
+            w.write_hex_u16(dev.vendor_id);
+            w.write_string(":");
+            w.write_hex_u16(dev.device_id);
+            w.write_string(" ");
+
+            w.set_color(Color::White, Color::Black);
+            w.write_string(crate::drivers::pci::class_name(dev.class_code, dev.subclass));
+
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_string(" (");
+            w.write_string(crate::drivers::pci::vendor_name(dev.vendor_id));
+            w.write_line(")");
+
+            w.set_color(Color::LightGray, Color::Black);
+        }
+    }
+}
+
+/// `ls` — Lista o conteúdo de um diretório no VFS.
+fn cmd_ls(w: &mut Writer, args: &str) {
+    let path = if args.is_empty() { "/" } else { args };
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_string("Conteudo de ");
+    w.write_string(path);
+    w.write_line(":");
+    w.set_color(Color::LightGray, Color::Black);
+
+    let mut count = 0;
+    let res = crate::vfs::readdir(path, |name, node_type| {
+        count += 1;
+        match node_type {
+            crate::vfs::NodeType::Directory => {
+                w.set_color(Color::LightCyan, Color::Black);
+                w.write_string("  [DIR]  ");
+                w.write_string(name);
+                w.write_line("/");
+            }
+            crate::vfs::NodeType::CharDevice | crate::vfs::NodeType::BlockDevice => {
+                w.set_color(Color::Yellow, Color::Black);
+                w.write_string("  [DEV]  ");
+                w.write_line(name);
+            }
+            _ => {
+                w.set_color(Color::White, Color::Black);
+                w.write_string("  [FILE] ");
+                w.write_line(name);
+            }
+        }
+        w.set_color(Color::LightGray, Color::Black);
+    });
+
+    if let Err(e) = res {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string("Erro ao listar diretorio: ");
+        w.write_line(match e {
+            crate::vfs::VfsError::NotFound => "Caminho nao encontrado",
+            crate::vfs::VfsError::NotADirectory => "Nao e um diretorio",
+            _ => "Falha de VFS / I/O",
+        });
+        w.set_color(Color::LightGray, Color::Black);
+    } else if count == 0 {
+        w.set_color(Color::DarkGray, Color::Black);
+        w.write_line("  (Diretorio vazio)");
+        w.set_color(Color::LightGray, Color::Black);
+    }
+}
+
+/// `cat` — Exibe o conteúdo de um arquivo de texto no VFS.
+fn cmd_cat(w: &mut Writer, args: &str) {
+    if args.is_empty() {
+        w.set_color(Color::Yellow, Color::Black);
+        w.write_line("Uso: cat <caminho_do_arquivo>");
+        w.set_color(Color::LightGray, Color::Black);
+        return;
+    }
+
+    match crate::vfs::open(args, crate::vfs::O_RDONLY) {
+        Ok(handle) => {
+            let mut buf = [0u8; 512];
+            let mut offset = 0u64;
+            loop {
+                match crate::vfs::read(args, handle, offset, &mut buf) {
+                    Ok(0) => break, // EOF
+                    Ok(n) => {
+                        for &byte in &buf[..n] {
+                            w.write_byte(byte);
+                        }
+                        offset += n as u64;
+                    }
+                    Err(_) => {
+                        w.set_color(Color::LightRed, Color::Black);
+                        w.write_line("\n[Erro de leitura]");
+                        w.set_color(Color::LightGray, Color::Black);
+                        break;
+                    }
+                }
+            }
+            let _ = crate::vfs::close(args, handle);
+        }
+        Err(e) => {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_string("Erro ao abrir arquivo '");
+            w.write_string(args);
+            w.write_string("': ");
+            w.write_line(match e {
+                crate::vfs::VfsError::NotFound => "Nao encontrado",
+                crate::vfs::VfsError::IsADirectory => "E um diretorio",
+                _ => "Erro de acesso",
+            });
+            w.set_color(Color::LightGray, Color::Black);
+        }
+    }
+}
+
+/// `mounts` — Lista pontos de montagem no VFS.
+fn cmd_mounts(w: &mut Writer) {
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_line("=== Pontos de Montagem do VFS ===");
+    w.set_color(Color::LightGray, Color::Black);
+
+    crate::vfs::list_mounts(|prefix, fs_name| {
+        w.set_color(Color::LightCyan, Color::Black);
+        w.write_string("  ");
+        w.write_string(prefix);
+        w.set_color(Color::DarkGray, Color::Black);
+        w.write_string(" -> tipo: ");
+        w.set_color(Color::White, Color::Black);
+        w.write_line(fs_name);
+        w.set_color(Color::LightGray, Color::Black);
+    });
+}
+
+/// `mount_fat` — Monta partição FAT32 do disco em /disk.
+fn cmd_mount_fat(w: &mut Writer, args: &str) {
+    let drive = 0u8; // Primary Master
+    let mut target_lba = 0u32;
+
+    if !args.is_empty() {
+        let mut val = 0u32;
+        let mut valid = false;
+        for b in args.bytes() {
+            if (b'0'..=b'9').contains(&b) {
+                val = val * 10 + (b - b'0') as u32;
+                valid = true;
+            } else {
+                valid = false;
+                break;
+            }
+        }
+        if valid {
+            target_lba = val;
+        }
+    } else {
+        match crate::drivers::ide::read_mbr(drive) {
+            Ok(mbr) if mbr.is_valid => {
+                for part_opt in mbr.partitions.iter().flatten() {
+                    if part_opt.partition_type == 0x0B || part_opt.partition_type == 0x0C {
+                        target_lba = part_opt.start_lba;
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    w.set_color(Color::LightCyan, Color::Black);
+    w.write_string("Montando FAT32 no Drive 0, LBA ");
+    w.write_decimal(target_lba as usize);
+    w.write_line(" em /disk...");
+    w.set_color(Color::LightGray, Color::Black);
+
+    match crate::vfs::fat32::mount_fat32_partition("/disk", drive, target_lba) {
+        Ok(()) => {
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_line("[OK] Volume FAT32 montado com sucesso em /disk!");
+            w.set_color(Color::LightGray, Color::Black);
+            w.write_line("Use 'ls /disk' para ver os arquivos.");
+        }
+        Err(e) => {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_string("[Falha] ");
+            w.write_line(e);
+            w.set_color(Color::LightGray, Color::Black);
+        }
     }
 }
 
