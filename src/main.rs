@@ -14,6 +14,7 @@ pub mod gdt;
 pub mod gui;
 pub mod interrupts;
 pub mod ipc;
+pub mod jda;
 pub mod keyboard_buffer;
 pub mod limine;
 pub mod memory;
@@ -200,6 +201,16 @@ pub extern "C" fn _start() -> ! {
     ipc::register(0);
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
+    w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string("[+] JDA Engine (Dataflow Architecture)...");
+    if jda::init().is_ok() {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_line(" OK");
+    } else {
+        w.set_color(Color::Yellow, Color::Black);
+        w.write_line(" WARN (Desativado)");
+    }
     w.set_color(Color::LightGray, Color::Black);
 
     w.write_string("[+] Escalonador e Processos...");

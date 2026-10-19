@@ -143,6 +143,27 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
 
 ---
 
+## 🧬 Linha de Pesquisa: Jinn Dataflow Architecture (JDA — Em Andamento 🚧)
+
+Investigação experimental para eliminar movimentação desnecessária de dados, contenção de recursos e ociosidade da CPU por meio de grafos dirigidos por dados, transferências zero-copy e observabilidade de ciclos de clock.
+
+- [x] **Fase 0 — Auditoria Técnica e Diagnóstico**:
+  - Auditoria completa dos componentes de memória, escalonador, IPC, VFS e drivers.
+  - Mapeamento de gargalos de cópia e polling síncrono.
+- [x] **Fase 1 — Especificação v0.1 & Modelo de Dados**:
+  - [Especificação Técnica Formal v0.1](docs/JDA_SPEC_V0.1.md) cobrindo DAGs, invariâncias, confiança de hardware e políticas.
+  - Modelo de Topologia de Hardware (`src/jda/topology.rs`): detecção de cores e hierarquia de caches L1/L2/L3 via CPUID.
+  - Grafo Acíclico Dirigido (`src/jda/graph.rs`): resolução de dependências por bitmask e descritores de buffer zero-copy.
+  - Motor de Telemetria (`src/jda/telemetry.rs`): contadores de ciclos TSC (`rdtsc`), bytes poupados e latência.
+  - Políticas Substituíveis (`src/jda/policy.rs`): política FIFO de referência e política adaptativa orientada à localidade.
+  - Comandos interativos no shell do kernel: `jda` e `jdabench`.
+- [ ] **Fase 2 — Protótipo de Referência e Cargas Sintéticas**:
+  - Suite de benchmark sintético comparando classes de trabalho (computação pura, acessos sequenciais/aleatórios e dependências).
+- [ ] **Fase 3 — Integração Inicial e Anéis Assíncronos no Microkernel**:
+  - Anéis de submissão e conclusão lock-free no padrão *io_uring* para desacoplar I/O de disco da execução de CPU.
+
+---
+
 ## 🤝 Como Participar e Ajudar
 
 Nós valorizamos cada pessoa interessada em sistemas operacionais, Rust e computação de baixo nível!
