@@ -178,6 +178,24 @@ pub extern "C" fn _start() -> ! {
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
 
+    // Auto-detecta e monta partição FAT32 do disco primário IDE em /disk
+    if let Ok(mbr) = drivers::ide::read_mbr(0) {
+        if mbr.is_valid {
+            for part_opt in mbr.partitions.iter() {
+                if let Some(part) = part_opt {
+                    if part.partition_type == 0x0B || part.partition_type == 0x0C {
+                        if vfs::fat32::mount_fat32_partition("/disk", 0, part.start_lba).is_ok() {
+                            w.write_string("    Auto-montado FAT32 em /disk (LBA ");
+                            w.write_decimal(part.start_lba as usize);
+                            w.write_line(")");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     w.write_string("[+] IPC...");
     ipc::register(0);
     w.set_color(Color::LightGreen, Color::Black);

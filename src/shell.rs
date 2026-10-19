@@ -32,6 +32,7 @@ use crate::keyboard_buffer;
 use crate::memory;
 use crate::scheduler;
 use crate::timer;
+use crate::vfs;
 use crate::vga::{Color, Writer};
 
 const MAX_LINE: usize = 128;
@@ -273,37 +274,111 @@ fn cmd_ps(w: &mut Writer) {
     w.set_color(Color::LightGray, Color::Black);
 }
 
-/// `spawn <demo>` — Inicia um processo de usuário a partir do módulo ELF carregado.
+/// `spawn <arquivo.elf | caminho | nome>` — Inicia um processo de usuário a partir do VFS ou módulo ELF.
 fn cmd_spawn(w: &mut Writer, args: &str) {
-    let kind = args.trim();
-    if kind.is_empty() {
+    let target = args.trim();
+    if target.is_empty() {
         w.set_color(Color::LightRed, Color::Black);
-        w.write_line("Uso: spawn <nome>  (ex: spawn ola-mundo)");
+        w.write_line("Uso: spawn <arquivo.elf | caminho | nome>");
+        w.write_line("  Ex: spawn /disk/ola.elf");
+        w.write_line("      spawn /disk/ola-mundo.elf");
+        w.write_line("      spawn ola-mundo");
         w.set_color(Color::LightGray, Color::Black);
         return;
     }
 
-    // Buscar o módulo ELF carregado pelo Limine
-    let elf_data = match crate::limine::get_module(0) {
-        Some(data) => data,
-        None => {
-            w.set_color(Color::LightRed, Color::Black);
-            w.write_line("[ERRO] Nenhum modulo ELF carregado pelo bootloader.");
-            w.set_color(Color::LightGray, Color::Black);
-            return;
+    // Buffer estático de carregamento de binários ELF do VFS (até 64 KiB)
+    static mut ELF_LOAD_BUF: [u8; 64 * 1024] = [0u8; 64 * 1024];
+    let mut loaded_via_vfs = false;
+    let mut elf_len = 0;
+
+    // 1. Se começa com '/', tenta carregar diretamente do caminho absoluto no VFS
+    if target.starts_with('/') {
+        unsafe {
+            let buf_ptr = core::ptr::addr_of_mut!(ELF_LOAD_BUF);
+            if let Ok(n) = vfs::read_file(target, &mut (*buf_ptr)) {
+                elf_len = n;
+                loaded_via_vfs = true;
+            }
+        }
+    } else {
+        // Tenta buscar no ponto de montagem /disk/
+        let mut path_buf = [0u8; 64];
+        let base = b"/disk/";
+        let mut idx = 0;
+        for &b in base {
+            path_buf[idx] = b;
+            idx += 1;
+        }
+        for b in target.bytes() {
+            if idx < path_buf.len() - 5 {
+                path_buf[idx] = b;
+                idx += 1;
+            }
+        }
+        if let Ok(p) = core::str::from_utf8(&path_buf[..idx]) {
+            unsafe {
+                let buf_ptr = core::ptr::addr_of_mut!(ELF_LOAD_BUF);
+                if let Ok(n) = vfs::read_file(p, &mut (*buf_ptr)) {
+                    elf_len = n;
+                    loaded_via_vfs = true;
+                }
+            }
+        }
+        if !loaded_via_vfs {
+            // Tenta adicionar a extensão .elf
+            let mut idx2 = idx;
+            for &b in b".elf" {
+                if idx2 < path_buf.len() {
+                    path_buf[idx2] = b;
+                    idx2 += 1;
+                }
+            }
+            if let Ok(p2) = core::str::from_utf8(&path_buf[..idx2]) {
+                unsafe {
+                    let buf_ptr = core::ptr::addr_of_mut!(ELF_LOAD_BUF);
+                    if let Ok(n) = vfs::read_file(p2, &mut (*buf_ptr)) {
+                        elf_len = n;
+                        loaded_via_vfs = true;
+                    }
+                }
+            }
+        }
+    }
+
+    let sched = scheduler::get();
+    let pid = if loaded_via_vfs {
+        let elf_slice = unsafe {
+            let buf_ptr = core::ptr::addr_of!(ELF_LOAD_BUF);
+            core::slice::from_raw_parts((*buf_ptr).as_ptr(), elf_len)
+        };
+        w.set_color(Color::LightCyan, Color::Black);
+        w.write_string("[VFS] Executavel carregado do disco: ");
+        w.write_decimal(elf_len);
+        w.write_line(" bytes");
+        sched.add_user_task("disk-app[U3]", elf_slice)
+    } else {
+        // Fallback: carregar módulo ELF injetado pelo bootloader Limine
+        match crate::limine::get_module(0) {
+            Some(data) => {
+                let name = match target {
+                    "hello" | "ola" | "ola-mundo" => "ola-mundo[U3]",
+                    _ => "user-app[U3]",
+                };
+                sched.add_user_task(name, data)
+            }
+            None => {
+                w.set_color(Color::LightRed, Color::Black);
+                w.write_line("[ERRO] Arquivo nao encontrado no VFS e nenhum modulo no bootloader.");
+                w.set_color(Color::LightGray, Color::Black);
+                return;
+            }
         }
     };
 
-    let name: &'static str = match kind {
-        "hello" | "ola" | "ola-mundo" => "ola-mundo[U3]",
-        _ => "user-app[U3]",
-    };
-
-    let sched = scheduler::get();
-    let pid = sched.add_user_task(name, elf_data);
     if pid == 0 {
         w.set_color(Color::LightRed, Color::Black);
-        w.write_line("[ERRO] Falha ao carregar processo ELF.");
+        w.write_line("[ERRO] Falha ao carregar processo ELF para Ring 3.");
         w.set_color(Color::LightGray, Color::Black);
         return;
     }
@@ -312,9 +387,7 @@ fn cmd_spawn(w: &mut Writer, args: &str) {
     w.set_color(Color::LightGreen, Color::Black);
     w.write_string("[OK] Processo de usuario criado: PID=");
     w.write_decimal(pid);
-    w.write_string(" (");
-    w.write_string(name);
-    w.write_line(")");
+    w.write_line("");
     w.set_color(Color::LightGray, Color::Black);
 }
 

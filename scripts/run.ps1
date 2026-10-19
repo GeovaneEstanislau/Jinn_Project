@@ -304,11 +304,18 @@ if (-not $NoRun) {
         Write-Error "qemu-system-x86_64 não encontrado. Adicione o QEMU ao PATH."
         exit 1
     }
-    & $qemu `
-        -cdrom  $isoPath `
-        -m      512M `
-        -serial stdio `
-        -display sdl
+    $diskImg = Join-Path $projectRoot "disk.img"
+    $qemuArgs = @(
+        "-boot", "order=d",
+        "-cdrom", $isoPath,
+        "-m", "512M",
+        "-serial", "stdio"
+    )
+    if (Test-Path $diskImg) {
+        Write-Host "Conectando disco virtual FAT32 ($diskImg)..."
+        $qemuArgs += @("-drive", "file=$diskImg,format=raw,index=0,media=disk")
+    }
+    & $qemu @qemuArgs
 } else {
     Write-Host "ISO gerada; execução do QEMU ignorada por -NoRun."
 }

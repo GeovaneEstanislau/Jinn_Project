@@ -53,4 +53,11 @@ $isoAppsDir = Join-Path -Path (Get-Location) "iso_root\apps"
 New-Item -ItemType Directory -Force -Path $isoAppsDir | Out-Null
 Copy-Item -Path $appElfPath -Destination (Join-Path $isoAppsDir "ola-mundo.elf") -Force
 
-Write-Host "Build completed. Kernel and Apps copied to iso_root"
+# --- Gera imagem de disco virtual FAT32 com MBR ---
+$makeDiskScript = Join-Path -Path (Get-Location) "scripts\make_disk.ps1"
+if (Test-Path $makeDiskScript) {
+    Write-Host "Gerando imagem de disco virtual FAT32 (disk.img)..."
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $makeDiskScript
+}
+
+Write-Host "Build completed. Kernel, Apps e Disco FAT32 prontos!"

@@ -12,7 +12,7 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
 * **Fase 1 (Concluída ✅)**: Fundação do Microkernel, Paginação PML4, Preempção com APIC Timer, Syscalls via `int 0x80`, IPC lock-free, Carregador ELF64 e Isolamento Real em Ring 3.
 * **Fase 2 (Concluída ✅)**: Primitivas 2D, Driver de Mouse PS/2, Renderização de Cursor, Double Buffering, Compositor de Janelas e Terminal Interativo ([Issue #32](https://github.com/GeovaneEstanislau/Jinn_Project/issues/32)).
 * **Fase 3 (Em Andamento 🚧)**: Driver de Disco (IDE/ATA PIO Mode), MBR, Sistema de Arquivos (Ext2/FAT32) e montagem VFS ([Issue #30](https://github.com/GeovaneEstanislau/Jinn_Project/issues/30)).
-* **Fase 4 (Em Andamento 🚧)**: Melhorias de DX, scripts de build multiplataforma e CI no GitHub Actions ([Issue #31](https://github.com/GeovaneEstanislau/Jinn_Project/issues/31) e [Issue #33](https://github.com/GeovaneEstanislau/Jinn_Project/issues/33)).
+* **Fase 4 (Concluída ✅)**: Melhorias de DX, scripts de build multiplataforma (Makefile/PS1) e CI no GitHub Actions ([Issue #31](https://github.com/GeovaneEstanislau/Jinn_Project/issues/31) e [Issue #33](https://github.com/GeovaneEstanislau/Jinn_Project/issues/33)).
 * **Fase 5 (Futuro 📋)**: Suporte a SMP (Multiprocessamento), Driver de Rede (e1000/VirtIO) e Stack TCP/IP em Ring 3 ([Issue #34](https://github.com/GeovaneEstanislau/Jinn_Project/issues/34) e [Issue #35](https://github.com/GeovaneEstanislau/Jinn_Project/issues/35)).
 
 ---
@@ -99,26 +99,28 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
   - Comando `ls [path]`: Listagem de arquivos e diretórios em qualquer caminho do VFS (`/`, `/dev`, `/disk`).
   - Comando `cat <file>`: Leitura de conteúdo de arquivos texto em qualquer sistema de arquivos montado.
   - Comando `mounts`: Exibição de todos os pontos de montagem ativos.
+  - **Auto-montagem no boot**: Detecção automática de partições FAT32 (tipos `0x0B` e `0x0C`) e montagem em `/disk`.
+  - **Carregamento dinâmico de binários ELF do disco/VFS**: Comando `spawn` e GUI agora leem arquivos executáveis diretamente de `/disk` (`spawn /disk/ola.elf`), com alocação e isolamento em Ring 3.
+  - **Gerador de Disco Virtual FAT32**: Scripts multiplataforma (`scripts/make_disk.ps1` e `scripts/make_disk.py`) que geram discos RAW de 32 MiB com MBR e arquivos de teste para o QEMU.
 - [ ] **Drivers Adicionais & Expansão de Armazenamento**:
   - Driver AHCI SATA para discos modernos em modo DMA.
   - Reconhecimento de tabelas de partição GPT.
-  - Carregamento sob demanda de binários ELF a partir do disco (`/bin/`).
 
 ---
 
-## 🛠️ Fase 4: Experiência de Desenvolvimento (DX) & Automação (Em Andamento 🚧)
+## 🛠️ Fase 4: Experiência de Desenvolvimento (DX) & Automação (Concluída ✅)
 
-> 📌 **Discussão e Colaboração:** Participe nas issues:
+> 📌 **Discussão e Colaboração:** Concluída nas issues:
 > - [Issue #31: Padronizar o sistema de build (Scripts vs Make/Cargo-make)](https://github.com/GeovaneEstanislau/Jinn_Project/issues/31)
 > - [Issue #33: Configurar GitHub Actions para CI e geração da ISO](https://github.com/GeovaneEstanislau/Jinn_Project/issues/33)
 
-- [x] Scripts PowerShell automatizados (`scripts/build.ps1`, `scripts/run.ps1`) com suporte a `xorriso`.
-- [ ] **Makefile Multiplataforma / `cargo-make`**:
-  - Suporte suave para desenvolvedores no Linux, macOS e Windows.
-- [ ] **Pipeline de CI/CD no GitHub Actions (`.github/workflows/ci.yml`)**:
+- [x] **Scripts PowerShell automatizados** (`scripts/build.ps1`, `scripts/run.ps1`) com suporte a `xorriso`, `limine.exe bios-install` e discos virtuais.
+- [x] **Makefile Multiplataforma (`Makefile`)**:
+  - Suporte completo para desenvolvedores no Linux, macOS e WSL (`make kernel`, `make app`, `make disk`, `make iso`, `make run`, `make clean`).
+- [x] **Pipeline de CI/CD no GitHub Actions (`.github/workflows/ci.yml`)**:
   - Validação contínua da compilação do kernel (`cargo build --release`).
   - Validação de build das aplicações de usuário (`apps/ola-mundo`).
-  - Geração automática e disponibilização de artefatos da ISO (`jinn.iso`) em releases e PRs.
+  - Geração automática e disponibilização dos artefatos `jinn.iso` e `disk.img` em cada commit e Pull Request.
 
 ---
 

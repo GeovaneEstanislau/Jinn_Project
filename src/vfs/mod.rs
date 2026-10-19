@@ -202,3 +202,23 @@ where
         }
     }
 }
+
+/// Lê todo o conteúdo de um arquivo do VFS para o buffer fornecido.
+/// Retorna o número total de bytes lidos.
+pub fn read_file(path: &str, buf: &mut [u8]) -> VfsResult<usize> {
+    let stat = stat(path)?;
+    if stat.node_type != NodeType::File {
+        return Err(VfsError::IsADirectory);
+    }
+    let handle = open(path, O_RDONLY)?;
+    let mut total = 0;
+    while total < buf.len() {
+        let n = read(path, handle, total as u64, &mut buf[total..])?;
+        if n == 0 {
+            break;
+        }
+        total += n;
+    }
+    let _ = close(path, handle);
+    Ok(total)
+}

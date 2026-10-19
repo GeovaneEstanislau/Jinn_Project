@@ -943,9 +943,25 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) {
 fn spawn_user_app() {
     unsafe {
         let wm = &mut *core::ptr::addr_of_mut!(WM);
-        if let Some(elf_data) = crate::limine::get_module(0) {
-            let sched = crate::scheduler::get();
-            let pid = sched.add_user_task("ola-mundo[U3]", elf_data);
+        static mut GUI_ELF_BUF: [u8; 64 * 1024] = [0u8; 64 * 1024];
+        let sched = crate::scheduler::get();
+
+        let mut vfs_len = 0;
+        let buf_ptr = core::ptr::addr_of_mut!(GUI_ELF_BUF);
+        if let Ok(n) = crate::vfs::read_file("/disk/ola.elf", &mut (*buf_ptr)) {
+            vfs_len = n;
+        } else if let Ok(n) = crate::vfs::read_file("/disk/ola-mundo.elf", &mut (*buf_ptr)) {
+            vfs_len = n;
+        }
+
+        let elf_data: Option<&[u8]> = if vfs_len > 0 {
+            Some(core::slice::from_raw_parts((*buf_ptr).as_ptr(), vfs_len))
+        } else {
+            crate::limine::get_module(0)
+        };
+
+        if let Some(data) = elf_data {
+            let pid = sched.add_user_task("ola-mundo[U3]", data);
             if pid > 0 {
                 crate::ipc::register(pid);
                 wm.spawn_count += 1;
