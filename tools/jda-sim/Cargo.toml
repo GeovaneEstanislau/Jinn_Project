@@ -1,0 +1,7 @@
+[package]
+name = "jda-sim"
+version = "0.1.0"
+edition = "2021"
+description = "JDA (Jinn Dataflow Architecture) User-Space Reference Prototype & Benchmark Harness"
+
+[dependencies]

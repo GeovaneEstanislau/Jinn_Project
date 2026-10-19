@@ -33,6 +33,11 @@ jobs:
         run: |
           cargo build --release --target x86_64-unknown-none -Zbuild-std=core,alloc
 
+      - name: Run JDA (Jinn Dataflow Architecture) Simulator & Verification Tests
+        run: |
+          cargo test --manifest-path tools/jda-sim/Cargo.toml
+          cargo run --manifest-path tools/jda-sim/Cargo.toml
+
       - name: Build Ring 3 User Application (ola-mundo)
         run: |
           cd apps/ola-mundo

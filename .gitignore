@@ -1,6 +1,7 @@
 # Rust build artifacts
 /target/
 /apps/**/target/
+/tools/**/target/
 
 # Boot image artifacts
 *.iso

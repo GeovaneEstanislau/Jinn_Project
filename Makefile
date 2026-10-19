@@ -13,7 +13,7 @@ DISK_IMG = disk.img
 
 LIMINE_BRANCH ?= v8.x-binary
 
-.PHONY: all kernel app disk iso run clean help
+.PHONY: all kernel app disk iso run clean help jda-sim test-jda
 
 all: iso disk
 
@@ -23,6 +23,8 @@ help:
 	@echo "  make app      - Compila a aplicação de usuário ola-mundo (Ring 3)"
 	@echo "  make disk     - Gera o disco virtual FAT32 (disk.img)"
 	@echo "  make iso      - Gera a imagem ISO híbrida inicializável (jinn.iso) com Limine"
+	@echo "  make jda-sim  - Executa a suíte de benchmark do Jinn Dataflow Architecture"
+	@echo "  make test-jda - Executa os testes de verificação e corretude do JDA"
 	@echo "  make run      - Inicia o QEMU com a ISO e o disco virtual FAT32"
 	@echo "  make clean    - Remove artefatos de compilação e imagens geradas"
 
@@ -76,6 +78,14 @@ iso: kernel app limine
 run: all
 	@echo "[+] Iniciando QEMU com Jinn OS..."
 	$(QEMU) -boot order=d -cdrom $(ISO) -drive file=$(DISK_IMG),format=raw,index=0,media=disk -m 512M -serial stdio
+
+jda-sim:
+	@echo "[+] Executando benchmark do Jinn Dataflow Architecture (JDA)..."
+	$(CARGO) run --manifest-path tools/jda-sim/Cargo.toml
+
+test-jda:
+	@echo "[+] Executando testes unitários e de integração do JDA..."
+	$(CARGO) test --manifest-path tools/jda-sim/Cargo.toml
 
 clean:
 	@echo "[+] Limpando diretórios de build..."
