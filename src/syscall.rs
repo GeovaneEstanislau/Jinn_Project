@@ -60,6 +60,7 @@ pub extern "C" fn syscall_dispatch(
         11 => sys_sleep(arg0),
         12 => sys_jda_shm_alloc(arg0 != 0),
         13 => sys_jda_shm_release(arg0),
+        14 => sys_jda_submit(arg0, arg1, arg2),
         _  => ENOSYS,
     }
 }
@@ -258,6 +259,56 @@ fn sys_jda_shm_release(handle: usize) -> isize {
         Ok(()) => 0,
         Err(_) => EINVAL,
     }
+}
+
+/// `sys_jda_submit(job_type, handle, len)` — Submete um job de processamento de fluxo de dados (JDA).
+/// Processa o buffer físico Zero-Copy identificado por `handle` sem duplicar memória.
+/// Retorna o resultado numérico do processamento (ex: checksum ou soma acumulada) ou erro negativo.
+fn sys_jda_submit(job_type: usize, handle: usize, len: usize) -> isize {
+    let pool = crate::jda::shmem::SHARED_BUFFER_POOL.lock();
+    let phys = match pool.get_phys_addr(handle) {
+        Some(p) => p,
+        None => return EINVAL,
+    };
+    let data_len = len.min(4096);
+    let virt = crate::memory::paging::phys_to_virt(phys) as *mut u8;
+
+    let res = match job_type {
+        // Job 1: Checksum Fletcher32
+        1 => {
+            let slice = unsafe { core::slice::from_raw_parts(virt as *const u8, data_len) };
+            let mut c0 = 0u32;
+            let mut c1 = 0u32;
+            for &b in slice {
+                c0 = (c0 + b as u32) % 255;
+                c1 = (c1 + c0) % 255;
+            }
+            ((c1 << 8) | c0) as isize
+        }
+        // Job 2: Acumulador de bytes (Soma)
+        2 => {
+            let slice = unsafe { core::slice::from_raw_parts(virt as *const u8, data_len) };
+            let mut sum: u32 = 0;
+            for &b in slice {
+                sum = sum.wrapping_add(b as u32);
+            }
+            sum as isize
+        }
+        // Job 3: Transformação XOR in-place com chave 0x5A
+        3 => {
+            let slice = unsafe { core::slice::from_raw_parts_mut(virt, data_len) };
+            for b in slice.iter_mut() {
+                *b ^= 0x5A;
+            }
+            data_len as isize
+        }
+        _ => return ENOSYS,
+    };
+
+    crate::jda::telemetry::record_data_transfer(data_len, true);
+    crate::jda::telemetry::record_operation_completed(100);
+
+    res
 }
 
 // ── Kernel-internal invoke ────────────────────────────────────────────────────

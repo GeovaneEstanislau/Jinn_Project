@@ -38,6 +38,11 @@ unsafe fn sys_jda_shm_release(handle: u64) -> i64 {
 }
 
 #[inline(always)]
+unsafe fn sys_jda_submit(job_type: u64, handle: u64, len: u64) -> i64 {
+    syscall3(14, job_type, handle, len)
+}
+
+#[inline(always)]
 unsafe fn sys_exit(code: i32) -> ! {
     loop {
         syscall3(0, code as u64, 0, 0);
@@ -48,9 +53,10 @@ unsafe fn sys_exit(code: i32) -> ! {
 pub extern "C" fn _start() -> ! {
     let msg1 = b"[U3] ola-mundo ativo em Ring 3!\n";
     let msg2 = b"[U3] Solicitando buffer JDA Zero-Copy (Syscall 12 alloc)...\n";
-    let msg3 = b"[U3] Buffer alocado! Liberando (Syscall 13 release)...\n";
-    let msg4 = b"[U3] JDA Zero-Copy validado! Entrando em sono (500ms)...\n";
-    let msg5 = b"[U3] Acordou com sucesso! Encerrando processo.\n";
+    let msg3 = b"[U3] Submetendo Job JDA Zero-Copy (Syscall 14: Fletcher32 Checksum)...\n";
+    let msg4 = b"[U3] Job JDA processado com sucesso! Liberando (Syscall 13 release)...\n";
+    let msg5 = b"[U3] Pipeline JDA Zero-Copy validado! Entrando em sono (500ms)...\n";
+    let msg6 = b"[U3] Acordou com sucesso! Encerrando processo.\n";
     unsafe {
         let _ = sys_write(1, msg1.as_ptr(), msg1.len() as u64);
         let _ = sys_write(1, msg2.as_ptr(), msg2.len() as u64);
@@ -58,12 +64,16 @@ pub extern "C" fn _start() -> ! {
         let handle = sys_jda_shm_alloc(false);
         if handle >= 0 {
             let _ = sys_write(1, msg3.as_ptr(), msg3.len() as u64);
+            let checksum = sys_jda_submit(1, handle as u64, 512);
+            if checksum >= 0 {
+                let _ = sys_write(1, msg4.as_ptr(), msg4.len() as u64);
+            }
             let _ = sys_jda_shm_release(handle as u64);
-            let _ = sys_write(1, msg4.as_ptr(), msg4.len() as u64);
+            let _ = sys_write(1, msg5.as_ptr(), msg5.len() as u64);
         }
 
         let _ = sys_sleep(500);
-        let _ = sys_write(1, msg5.as_ptr(), msg5.len() as u64);
+        let _ = sys_write(1, msg6.as_ptr(), msg6.len() as u64);
         sys_exit(0);
     }
 }

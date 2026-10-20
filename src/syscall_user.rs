@@ -291,3 +291,14 @@ pub unsafe fn sys_jda_shm_alloc(is_read_only: bool) -> i64 {
 pub unsafe fn sys_jda_shm_release(handle: u64) -> i64 {
     syscall3(13, handle, 0, 0)
 }
+
+// ── Syscall 14 — jda_submit ──────────────────────────────────────────────────
+
+/// Submete um trabalho de fluxo de dados Zero-Copy diretamente sobre um buffer físico do JDA.
+///
+/// `job_type`: 1 = Fletcher32 Checksum, 2 = Acumulador, 3 = Transformação In-place XOR.
+/// Retorna o resultado numérico do kernel, ou código de erro negativo.
+#[inline(always)]
+pub unsafe fn sys_jda_submit(job_type: u64, handle: u64, len: u64) -> i64 {
+    syscall3(14, job_type, handle, len)
+}

@@ -907,24 +907,52 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
                     fill_rect_bb(files_box_x, files_box_y, files_box_w, files_box_h, COLOR_ALADDIN_CARD_ALT);
                     draw_rect_outline_bb(files_box_x, files_box_y, files_box_w, files_box_h, COLOR_ALADDIN_BORDER);
 
-                    draw_string_bb("[TXT] README.TXT       1.2 KB  (Documento)", files_box_x + 12, files_box_y + 12, COLOR_ALADDIN_TEXT_PRI, Some(COLOR_ALADDIN_CARD_ALT));
-                    draw_string_bb("[ELF] OLA.ELF         18.4 KB  (Binario U3)", files_box_x + 12, files_box_y + 38, COLOR_ALADDIN_EMERALD, Some(COLOR_ALADDIN_CARD_ALT));
-                    draw_string_bb("[DEV] ide0_block0     512 B    (Setor MBR)", files_box_x + 12, files_box_y + 64, COLOR_ALADDIN_PURPLE, Some(COLOR_ALADDIN_CARD_ALT));
+                    // Varredura dinâmica de arquivos reais no volume /disk via VFS
+                    let mut file_count = 0usize;
+                    let mut file_names = [[0u8; 13]; 3];
+                    let mut file_lens = [0usize; 3];
+                    let mut file_is_elf = [false; 3];
+                    let mut file_is_txt = [false; 3];
 
-                    // Botões de ação direta no Gerenciador de Arquivos
-                    let btn_w = 72;
-                    let btn_h = 18;
-                    let btn_x = files_box_x + files_box_w - btn_w - 8;
+                    let _ = crate::vfs::readdir("/disk", |name, _| {
+                        if file_count < 3 {
+                            let n_len = name.len().min(12);
+                            file_names[file_count][..n_len].copy_from_slice(&name.as_bytes()[..n_len]);
+                            file_lens[file_count] = n_len;
+                            file_is_elf[file_count] = name.ends_with(".elf") || name.ends_with(".ELF");
+                            file_is_txt[file_count] = name.ends_with(".txt") || name.ends_with(".TXT");
+                            file_count += 1;
+                        }
+                    });
 
-                    // Botão [Ler VFS] para README.TXT
-                    fill_rect_bb(btn_x, files_box_y + 8, btn_w, btn_h, 0x001E_293B);
-                    draw_rect_outline_bb(btn_x, files_box_y + 8, btn_w, btn_h, COLOR_ALADDIN_BORDER);
-                    draw_string_bb("Ler VFS", btn_x + 8, files_box_y + 10, COLOR_ALADDIN_CYAN, Some(0x001E_293B));
+                    if file_count == 0 {
+                        draw_string_bb("(Nenhum arquivo detectado no volume /disk)", files_box_x + 12, files_box_y + 36, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD_ALT));
+                    } else {
+                        for i in 0..file_count {
+                            let item_y = files_box_y + 10 + (i * 26);
+                            let tag = if file_is_elf[i] { "[ELF] " } else if file_is_txt[i] { "[TXT] " } else { "[ARQ] " };
+                            let tag_color = if file_is_elf[i] { COLOR_ALADDIN_EMERALD } else { COLOR_ALADDIN_CYAN };
+                            draw_string_bb(tag, files_box_x + 12, item_y, tag_color, Some(COLOR_ALADDIN_CARD_ALT));
+                            if let Ok(name_str) = core::str::from_utf8(&file_names[i][..file_lens[i]]) {
+                                draw_string_bb(name_str, files_box_x + 56, item_y, COLOR_ALADDIN_TEXT_PRI, Some(COLOR_ALADDIN_CARD_ALT));
+                            }
 
-                    // Botão [> Rodar] para OLA.ELF
-                    fill_rect_bb(btn_x, files_box_y + 34, btn_w, btn_h, COLOR_BTN_BG);
-                    draw_rect_outline_bb(btn_x, files_box_y + 34, btn_w, btn_h, 0x0093_C5FD);
-                    draw_string_bb("> Rodar", btn_x + 8, files_box_y + 36, COLOR_WHITE, Some(COLOR_BTN_BG));
+                            // Botões de ação dinâmica
+                            let btn_w = 68;
+                            let btn_h = 18;
+                            let btn_x = files_box_x + files_box_w - btn_w - 8;
+
+                            if file_is_elf[i] {
+                                fill_rect_bb(btn_x, item_y - 2, btn_w, btn_h, COLOR_BTN_BG);
+                                draw_rect_outline_bb(btn_x, item_y - 2, btn_w, btn_h, 0x0093_C5FD);
+                                draw_string_bb("> Rodar", btn_x + 6, item_y, COLOR_WHITE, Some(COLOR_BTN_BG));
+                            } else if file_is_txt[i] {
+                                fill_rect_bb(btn_x, item_y - 2, btn_w, btn_h, 0x001E_293B);
+                                draw_rect_outline_bb(btn_x, item_y - 2, btn_w, btn_h, COLOR_ALADDIN_BORDER);
+                                draw_string_bb("Ler VFS", btn_x + 6, item_y, COLOR_ALADDIN_CYAN, Some(0x001E_293B));
+                            }
+                        }
+                    }
 
                     let prof = crate::drivers::block::get_storage_profile();
                     let policy = crate::drivers::block::get_storage_policy();
