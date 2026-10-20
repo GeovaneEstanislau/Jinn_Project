@@ -89,6 +89,7 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         // ── Armazenamento / Discos ─────────────────────────────────────────────
         "disk" | "disks" | "ata" => cmd_disk(w),
         "bdev" => cmd_bdev(w),
+        "storage" | "jsa" => cmd_storage(w, args),
 
         // ── Barramento de Hardware ─────────────────────────────────────────────
         "lspci" | "pci" => cmd_lspci(w),
@@ -138,6 +139,7 @@ fn cmd_help(w: &mut Writer) {
     w.write_line("  uptime         — ticks de timer desde o boot");
     w.write_line("  disk           — detecta discos IDE/ATA e particoes MBR (alias: ata)");
     w.write_line("  bdev           — diagnostico e teste da camada BlockDevice");
+    w.write_line("  storage [prof] — diagnostico da JSA, particoes MBR/GPT e perfis adaptativos");
     w.write_line("  lspci          — lista dispositivos no barramento PCI (alias: pci)");
     w.write_line("  ls [path]      — lista conteudo de diretorio no VFS (ex: ls /dev)");
     w.write_line("  cat <file>     — exibe conteudo de arquivo no VFS");
@@ -1361,6 +1363,186 @@ fn cmd_bdev(w: &mut Writer) {
     w.set_color(Color::LightGray, Color::Black);
 }
 
+/// `storage` / `jsa` — Diagnóstico e controle da Jinn Storage Architecture (JSA).
+fn cmd_storage(w: &mut Writer, args: &str) {
+    use crate::drivers::block::{
+        get_storage_policy, get_storage_profile, set_storage_profile,
+        BlockDevice, IdeBlockDevice, StorageProfile, WriteStrategy,
+    };
+    use crate::drivers::partition::{scan_partitions, PartitionDevice};
+
+    let trimmed = args.trim();
+
+    // Tratamento de chaveamento de perfil: `storage profile <nome>`
+    if trimmed.starts_with("profile ") || trimmed.starts_with("prof ") {
+        let p_name = if let Some(rest) = trimmed.strip_prefix("profile ") {
+            rest.trim()
+        } else if let Some(rest) = trimmed.strip_prefix("prof ") {
+            rest.trim()
+        } else {
+            ""
+        };
+
+        match p_name {
+            "aladdin" | "domestico" => {
+                set_storage_profile(StorageProfile::Aladdin);
+                w.set_color(Color::LightGreen, Color::Black);
+                w.write_line("[OK] Perfil JSA alterado para ALADDIN (Domestico).");
+            }
+            "simbad" | "servidor" | "server" => {
+                set_storage_profile(StorageProfile::Simbad);
+                w.set_color(Color::LightGreen, Color::Black);
+                w.write_line("[OK] Perfil JSA alterado para SIMBAD (Servidor de Alta Integridade).");
+            }
+            "workstation" | "dev" => {
+                set_storage_profile(StorageProfile::Workstation);
+                w.set_color(Color::LightGreen, Color::Black);
+                w.write_line("[OK] Perfil JSA alterado para WORKSTATION (Engenharia/Desenvolvimento).");
+            }
+            "pos" | "terminal" => {
+                set_storage_profile(StorageProfile::TerminalPos);
+                w.set_color(Color::LightGreen, Color::Black);
+                w.write_line("[OK] Perfil JSA alterado para TERMINAL/POS (Corte de Energia Resiliente).");
+            }
+            _ => {
+                w.set_color(Color::LightRed, Color::Black);
+                w.write_line("Perfil desconhecido. Opcoes: aladdin, simbad, workstation, pos");
+            }
+        }
+        w.set_color(Color::LightGray, Color::Black);
+        return;
+    }
+
+    // Exibição de Status e Diagnóstico Geral da JSA
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_line("=== Jinn Storage Architecture (JSA) ===");
+    w.set_color(Color::LightGray, Color::Black);
+
+    let cur_prof = get_storage_profile();
+    let cur_policy = get_storage_policy();
+
+    w.write_string("  Perfil Ativo         : ");
+    w.set_color(Color::LightCyan, Color::Black);
+    w.write_line(cur_prof.name());
+    w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string("  Estrategia de Escrita: ");
+    w.set_color(Color::White, Color::Black);
+    match cur_policy.write_strategy {
+        WriteStrategy::WriteThrough => w.write_line("Write-Through (Sincrono Imediato)"),
+        WriteStrategy::WriteBack => w.write_line("Write-Back (Consolidacao por Flush)"),
+    }
+    w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string("  Slots de Cache RAM   : ");
+    w.write_decimal(cur_policy.max_cache_slots);
+    w.write_string(" slots (");
+    w.write_decimal(cur_policy.max_cache_slots * 512 / 1024);
+    w.write_line(" KiB)");
+
+    w.write_string("  Prefetch de Leitura  : ");
+    w.write_decimal(cur_policy.prefetch_sectors);
+    w.write_line(" setores");
+
+    w.write_string("  Barreira de I/O      : ");
+    if cur_policy.barrier_required {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_line("Exigida (Flush Barrier Ativo)");
+    } else {
+        w.set_color(Color::DarkGray, Color::Black);
+        w.write_line("Opcional / Sob Demanda");
+    }
+    w.set_color(Color::LightGray, Color::Black);
+
+    // Varredura de Partições MBR e GPT
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_line("\n--- Varredura de Particoes e Volumes (MBR/GPT) ---");
+    w.set_color(Color::LightGray, Color::Black);
+
+    match IdeBlockDevice::new(0) {
+        Ok(dev) => {
+            match scan_partitions(&dev) {
+                Ok(table) => {
+                    w.write_string("  Esquema Detectado    : ");
+                    w.set_color(Color::LightGreen, Color::Black);
+                    if table.is_gpt {
+                        w.write_line("GPT (GUID Partition Table)");
+                    } else {
+                        w.write_line("MBR (Master Boot Record)");
+                    }
+                    w.set_color(Color::LightGray, Color::Black);
+
+                    w.write_string("  Particoes Encontradas: ");
+                    w.write_decimal(table.count);
+                    w.write_line("");
+
+                    for i in 0..table.count {
+                        if let Some(part) = table.partitions[i] {
+                            w.write_string("  [p");
+                            w.write_decimal(part.index);
+                            w.write_string("] LBA ");
+                            w.write_decimal(part.start_lba as usize);
+                            w.write_string("..");
+                            w.write_decimal((part.start_lba + part.sector_count - 1) as usize);
+                            w.write_string(" (");
+                            w.write_decimal(part.size_mb() as usize);
+                            w.write_string(" MiB) | Tipo: ");
+                            w.set_color(Color::LightCyan, Color::Black);
+                            w.write_string(part.type_str());
+                            w.set_color(Color::LightGray, Color::Black);
+                            if part.is_bootable {
+                                w.set_color(Color::LightGreen, Color::Black);
+                                w.write_string(" [Bootavel]");
+                                w.set_color(Color::LightGray, Color::Black);
+                            }
+                            w.write_line("");
+
+                            // Demonstração de contenção segura de limites via PartitionDevice
+                            if i == 0 {
+                                if let Ok(part_dev) = PartitionDevice::new(&dev, "ide0p1", part.start_lba, part.sector_count, false) {
+                                    w.write_string("    Guarda de Limite (Boundary Guard): ");
+                                    let mut dummy = [0u8; 512];
+                                    // Tenta ler além do final da partição para verificar bloqueio
+                                    match part_dev.read_blocks(part.sector_count, 1, &mut dummy) {
+                                        Err(err) => {
+                                            w.set_color(Color::LightGreen, Color::Black);
+                                            w.write_string("BLOQUEADO com sucesso (");
+                                            w.write_string(err);
+                                            w.write_line(")");
+                                            w.set_color(Color::LightGray, Color::Black);
+                                        }
+                                        Ok(()) => {
+                                            w.set_color(Color::LightRed, Color::Black);
+                                            w.write_line("FALHA: Acesso fora do limite permitido!");
+                                            w.set_color(Color::LightGray, Color::Black);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    w.set_color(Color::LightRed, Color::Black);
+                    w.write_string("  Erro na varredura de particoes: ");
+                    w.write_line(e);
+                    w.set_color(Color::LightGray, Color::Black);
+                }
+            }
+        }
+        Err(e) => {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_string("  Erro no dispositivo primario: ");
+            w.write_line(e);
+            w.set_color(Color::LightGray, Color::Black);
+        }
+    }
+
+    w.set_color(Color::DarkGray, Color::Black);
+    w.write_line("\nDica: use 'storage profile <aladdin|simbad|workstation|pos>' para alternar.");
+    w.set_color(Color::LightGray, Color::Black);
+}
+
 /// `jdashm` — Teste de ciclo de vida de memória física compartilhada (Zero-Copy Frame Remapping).
 fn cmd_jdashm(w: &mut Writer) {
     use crate::jda::shmem::SHARED_BUFFER_POOL;
@@ -1395,6 +1577,26 @@ fn cmd_jdashm(w: &mut Writer) {
                     w.set_color(Color::LightGreen, Color::Black);
                     w.write_line("  2. [OK] Mensagem IPC Zero-Copy transmitida via descritor (0 bytes payload copiados)");
                     w.set_color(Color::LightGray, Color::Black);
+                }
+            }
+
+            // 2.1. Teste de I/O de Bloco Direto para o Frame Físico (Zero-Copy Block I/O)
+            if let Ok(dev) = crate::drivers::block::IdeBlockDevice::new(0) {
+                match pool.read_from_block_device(handle, &dev, 0, 1) {
+                    Ok(()) => {
+                        let sig_ok = unsafe { *virt.add(510) == 0x55 && *virt.add(511) == 0xAA };
+                        if sig_ok {
+                            w.set_color(Color::LightGreen, Color::Black);
+                            w.write_line("  2.1 [OK] Leitura Direta Bloco -> Frame JDA (Zero-Copy MBR 0x55AA verificado)");
+                            w.set_color(Color::LightGray, Color::Black);
+                        }
+                    }
+                    Err(err) => {
+                        w.set_color(Color::Yellow, Color::Black);
+                        w.write_string("  2.1 [AVISO] Leitura direta de bloco: ");
+                        w.write_line(err);
+                        w.set_color(Color::LightGray, Color::Black);
+                    }
                 }
             }
 

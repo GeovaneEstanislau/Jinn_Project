@@ -102,6 +102,51 @@ impl SharedBufferPool {
             None
         }
     }
+
+    /// Lê dados de um dispositivo de blocos diretamente para o frame físico compartilhado (Zero-Copy Block I/O).
+    /// Elimina qualquer cópia intermediária no heap do kernel ou buffers temporários.
+    pub fn read_from_block_device<D: crate::drivers::block::BlockDevice>(
+        &self,
+        handle: usize,
+        dev: &D,
+        start_block: u64,
+        count: usize,
+    ) -> Result<(), &'static str> {
+        if handle >= MAX_SHARED_BUFFERS || !self.buffers[handle].is_allocated {
+            return Err("Descritor de buffer compartilhado invalido");
+        }
+        let phys = self.buffers[handle].frame_phys_addr;
+        let total_bytes = count * dev.block_size();
+        if total_bytes > 4096 {
+            return Err("Quantidade de blocos excede a capacidade do frame de 4 KiB");
+        }
+
+        let virt_addr = crate::memory::paging::phys_to_virt(phys);
+        let slice = unsafe { core::slice::from_raw_parts_mut(virt_addr as *mut u8, total_bytes) };
+        dev.read_blocks(start_block, count, slice)
+    }
+
+    /// Escreve dados de um frame físico compartilhado diretamente em um dispositivo de blocos (Zero-Copy Direct Flush).
+    pub fn write_to_block_device<D: crate::drivers::block::BlockDevice>(
+        &self,
+        handle: usize,
+        dev: &D,
+        start_block: u64,
+        count: usize,
+    ) -> Result<(), &'static str> {
+        if handle >= MAX_SHARED_BUFFERS || !self.buffers[handle].is_allocated {
+            return Err("Descritor de buffer compartilhado invalido");
+        }
+        let phys = self.buffers[handle].frame_phys_addr;
+        let total_bytes = count * dev.block_size();
+        if total_bytes > 4096 {
+            return Err("Quantidade de blocos excede a capacidade do frame de 4 KiB");
+        }
+
+        let virt_addr = crate::memory::paging::phys_to_virt(phys);
+        let slice = unsafe { core::slice::from_raw_parts(virt_addr as *const u8, total_bytes) };
+        dev.write_blocks(start_block, count, slice)
+    }
 }
 
 pub static SHARED_BUFFER_POOL: SpinLock<SharedBufferPool> = SpinLock::new(SharedBufferPool::new());

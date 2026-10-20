@@ -105,9 +105,97 @@ impl BlockDevice for IdeBlockDevice {
     }
 }
 
+// ── Perfis de Armazenamento Adaptativo (JSA Storage Profiles) ─────────────────
+
+/// Perfis de configuração adaptativa de armazenamento da JSA
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageProfile {
+    /// Aladdin (Doméstico): Foco em usabilidade, write-through balanceado, prefetch moderado e recuperação simples
+    Aladdin,
+    /// Simbad (Servidor): Máxima integridade, write-back com diário e barreiras, telemetria detalhada de I/O
+    Simbad,
+    /// Workstation: Estações de trabalho, cargas mistas, readahead agressivo e prioridade a baixa latência
+    Workstation,
+    /// Terminal / POS: Computadores dedicados/embarcados, cache mínimo, write-through estrito e imediato
+    TerminalPos,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteStrategy {
+    WriteThrough,
+    WriteBack,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct StoragePolicy {
+    pub profile: StorageProfile,
+    pub max_cache_slots: usize,
+    pub write_strategy: WriteStrategy,
+    pub prefetch_sectors: usize,
+    pub barrier_required: bool,
+}
+
+impl StorageProfile {
+    pub const fn policy(&self) -> StoragePolicy {
+        match self {
+            StorageProfile::Aladdin => StoragePolicy {
+                profile: StorageProfile::Aladdin,
+                max_cache_slots: 16,
+                write_strategy: WriteStrategy::WriteThrough,
+                prefetch_sectors: 2,
+                barrier_required: false,
+            },
+            StorageProfile::Simbad => StoragePolicy {
+                profile: StorageProfile::Simbad,
+                max_cache_slots: 32,
+                write_strategy: WriteStrategy::WriteBack,
+                prefetch_sectors: 4,
+                barrier_required: true,
+            },
+            StorageProfile::Workstation => StoragePolicy {
+                profile: StorageProfile::Workstation,
+                max_cache_slots: 32,
+                write_strategy: WriteStrategy::WriteThrough,
+                prefetch_sectors: 8,
+                barrier_required: false,
+            },
+            StorageProfile::TerminalPos => StoragePolicy {
+                profile: StorageProfile::TerminalPos,
+                max_cache_slots: 8,
+                write_strategy: WriteStrategy::WriteThrough,
+                prefetch_sectors: 0,
+                barrier_required: true,
+            },
+        }
+    }
+
+    pub const fn name(&self) -> &'static str {
+        match self {
+            StorageProfile::Aladdin => "Aladdin (Domestico)",
+            StorageProfile::Simbad => "Simbad (Servidor)",
+            StorageProfile::Workstation => "Workstation (Engenharia)",
+            StorageProfile::TerminalPos => "Terminal/POS (Resiliente)",
+        }
+    }
+}
+
+static mut ACTIVE_STORAGE_PROFILE: StorageProfile = StorageProfile::Aladdin;
+
+pub fn get_storage_profile() -> StorageProfile {
+    unsafe { *core::ptr::addr_of!(ACTIVE_STORAGE_PROFILE) }
+}
+
+pub fn set_storage_profile(profile: StorageProfile) {
+    unsafe { *core::ptr::addr_of_mut!(ACTIVE_STORAGE_PROFILE) = profile; }
+}
+
+pub fn get_storage_policy() -> StoragePolicy {
+    get_storage_profile().policy()
+}
+
 // ── Cache de Blocos na Memória RAM (Block Cache) ──────────────────────────────
 
-pub const CACHE_SLOTS: usize = 16;
+pub const CACHE_SLOTS: usize = 32;
 
 #[derive(Clone, Copy)]
 pub struct CacheSlot {
@@ -142,6 +230,28 @@ impl BlockCache {
             slots: [CacheSlot::empty(); CACHE_SLOTS],
             clock: 0,
         }
+    }
+
+    /// Retorna o número de slots válidos atualmente modificados (dirty)
+    pub fn dirty_count(&self) -> usize {
+        let mut count = 0;
+        for s in self.slots.iter() {
+            if s.is_valid && s.is_dirty {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Descarrega todos os slots dirty para o dispositivo subjacente
+    pub fn flush_dirty<D: BlockDevice>(&mut self, dev: &D) -> Result<(), &'static str> {
+        for slot in self.slots.iter_mut() {
+            if slot.is_valid && slot.is_dirty {
+                dev.write_blocks(slot.lba, 1, &slot.data)?;
+                slot.is_dirty = false;
+            }
+        }
+        Ok(())
     }
 
     /// Busca um setor na cache. Retorna Some(&[u8; 512]) em caso de Cache Hit
@@ -224,6 +334,10 @@ impl<D: BlockDevice> CachedBlockDevice<D> {
             self.misses.load(core::sync::atomic::Ordering::Relaxed),
         )
     }
+
+    pub fn dirty_count(&self) -> usize {
+        self.cache.lock().dirty_count()
+    }
 }
 
 impl<D: BlockDevice> BlockDevice for CachedBlockDevice<D> {
@@ -264,21 +378,38 @@ impl<D: BlockDevice> BlockDevice for CachedBlockDevice<D> {
 
     fn write_blocks(&self, start_block: u64, count: usize, buf: &[u8]) -> Result<(), &'static str> {
         let block_sz = self.block_size();
+        let policy = get_storage_policy();
         let mut cache = self.cache.lock();
 
-        // Write-through: atualiza cache e dispositivo físico
-        for i in 0..count {
-            let lba = start_block + i as u64;
-            let offset = i * block_sz;
-            let mut sector = [0u8; DEFAULT_SECTOR_SIZE];
-            sector.copy_from_slice(&buf[offset..offset + block_sz]);
-            cache.insert(lba, &sector, false);
+        match policy.write_strategy {
+            WriteStrategy::WriteThrough => {
+                // Atualiza cache e escreve imediatamente no disco físico
+                for i in 0..count {
+                    let lba = start_block + i as u64;
+                    let offset = i * block_sz;
+                    let mut sector = [0u8; DEFAULT_SECTOR_SIZE];
+                    sector.copy_from_slice(&buf[offset..offset + block_sz]);
+                    cache.insert(lba, &sector, false);
+                }
+                self.inner.write_blocks(start_block, count, buf)
+            }
+            WriteStrategy::WriteBack => {
+                // Marca como dirty no cache para consolidação posterior
+                for i in 0..count {
+                    let lba = start_block + i as u64;
+                    let offset = i * block_sz;
+                    let mut sector = [0u8; DEFAULT_SECTOR_SIZE];
+                    sector.copy_from_slice(&buf[offset..offset + block_sz]);
+                    cache.insert(lba, &sector, true);
+                }
+                Ok(())
+            }
         }
-
-        self.inner.write_blocks(start_block, count, buf)
     }
 
     fn flush(&self) -> Result<(), &'static str> {
+        let mut cache = self.cache.lock();
+        cache.flush_dirty(&self.inner)?;
         self.inner.flush()
     }
 }
