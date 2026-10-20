@@ -113,6 +113,16 @@ impl DirtyRect {
 }
 ```
 
+### 4.1. Decorações de Janela, Quick Look e Barra de Tarefas
+1. **Controles de Janela**:
+   - **Minimizar `[-]` (Âmbar)**: Oculta a superfície da janela mantendo seu estado em RAM.
+   - **Maximizar / Restaurar `[+]` / `[^]` (Esmeralda)**: Salva as coordenadas anteriores (`saved_x`, `saved_y`, `saved_width`, `saved_height`) e expande a janela para preencher a área de trabalho (1024x712, entre a barra superior e a barra de tarefas). Ao clicar novamente, restaura a geometria anterior.
+   - **Fechar `[X]` (Rubi)**: Fecha a janela.
+2. **Visualizador de Conteúdo Integrado (Quick Look)**:
+   - Na janela do Gerenciador de Arquivos (Window 3), o usuário pode clicar em `[Ler VFS]` para inspecionar arquivos de texto (`.txt`) diretamente dentro do cartão da janela, sem necessidade de chavear para o terminal. O painel exibe o caminho, até 4 linhas formatadas em UTF-8 e botão `[X Fechar]`.
+3. **Abas Dinâmicas na Barra de Tarefas**:
+   - As abas indicam o estado em tempo real: `*` para janela ativa em foco, `_` para janela minimizada em segundo plano e fundo destacado para a janela em foco. Clicar na aba ativa minimiza a janela; clicar em aba minimizada restaura e traz para o topo do Z-order.
+
 ---
 
 ## 5. Roteiro de Transição para Espaço de Usuário (Ring 3)

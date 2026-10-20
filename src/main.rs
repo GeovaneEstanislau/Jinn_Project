@@ -153,6 +153,7 @@ pub extern "C" fn _start() -> ! {
 
     w.write_string("[+] IDE / ATA Controller...");
     drivers::ide::init();
+    drivers::block::init_primary_cache();
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);

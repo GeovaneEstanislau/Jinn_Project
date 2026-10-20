@@ -7,6 +7,7 @@
 /// Mount table: up to MAX_MOUNTS filesystems can be mounted at once.
 /// Path resolution is prefix-based: the longest matching mount point wins.
 
+pub mod ext2;
 pub mod fat32;
 pub mod ramfs;
 

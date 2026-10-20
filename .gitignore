@@ -35,4 +35,7 @@ limine-bios-x86_64.bin
 iso_root/boot/jinn_kernel/jinn
 iso_root/apps/
 iso_root/boot/*.elf
+iso_root/boot/*.sys
+iso_root/boot/*.bin
+iso_root/EFI/
 /boot/*.elf

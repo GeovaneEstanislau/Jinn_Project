@@ -413,3 +413,50 @@ impl<D: BlockDevice> BlockDevice for CachedBlockDevice<D> {
         self.inner.flush()
     }
 }
+
+// ── Instância Global do Dispositivo Primário com Cache e Flusher Periódico ────
+
+/// Dispositivo de blocos IDE com cache LRU primário compartilhado globalmente
+pub static PRIMARY_CACHED_DEV: crate::memory::SpinLock<Option<CachedBlockDevice<IdeBlockDevice>>> =
+    crate::memory::SpinLock::new(None);
+
+/// Inicializa o dispositivo de blocos primário com cache LRU
+pub fn init_primary_cache() {
+    if let Ok(dev) = IdeBlockDevice::new(0) {
+        *PRIMARY_CACHED_DEV.lock() = Some(CachedBlockDevice::new(dev));
+    }
+}
+
+/// Executa a sincronização (FLUSH) de todos os blocos marcados como dirty na memória para o disco
+pub fn flush_primary_cache() -> Result<usize, &'static str> {
+    let mut dev_opt = PRIMARY_CACHED_DEV.lock();
+    if let Some(ref mut cdev) = *dev_opt {
+        let dirty = cdev.dirty_count();
+        if dirty > 0 {
+            cdev.flush()?;
+        }
+        Ok(dirty)
+    } else {
+        Ok(0)
+    }
+}
+
+/// Retorna estatísticas da cache primária: (hits, misses, dirty_count)
+pub fn primary_cache_stats() -> (u64, u64, usize) {
+    let dev_opt = PRIMARY_CACHED_DEV.lock();
+    if let Some(ref cdev) = *dev_opt {
+        let (hits, misses) = cdev.stats();
+        let dirty = cdev.dirty_count();
+        (hits, misses, dirty)
+    } else {
+        (0, 0, 0)
+    }
+}
+
+/// Verificação periódica de descarregamento de cache para o perfil Simbad (WriteBack)
+pub fn periodic_flush_check() {
+    let policy = get_storage_policy();
+    if policy.write_strategy == WriteStrategy::WriteBack {
+        let _ = flush_primary_cache();
+    }
+}

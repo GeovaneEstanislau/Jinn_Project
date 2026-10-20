@@ -96,3 +96,19 @@ Operações de escrita destrutiva em mídias de armazenamento físicas represent
 1. **Ambiente Isolado**: Testes de escrita devem ocorrer exclusivamente em imagens virtuais (`disk.img`) ou RamDisks, nunca em dispositivos físicos de partição do hospedeiro.
 2. **Escrita Atômica de Setor IDE**: A implementação de `write_sector` no driver IDE deve verificar rigorosamente os sinais `STATUS_BSY` e `STATUS_DRQ`, com atrasos padronizados de 400ns e timeouts explícitos.
 3. **Flushing Obrigatório**: O driver deve emitir comandos de sincronização (`FLUSH CACHE - 0xE7` no padrão ATA) antes de confirmar a gravação de blocos de metadados críticos.
+
+---
+
+## 5. Implementação da Fase 2: Ext2 e Flusher Periódico
+
+### 5.1. Driver Ext2 Read-Only (`src/vfs/ext2.rs`)
+- **Superblock**: Localizado no byte 1024 da partição (LBA 2). Validação de magic `0xEF53`. Extração de `inodes_count`, `blocks_count`, `first_data_block`, `block_size` ($1024 \times 2^{\text{log\_block\_size}}$) e `inode_size`.
+- **Tabela de Descritores de Grupos**: Leitura dos ponteiros da Inode Table de cada grupo de blocos.
+- **Leitura de Inodes**: Resolução matemática de grupo e índice para ler o Inode diretamente dos blocos físicos. Suporte a nós de arquivo regular (`0x8000`) e diretório (`0x4000`).
+- **Iteração de Diretórios e Resolução de Caminhos**: Percorre entradas de diretório (`rec_len`, `name_len`, `inode`) e resolve caminhos hierárquicos para nós alvo.
+- **Integração VFS**: Implementa a trait `FileSystem`, permitindo montagem via `mount_ext2_partition(prefix, drive, start_lba)` ou comando de shell `mount_ext2`.
+
+### 5.2. Flusher Periódico e Política Write-Back (Perfil Simbad)
+- **`CachedBlockDevice`**: Gerencia slots LRU com flag `is_dirty`.
+- **Flusher em Background**: Integrado à tarefa `idle_task_entry()` no escalonador. Durante ciclos ociosos da CPU, se o perfil ativo for `Simbad` (`WriteStrategy::WriteBack`), o flusher descarrega automaticamente blocos modificados para a mídia não volátil sem impactar a responsividade de processos interativos.
+- **Sincronização Explícita**: Comando de shell `sync` força o descarregamento imediato de todos os setores dirty na memória.

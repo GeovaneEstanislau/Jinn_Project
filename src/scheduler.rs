@@ -758,6 +758,8 @@ impl Scheduler {
 /// poderá despachar outra tarefa que tenha se tornado Ready.
 fn idle_task_entry() {
     loop {
+        // Em segundo plano na thread Idle, verifica e descarrega caches dirty do storage (WriteBack / Simbad)
+        crate::drivers::block::periodic_flush_check();
         unsafe { core::arch::asm!("hlt"); }
     }
 }

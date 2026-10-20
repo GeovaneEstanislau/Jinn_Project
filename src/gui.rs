@@ -164,6 +164,12 @@ pub struct Window {
     pub width: usize,
     pub height: usize,
     pub is_open: bool,
+    pub is_minimized: bool,
+    pub is_maximized: bool,
+    pub saved_x: usize,
+    pub saved_y: usize,
+    pub saved_width: usize,
+    pub saved_height: usize,
     pub is_dragging: bool,
     pub drag_offset_x: usize,
     pub drag_offset_y: usize,
@@ -225,6 +231,11 @@ struct WindowManager {
     should_exit: bool,
     spawn_count: usize,
     terminal: TerminalBuffer,
+    preview_active: bool,
+    preview_filename: [u8; 16],
+    preview_filename_len: usize,
+    preview_content: [u8; 256],
+    preview_content_len: usize,
 }
 
 impl WindowManager {
@@ -345,6 +356,11 @@ static mut WM: WindowManager = WindowManager {
     should_exit: false,
     spawn_count: 0,
     terminal: TerminalBuffer::new(),
+    preview_active: false,
+    preview_filename: [0u8; 16],
+    preview_filename_len: 0,
+    preview_content: [0u8; 256],
+    preview_content_len: 0,
 };
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
@@ -392,6 +408,12 @@ fn init_default_windows() {
             width: 380,
             height: 220,
             is_open: true,
+            is_minimized: false,
+            is_maximized: false,
+            saved_x: 60,
+            saved_y: 60,
+            saved_width: 380,
+            saved_height: 220,
             is_dragging: false,
             drag_offset_x: 0,
             drag_offset_y: 0,
@@ -415,6 +437,12 @@ fn init_default_windows() {
             width: 460,
             height: 240,
             is_open: true,
+            is_minimized: false,
+            is_maximized: false,
+            saved_x: 470,
+            saved_y: 80,
+            saved_width: 460,
+            saved_height: 240,
             is_dragging: false,
             drag_offset_x: 0,
             drag_offset_y: 0,
@@ -438,6 +466,12 @@ fn init_default_windows() {
             width: 420,
             height: 200,
             is_open: true,
+            is_minimized: false,
+            is_maximized: false,
+            saved_x: 240,
+            saved_y: 330,
+            saved_width: 420,
+            saved_height: 200,
             is_dragging: false,
             drag_offset_x: 0,
             drag_offset_y: 0,
@@ -461,6 +495,12 @@ fn init_default_windows() {
             width: 440,
             height: 240,
             is_open: false,
+            is_minimized: false,
+            is_maximized: false,
+            saved_x: 160,
+            saved_y: 190,
+            saved_width: 440,
+            saved_height: 240,
             is_dragging: false,
             drag_offset_x: 0,
             drag_offset_y: 0,
@@ -775,7 +815,7 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
 
         for &win_idx in wm.order.iter() {
             if let Some(win) = wm.windows[win_idx] {
-                if !win.is_open { continue; }
+                if !win.is_open || win.is_minimized { continue; }
 
                 let is_active = win_idx == top_idx;
                 let title_color = if is_active { COLOR_ALADDIN_TOPPANEL } else { 0x0011_1827 };
@@ -811,11 +851,23 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
                     draw_string_bb(win.title, win.x + 10, win.y + 4, COLOR_ALADDIN_TEXT_MUTED, Some(title_color));
                 }
 
-                // Botão de fechar [X] estilizado em rubi Aladdin
+                // Trio de botões de controle de janela (Minimizar [-], Maximizar/Restaurar [+]/[^], Fechar [X])
+                // 1. Botão de minimizar [-] em âmbar Aladdin
+                let btn_min_x = win.x + win.width - 66;
+                let btn_y = win.y + 3;
+                fill_rect_bb(btn_min_x, btn_y, 18, 18, COLOR_ALADDIN_AMBER);
+                draw_char_bb(b'-', btn_min_x + 5, btn_y + 1, COLOR_WHITE, Some(COLOR_ALADDIN_AMBER));
+
+                // 2. Botão de maximizar/restaurar [+] / [^] em esmeralda Aladdin
+                let btn_max_x = win.x + win.width - 44;
+                let max_char = if win.is_maximized { b'^' } else { b'+' };
+                fill_rect_bb(btn_max_x, btn_y, 18, 18, COLOR_ALADDIN_EMERALD);
+                draw_char_bb(max_char, btn_max_x + 5, btn_y + 1, COLOR_WHITE, Some(COLOR_ALADDIN_EMERALD));
+
+                // 3. Botão de fechar [X] estilizado em rubi Aladdin
                 let btn_close_x = win.x + win.width - 22;
-                let btn_close_y = win.y + 3;
-                fill_rect_bb(btn_close_x, btn_close_y, 18, 18, COLOR_ALADDIN_RUBY);
-                draw_char_bb(b'X', btn_close_x + 5, btn_close_y + 1, COLOR_WHITE, Some(COLOR_ALADDIN_RUBY));
+                fill_rect_bb(btn_close_x, btn_y, 18, 18, COLOR_ALADDIN_RUBY);
+                draw_char_bb(b'X', btn_close_x + 5, btn_y + 1, COLOR_WHITE, Some(COLOR_ALADDIN_RUBY));
 
                 // Corpo da janela (Aladdin Card Surface)
                 fill_rect_bb(win.x, win.y + 25, win.width, win.height.saturating_sub(25), COLOR_ALADDIN_CARD);
@@ -897,71 +949,119 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
                 } else if win.id == 3 {
                     // ── Janela 3: Gerenciador de Arquivos Aladdin (FAT32) ──
                     draw_string_bb("--- Armazenamento Jinn / VFS ---", win.x + 12, win.y + 36, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD));
-                    draw_string_bb("Ponto de Montagem: /disk (FAT32 em IDE hd0)", win.x + 12, win.y + 56, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD));
+                    draw_string_bb("Ponto de Montagem: /disk (FAT32 em IDE hd0)", win.x + 12, win.y + 54, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD));
 
-                    // Card de arquivos do volume
-                    let files_box_x = win.x + 12;
-                    let files_box_y = win.y + 76;
-                    let files_box_w = win.width - 24;
-                    let files_box_h = 96;
-                    fill_rect_bb(files_box_x, files_box_y, files_box_w, files_box_h, COLOR_ALADDIN_CARD_ALT);
-                    draw_rect_outline_bb(files_box_x, files_box_y, files_box_w, files_box_h, COLOR_ALADDIN_BORDER);
+                    if wm.preview_active {
+                        // Painel de Visualização de Arquivo Integrado (Quick Look / File Preview)
+                        let p_x = win.x + 12;
+                        let p_y = win.y + 72;
+                        let p_w = win.width - 24;
+                        let p_h = 104;
 
-                    // Varredura dinâmica de arquivos reais no volume /disk via VFS
-                    let mut file_count = 0usize;
-                    let mut file_names = [[0u8; 13]; 3];
-                    let mut file_lens = [0usize; 3];
-                    let mut file_is_elf = [false; 3];
-                    let mut file_is_txt = [false; 3];
+                        fill_rect_bb(p_x, p_y, p_w, p_h, 0x000F_172A);
+                        draw_rect_outline_bb(p_x, p_y, p_w, p_h, COLOR_ALADDIN_BORDER_ACT);
 
-                    let _ = crate::vfs::readdir("/disk", |name, _| {
-                        if file_count < 3 {
-                            let n_len = name.len().min(12);
-                            file_names[file_count][..n_len].copy_from_slice(&name.as_bytes()[..n_len]);
-                            file_lens[file_count] = n_len;
-                            file_is_elf[file_count] = name.ends_with(".elf") || name.ends_with(".ELF");
-                            file_is_txt[file_count] = name.ends_with(".txt") || name.ends_with(".TXT");
-                            file_count += 1;
+                        // Barra de topo do preview
+                        fill_rect_bb(p_x + 1, p_y + 1, p_w - 2, 20, 0x001E_293B);
+                        draw_string_bb("Preview: /disk/", p_x + 6, p_y + 3, COLOR_ALADDIN_CYAN, Some(0x001E_293B));
+                        let fn_len = wm.preview_filename_len.min(16);
+                        if let Ok(fn_str) = core::str::from_utf8(&wm.preview_filename[..fn_len]) {
+                            draw_string_bb(fn_str, p_x + 126, p_y + 3, COLOR_WHITE, Some(0x001E_293B));
                         }
-                    });
 
-                    if file_count == 0 {
-                        draw_string_bb("(Nenhum arquivo detectado no volume /disk)", files_box_x + 12, files_box_y + 36, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD_ALT));
+                        // Botão Fechar Preview
+                        let btn_c_w = 76;
+                        let btn_c_x = p_x + p_w - btn_c_w - 4;
+                        fill_rect_bb(btn_c_x, p_y + 2, btn_c_w, 16, COLOR_ALADDIN_RUBY);
+                        draw_string_bb("X Fechar", btn_c_x + 6, p_y + 3, COLOR_WHITE, Some(COLOR_ALADDIN_RUBY));
+
+                        // Renderiza conteúdo do preview (até 4 linhas)
+                        let c_len = wm.preview_content_len.min(256);
+                        let mut line_y = p_y + 24;
+                        let mut line_start = 0;
+                        let mut rendered_lines = 0;
+                        for i in 0..c_len {
+                            let b = wm.preview_content[i];
+                            let is_break = b == b'\n' || (i - line_start) >= 46 || i == c_len - 1;
+                            if is_break {
+                                let end_i = if b == b'\n' { i } else { i + 1 };
+                                if end_i > line_start && rendered_lines < 4 {
+                                    if let Ok(line_str) = core::str::from_utf8(&wm.preview_content[line_start..end_i]) {
+                                        draw_string_bb(line_str, p_x + 8, line_y, COLOR_ALADDIN_TEXT_PRI, Some(0x000F_172A));
+                                        line_y += 18;
+                                        rendered_lines += 1;
+                                    }
+                                }
+                                line_start = if b == b'\n' { i + 1 } else { i + 1 };
+                            }
+                        }
+
+                        draw_string_bb("Modo: Somente Leitura | UTF-8", win.x + 12, win.y + 182, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD));
                     } else {
-                        for i in 0..file_count {
-                            let item_y = files_box_y + 10 + (i * 26);
-                            let tag = if file_is_elf[i] { "[ELF] " } else if file_is_txt[i] { "[TXT] " } else { "[ARQ] " };
-                            let tag_color = if file_is_elf[i] { COLOR_ALADDIN_EMERALD } else { COLOR_ALADDIN_CYAN };
-                            draw_string_bb(tag, files_box_x + 12, item_y, tag_color, Some(COLOR_ALADDIN_CARD_ALT));
-                            if let Ok(name_str) = core::str::from_utf8(&file_names[i][..file_lens[i]]) {
-                                draw_string_bb(name_str, files_box_x + 56, item_y, COLOR_ALADDIN_TEXT_PRI, Some(COLOR_ALADDIN_CARD_ALT));
+                        // Card de arquivos do volume
+                        let files_box_x = win.x + 12;
+                        let files_box_y = win.y + 74;
+                        let files_box_w = win.width - 24;
+                        let files_box_h = 96;
+                        fill_rect_bb(files_box_x, files_box_y, files_box_w, files_box_h, COLOR_ALADDIN_CARD_ALT);
+                        draw_rect_outline_bb(files_box_x, files_box_y, files_box_w, files_box_h, COLOR_ALADDIN_BORDER);
+
+                        // Varredura dinâmica de arquivos reais no volume /disk via VFS
+                        let mut file_count = 0usize;
+                        let mut file_names = [[0u8; 13]; 3];
+                        let mut file_lens = [0usize; 3];
+                        let mut file_is_elf = [false; 3];
+                        let mut file_is_txt = [false; 3];
+
+                        let _ = crate::vfs::readdir("/disk", |name, _| {
+                            if file_count < 3 {
+                                let n_len = name.len().min(12);
+                                file_names[file_count][..n_len].copy_from_slice(&name.as_bytes()[..n_len]);
+                                file_lens[file_count] = n_len;
+                                file_is_elf[file_count] = name.ends_with(".elf") || name.ends_with(".ELF");
+                                file_is_txt[file_count] = name.ends_with(".txt") || name.ends_with(".TXT");
+                                file_count += 1;
                             }
+                        });
 
-                            // Botões de ação dinâmica
-                            let btn_w = 68;
-                            let btn_h = 18;
-                            let btn_x = files_box_x + files_box_w - btn_w - 8;
+                        if file_count == 0 {
+                            draw_string_bb("(Nenhum arquivo detectado no volume /disk)", files_box_x + 12, files_box_y + 36, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD_ALT));
+                        } else {
+                            for i in 0..file_count {
+                                let item_y = files_box_y + 10 + (i * 26);
+                                let tag = if file_is_elf[i] { "[ELF] " } else if file_is_txt[i] { "[TXT] " } else { "[ARQ] " };
+                                let tag_color = if file_is_elf[i] { COLOR_ALADDIN_EMERALD } else { COLOR_ALADDIN_CYAN };
+                                draw_string_bb(tag, files_box_x + 12, item_y, tag_color, Some(COLOR_ALADDIN_CARD_ALT));
+                                if let Ok(name_str) = core::str::from_utf8(&file_names[i][..file_lens[i]]) {
+                                    draw_string_bb(name_str, files_box_x + 56, item_y, COLOR_ALADDIN_TEXT_PRI, Some(COLOR_ALADDIN_CARD_ALT));
+                                }
 
-                            if file_is_elf[i] {
-                                fill_rect_bb(btn_x, item_y - 2, btn_w, btn_h, COLOR_BTN_BG);
-                                draw_rect_outline_bb(btn_x, item_y - 2, btn_w, btn_h, 0x0093_C5FD);
-                                draw_string_bb("> Rodar", btn_x + 6, item_y, COLOR_WHITE, Some(COLOR_BTN_BG));
-                            } else if file_is_txt[i] {
-                                fill_rect_bb(btn_x, item_y - 2, btn_w, btn_h, 0x001E_293B);
-                                draw_rect_outline_bb(btn_x, item_y - 2, btn_w, btn_h, COLOR_ALADDIN_BORDER);
-                                draw_string_bb("Ler VFS", btn_x + 6, item_y, COLOR_ALADDIN_CYAN, Some(0x001E_293B));
+                                // Botões de ação dinâmica
+                                let btn_w = 68;
+                                let btn_h = 18;
+                                let btn_x = files_box_x + files_box_w - btn_w - 8;
+
+                                if file_is_elf[i] {
+                                    fill_rect_bb(btn_x, item_y - 2, btn_w, btn_h, COLOR_BTN_BG);
+                                    draw_rect_outline_bb(btn_x, item_y - 2, btn_w, btn_h, 0x0093_C5FD);
+                                    draw_string_bb("> Rodar", btn_x + 6, item_y, COLOR_WHITE, Some(COLOR_BTN_BG));
+                                } else if file_is_txt[i] {
+                                    fill_rect_bb(btn_x, item_y - 2, btn_w, btn_h, 0x001E_293B);
+                                    draw_rect_outline_bb(btn_x, item_y - 2, btn_w, btn_h, COLOR_ALADDIN_BORDER);
+                                    draw_string_bb("Ler VFS", btn_x + 6, item_y, COLOR_ALADDIN_CYAN, Some(0x001E_293B));
+                                }
                             }
                         }
-                    }
 
-                    let prof = crate::drivers::block::get_storage_profile();
-                    let policy = crate::drivers::block::get_storage_policy();
-                    draw_string_bb(prof.name(), win.x + 12, win.y + 184, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD));
-                    let strat_str = match policy.write_strategy {
-                        crate::drivers::block::WriteStrategy::WriteThrough => "Politica: Write-Through | Cache LRU: 16 KB",
-                        crate::drivers::block::WriteStrategy::WriteBack => "Politica: Write-Back + Flush | Cache: 32 KB",
-                    };
-                    draw_string_bb(strat_str, win.x + 12, win.y + 204, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD));
+                        let prof = crate::drivers::block::get_storage_profile();
+                        let policy = crate::drivers::block::get_storage_policy();
+                        draw_string_bb(prof.name(), win.x + 12, win.y + 184, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD));
+                        let strat_str = match policy.write_strategy {
+                            crate::drivers::block::WriteStrategy::WriteThrough => "Politica: Write-Through | Cache LRU: 16 KB",
+                            crate::drivers::block::WriteStrategy::WriteBack => "Politica: Write-Back + Flush | Cache: 32 KB",
+                        };
+                        draw_string_bb(strat_str, win.x + 12, win.y + 204, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD));
+                    }
                 }
             }
         }
@@ -974,6 +1074,7 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
 
     unsafe {
         let wm = &*core::ptr::addr_of!(WM);
+        let top_idx = wm.order[MAX_WINDOWS - 1];
 
         // Botão Iniciar [ Jinn OS ]
         let is_start_hover = mouse_x >= 6 && mouse_x <= 116 && mouse_y >= taskbar_y + 4 && mouse_y <= taskbar_y + 28;
@@ -991,12 +1092,37 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
         ];
 
         for &(label, tab_x, win_id) in tab_defs.iter() {
-            let is_open = wm.windows[win_id].map(|w| w.is_open).unwrap_or(false);
-            let tab_bg = if is_open { 0x001E_293B } else { 0x000F_172A };
-            let tab_fg = if is_open { COLOR_WHITE } else { 0x0064_748B };
+            let win_opt = wm.windows[win_id];
+            let is_open = win_opt.map(|w| w.is_open).unwrap_or(false);
+            let is_min = win_opt.map(|w| w.is_minimized).unwrap_or(false);
+            let is_top = is_open && !is_min && (top_idx == win_id);
+
+            let tab_bg = if is_top {
+                COLOR_ALADDIN_TOPPANEL
+            } else if is_open && !is_min {
+                0x001E_293B
+            } else if is_min {
+                0x0018_2030
+            } else {
+                0x000F_172A
+            };
+
+            let tab_fg = if is_top {
+                COLOR_ALADDIN_CYAN
+            } else if is_open && !is_min {
+                COLOR_WHITE
+            } else if is_min {
+                COLOR_ALADDIN_AMBER
+            } else {
+                0x0064_748B
+            };
+
             fill_rect_bb(tab_x, taskbar_y + 4, 96, 24, tab_bg);
-            draw_rect_outline_bb(tab_x, taskbar_y + 4, 96, 24, 0x0033_4155);
-            draw_string_bb(label, tab_x + 8, taskbar_y + 8, tab_fg, Some(tab_bg));
+            draw_rect_outline_bb(tab_x, taskbar_y + 4, 96, 24, if is_top { COLOR_ALADDIN_CYAN } else { 0x0033_4155 });
+
+            let prefix = if is_min { "_" } else if is_top { "*" } else { " " };
+            draw_string_bb(prefix, tab_x + 4, taskbar_y + 8, tab_fg, Some(tab_bg));
+            draw_string_bb(label, tab_x + 14, taskbar_y + 8, tab_fg, Some(tab_bg));
         }
 
         // Relógio / Info no canto direito da barra de tarefas
@@ -1145,17 +1271,26 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                     match item_idx {
                         0 => {
                             // Monitor de Sistema
-                            if let Some(w) = wm.windows[0].as_mut() { w.is_open = true; }
+                            if let Some(w) = wm.windows[0].as_mut() {
+                                w.is_open = true;
+                                w.is_minimized = false;
+                            }
                             bring_to_front(0);
                         }
                         1 => {
                             // Terminal Interativo
-                            if let Some(w) = wm.windows[1].as_mut() { w.is_open = true; }
+                            if let Some(w) = wm.windows[1].as_mut() {
+                                w.is_open = true;
+                                w.is_minimized = false;
+                            }
                             bring_to_front(1);
                         }
                         2 => {
                             // Gerenciador de Arquivos (FAT32)
-                            if let Some(w) = wm.windows[3].as_mut() { w.is_open = true; }
+                            if let Some(w) = wm.windows[3].as_mut() {
+                                w.is_open = true;
+                                w.is_minimized = false;
+                            }
                             bring_to_front(3);
                         }
                         3 => {
@@ -1164,7 +1299,10 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                         }
                         4 => {
                             // Sobre o Jinn OS
-                            if let Some(w) = wm.windows[2].as_mut() { w.is_open = true; }
+                            if let Some(w) = wm.windows[2].as_mut() {
+                                w.is_open = true;
+                                w.is_minimized = false;
+                            }
                             bring_to_front(2);
                         }
                         5 => {
@@ -1190,9 +1328,20 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                 let tab_defs = [(126, 0), (232, 1), (338, 2), (444, 3)];
                 for &(tx, win_id) in tab_defs.iter() {
                     if mouse_x >= tx && mouse_x <= tx + 96 {
+                        let top_idx = wm.order[MAX_WINDOWS - 1];
                         if let Some(w) = wm.windows[win_id].as_mut() {
-                            w.is_open = !w.is_open;
-                            if w.is_open {
+                            if !w.is_open {
+                                w.is_open = true;
+                                w.is_minimized = false;
+                                bring_to_front(win_id);
+                            } else if w.is_minimized {
+                                w.is_minimized = false;
+                                bring_to_front(win_id);
+                            } else if top_idx == win_id {
+                                // Já está aberta e no topo -> minimiza
+                                w.is_minimized = true;
+                            } else {
+                                // Aberta mas em segundo plano -> traz para o topo
                                 bring_to_front(win_id);
                             }
                         }
@@ -1201,23 +1350,61 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                 }
             }
 
-            // 4. Clique dentro de Janelas (arrasto, fechar ou botão de ação)
+            // 4. Clique dentro de Janelas (arrasto, minimizar, maximizar, fechar ou botão de ação)
             let mut clicked_win_idx = None;
             for i in (0..MAX_WINDOWS).rev() {
                 let win_idx = wm.order[i];
                 if let Some(win) = wm.windows[win_idx] {
-                    if !win.is_open { continue; }
+                    if !win.is_open || win.is_minimized { continue; }
 
                     if mouse_x >= win.x && mouse_x < win.x + win.width &&
                        mouse_y >= win.y && mouse_y < win.y + win.height {
 
-                        // Botão de fechar [X]
-                        let btn_x = win.x + win.width - 22;
                         let btn_y = win.y + 3;
-                        if mouse_x >= btn_x && mouse_x < btn_x + 18 &&
+
+                        // 1. Botão de minimizar [-]
+                        let btn_min_x = win.x + win.width - 66;
+                        if mouse_x >= btn_min_x && mouse_x < btn_min_x + 18 &&
+                           mouse_y >= btn_y && mouse_y < btn_y + 18 {
+                            if let Some(w) = wm.windows[win_idx].as_mut() {
+                                w.is_minimized = true;
+                            }
+                            return (false, None);
+                        }
+
+                        // 2. Botão de maximizar/restaurar [+] / [^]
+                        let btn_max_x = win.x + win.width - 44;
+                        if mouse_x >= btn_max_x && mouse_x < btn_max_x + 18 &&
+                           mouse_y >= btn_y && mouse_y < btn_y + 18 {
+                            if let Some(w) = wm.windows[win_idx].as_mut() {
+                                if w.is_maximized {
+                                    w.x = w.saved_x;
+                                    w.y = w.saved_y;
+                                    w.width = w.saved_width;
+                                    w.height = w.saved_height;
+                                    w.is_maximized = false;
+                                } else {
+                                    w.saved_x = w.x;
+                                    w.saved_y = w.y;
+                                    w.saved_width = w.width;
+                                    w.saved_height = w.height;
+                                    w.x = 0;
+                                    w.y = 24;
+                                    w.width = DEFAULT_WIDTH;
+                                    w.height = DEFAULT_HEIGHT - 32 - 24;
+                                    w.is_maximized = true;
+                                }
+                            }
+                            return (false, None);
+                        }
+
+                        // 3. Botão de fechar [X]
+                        let btn_close_x = win.x + win.width - 22;
+                        if mouse_x >= btn_close_x && mouse_x < btn_close_x + 18 &&
                            mouse_y >= btn_y && mouse_y < btn_y + 18 {
                             if let Some(w) = wm.windows[win_idx].as_mut() {
                                 w.is_open = false;
+                                w.is_minimized = false;
                             }
                             return (false, None);
                         }
@@ -1235,44 +1422,66 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
 
                         // Botões de ação na janela do Gerenciador de Arquivos (Window 3)
                         if win_idx == 3 {
-                            let files_box_x = win.x + 12;
-                            let files_box_y = win.y + 76;
-                            let files_box_w = win.width - 24;
-                            let btn_w = 72;
-                            let btn_h = 18;
-                            let btn_x = files_box_x + files_box_w - btn_w - 8;
-
-                            // Clique em [Ler VFS] de README.TXT
-                            if mouse_x >= btn_x && mouse_x <= btn_x + btn_w &&
-                               mouse_y >= files_box_y + 8 && mouse_y <= files_box_y + 8 + btn_h {
-                                let mut preview = [0u8; 40];
-                                if let Ok(n) = crate::vfs::read_file("/disk/README.TXT", &mut preview) {
-                                    if let Ok(s) = core::str::from_utf8(&preview[..n.min(38)]) {
-                                        wm.terminal.push_line(s, 0x00F8_FAFC);
-                                    }
-                                } else {
-                                    wm.terminal.push_line("[README.TXT lido via VFS com sucesso]", 0x0022_C55E);
+                            if wm.preview_active {
+                                // Clique no botão [X Fechar] do Preview
+                                let p_x = win.x + 12;
+                                let p_y = win.y + 72;
+                                let p_w = win.width - 24;
+                                let btn_c_w = 76;
+                                let btn_c_x = p_x + p_w - btn_c_w - 4;
+                                if mouse_x >= btn_c_x && mouse_x <= btn_c_x + btn_c_w &&
+                                   mouse_y >= p_y + 2 && mouse_y <= p_y + 20 {
+                                    wm.preview_active = false;
+                                    return (false, None);
                                 }
-                                if let Some(w) = wm.windows[1].as_mut() { w.is_open = true; }
-                                bring_to_front(1);
-                                return (false, None);
-                            }
+                            } else {
+                                let files_box_x = win.x + 12;
+                                let files_box_y = win.y + 74;
+                                let files_box_w = win.width - 24;
+                                let btn_w = 72;
+                                let btn_h = 18;
+                                let btn_x = files_box_x + files_box_w - btn_w - 8;
 
-                            // Clique em [> Rodar] de OLA.ELF
-                            if mouse_x >= btn_x && mouse_x <= btn_x + btn_w &&
-                               mouse_y >= files_box_y + 34 && mouse_y <= files_box_y + 34 + btn_h {
-                                spawn_user_app();
-                                bring_to_front(1);
-                                return (false, None);
+                                // Clique em [Ler VFS] de README.TXT
+                                if mouse_x >= btn_x && mouse_x <= btn_x + btn_w &&
+                                   mouse_y >= files_box_y + 8 && mouse_y <= files_box_y + 8 + btn_h {
+                                    let mut preview = [0u8; 256];
+                                    let n = crate::vfs::read_file("/disk/README.TXT", &mut preview).unwrap_or(0);
+                                    wm.preview_content = preview;
+                                    wm.preview_content_len = n;
+                                    let fname = b"README.TXT";
+                                    wm.preview_filename[..fname.len()].copy_from_slice(fname);
+                                    wm.preview_filename_len = fname.len();
+                                    wm.preview_active = true;
+
+                                    if n > 0 {
+                                        if let Ok(s) = core::str::from_utf8(&preview[..n.min(38)]) {
+                                            wm.terminal.push_line(s, 0x00F8_FAFC);
+                                        }
+                                    } else {
+                                        wm.terminal.push_line("[README.TXT lido via VFS com sucesso]", 0x0022_C55E);
+                                    }
+                                    return (false, None);
+                                }
+
+                                // Clique em [> Rodar] de OLA.ELF
+                                if mouse_x >= btn_x && mouse_x <= btn_x + btn_w &&
+                                   mouse_y >= files_box_y + 34 && mouse_y <= files_box_y + 34 + btn_h {
+                                    spawn_user_app();
+                                    bring_to_front(1);
+                                    return (false, None);
+                                }
                             }
                         }
 
-                        // Barra de título: inicia arrasto
+                        // Barra de título: inicia arrasto (se não estiver maximizada)
                         if mouse_y < win.y + 24 {
                             if let Some(w) = wm.windows[win_idx].as_mut() {
-                                w.is_dragging = true;
-                                w.drag_offset_x = mouse_x - win.x;
-                                w.drag_offset_y = mouse_y - win.y;
+                                if !w.is_maximized {
+                                    w.is_dragging = true;
+                                    w.drag_offset_x = mouse_x - win.x;
+                                    w.drag_offset_y = mouse_y - win.y;
+                                }
                             }
                         }
 

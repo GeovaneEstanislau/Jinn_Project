@@ -90,11 +90,12 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         "disk" | "disks" | "ata" => cmd_disk(w),
         "bdev" => cmd_bdev(w),
         "storage" | "jsa" => cmd_storage(w, args),
+        "sync" | "flush" => cmd_sync(w),
 
         // ── Barramento de Hardware ─────────────────────────────────────────────
         "lspci" | "pci" => cmd_lspci(w),
 
-        // ── Sistema de Arquivos (VFS & FAT32) ──────────────────────────────────
+        // ── Sistema de Arquivos (VFS, FAT32 & Ext2) ────────────────────────────
         "ls" | "dir" => cmd_ls(w, args),
         "cat" => cmd_cat(w, args),
         "write" => cmd_write(w, args),
@@ -103,6 +104,7 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         "df" => cmd_df(w),
         "mounts" => cmd_mounts(w),
         "mount_fat" => cmd_mount_fat(w, args),
+        "mount_ext2" => cmd_mount_ext2(w, args),
 
         // ── JDA (Jinn Dataflow Architecture) ──────────────────────────────────
         "jda" => cmd_jda(w),
@@ -143,6 +145,7 @@ fn cmd_help(w: &mut Writer) {
     w.write_line("  disk           — detecta discos IDE/ATA e particoes MBR (alias: ata)");
     w.write_line("  bdev           — diagnostico e teste da camada BlockDevice");
     w.write_line("  storage [prof] — diagnostico da JSA, particoes MBR/GPT e perfis adaptativos");
+    w.write_line("  sync           — sincroniza blocos modificados (dirty) da cache para o disco");
     w.write_line("  lspci          — lista dispositivos no barramento PCI (alias: pci)");
     w.write_line("  ls [path]      — lista conteudo de diretorio no VFS (ex: ls /dev)");
     w.write_line("  cat <file>     — exibe conteudo de arquivo no VFS");
@@ -152,6 +155,7 @@ fn cmd_help(w: &mut Writer) {
     w.write_line("  df             — espaco e utilizacao dos sistemas de arquivos montados");
     w.write_line("  mounts         — lista pontos de montagem ativos no VFS");
     w.write_line("  mount_fat [lba]— monta particao FAT32 do disco em /disk");
+    w.write_line("  mount_ext2 [lb]— monta particao Ext2 do disco em /ext2");
     w.write_line("  jda            — topologia de hardware e telemetria JDA (Dataflow)");
     w.write_line("  jdabench       — executa benchmark do grafo Dataflow vs Baseline");
     w.write_line("  jdashm         — teste de ciclo de vida de memoria fisica compartilhada Zero-Copy");
@@ -1021,6 +1025,87 @@ fn cmd_mount_fat(w: &mut Writer, args: &str) {
     }
 }
 
+/// `mount_ext2` — Monta partição Ext2 do disco em /ext2.
+fn cmd_mount_ext2(w: &mut Writer, args: &str) {
+    let drive = 0u8; // Primary Master
+    let mut target_lba = 0u32;
+    let prefix = "/ext2";
+
+    if !args.is_empty() {
+        let mut val = 0u32;
+        let mut valid = false;
+        for b in args.bytes() {
+            if (b'0'..=b'9').contains(&b) {
+                val = val * 10 + (b - b'0') as u32;
+                valid = true;
+            } else {
+                valid = false;
+                break;
+            }
+        }
+        if valid {
+            target_lba = val;
+        }
+    } else {
+        match crate::drivers::ide::read_mbr(drive) {
+            Ok(mbr) if mbr.is_valid => {
+                for part_opt in mbr.partitions.iter().flatten() {
+                    if part_opt.partition_type == 0x83 {
+                        target_lba = part_opt.start_lba;
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    w.set_color(Color::LightCyan, Color::Black);
+    w.write_string("Montando Ext2 no Drive 0, LBA ");
+    w.write_decimal(target_lba as usize);
+    w.write_string(" em ");
+    w.write_string(prefix);
+    w.write_line("...");
+    w.set_color(Color::LightGray, Color::Black);
+
+    match crate::vfs::ext2::mount_ext2_partition(prefix, drive, target_lba) {
+        Ok(()) => {
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_line("[OK] Volume Ext2 montado com sucesso em /ext2 (Read-Only)!");
+            w.set_color(Color::LightGray, Color::Black);
+            w.write_line("Use 'ls /ext2' para inspecionar os arquivos.");
+        }
+        Err(e) => {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_string("[Falha] ");
+            w.write_line(e);
+            w.set_color(Color::LightGray, Color::Black);
+        }
+    }
+}
+
+/// `sync` — Descarrega caches voláteis modificados (dirty) para o disco físico.
+fn cmd_sync(w: &mut Writer) {
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_line("=== Jinn Storage Sync (FLUSH CACHE) ===");
+    w.set_color(Color::LightGray, Color::Black);
+
+    match crate::drivers::block::flush_primary_cache() {
+        Ok(sectors) => {
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_string("[OK] Storage sincronizado com sucesso: ");
+            w.write_decimal(sectors);
+            w.write_line(" setores descarregados para o disco.");
+        }
+        Err(e) => {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_string("[Falha ao sincronizar] ");
+            w.write_line(e);
+        }
+    }
+    w.set_color(Color::LightGray, Color::Black);
+}
+
 /// `reboot` — Reinicia via triple fault (técnica de debug em bare-metal).
 fn cmd_reboot(w: &mut Writer) -> ! {
     w.set_color(Color::LightRed, Color::Black);
@@ -1565,6 +1650,15 @@ fn cmd_storage(w: &mut Writer, args: &str) {
         w.write_line("Opcional / Sob Demanda");
     }
     w.set_color(Color::LightGray, Color::Black);
+
+    let (c_hits, c_misses, c_dirty) = crate::drivers::block::primary_cache_stats();
+    w.write_string("  Estatisticas Cache   : Hits: ");
+    w.write_decimal(c_hits as usize);
+    w.write_string(" | Misses: ");
+    w.write_decimal(c_misses as usize);
+    w.write_string(" | Dirty: ");
+    w.write_decimal(c_dirty);
+    w.write_line(" setores");
 
     // Varredura de Partições MBR e GPT
     w.set_color(Color::Yellow, Color::Black);
