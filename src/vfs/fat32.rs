@@ -431,8 +431,94 @@ impl FileSystem for Fat32Fs {
         Ok(bytes_read)
     }
 
-    fn write(&self, _handle: u64, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
-        Err(VfsError::NotSupported)
+    fn write(&self, handle: u64, offset: u64, buf: &[u8]) -> VfsResult<usize> {
+        if !self.is_mounted {
+            return Err(VfsError::NotSupported);
+        }
+
+        let idx = handle as usize;
+        if idx >= MAX_OPEN_FILES {
+            return Err(VfsError::InvalidPath);
+        }
+
+        let entry = unsafe {
+            let fs_ptr = core::ptr::addr_of!(FAT32_GLOBAL);
+            let slot = &(*fs_ptr).open_files[idx];
+            if !slot.is_active {
+                return Err(VfsError::NotFound);
+            }
+            slot.entry
+        };
+
+        if entry.is_dir {
+            return Err(VfsError::IsADirectory);
+        }
+
+        // Permite sobrescrever dados dentro do tamanho atual do arquivo
+        if offset >= entry.size as u64 {
+            return Ok(0);
+        }
+
+        let bytes_to_write = ((entry.size as u64 - offset) as usize).min(buf.len());
+        let cluster_bytes = (self.sectors_per_cluster as usize) * 512;
+
+        let mut cluster_skip = (offset as usize) / cluster_bytes;
+        let mut cluster_offset = (offset as usize) % cluster_bytes;
+
+        let mut current_cluster = entry.first_cluster;
+        while cluster_skip > 0 {
+            match self.get_next_cluster(current_cluster) {
+                Ok(Some(next)) => current_cluster = next,
+                _ => return Ok(0),
+            }
+            cluster_skip -= 1;
+        }
+
+        let mut bytes_written = 0;
+        let mut sector_buf = [0u8; 512];
+
+        while bytes_written < bytes_to_write && current_cluster >= 2 && current_cluster < FAT32_EOF {
+            let start_lba = self.cluster_to_lba(current_cluster);
+
+            let start_sec = cluster_offset / 512;
+            let mut sec_offset = cluster_offset % 512;
+
+            for sec in start_sec..(self.sectors_per_cluster as usize) {
+                let sec_lba = start_lba + sec as u32;
+
+                // Lê o setor para preservar bytes ao redor da região modificada
+                if ide::read_sector(self.drive, sec_lba, &mut sector_buf).is_err() {
+                    return Err(VfsError::IoError);
+                }
+
+                let available_in_sec = 512 - sec_offset;
+                let needed = bytes_to_write - bytes_written;
+                let copy_count = available_in_sec.min(needed);
+
+                sector_buf[sec_offset..sec_offset + copy_count]
+                    .copy_from_slice(&buf[bytes_written..bytes_written + copy_count]);
+
+                // Escreve o setor modificado no disco físico via ATA PIO LBA28
+                if ide::write_sector(self.drive, sec_lba, &sector_buf).is_err() {
+                    return Err(VfsError::IoError);
+                }
+
+                bytes_written += copy_count;
+                sec_offset = 0;
+
+                if bytes_written >= bytes_to_write {
+                    break;
+                }
+            }
+
+            cluster_offset = 0;
+            match self.get_next_cluster(current_cluster) {
+                Ok(Some(next)) => current_cluster = next,
+                _ => break,
+            }
+        }
+
+        Ok(bytes_written)
     }
 
     fn create(&self, _path: &str) -> VfsResult<()> {

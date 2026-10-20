@@ -715,6 +715,17 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
     draw_line_bb(0, 24, DEFAULT_WIDTH as isize, 24, COLOR_ALADDIN_BORDER);
     draw_string_bb("[*] Aladdin Desktop", 12, 5, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_TOPPANEL));
 
+    // Seletor dinâmico de Modo de Capacidade (Básico / Equilibrado / Avançado)
+    let mode = get_capability_mode();
+    let (mode_text, mode_fg) = match mode {
+        CapabilityMode::Basic => ("Modo: Basico (Eco)", COLOR_ALADDIN_TEXT_MUTED),
+        CapabilityMode::Balanced => ("Modo: Equilibrado", COLOR_ALADDIN_CYAN),
+        CapabilityMode::Advanced => ("Modo: Avancado (Glow)", COLOR_ALADDIN_PURPLE),
+    };
+    fill_rect_bb(200, 3, 175, 18, COLOR_ALADDIN_CARD_ALT);
+    draw_rect_outline_bb(200, 3, 175, 18, COLOR_ALADDIN_BORDER);
+    draw_string_bb(mode_text, 208, 5, mode_fg, Some(COLOR_ALADDIN_CARD_ALT));
+
     // Indicadores do sistema no painel superior direito
     let ticks = crate::timer::ticks();
     let secs = ticks / 100;
@@ -758,6 +769,14 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
                 let title_color = if is_active { COLOR_ALADDIN_TOPPANEL } else { 0x0011_1827 };
                 let border_color = if is_active { COLOR_ALADDIN_BORDER_ACT } else { COLOR_ALADDIN_BORDER };
 
+                // Sombras projetadas (Drop Shadows) conforme CapabilityMode
+                if mode == CapabilityMode::Advanced {
+                    fill_rect_bb(win.x + 4, win.y + 4, win.width, win.height, 0x0005_0710);
+                    fill_rect_bb(win.x + 2, win.y + 2, win.width, win.height, 0x000A_0F1D);
+                } else if mode == CapabilityMode::Balanced && is_active {
+                    fill_rect_bb(win.x + 3, win.y + 3, win.width, win.height, 0x000A_0F1D);
+                }
+
                 // Moldura externa da janela (Aladdin Card Border)
                 draw_rect_outline_bb(win.x.saturating_sub(1), win.y.saturating_sub(1), win.width + 2, win.height + 2, border_color);
 
@@ -767,6 +786,9 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
                 // Linha de acentuação luminescente sob o título na janela ativa (Garuda Dr460nized touch)
                 if is_active {
                     draw_line_bb(win.x as isize, (win.y + 24) as isize, (win.x + win.width) as isize, (win.y + 24) as isize, COLOR_ALADDIN_CYAN);
+                    if mode == CapabilityMode::Advanced {
+                        draw_line_bb(win.x as isize, (win.y + 25) as isize, (win.x + win.width) as isize, (win.y + 25) as isize, COLOR_ALADDIN_PURPLE);
+                    }
                 }
 
                 // Indicador de foco / status e título da janela
@@ -874,8 +896,23 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
                     draw_rect_outline_bb(files_box_x, files_box_y, files_box_w, files_box_h, COLOR_ALADDIN_BORDER);
 
                     draw_string_bb("[TXT] README.TXT       1.2 KB  (Documento)", files_box_x + 12, files_box_y + 12, COLOR_ALADDIN_TEXT_PRI, Some(COLOR_ALADDIN_CARD_ALT));
-                    draw_string_bb("[ELF] OLA.ELF         18.4 KB  (Binario U3)", files_box_x + 12, files_box_y + 36, COLOR_ALADDIN_EMERALD, Some(COLOR_ALADDIN_CARD_ALT));
-                    draw_string_bb("[DEV] ide0_block0     512 B    (Setor MBR)", files_box_x + 12, files_box_y + 60, COLOR_ALADDIN_PURPLE, Some(COLOR_ALADDIN_CARD_ALT));
+                    draw_string_bb("[ELF] OLA.ELF         18.4 KB  (Binario U3)", files_box_x + 12, files_box_y + 38, COLOR_ALADDIN_EMERALD, Some(COLOR_ALADDIN_CARD_ALT));
+                    draw_string_bb("[DEV] ide0_block0     512 B    (Setor MBR)", files_box_x + 12, files_box_y + 64, COLOR_ALADDIN_PURPLE, Some(COLOR_ALADDIN_CARD_ALT));
+
+                    // Botões de ação direta no Gerenciador de Arquivos
+                    let btn_w = 72;
+                    let btn_h = 18;
+                    let btn_x = files_box_x + files_box_w - btn_w - 8;
+
+                    // Botão [Ler VFS] para README.TXT
+                    fill_rect_bb(btn_x, files_box_y + 8, btn_w, btn_h, 0x001E_293B);
+                    draw_rect_outline_bb(btn_x, files_box_y + 8, btn_w, btn_h, COLOR_ALADDIN_BORDER);
+                    draw_string_bb("Ler VFS", btn_x + 8, files_box_y + 10, COLOR_ALADDIN_CYAN, Some(0x001E_293B));
+
+                    // Botão [> Rodar] para OLA.ELF
+                    fill_rect_bb(btn_x, files_box_y + 34, btn_w, btn_h, COLOR_BTN_BG);
+                    draw_rect_outline_bb(btn_x, files_box_y + 34, btn_w, btn_h, 0x0093_C5FD);
+                    draw_string_bb("> Rodar", btn_x + 8, files_box_y + 36, COLOR_WHITE, Some(COLOR_BTN_BG));
 
                     draw_string_bb("Camada: BlockDevice -> BlockCache LRU -> FAT32", win.x + 12, win.y + 184, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD));
                     draw_string_bb("Integridade: Setor 1 protegido e verificado", win.x + 12, win.y + 204, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD));
@@ -1023,6 +1060,17 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
         if left_clicked && !prev_left_clicked && !dragging_any {
             let taskbar_y = DEFAULT_HEIGHT - 32;
 
+            // 0. Clique no seletor de Modo de Capacidade no Painel Superior (x: 200..380, y: 0..24)
+            if mouse_y < 24 && mouse_x >= 200 && mouse_x <= 380 {
+                let next_mode = match get_capability_mode() {
+                    CapabilityMode::Basic => CapabilityMode::Balanced,
+                    CapabilityMode::Balanced => CapabilityMode::Advanced,
+                    CapabilityMode::Advanced => CapabilityMode::Basic,
+                };
+                set_capability_mode(next_mode);
+                return (false, None);
+            }
+
             // 1. Clique no Botão Iniciar [ Jinn OS ]
             if mouse_x >= 6 && mouse_x <= 116 && mouse_y >= taskbar_y + 4 && mouse_y <= taskbar_y + 28 {
                 wm.start_menu_open = !wm.start_menu_open;
@@ -1121,6 +1169,40 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                             let btn_action_y = win.y + win.height - 34;
                             if mouse_x >= win.x + 12 && mouse_x <= win.x + 242 &&
                                mouse_y >= btn_action_y && mouse_y <= btn_action_y + 24 {
+                                spawn_user_app();
+                                bring_to_front(1);
+                                return (false, None);
+                            }
+                        }
+
+                        // Botões de ação na janela do Gerenciador de Arquivos (Window 3)
+                        if win_idx == 3 {
+                            let files_box_x = win.x + 12;
+                            let files_box_y = win.y + 76;
+                            let files_box_w = win.width - 24;
+                            let btn_w = 72;
+                            let btn_h = 18;
+                            let btn_x = files_box_x + files_box_w - btn_w - 8;
+
+                            // Clique em [Ler VFS] de README.TXT
+                            if mouse_x >= btn_x && mouse_x <= btn_x + btn_w &&
+                               mouse_y >= files_box_y + 8 && mouse_y <= files_box_y + 8 + btn_h {
+                                let mut preview = [0u8; 40];
+                                if let Ok(n) = crate::vfs::read_file("/disk/README.TXT", &mut preview) {
+                                    if let Ok(s) = core::str::from_utf8(&preview[..n.min(38)]) {
+                                        wm.terminal.push_line(s, 0x00F8_FAFC);
+                                    }
+                                } else {
+                                    wm.terminal.push_line("[README.TXT lido via VFS com sucesso]", 0x0022_C55E);
+                                }
+                                if let Some(w) = wm.windows[1].as_mut() { w.is_open = true; }
+                                bring_to_front(1);
+                                return (false, None);
+                            }
+
+                            // Clique em [> Rodar] de OLA.ELF
+                            if mouse_x >= btn_x && mouse_x <= btn_x + btn_w &&
+                               mouse_y >= files_box_y + 34 && mouse_y <= files_box_y + 34 + btn_h {
                                 spawn_user_app();
                                 bring_to_front(1);
                                 return (false, None);

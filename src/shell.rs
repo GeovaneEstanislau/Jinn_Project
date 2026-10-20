@@ -96,6 +96,7 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         // ── Sistema de Arquivos (VFS & FAT32) ──────────────────────────────────
         "ls" | "dir" => cmd_ls(w, args),
         "cat" => cmd_cat(w, args),
+        "write" => cmd_write(w, args),
         "mounts" => cmd_mounts(w),
         "mount_fat" => cmd_mount_fat(w, args),
 
@@ -140,6 +141,7 @@ fn cmd_help(w: &mut Writer) {
     w.write_line("  lspci          — lista dispositivos no barramento PCI (alias: pci)");
     w.write_line("  ls [path]      — lista conteudo de diretorio no VFS (ex: ls /dev)");
     w.write_line("  cat <file>     — exibe conteudo de arquivo no VFS");
+    w.write_line("  write <p> <txt>— escreve texto em arquivo no VFS/FAT32");
     w.write_line("  mounts         — lista pontos de montagem ativos no VFS");
     w.write_line("  mount_fat [lba]— monta particao FAT32 do disco em /disk");
     w.write_line("  jda            — topologia de hardware e telemetria JDA (Dataflow)");
@@ -777,6 +779,54 @@ fn cmd_cat(w: &mut Writer, args: &str) {
                 crate::vfs::VfsError::NotFound => "Nao encontrado",
                 crate::vfs::VfsError::IsADirectory => "E um diretorio",
                 _ => "Erro de acesso",
+            });
+            w.set_color(Color::LightGray, Color::Black);
+        }
+    }
+}
+
+/// `write` — Escreve dados textuais em um arquivo existente no VFS.
+fn cmd_write(w: &mut Writer, args: &str) {
+    let mut parts = args.splitn(2, ' ');
+    let path = match parts.next() {
+        Some(p) if !p.is_empty() => p,
+        _ => {
+            w.set_color(Color::Yellow, Color::Black);
+            w.write_line("Uso: write <caminho> <texto>");
+            w.set_color(Color::LightGray, Color::Black);
+            return;
+        }
+    };
+    let content = match parts.next() {
+        Some(c) => c,
+        None => {
+            w.set_color(Color::Yellow, Color::Black);
+            w.write_line("Uso: write <caminho> <texto>");
+            w.set_color(Color::LightGray, Color::Black);
+            return;
+        }
+    };
+
+    match crate::vfs::write_file(path, content.as_bytes()) {
+        Ok(n) => {
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_string("[OK] Gravados ");
+            w.write_decimal(n);
+            w.write_string(" bytes no arquivo '");
+            w.write_string(path);
+            w.write_line("' via VFS/FAT32!");
+            w.set_color(Color::LightGray, Color::Black);
+        }
+        Err(e) => {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_string("Erro ao gravar em '");
+            w.write_string(path);
+            w.write_string("': ");
+            w.write_line(match e {
+                crate::vfs::VfsError::NotFound => "Arquivo nao encontrado",
+                crate::vfs::VfsError::IsADirectory => "E um diretorio",
+                crate::vfs::VfsError::NotSupported => "Operacao nao suportada pelo FS",
+                _ => "Falha de E/S ou espaco",
             });
             w.set_color(Color::LightGray, Color::Black);
         }

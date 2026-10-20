@@ -222,3 +222,23 @@ pub fn read_file(path: &str, buf: &mut [u8]) -> VfsResult<usize> {
     let _ = close(path, handle);
     Ok(total)
 }
+
+/// Escreve dados em um arquivo existente no VFS a partir do offset 0.
+/// Retorna o número total de bytes gravados no filesystem.
+pub fn write_file(path: &str, buf: &[u8]) -> VfsResult<usize> {
+    let stat = stat(path)?;
+    if stat.node_type != NodeType::File {
+        return Err(VfsError::IsADirectory);
+    }
+    let handle = open(path, O_WRONLY)?;
+    let mut total = 0;
+    while total < buf.len() {
+        let n = write(path, handle, total as u64, &buf[total..])?;
+        if n == 0 {
+            break;
+        }
+        total += n;
+    }
+    let _ = close(path, handle);
+    Ok(total)
+}
