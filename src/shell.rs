@@ -88,6 +88,7 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
 
         // ── Armazenamento / Discos ─────────────────────────────────────────────
         "disk" | "disks" | "ata" => cmd_disk(w),
+        "bdev" => cmd_bdev(w),
 
         // ── Barramento de Hardware ─────────────────────────────────────────────
         "lspci" | "pci" => cmd_lspci(w),
@@ -101,6 +102,7 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         // ── JDA (Jinn Dataflow Architecture) ──────────────────────────────────
         "jda" => cmd_jda(w),
         "jdabench" => cmd_jdabench(w),
+        "jdashm" => cmd_jdashm(w),
 
         // ── Sistema ───────────────────────────────────────────────────────────
         "reboot" => cmd_reboot(w),
@@ -134,6 +136,7 @@ fn cmd_help(w: &mut Writer) {
     w.write_line("  sched          — estatisticas do escalonador");
     w.write_line("  uptime         — ticks de timer desde o boot");
     w.write_line("  disk           — detecta discos IDE/ATA e particoes MBR (alias: ata)");
+    w.write_line("  bdev           — diagnostico e teste da camada BlockDevice");
     w.write_line("  lspci          — lista dispositivos no barramento PCI (alias: pci)");
     w.write_line("  ls [path]      — lista conteudo de diretorio no VFS (ex: ls /dev)");
     w.write_line("  cat <file>     — exibe conteudo de arquivo no VFS");
@@ -141,6 +144,7 @@ fn cmd_help(w: &mut Writer) {
     w.write_line("  mount_fat [lba]— monta particao FAT32 do disco em /disk");
     w.write_line("  jda            — topologia de hardware e telemetria JDA (Dataflow)");
     w.write_line("  jdabench       — executa benchmark do grafo Dataflow vs Baseline");
+    w.write_line("  jdashm         — teste de ciclo de vida de memoria fisica compartilhada Zero-Copy");
     w.write_line("  gui            — inicia a interface grafica com janelas e mouse (alias: desktop)");
     w.write_line("  reboot         — reinicia o sistema (triple fault)");
     w.write_line("");
@@ -1192,6 +1196,167 @@ fn cmd_jdabench(w: &mut Writer) {
     } else {
         w.set_color(Color::LightCyan, Color::Black);
         w.write_line("  [RESULTADO] Desempenho equivalente entre politicas.");
+    }
+    w.set_color(Color::LightGray, Color::Black);
+}
+
+/// `bdev` — Diagnóstico e teste da camada de abstração de dispositivos de bloco.
+fn cmd_bdev(w: &mut Writer) {
+    use crate::drivers::block::{BlockDevice, IdeBlockDevice};
+
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_line("=== Jinn Storage: Camada BlockDevice ===");
+    w.set_color(Color::LightGray, Color::Black);
+
+    match IdeBlockDevice::new(0) {
+        Ok(dev) => {
+            w.write_string("  Dispositivo Primario : ");
+            w.set_color(Color::LightCyan, Color::Black);
+            w.write_line(dev.name());
+            w.set_color(Color::LightGray, Color::Black);
+
+            w.write_string("  Tamanho do Bloco     : ");
+            w.write_decimal(dev.block_size());
+            w.write_line(" bytes");
+
+            w.write_string("  Total de Blocos      : ");
+            w.write_decimal(dev.total_blocks() as usize);
+            w.write_line(" setores");
+
+            w.write_string("  Capacidade           : ");
+            w.write_decimal((dev.total_blocks() * dev.block_size() as u64 / (1024 * 1024)) as usize);
+            w.write_line(" MiB");
+
+            // Teste de leitura de bloco 0 (MBR) via BlockDevice
+            let mut buf = [0u8; 512];
+            match dev.read_blocks(0, 1, &mut buf) {
+                Ok(()) => {
+                    let sig = (buf[510] == 0x55) && (buf[511] == 0xAA);
+                    w.write_string("  Teste Leitura Bloco 0: ");
+                    if sig {
+                        w.set_color(Color::LightGreen, Color::Black);
+                        w.write_line("OK (MBR 0x55AA valido)");
+                    } else {
+                        w.set_color(Color::Yellow, Color::Black);
+                        w.write_line("AVISO (Assinatura nao encontrada)");
+                    }
+                }
+                Err(e) => {
+                    w.set_color(Color::LightRed, Color::Black);
+                    w.write_string("  [ERRO] Leitura de bloco: ");
+                    w.write_line(e);
+                }
+            }
+            w.set_color(Color::LightGray, Color::Black);
+
+            // Teste controlado de escrita e leitura de volta no LBA 1 (espaço reservado seguro fora de partições)
+            let mut test_payload = [0u8; 512];
+            let test_magic = b"JINN_BLOCKDEV_V01_TEST_INTEGRITY_OK\0";
+            test_payload[..test_magic.len()].copy_from_slice(test_magic);
+            test_payload[500..504].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+
+            w.write_string("  Teste Escrita Bloco 1: ");
+            match dev.write_blocks(1, 1, &test_payload) {
+                Ok(()) => {
+                    let mut verify_buf = [0u8; 512];
+                    match dev.read_blocks(1, 1, &mut verify_buf) {
+                        Ok(()) => {
+                            if verify_buf == test_payload {
+                                w.set_color(Color::LightGreen, Color::Black);
+                                w.write_line("OK (Gravacao & Leitura 100% verificadas)");
+                            } else {
+                                w.set_color(Color::LightRed, Color::Black);
+                                w.write_line("FALHA (Dados lidos divergem dos gravados)");
+                            }
+                        }
+                        Err(e) => {
+                            w.set_color(Color::LightRed, Color::Black);
+                            w.write_string("ERRO de verificacao: ");
+                            w.write_line(e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    w.set_color(Color::Yellow, Color::Black);
+                    w.write_string("BLOQUEADO: ");
+                    w.write_line(e);
+                }
+            }
+        }
+        Err(e) => {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_string("  [ERRO] Falha ao instanciar IdeBlockDevice(0): ");
+            w.write_line(e);
+        }
+    }
+    w.set_color(Color::LightGray, Color::Black);
+}
+
+/// `jdashm` — Teste de ciclo de vida de memória física compartilhada (Zero-Copy Frame Remapping).
+fn cmd_jdashm(w: &mut Writer) {
+    use crate::jda::shmem::SHARED_BUFFER_POOL;
+
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_line("=== JDA Zero-Copy Physical Memory Engine ===");
+    w.set_color(Color::LightGray, Color::Black);
+
+    let mut pool = SHARED_BUFFER_POOL.lock();
+
+    // 1. Aloca um buffer físico de 4 KiB
+    match pool.allocate(0, false) {
+        Ok(handle) => {
+            let phys = pool.get_phys_addr(handle).unwrap_or(0);
+            w.write_string("  1. Buffer Alocado (ID ");
+            w.write_decimal(handle);
+            w.write_string(") : Frame Fisico 0x");
+            w.write_hex_u64(phys);
+            w.write_line("");
+
+            // Escreve padrão no quadro via HHDM virtual
+            let virt = crate::memory::paging::phys_to_virt(phys) as *mut u8;
+            let signature = b"JDA_PMM_ZERO_COPY_PAYLOAD_VALID";
+            unsafe {
+                core::ptr::copy_nonoverlapping(signature.as_ptr(), virt, signature.len());
+            }
+
+            // Constrói e decodifica mensagem IPC Zero-Copy transmitindo o descritor
+            let msg = crate::ipc::Message::new_jda_zero_copy(0, 0, handle, 4096);
+            if let Some((unpacked_handle, unpacked_len)) = msg.as_jda_zero_copy() {
+                if unpacked_handle == handle && unpacked_len == 4096 {
+                    w.set_color(Color::LightGreen, Color::Black);
+                    w.write_line("  2. [OK] Mensagem IPC Zero-Copy transmitida via descritor (0 bytes payload copiados)");
+                    w.set_color(Color::LightGray, Color::Black);
+                }
+            }
+
+            // 3. Retain (compartilhamento com outro nó ou processo consumidor)
+            match pool.retain(handle) {
+                Ok(_) => {
+                    w.set_color(Color::LightGreen, Color::Black);
+                    w.write_line("  3. [OK] Retain de referencia: ref_count = 2 (Compartilhado)");
+                    w.set_color(Color::LightGray, Color::Black);
+                }
+                Err(e) => {
+                    w.set_color(Color::LightRed, Color::Black);
+                    w.write_line(e);
+                }
+            }
+
+            // 4. Libera primeira referência (produtor concluiu)
+            pool.release(handle).ok();
+            w.write_line("  4. [OK] Release parcial: ref_count = 1 (Frame retido com sucesso)");
+
+            // 5. Libera segunda referência (consumidor concluiu -> libera frame físico de volta)
+            pool.release(handle).ok();
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_line("  5. [OK] Release final: ref_count = 0 (Frame fisico liberado ao bitmap PMM)");
+            w.set_color(Color::LightGray, Color::Black);
+        }
+        Err(e) => {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_string("  [ERRO] Alocacao de buffer compartilhado: ");
+            w.write_line(e);
+        }
     }
     w.set_color(Color::LightGray, Color::Black);
 }

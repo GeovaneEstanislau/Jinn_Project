@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// Jinn OS — Driver de Disco ATA / IDE em Modo PIO (Primary Bus)
 ///
 /// Implementa comunicação direta com o controlador de disco IDE/ATA via
@@ -249,6 +250,54 @@ pub fn read_sector(drive: u8, lba: u32, buf: &mut [u8; 512]) -> Result<(), &'sta
             let word = inw(IDE_DATA);
             buf[i * 2]     = (word & 0xFF) as u8;
             buf[i * 2 + 1] = (word >> 8) as u8;
+        }
+
+        Ok(())
+    }
+}
+
+/// Escreve um setor físico de 512 bytes por endereço LBA28.
+pub fn write_sector(drive: u8, lba: u32, buf: &[u8; 512]) -> Result<(), &'static str> {
+    if lba >= 0x0FFF_FFFF {
+        return Err("Endereço LBA excede o limite LBA28 (28 bits)");
+    }
+
+    unsafe {
+        wait_not_busy()?;
+
+        // Configura modo LBA (bit 6 = 1) + bits 24..27 do LBA
+        let drive_head = 0xE0 | ((drive & 1) << 4) | (((lba >> 24) & 0x0F) as u8);
+        outb(IDE_DRIVE_HEAD, drive_head);
+        ide_delay();
+
+        outb(IDE_FEATURES, 0);      // Sem features extras
+        outb(IDE_SECTOR_COUNT, 1);  // Escreve exatamente 1 setor
+        outb(IDE_LBA_LOW,  (lba & 0xFF) as u8);
+        outb(IDE_LBA_MID,  ((lba >> 8) & 0xFF) as u8);
+        outb(IDE_LBA_HIGH, ((lba >> 16) & 0xFF) as u8);
+
+        // Dispara comando WRITE SECTORS (0x30)
+        outb(IDE_STATUS_CMD, CMD_WRITE_SECTORS);
+        ide_delay();
+
+        // Aguarda a controladora solicitar os dados (DRQ = 1)
+        wait_drq()?;
+
+        // Transfere 256 palavras de 16 bits (512 bytes) para a porta de dados
+        for i in 0..256 {
+            let low = buf[i * 2] as u16;
+            let high = buf[i * 2 + 1] as u16;
+            let word = low | (high << 8);
+            outw(IDE_DATA, word);
+        }
+
+        // Aguarda a gravação física na mídia (BSY = 0)
+        wait_not_busy()?;
+
+        // Valida se houve erro na controladora
+        let status = inb(IDE_STATUS_CMD);
+        if (status & STATUS_ERR) != 0 || (status & STATUS_DF) != 0 {
+            return Err("Falha reportada pela controladora ao gravar setor no disco IDE");
         }
 
         Ok(())

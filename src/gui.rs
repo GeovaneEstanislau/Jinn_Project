@@ -21,27 +21,99 @@ static mut BACKBUFFER: *mut u32 = core::ptr::null_mut();
 const DEFAULT_WIDTH: usize = 1024;
 const DEFAULT_HEIGHT: usize = 768;
 
-// Cores da GUI (ARGB)
-pub const COLOR_DESKTOP: u32      = 0x0016_202C; // Azul ardósia escuro
-pub const COLOR_TASKBAR: u32      = 0x0010_171E; // Barra inferior escura
+/// Modos de capacidade gráfica com degradação graciosa
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapabilityMode {
+    /// Renderização 100% opaca, sem sombras pesadas ou blur, máxima economia de ciclos de CPU
+    Basic,
+    /// Alpha blending linear leve, sombras discretas de 1 passo
+    Balanced,
+    /// Composição avançada com desfoque e acentuações luminescentes
+    Advanced,
+}
+
+static mut CURRENT_CAPABILITY: CapabilityMode = CapabilityMode::Balanced;
+
+pub fn get_capability_mode() -> CapabilityMode {
+    unsafe { *core::ptr::addr_of!(CURRENT_CAPABILITY) }
+}
+
+pub fn set_capability_mode(mode: CapabilityMode) {
+    unsafe { *core::ptr::addr_of_mut!(CURRENT_CAPABILITY) = mode; }
+}
+
+/// Representa uma região retangular danificada para composição incremental (Damage Tracking)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DirtyRect {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl DirtyRect {
+    pub const fn new(x: usize, y: usize, width: usize, height: usize) -> Self {
+        Self { x, y, width, height }
+    }
+
+    pub fn union(&self, other: &DirtyRect) -> DirtyRect {
+        let min_x = self.x.min(other.x);
+        let min_y = self.y.min(other.y);
+        let max_x = (self.x + self.width).max(other.x + other.width);
+        let max_y = (self.y + self.height).max(other.y + other.height);
+        DirtyRect {
+            x: min_x,
+            y: min_y,
+            width: max_x.saturating_sub(min_x),
+            height: max_y.saturating_sub(min_y),
+        }
+    }
+
+    pub fn intersects(&self, other: &DirtyRect) -> bool {
+        self.x < other.x + other.width &&
+        self.x + self.width > other.x &&
+        self.y < other.y + other.height &&
+        self.y + self.height > other.y
+    }
+}
+
+// ── Aladdin Design Tokens & Paleta de Cores (ARGB 32-bit) ────────────────────
+pub const COLOR_ALADDIN_BG: u32        = 0x000D_1117; // Abismo Ardósia (Fundo principal)
+pub const COLOR_ALADDIN_CARD: u32      = 0x0016_1B22; // Superfície de Janelas/Cartões
+pub const COLOR_ALADDIN_CARD_ALT: u32  = 0x0021_262D; // Superfície secundária
+pub const COLOR_ALADDIN_TOPPANEL: u32  = 0x000A_0E14; // Barra superior de status
+pub const COLOR_ALADDIN_DOCK: u32      = 0x0013_171F; // Barra de tarefas / Dock
+pub const COLOR_ALADDIN_CYAN: u32      = 0x0038_BDF8; // Ciano Luminescente (Garuda Dr460nized)
+pub const COLOR_ALADDIN_PURPLE: u32    = 0x00A8_55F7; // Violeta Vibrante
+pub const COLOR_ALADDIN_EMERALD: u32   = 0x0022_C55E; // Esmeralda (Sucesso / Ativo)
+pub const COLOR_ALADDIN_AMBER: u32     = 0x00F5_9E0B; // Âmbar (Avisos / Pressão)
+pub const COLOR_ALADDIN_RUBY: u32      = 0x00EF_4444; // Rubi (Fechar / Erro)
+pub const COLOR_ALADDIN_BORDER: u32    = 0x0030_363D; // Borda sutil de 1px
+pub const COLOR_ALADDIN_BORDER_ACT: u32= 0x0038_BDF8; // Borda de janela com foco
+pub const COLOR_ALADDIN_TEXT_PRI: u32  = 0x00F8_FAFC; // Texto primário
+pub const COLOR_ALADDIN_TEXT_MUTED: u32= 0x0094_A3B8; // Metadados / Texto secundário
+
+// Cores legadas mapeadas para o sistema Aladdin
+pub const COLOR_DESKTOP: u32      = COLOR_ALADDIN_BG;
+pub const COLOR_TASKBAR: u32      = COLOR_ALADDIN_DOCK;
 pub const COLOR_START_BTN: u32    = 0x0000_7ACC; // Azul VSCode / Jinn
 pub const COLOR_START_HOVER: u32  = 0x0002_84C7; // Azul claro hover
 pub const COLOR_WIN_BG: u32       = 0x00EA_EEF2; // Corpo da janela (cinza claro moderno)
 pub const COLOR_WIN_TITLE_ACT: u32= 0x001B_4965; // Barra de título ativa
 pub const COLOR_WIN_TITLE_INA: u32= 0x004A_5568; // Barra de título inativa
-pub const COLOR_BTN_CLOSE: u32    = 0x00E5_3E3E; // Botão fechar [X] vermelho
+pub const COLOR_BTN_CLOSE: u32    = COLOR_ALADDIN_RUBY; // Botão fechar [X]
 pub const COLOR_WHITE: u32        = 0x00FF_FFFF;
 pub const COLOR_BLACK: u32        = 0x0000_0000;
 pub const COLOR_TEXT_DARK: u32    = 0x001A_202C;
-pub const COLOR_ACCENT_GREEN: u32 = 0x0038_A169;
-pub const COLOR_ACCENT_BLUE: u32  = 0x0031_82CE;
+pub const COLOR_ACCENT_GREEN: u32 = COLOR_ALADDIN_EMERALD;
+pub const COLOR_ACCENT_BLUE: u32  = COLOR_ALADDIN_CYAN;
 pub const COLOR_MENU_BG: u32      = 0x001E_293B; // Fundo azul escuro do menu iniciar
 pub const COLOR_MENU_HEADER: u32  = 0x000F_172A; // Topo do menu
 pub const COLOR_MENU_HOVER: u32   = 0x0033_4155; // Item em hover
-pub const COLOR_MENU_BORDER: u32  = 0x0047_5569;
-pub const COLOR_BAR_FG: u32       = 0x0010_B981; // Verde esmeralda para barra de progresso
+pub const COLOR_MENU_BORDER: u32  = COLOR_ALADDIN_BORDER;
+pub const COLOR_BAR_FG: u32       = COLOR_ALADDIN_EMERALD; // Verde esmeralda para barra de progresso
 pub const COLOR_BAR_BG: u32       = 0x00CB_D5E1; // Fundo suave para barra
-pub const COLOR_BAR_BORDER: u32   = 0x0094_A3B8; // Borda da barra
+pub const COLOR_BAR_BORDER: u32   = COLOR_ALADDIN_BORDER; // Borda da barra
 pub const COLOR_BTN_BG: u32       = 0x0025_63EB; // Botão de ação (azul clássico)
 
 // Sprite do cursor de mouse (11x16)
@@ -573,15 +645,82 @@ pub fn swap_buffers() {
     }
 }
 
+/// Realiza o swap incremental (Damage Tracking) copiando apenas a região retangular danificada para a VRAM.
+/// Reduz a transferência de dados de 3.145.728 bytes para apenas a área alterada.
+pub fn swap_buffer_rect(rect: &DirtyRect) {
+    unsafe {
+        let info_ptr = core::ptr::addr_of!(FB_INFO);
+        let fb = match *info_ptr {
+            Some(info) => info,
+            None => return,
+        };
+        let bb = *core::ptr::addr_of!(BACKBUFFER);
+        if bb.is_null() { return; }
+
+        let fb_width = fb.width as usize;
+        let fb_height = fb.height as usize;
+        let pitch = fb.pitch as usize;
+
+        // Limita o retângulo às dimensões do framebuffer
+        let rx = rect.x.min(fb_width);
+        let ry = rect.y.min(fb_height);
+        let rw = rect.width.min(fb_width.saturating_sub(rx));
+        let rh = rect.height.min(fb_height.saturating_sub(ry));
+
+        if rw == 0 || rh == 0 { return; }
+
+        let bytes_per_line = rw * 4;
+        let row_stride = DEFAULT_WIDTH * 4;
+
+        for line in 0..rh {
+            let cur_y = ry + line;
+            let src = (bb as *const u8).add(cur_y * row_stride + rx * 4);
+            let dst = fb.address.add(cur_y * pitch + rx * 4);
+            core::ptr::copy_nonoverlapping(src, dst, bytes_per_line);
+        }
+    }
+}
+
 // ── Renderização Completa do Compositor ────────────────────────────────────────
 
-pub fn render_desktop(mouse_x: usize, mouse_y: usize) {
-    // 1. Limpa o fundo do Desktop com tom elegante
-    fill_rect_bb(0, 0, DEFAULT_WIDTH, DEFAULT_HEIGHT, COLOR_DESKTOP);
+pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>) {
+    // 1. Limpa o fundo do Desktop com tom Abismo Ardósia do Aladdin
+    fill_rect_bb(0, 0, DEFAULT_WIDTH, DEFAULT_HEIGHT, COLOR_ALADDIN_BG);
+
+    // 1.1. Barra Superior de Status (Aladdin Top Panel)
+    fill_rect_bb(0, 0, DEFAULT_WIDTH, 24, COLOR_ALADDIN_TOPPANEL);
+    draw_line_bb(0, 24, DEFAULT_WIDTH as isize, 24, COLOR_ALADDIN_BORDER);
+    draw_string_bb("[*] Aladdin Desktop", 12, 5, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_TOPPANEL));
+
+    // Indicadores do sistema no painel superior direito
+    let ticks = crate::timer::ticks();
+    let secs = ticks / 100;
+    let mut time_buf = [0u8; 16];
+    let time_prefix = b"Up: ";
+    time_buf[..4].copy_from_slice(time_prefix);
+    let mut pos = 4;
+    let mut s = secs;
+    if s == 0 {
+        time_buf[pos] = b'0';
+        pos += 1;
+    } else {
+        let start = pos;
+        while s > 0 && pos < 12 {
+            time_buf[pos] = b'0' + (s % 10) as u8;
+            s /= 10;
+            pos += 1;
+        }
+        time_buf[start..pos].reverse();
+    }
+    time_buf[pos] = b's';
+    pos += 1;
+    if let Ok(msg) = core::str::from_utf8(&time_buf[..pos]) {
+        draw_string_bb(msg, DEFAULT_WIDTH - 120, 5, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_TOPPANEL));
+    }
 
     // Marca d'água elegante no canto inferior direito
-    draw_string_bb("Jinn OS Microkernel v0.0.3", DEFAULT_WIDTH - 240, DEFAULT_HEIGHT - 64, 0x0024_3348, None);
-    draw_string_bb("x86_64 Preemptive Desktop", DEFAULT_WIDTH - 240, DEFAULT_HEIGHT - 48, 0x0024_3348, None);
+    draw_string_bb("Aladdin Desktop Engine v0.1", DEFAULT_WIDTH - 260, DEFAULT_HEIGHT - 64, COLOR_ALADDIN_PURPLE, None);
+    draw_string_bb("Jinn Microkernel x86_64", DEFAULT_WIDTH - 260, DEFAULT_HEIGHT - 48, COLOR_ALADDIN_TEXT_MUTED, None);
 
     // 2. Renderiza as janelas em Z-order (da do fundo para a do topo)
     unsafe {
@@ -593,45 +732,56 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize) {
                 if !win.is_open { continue; }
 
                 let is_active = win_idx == top_idx;
-                let title_color = if is_active { COLOR_WIN_TITLE_ACT } else { COLOR_WIN_TITLE_INA };
+                let title_color = if is_active { COLOR_ALADDIN_TOPPANEL } else { 0x0011_1827 };
+                let border_color = if is_active { COLOR_ALADDIN_BORDER_ACT } else { COLOR_ALADDIN_BORDER };
 
-                // Moldura externa (sombra/borda de 1px)
-                draw_rect_outline_bb(win.x.saturating_sub(1), win.y.saturating_sub(1), win.width + 2, win.height + 2, 0x000F_172A);
+                // Moldura externa da janela (Aladdin Card Border)
+                draw_rect_outline_bb(win.x.saturating_sub(1), win.y.saturating_sub(1), win.width + 2, win.height + 2, border_color);
 
-                // Barra de título
+                // Barra de título (Aladdin Window Header)
                 fill_rect_bb(win.x, win.y, win.width, 24, title_color);
 
-                // Título da janela
-                draw_string_bb(win.title, win.x + 8, win.y + 4, COLOR_WHITE, Some(title_color));
+                // Linha de acentuação luminescente sob o título na janela ativa (Garuda Dr460nized touch)
+                if is_active {
+                    draw_line_bb(win.x as isize, (win.y + 24) as isize, (win.x + win.width) as isize, (win.y + 24) as isize, COLOR_ALADDIN_CYAN);
+                }
 
-                // Botão de fechar [X]
+                // Indicador de foco / status e título da janela
+                if is_active {
+                    draw_char_bb(b'*', win.x + 8, win.y + 4, COLOR_ALADDIN_CYAN, Some(title_color));
+                    draw_string_bb(win.title, win.x + 20, win.y + 4, COLOR_ALADDIN_TEXT_PRI, Some(title_color));
+                } else {
+                    draw_string_bb(win.title, win.x + 10, win.y + 4, COLOR_ALADDIN_TEXT_MUTED, Some(title_color));
+                }
+
+                // Botão de fechar [X] estilizado em rubi Aladdin
                 let btn_close_x = win.x + win.width - 22;
                 let btn_close_y = win.y + 3;
-                fill_rect_bb(btn_close_x, btn_close_y, 18, 18, COLOR_BTN_CLOSE);
-                draw_char_bb(b'X', btn_close_x + 5, btn_close_y + 1, COLOR_WHITE, Some(COLOR_BTN_CLOSE));
+                fill_rect_bb(btn_close_x, btn_close_y, 18, 18, COLOR_ALADDIN_RUBY);
+                draw_char_bb(b'X', btn_close_x + 5, btn_close_y + 1, COLOR_WHITE, Some(COLOR_ALADDIN_RUBY));
 
-                // Corpo da janela
-                fill_rect_bb(win.x, win.y + 24, win.width, win.height.saturating_sub(24), COLOR_WIN_BG);
+                // Corpo da janela (Aladdin Card Surface)
+                fill_rect_bb(win.x, win.y + 25, win.width, win.height.saturating_sub(25), COLOR_ALADDIN_CARD);
 
                 // Conteúdo específico da janela
                 if win.id == 0 {
                     // ── Janela 0: Monitor de Sistema Dinâmico ──────────────
-                    draw_string_bb("--- Recursos do Kernel (Ring 0) ---", win.x + 12, win.y + 36, COLOR_WIN_TITLE_ACT, Some(COLOR_WIN_BG));
+                    draw_string_bb("--- Recursos do Kernel (Ring 0) ---", win.x + 12, win.y + 36, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD));
                     let ticks = crate::timer::ticks();
-                    draw_label_and_num("Tempo Ativo    : ", (ticks / 100) as usize, " s (100 Hz APIC)", win.x + 12, win.y + 58, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
-                    draw_label_and_num("Tarefas Ativas : ", crate::scheduler::get().task_count(), " processos", win.x + 12, win.y + 78, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
-                    draw_label_and_num("Preempcoes APIC: ", crate::scheduler::sched_ticks() as usize, " ticks", win.x + 12, win.y + 98, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
+                    draw_label_and_num("Tempo Ativo    : ", (ticks / 100) as usize, " s (100 Hz APIC)", win.x + 12, win.y + 58, COLOR_ALADDIN_TEXT_PRI, Some(COLOR_ALADDIN_CARD));
+                    draw_label_and_num("Tarefas Ativas : ", crate::scheduler::get().task_count(), " processos", win.x + 12, win.y + 78, COLOR_ALADDIN_TEXT_PRI, Some(COLOR_ALADDIN_CARD));
+                    draw_label_and_num("Preempcoes APIC: ", crate::scheduler::sched_ticks() as usize, " ticks", win.x + 12, win.y + 98, COLOR_ALADDIN_TEXT_PRI, Some(COLOR_ALADDIN_CARD));
 
                     let total_mb = crate::memory::total_bytes() / (1024 * 1024);
                     let used_mb = crate::memory::used_bytes() / (1024 * 1024);
-                    draw_label_and_num("Memoria RAM    : ", used_mb, " MB / ", win.x + 12, win.y + 118, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
-                    draw_label_and_num("", total_mb, " MB", win.x + 204, win.y + 118, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
+                    draw_label_and_num("Memoria RAM    : ", used_mb, " MB / ", win.x + 12, win.y + 118, COLOR_ALADDIN_TEXT_PRI, Some(COLOR_ALADDIN_CARD));
+                    draw_label_and_num("", total_mb, " MB", win.x + 204, win.y + 118, COLOR_ALADDIN_TEXT_PRI, Some(COLOR_ALADDIN_CARD));
 
-                    // Barra de progresso visual de memória
-                    draw_progress_bar_bb(win.x + 12, win.y + 138, win.width - 24, 16, used_mb, total_mb, COLOR_BAR_FG, COLOR_BAR_BG, COLOR_BAR_BORDER);
+                    // Barra de progresso visual de memória com acento esmeralda
+                    draw_progress_bar_bb(win.x + 12, win.y + 138, win.width - 24, 16, used_mb, total_mb, COLOR_ALADDIN_EMERALD, COLOR_ALADDIN_CARD_ALT, COLOR_ALADDIN_BORDER);
 
-                    draw_string_bb("Paginacao PML4 | Scheduler Preemptivo", win.x + 12, win.y + 164, COLOR_ACCENT_GREEN, Some(COLOR_WIN_BG));
-                    draw_string_bb("Seguranca: Ring 0 (Kernel) / Ring 3 (User)", win.x + 12, win.y + 184, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
+                    draw_string_bb("Paginacao PML4 | Scheduler Preemptivo", win.x + 12, win.y + 164, COLOR_ALADDIN_PURPLE, Some(COLOR_ALADDIN_CARD));
+                    draw_string_bb("Seguranca: Ring 0 (Kernel) / Ring 3 (User)", win.x + 12, win.y + 184, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD));
                 } else if win.id == 1 {
                     // ── Janela 1: Terminal Interativo ──────────────────────
                     let term_box_x = win.x + 8;
@@ -779,12 +929,16 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize) {
     }
 
     // 6. Envia o frame final da RAM para a memória de vídeo (VRAM)
-    swap_buffers();
+    if let Some(ref rect) = damage {
+        swap_buffer_rect(rect);
+    } else {
+        swap_buffers();
+    }
 }
 
 // ── Gerenciador de Eventos de Mouse ───────────────────────────────────────────
 
-pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) {
+pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Option<DirtyRect>) {
     unsafe {
         let wm = &mut *core::ptr::addr_of_mut!(WM);
         let left_clicked = (buttons & 1) != 0;
@@ -800,16 +954,23 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) {
             }
         }
 
-        // Se está arrastando alguma janela, atualiza suas coordenadas
+        // Se está arrastando alguma janela, atualiza suas coordenadas e calcula a região danificada
         let mut dragging_any = false;
+        let mut drag_damage: Option<DirtyRect> = None;
         for win_opt in wm.windows.iter_mut() {
             if let Some(win) = win_opt {
                 if win.is_dragging {
+                    let old_x = win.x;
+                    let old_y = win.y;
                     let new_x = mouse_x.saturating_sub(win.drag_offset_x);
                     let new_y = mouse_y.saturating_sub(win.drag_offset_y);
                     win.x = new_x.min(DEFAULT_WIDTH.saturating_sub(win.width));
                     win.y = new_y.min((DEFAULT_HEIGHT - 32).saturating_sub(win.height));
                     dragging_any = true;
+
+                    let old_box = DirtyRect::new(old_x.saturating_sub(2), old_y.saturating_sub(2), win.width + 4, win.height + 4);
+                    let new_box = DirtyRect::new(win.x.saturating_sub(2), win.y.saturating_sub(2), win.width + 4, win.height + 4);
+                    drag_damage = Some(old_box.union(&new_box));
                 }
             }
         }
@@ -821,7 +982,7 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) {
             // 1. Clique no Botão Iniciar [ Jinn OS ]
             if mouse_x >= 6 && mouse_x <= 116 && mouse_y >= taskbar_y + 4 && mouse_y <= taskbar_y + 28 {
                 wm.start_menu_open = !wm.start_menu_open;
-                return;
+                return (false, None);
             }
 
             // 2. Clique dentro do Menu Iniciar
@@ -862,7 +1023,7 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) {
                         _ => {}
                     }
                     wm.start_menu_open = false;
-                    return;
+                    return (false, None);
                 } else {
                     // Clique fora do menu fecha o menu
                     wm.start_menu_open = false;
@@ -880,7 +1041,7 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) {
                                 bring_to_front(win_id);
                             }
                         }
-                        return;
+                        return (false, None);
                     }
                 }
             }
@@ -903,7 +1064,7 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) {
                             if let Some(w) = wm.windows[win_idx].as_mut() {
                                 w.is_open = false;
                             }
-                            return;
+                            return (false, None);
                         }
 
                         // Botão de ação na janela do Terminal (Window 1)
@@ -913,7 +1074,7 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) {
                                mouse_y >= btn_action_y && mouse_y <= btn_action_y + 24 {
                                 spawn_user_app();
                                 bring_to_front(1);
-                                return;
+                                return (false, None);
                             }
                         }
 
@@ -937,6 +1098,8 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) {
                 bring_to_front(idx);
             }
         }
+
+        (dragging_any, drag_damage)
     }
 }
 
@@ -1055,20 +1218,35 @@ pub fn run_desktop() {
         let current_ticks = crate::timer::ticks();
 
         // 4. Processa interação e arrasto de janelas
-        handle_mouse(mx, my, buttons);
+        let (dragging_any, drag_damage) = handle_mouse(mx, my, buttons);
 
-        // 5. Re-renderiza se houve movimento do mouse, clique, digitação ou passou 10 ticks (100ms)
-        let state_changed = mx != last_mx || my != last_my || buttons != last_btn || key_pressed;
+        // 5. Re-renderiza se houve movimento do mouse, clique, digitação, arrasto ou passou 10 ticks (100ms)
+        let mouse_moved = mx != last_mx || my != last_my;
+        let button_changed = buttons != last_btn;
         let time_changed  = current_ticks.saturating_sub(last_ticks) >= 10;
+        let state_changed = mouse_moved || button_changed || key_pressed || dragging_any;
 
         if state_changed || time_changed {
+            // Damage Tracking: se janela foi arrastada, atualiza apenas união dos quadros; se apenas cursor moveu, caixa do cursor
+            let damage = if dragging_any && drag_damage.is_some() {
+                drag_damage
+            } else if mouse_moved && !button_changed && !key_pressed && !time_changed && last_mx != usize::MAX {
+                let min_x = last_mx.min(mx);
+                let min_y = last_my.min(my);
+                let max_x = (last_mx.max(mx) + CURSOR_W + 2).min(DEFAULT_WIDTH);
+                let max_y = (last_my.max(my) + CURSOR_H + 2).min(DEFAULT_HEIGHT);
+                Some(DirtyRect::new(min_x, min_y, max_x.saturating_sub(min_x), max_y.saturating_sub(min_y)))
+            } else {
+                None // Redesenho completo para cliques, digitação ou tempo
+            };
+
             last_mx = mx;
             last_my = my;
             last_btn = buttons;
             last_ticks = current_ticks;
 
-            // Renderiza a cena completa no Backbuffer e faz Swap para a tela
-            render_desktop(mx, my);
+            // Renderiza e faz swap (incremental ou total conforme o damage)
+            render_desktop(mx, my, damage);
         } else {
             // Cede uma fatia curta de CPU para que outras threads e timers rodem
             core::hint::spin_loop();

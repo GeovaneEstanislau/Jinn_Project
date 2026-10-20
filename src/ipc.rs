@@ -20,6 +20,9 @@ use crate::memory::SpinLock;
 pub const MAX_PROCS:    usize = 64;
 pub const QUEUE_DEPTH:  usize = 16;   // messages per queue
 
+pub const TAG_DATA_INLINE:     u32 = 0x0000_0000;
+pub const TAG_JDA_SHM_BUFFER:  u32 = 0x4A44_4101; // Marcador 'JDA\1' para Zero-Copy Frame
+
 // ── Message ───────────────────────────────────────────────────────────────────
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -49,6 +52,32 @@ impl Message {
         let len = data.len().min(64);
         m.payload[..len].copy_from_slice(&data[..len]);
         m
+    }
+
+    /// Cria uma mensagem IPC que transporta uma referência de buffer físico Zero-Copy do JDA
+    pub fn new_jda_zero_copy(from: u32, to: u32, shm_handle: usize, data_len: usize) -> Self {
+        let mut m = Self::zero();
+        m.pid_from = from;
+        m.pid_to   = to;
+        m.tag      = TAG_JDA_SHM_BUFFER;
+        m.payload[0..8].copy_from_slice(&(shm_handle as u64).to_le_bytes());
+        m.payload[8..16].copy_from_slice(&(data_len as u64).to_le_bytes());
+        m
+    }
+
+    /// Se a mensagem for TAG_JDA_SHM_BUFFER, extrai o (handle, data_len)
+    pub fn as_jda_zero_copy(&self) -> Option<(usize, usize)> {
+        if self.tag == TAG_JDA_SHM_BUFFER {
+            let mut handle_bytes = [0u8; 8];
+            let mut len_bytes = [0u8; 8];
+            handle_bytes.copy_from_slice(&self.payload[0..8]);
+            len_bytes.copy_from_slice(&self.payload[8..16]);
+            let handle = u64::from_le_bytes(handle_bytes) as usize;
+            let len = u64::from_le_bytes(len_bytes) as usize;
+            Some((handle, len))
+        } else {
+            None
+        }
     }
 }
 
