@@ -242,3 +242,17 @@ pub fn write_file(path: &str, buf: &[u8]) -> VfsResult<usize> {
     let _ = close(path, handle);
     Ok(total)
 }
+
+/// Cria um novo arquivo no VFS.
+pub fn create(path: &str) -> VfsResult<()> {
+    let table = MOUNTS.lock();
+    let (fs, rel) = table.resolve(path).ok_or(VfsError::NotFound)?;
+    fs.create(rel)
+}
+
+/// Remove um arquivo existente do VFS.
+pub fn remove(path: &str) -> VfsResult<()> {
+    let table = MOUNTS.lock();
+    let (fs, rel) = table.resolve(path).ok_or(VfsError::NotFound)?;
+    fs.remove(rel)
+}

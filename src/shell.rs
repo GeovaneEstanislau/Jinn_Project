@@ -98,6 +98,8 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         "ls" | "dir" => cmd_ls(w, args),
         "cat" => cmd_cat(w, args),
         "write" => cmd_write(w, args),
+        "touch" => cmd_touch(w, args),
+        "rm" | "del" => cmd_rm(w, args),
         "mounts" => cmd_mounts(w),
         "mount_fat" => cmd_mount_fat(w, args),
 
@@ -144,6 +146,8 @@ fn cmd_help(w: &mut Writer) {
     w.write_line("  ls [path]      — lista conteudo de diretorio no VFS (ex: ls /dev)");
     w.write_line("  cat <file>     — exibe conteudo de arquivo no VFS");
     w.write_line("  write <p> <txt>— escreve texto em arquivo no VFS/FAT32");
+    w.write_line("  touch <file>   — cria um novo arquivo no VFS/FAT32");
+    w.write_line("  rm <file>      — remove um arquivo do VFS/FAT32 (alias: del)");
     w.write_line("  mounts         — lista pontos de montagem ativos no VFS");
     w.write_line("  mount_fat [lba]— monta particao FAT32 do disco em /disk");
     w.write_line("  jda            — topologia de hardware e telemetria JDA (Dataflow)");
@@ -829,6 +833,75 @@ fn cmd_write(w: &mut Writer, args: &str) {
                 crate::vfs::VfsError::IsADirectory => "E um diretorio",
                 crate::vfs::VfsError::NotSupported => "Operacao nao suportada pelo FS",
                 _ => "Falha de E/S ou espaco",
+            });
+            w.set_color(Color::LightGray, Color::Black);
+        }
+    }
+}
+
+/// `touch` — Cria um novo arquivo no VFS.
+fn cmd_touch(w: &mut Writer, args: &str) {
+    let path = args.trim();
+    if path.is_empty() {
+        w.set_color(Color::Yellow, Color::Black);
+        w.write_line("Uso: touch <caminho_do_arquivo>");
+        w.set_color(Color::LightGray, Color::Black);
+        return;
+    }
+
+    match crate::vfs::create(path) {
+        Ok(()) => {
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_string("[OK] Arquivo '");
+            w.write_string(path);
+            w.write_line("' criado com sucesso no VFS/FAT32!");
+            w.set_color(Color::LightGray, Color::Black);
+        }
+        Err(e) => {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_string("Erro ao criar '");
+            w.write_string(path);
+            w.write_string("': ");
+            w.write_line(match e {
+                crate::vfs::VfsError::AlreadyExists => "Arquivo ja existe",
+                crate::vfs::VfsError::NoSpace => "Sem espaco no disco ou na tabela de diretorio",
+                crate::vfs::VfsError::InvalidPath => "Nome invalido (use formato 8.3 sem caracteres especiais)",
+                crate::vfs::VfsError::NotSupported => "Operacao nao suportada neste caminho",
+                _ => "Falha de E/S",
+            });
+            w.set_color(Color::LightGray, Color::Black);
+        }
+    }
+}
+
+/// `rm` — Remove um arquivo do VFS.
+fn cmd_rm(w: &mut Writer, args: &str) {
+    let path = args.trim();
+    if path.is_empty() {
+        w.set_color(Color::Yellow, Color::Black);
+        w.write_line("Uso: rm <caminho_do_arquivo>");
+        w.set_color(Color::LightGray, Color::Black);
+        return;
+    }
+
+    match crate::vfs::remove(path) {
+        Ok(()) => {
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_string("[OK] Arquivo '");
+            w.write_string(path);
+            w.write_line("' removido com sucesso do VFS/FAT32!");
+            w.set_color(Color::LightGray, Color::Black);
+        }
+        Err(e) => {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_string("Erro ao remover '");
+            w.write_string(path);
+            w.write_string("': ");
+            w.write_line(match e {
+                crate::vfs::VfsError::NotFound => "Arquivo nao encontrado",
+                crate::vfs::VfsError::IsADirectory => "E um diretorio",
+                crate::vfs::VfsError::NotSupported => "Operacao nao suportada neste caminho",
+                _ => "Falha de E/S",
             });
             w.set_color(Color::LightGray, Color::Black);
         }

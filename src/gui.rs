@@ -726,6 +726,18 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
     draw_rect_outline_bb(200, 3, 175, 18, COLOR_ALADDIN_BORDER);
     draw_string_bb(mode_text, 208, 5, mode_fg, Some(COLOR_ALADDIN_CARD_ALT));
 
+    // Seletor dinâmico de Perfil de Armazenamento JSA (Aladdin / Simbad / Workstation / POS)
+    let prof = crate::drivers::block::get_storage_profile();
+    let (prof_text, prof_fg) = match prof {
+        crate::drivers::block::StorageProfile::Aladdin => ("JSA: Aladdin (Home)", COLOR_ALADDIN_CYAN),
+        crate::drivers::block::StorageProfile::Simbad => ("JSA: Simbad (Server)", COLOR_ALADDIN_EMERALD),
+        crate::drivers::block::StorageProfile::Workstation => ("JSA: Workstation", COLOR_ALADDIN_PURPLE),
+        crate::drivers::block::StorageProfile::TerminalPos => ("JSA: POS (Resilient)", COLOR_ALADDIN_RUBY),
+    };
+    fill_rect_bb(385, 3, 175, 18, COLOR_ALADDIN_CARD_ALT);
+    draw_rect_outline_bb(385, 3, 175, 18, COLOR_ALADDIN_BORDER);
+    draw_string_bb(prof_text, 393, 5, prof_fg, Some(COLOR_ALADDIN_CARD_ALT));
+
     // Indicadores do sistema no painel superior direito
     let ticks = crate::timer::ticks();
     let secs = ticks / 100;
@@ -914,8 +926,14 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
                     draw_rect_outline_bb(btn_x, files_box_y + 34, btn_w, btn_h, 0x0093_C5FD);
                     draw_string_bb("> Rodar", btn_x + 8, files_box_y + 36, COLOR_WHITE, Some(COLOR_BTN_BG));
 
-                    draw_string_bb("Camada: BlockDevice -> BlockCache LRU -> FAT32", win.x + 12, win.y + 184, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD));
-                    draw_string_bb("Integridade: Setor 1 protegido e verificado", win.x + 12, win.y + 204, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD));
+                    let prof = crate::drivers::block::get_storage_profile();
+                    let policy = crate::drivers::block::get_storage_policy();
+                    draw_string_bb(prof.name(), win.x + 12, win.y + 184, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD));
+                    let strat_str = match policy.write_strategy {
+                        crate::drivers::block::WriteStrategy::WriteThrough => "Politica: Write-Through | Cache LRU: 16 KB",
+                        crate::drivers::block::WriteStrategy::WriteBack => "Politica: Write-Back + Flush | Cache: 32 KB",
+                    };
+                    draw_string_bb(strat_str, win.x + 12, win.y + 204, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD));
                 }
             }
         }
@@ -1068,6 +1086,18 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                     CapabilityMode::Advanced => CapabilityMode::Basic,
                 };
                 set_capability_mode(next_mode);
+                return (false, None);
+            }
+
+            // 0.1. Clique no seletor de Perfil JSA no Painel Superior (x: 385..560, y: 0..24)
+            if mouse_y < 24 && mouse_x >= 385 && mouse_x <= 560 {
+                let next_prof = match crate::drivers::block::get_storage_profile() {
+                    crate::drivers::block::StorageProfile::Aladdin => crate::drivers::block::StorageProfile::Simbad,
+                    crate::drivers::block::StorageProfile::Simbad => crate::drivers::block::StorageProfile::Workstation,
+                    crate::drivers::block::StorageProfile::Workstation => crate::drivers::block::StorageProfile::TerminalPos,
+                    crate::drivers::block::StorageProfile::TerminalPos => crate::drivers::block::StorageProfile::Aladdin,
+                };
+                crate::drivers::block::set_storage_profile(next_prof);
                 return (false, None);
             }
 
