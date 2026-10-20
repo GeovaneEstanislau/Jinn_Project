@@ -215,11 +215,11 @@ impl TerminalBuffer {
     }
 }
 
-const MAX_WINDOWS: usize = 3;
+const MAX_WINDOWS: usize = 4;
 
 struct WindowManager {
     windows: [Option<Window>; MAX_WINDOWS],
-    order: [usize; MAX_WINDOWS], // Z-order: 0 = fundo, 2 = topo
+    order: [usize; MAX_WINDOWS], // Z-order: 0 = fundo, 3 = topo
     prev_buttons: u8,
     start_menu_open: bool,
     should_exit: bool,
@@ -338,8 +338,8 @@ impl WindowManager {
 }
 
 static mut WM: WindowManager = WindowManager {
-    windows: [None, None, None],
-    order: [0, 1, 2],
+    windows: [None, None, None, None],
+    order: [0, 1, 2, 3],
     prev_buttons: 0,
     start_menu_open: false,
     should_exit: false,
@@ -448,6 +448,29 @@ fn init_default_windows() {
                 "Comunidade: github.com/GeovaneEstanislau/Jinn_Project",
                 "Enalteca a tecnologia brasileira!",
                 "Pressione [ESC] para retornar ao Shell texto.",
+            ],
+            line_count: 6,
+        });
+
+        // Janela 3: Gerenciador de Arquivos Aladdin (FAT32 / Storage)
+        wm.windows[3] = Some(Window {
+            id: 3,
+            title: "Aladdin Files - Volume /disk (FAT32)",
+            x: 160,
+            y: 190,
+            width: 440,
+            height: 240,
+            is_open: false,
+            is_dragging: false,
+            drag_offset_x: 0,
+            drag_offset_y: 0,
+            lines: [
+                "Dispositivo: IDE Primary Master (LBA28)",
+                "Particao 1: FAT32 Volume /disk",
+                "Arquivos detectados no VFS:",
+                " [DOC] README.TXT      1.2 KB",
+                " [BIN] OLA.ELF         18.4 KB (Executavel Ring 3)",
+                "Status: Sistema de arquivos montado e consistente",
             ],
             line_count: 6,
         });
@@ -831,12 +854,31 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
                     if wm.spawn_count > 0 {
                         draw_label_and_num("Apps: ", wm.spawn_count, " PIDs", win.x + 236, btn_y + 6, COLOR_ACCENT_GREEN, Some(COLOR_WIN_BG));
                     }
-                } else {
+                } else if win.id == 2 {
                     // ── Janela 2: Sobre o Jinn OS ─────────────────────────
                     for i in 0..win.line_count {
                         let line_y = win.y + 36 + (i * 20);
                         draw_string_bb(win.lines[i], win.x + 12, line_y, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
                     }
+                } else if win.id == 3 {
+                    // ── Janela 3: Gerenciador de Arquivos Aladdin (FAT32) ──
+                    draw_string_bb("--- Armazenamento Jinn / VFS ---", win.x + 12, win.y + 36, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD));
+                    draw_string_bb("Ponto de Montagem: /disk (FAT32 em IDE hd0)", win.x + 12, win.y + 56, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD));
+
+                    // Card de arquivos do volume
+                    let files_box_x = win.x + 12;
+                    let files_box_y = win.y + 76;
+                    let files_box_w = win.width - 24;
+                    let files_box_h = 96;
+                    fill_rect_bb(files_box_x, files_box_y, files_box_w, files_box_h, COLOR_ALADDIN_CARD_ALT);
+                    draw_rect_outline_bb(files_box_x, files_box_y, files_box_w, files_box_h, COLOR_ALADDIN_BORDER);
+
+                    draw_string_bb("[TXT] README.TXT       1.2 KB  (Documento)", files_box_x + 12, files_box_y + 12, COLOR_ALADDIN_TEXT_PRI, Some(COLOR_ALADDIN_CARD_ALT));
+                    draw_string_bb("[ELF] OLA.ELF         18.4 KB  (Binario U3)", files_box_x + 12, files_box_y + 36, COLOR_ALADDIN_EMERALD, Some(COLOR_ALADDIN_CARD_ALT));
+                    draw_string_bb("[DEV] ide0_block0     512 B    (Setor MBR)", files_box_x + 12, files_box_y + 60, COLOR_ALADDIN_PURPLE, Some(COLOR_ALADDIN_CARD_ALT));
+
+                    draw_string_bb("Camada: BlockDevice -> BlockCache LRU -> FAT32", win.x + 12, win.y + 184, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD));
+                    draw_string_bb("Integridade: Setor 1 protegido e verificado", win.x + 12, win.y + 204, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD));
                 }
             }
         }
@@ -862,6 +904,7 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
             (" Monitor ", 126, 0),
             (" Terminal", 232, 1),
             (" Sobre   ", 338, 2),
+            (" Arquivos", 444, 3),
         ];
 
         for &(label, tab_x, win_id) in tab_defs.iter() {
@@ -880,9 +923,9 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
         // 4. Menu Iniciar Popup (se ativo)
         if wm.start_menu_open {
             let menu_x = 6;
-            let menu_y = taskbar_y - 210;
+            let menu_y = taskbar_y - 238;
             let menu_w = 240;
-            let menu_h = 206;
+            let menu_h = 234;
 
             // Sombra do menu
             fill_rect_bb(menu_x + 2, menu_y + 2, menu_w, menu_h, 0x000A_0F1D);
@@ -898,10 +941,11 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
             let items = [
                 "1. Monitor de Sistema",
                 "2. Terminal Interativo",
-                "3. Executar ola-mundo (U3)",
-                "4. Sobre o Jinn OS",
-                "5. Reiniciar Maquina",
-                "6. Sair para Shell (ESC)",
+                "3. Arquivos /disk (FAT32)",
+                "4. Executar ola-mundo (U3)",
+                "5. Sobre o Jinn OS",
+                "6. Reiniciar Maquina",
+                "7. Sair para Shell (ESC)",
             ];
 
             for (idx, &item) in items.iter().enumerate() {
@@ -988,7 +1032,7 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
             // 2. Clique dentro do Menu Iniciar
             if wm.start_menu_open {
                 let menu_x = 6;
-                let menu_y = taskbar_y - 210;
+                let menu_y = taskbar_y - 238;
                 let menu_w = 240;
                 if mouse_x >= menu_x && mouse_x <= menu_x + menu_w && mouse_y >= menu_y && mouse_y < taskbar_y {
                     let item_idx = (mouse_y.saturating_sub(menu_y + 32)) / 28;
@@ -1004,19 +1048,24 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                             bring_to_front(1);
                         }
                         2 => {
+                            // Gerenciador de Arquivos (FAT32)
+                            if let Some(w) = wm.windows[3].as_mut() { w.is_open = true; }
+                            bring_to_front(3);
+                        }
+                        3 => {
                             // Executar ola-mundo
                             spawn_user_app();
                         }
-                        3 => {
+                        4 => {
                             // Sobre o Jinn OS
                             if let Some(w) = wm.windows[2].as_mut() { w.is_open = true; }
                             bring_to_front(2);
                         }
-                        4 => {
+                        5 => {
                             // Reiniciar Maquina via triple fault
                             reboot_machine();
                         }
-                        5 => {
+                        6 => {
                             // Sair para o Shell
                             wm.should_exit = true;
                         }
@@ -1032,7 +1081,7 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
 
             // 3. Clique nas Abas da Barra de Tarefas
             if mouse_y >= taskbar_y + 4 && mouse_y <= taskbar_y + 28 {
-                let tab_defs = [(126, 0), (232, 1), (338, 2)];
+                let tab_defs = [(126, 0), (232, 1), (338, 2), (444, 3)];
                 for &(tx, win_id) in tab_defs.iter() {
                     if mouse_x >= tx && mouse_x <= tx + 96 {
                         if let Some(w) = wm.windows[win_id].as_mut() {

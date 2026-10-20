@@ -58,6 +58,8 @@ pub extern "C" fn syscall_dispatch(
         9  => sys_spawn(arg0, arg1 as *const u8, arg2),
         10 => sys_waitpid(arg0),
         11 => sys_sleep(arg0),
+        12 => sys_jda_shm_alloc(arg0 != 0),
+        13 => sys_jda_shm_release(arg0),
         _  => ENOSYS,
     }
 }
@@ -236,6 +238,26 @@ fn sys_sleep(ms: usize) -> isize {
     scheduler::get().sleep_task(pid, wake_tick);
     sys_yield();
     0
+}
+
+/// `sys_jda_shm_alloc(is_read_only)` — Aloca um buffer físico no pool do JDA.
+/// Retorna o identificador do buffer (handle >= 0), ou código de erro negativo.
+fn sys_jda_shm_alloc(is_read_only: bool) -> isize {
+    let pid = scheduler::current_pid();
+    let mut pool = crate::jda::shmem::SHARED_BUFFER_POOL.lock();
+    match pool.allocate(pid, is_read_only) {
+        Ok(handle) => handle as isize,
+        Err(_) => ENOMEM,
+    }
+}
+
+/// `sys_jda_shm_release(handle)` — Libera a referência do buffer físico compartilhado no JDA.
+fn sys_jda_shm_release(handle: usize) -> isize {
+    let mut pool = crate::jda::shmem::SHARED_BUFFER_POOL.lock();
+    match pool.release(handle) {
+        Ok(()) => 0,
+        Err(_) => EINVAL,
+    }
 }
 
 // ── Kernel-internal invoke ────────────────────────────────────────────────────

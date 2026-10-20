@@ -273,3 +273,21 @@ pub unsafe fn sys_waitpid(pid: u64) -> i64 {
 pub unsafe fn sys_sleep(ms: u64) -> i64 {
     syscall3(11, ms, 0, 0)
 }
+
+// ── Syscall 12 — jda_shm_alloc ───────────────────────────────────────────────
+
+/// Aloca um buffer de página física compartilhado no subsistema JDA para transferência Zero-Copy.
+///
+/// Retorna o descritor (handle >= 0), ou código de erro negativo.
+#[inline(always)]
+pub unsafe fn sys_jda_shm_alloc(is_read_only: bool) -> i64 {
+    syscall3(12, if is_read_only { 1 } else { 0 }, 0, 0)
+}
+
+// ── Syscall 13 — jda_shm_release ─────────────────────────────────────────────
+
+/// Libera uma referência de buffer de página física compartilhado no JDA.
+#[inline(always)]
+pub unsafe fn sys_jda_shm_release(handle: u64) -> i64 {
+    syscall3(13, handle, 0, 0)
+}

@@ -1282,6 +1282,25 @@ fn cmd_bdev(w: &mut Writer) {
                     w.write_line(e);
                 }
             }
+
+            // Teste de eficiência da camada CachedBlockDevice
+            let cached_dev = crate::drivers::block::CachedBlockDevice::new(dev);
+            let mut cbuf = [0u8; 512];
+            cached_dev.read_blocks(0, 1, &mut cbuf).ok(); // Leitura 1: Miss
+            cached_dev.read_blocks(0, 1, &mut cbuf).ok(); // Leitura 2: Hit
+            let (hits, misses) = cached_dev.stats();
+
+            w.write_string("  BlockCache LRU (8 KB RAM): ");
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_decimal(hits as usize);
+            w.write_string(" Hit(s) / ");
+            w.write_decimal(misses as usize);
+            w.write_string(" Miss (Eficiencia: ");
+            let total = hits + misses;
+            let ratio = if total > 0 { (hits * 100) / total } else { 0 };
+            w.write_decimal(ratio as usize);
+            w.write_line("%)");
+            w.set_color(Color::LightGray, Color::Black);
         }
         Err(e) => {
             w.set_color(Color::LightRed, Color::Black);

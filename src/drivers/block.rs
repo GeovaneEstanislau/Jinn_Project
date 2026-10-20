@@ -199,3 +199,86 @@ impl BlockCache {
         slot.access_counter = self.clock;
     }
 }
+
+/// Dispositivo de blocos com cache LRU na RAM para amortizar acessos físicos ao disco
+pub struct CachedBlockDevice<D: BlockDevice> {
+    pub inner: D,
+    pub cache: crate::memory::SpinLock<BlockCache>,
+    pub hits: core::sync::atomic::AtomicU64,
+    pub misses: core::sync::atomic::AtomicU64,
+}
+
+impl<D: BlockDevice> CachedBlockDevice<D> {
+    pub fn new(inner: D) -> Self {
+        Self {
+            inner,
+            cache: crate::memory::SpinLock::new(BlockCache::new()),
+            hits: core::sync::atomic::AtomicU64::new(0),
+            misses: core::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    pub fn stats(&self) -> (u64, u64) {
+        (
+            self.hits.load(core::sync::atomic::Ordering::Relaxed),
+            self.misses.load(core::sync::atomic::Ordering::Relaxed),
+        )
+    }
+}
+
+impl<D: BlockDevice> BlockDevice for CachedBlockDevice<D> {
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
+
+    fn block_size(&self) -> usize {
+        self.inner.block_size()
+    }
+
+    fn total_blocks(&self) -> u64 {
+        self.inner.total_blocks()
+    }
+
+    fn read_blocks(&self, start_block: u64, count: usize, buf: &mut [u8]) -> Result<(), &'static str> {
+        let block_sz = self.block_size();
+        let mut cache = self.cache.lock();
+
+        for i in 0..count {
+            let lba = start_block + i as u64;
+            let offset = i * block_sz;
+
+            if let Some(cached_data) = cache.lookup(lba) {
+                buf[offset..offset + block_sz].copy_from_slice(cached_data);
+                self.hits.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            } else {
+                let mut sector = [0u8; DEFAULT_SECTOR_SIZE];
+                self.inner.read_blocks(lba, 1, &mut sector)?;
+                cache.insert(lba, &sector, false);
+                buf[offset..offset + block_sz].copy_from_slice(&sector);
+                self.misses.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn write_blocks(&self, start_block: u64, count: usize, buf: &[u8]) -> Result<(), &'static str> {
+        let block_sz = self.block_size();
+        let mut cache = self.cache.lock();
+
+        // Write-through: atualiza cache e dispositivo físico
+        for i in 0..count {
+            let lba = start_block + i as u64;
+            let offset = i * block_sz;
+            let mut sector = [0u8; DEFAULT_SECTOR_SIZE];
+            sector.copy_from_slice(&buf[offset..offset + block_sz]);
+            cache.insert(lba, &sector, false);
+        }
+
+        self.inner.write_blocks(start_block, count, buf)
+    }
+
+    fn flush(&self) -> Result<(), &'static str> {
+        self.inner.flush()
+    }
+}
