@@ -7,8 +7,7 @@
 ///   [ Boot Record (1024 B) ] -> [ Superblock (1024 B) ] -> [ Block Group Descriptors ]
 ///   -> [ Block Bitmaps / Inode Bitmaps ] -> [ Inode Tables ] -> [ Data Blocks ]
 
-use crate::vfs::{self, FileSystem, NodeType, Stat, VfsError, VfsResult};
-use crate::drivers::ide;
+use crate::vfs::{self, FileSystem, FsCapabilities, NodeType, Stat, VfsError, VfsResult};
 
 pub const EXT2_SUPER_MAGIC: u16 = 0xEF53;
 pub const EXT2_ROOT_INO: u32    = 2;
@@ -17,6 +16,7 @@ pub const EXT2_S_IFREG: u16     = 0x8000;
 pub const EXT2_FT_REG_FILE: u8  = 1;
 pub const EXT2_FT_DIR: u8       = 2;
 
+pub const MAX_EXT2_BLOCK_SIZE: usize = 4096;
 const MAX_OPEN_FILES: usize = 8;
 
 #[derive(Clone, Copy)]
@@ -74,6 +74,7 @@ struct OpenExt2File {
 pub struct Ext2Fs {
     pub drive: u8,
     pub partition_lba: u32,
+    pub partition_sectors: u64,
     pub block_size: usize,
     pub inodes_count: u32,
     pub blocks_count: u32,
@@ -95,6 +96,7 @@ impl Ext2Fs {
         Self {
             drive: 0,
             partition_lba: 0,
+            partition_sectors: 0,
             block_size: 1024,
             inodes_count: 0,
             blocks_count: 0,
@@ -107,11 +109,23 @@ impl Ext2Fs {
         }
     }
 
+    #[inline]
+    fn read_sec(&self, lba: u32, buf: &mut [u8; 512]) -> Result<(), &'static str> {
+        if self.partition_sectors > 0 && (lba as u64) >= (self.partition_lba as u64 + self.partition_sectors) {
+            return Err("Acesso de leitura fora dos limites da particao Ext2 (Bloqueado)");
+        }
+        crate::drivers::block::cached_read_sector(lba as u64, buf)
+    }
+
     /// Inicializa e valida o Superblock Ext2 na partição especificada
-    pub fn init_from_partition(&mut self, drive: u8, partition_lba: u32) -> Result<(), &'static str> {
+    pub fn init_from_partition(&mut self, drive: u8, partition_lba: u32, partition_sectors: u64) -> Result<(), &'static str> {
+        self.drive = drive;
+        self.partition_lba = partition_lba;
+        self.partition_sectors = partition_sectors;
+
         // O Superblock Ext2 fica localizado no byte 1024 (LBA offset 2 de 512 bytes)
         let mut sb_buf = [0u8; 512];
-        ide::read_sector(drive, partition_lba + 2, &mut sb_buf)?;
+        self.read_sec(partition_lba + 2, &mut sb_buf)?;
 
         // Valida Magic Number Ext2: 0xEF53 (offset 56 no superblock)
         let magic = u16::from_le_bytes([sb_buf[56], sb_buf[57]]);
@@ -119,14 +133,17 @@ impl Ext2Fs {
             return Err("Assinatura Ext2 invalida (magic != 0xEF53)");
         }
 
-        self.drive = drive;
-        self.partition_lba = partition_lba;
         self.inodes_count = u32::from_le_bytes([sb_buf[0], sb_buf[1], sb_buf[2], sb_buf[3]]);
         self.blocks_count = u32::from_le_bytes([sb_buf[4], sb_buf[5], sb_buf[6], sb_buf[7]]);
         self.first_data_block = u32::from_le_bytes([sb_buf[20], sb_buf[21], sb_buf[22], sb_buf[23]]);
 
         let log_block_size = u32::from_le_bytes([sb_buf[24], sb_buf[25], sb_buf[26], sb_buf[27]]);
-        self.block_size = 1024usize << log_block_size;
+        let computed_block_size = 1024usize << log_block_size;
+        if computed_block_size > MAX_EXT2_BLOCK_SIZE {
+            return Err("Tamanho de bloco Ext2 excede o limite suportado (4096 bytes)");
+        }
+        self.block_size = computed_block_size;
+
         self.blocks_per_group = u32::from_le_bytes([sb_buf[32], sb_buf[33], sb_buf[34], sb_buf[35]]);
         self.inodes_per_group = u32::from_le_bytes([sb_buf[40], sb_buf[41], sb_buf[42], sb_buf[43]]);
 
@@ -146,7 +163,7 @@ impl Ext2Fs {
         for s in 0..sectors_per_block {
             let offset = s * 512;
             let mut sec_buf = [0u8; 512];
-            ide::read_sector(self.drive, start_lba + s as u32, &mut sec_buf)?;
+            self.read_sec(start_lba + s as u32, &mut sec_buf)?;
             let copy_len = (buf.len().saturating_sub(offset)).min(512);
             buf[offset..offset + copy_len].copy_from_slice(&sec_buf[..copy_len]);
         }
@@ -162,8 +179,8 @@ impl Ext2Fs {
         let desc_block = desc_start_block + (group / descs_per_block);
         let desc_index = (group % descs_per_block) as usize;
 
-        let mut block_buf = [0u8; 1024];
-        self.read_block(desc_block, &mut block_buf)?;
+        let mut block_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+        self.read_block(desc_block, &mut block_buf[..self.block_size])?;
 
         let entry_offset = desc_index * 32;
         // Inode table LBA fica nos bytes 8..12 do descritor de grupo
@@ -190,8 +207,8 @@ impl Ext2Fs {
         let block_in_table = inode_table_block + (byte_offset / self.block_size as u32);
         let offset_within_block = (byte_offset % self.block_size as u32) as usize;
 
-        let mut block_buf = [0u8; 1024];
-        self.read_block(block_in_table, &mut block_buf)?;
+        let mut block_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+        self.read_block(block_in_table, &mut block_buf[..self.block_size])?;
 
         let b = &block_buf[offset_within_block..offset_within_block + self.inode_size as usize];
         let mode = u16::from_le_bytes([b[0], b[1]]);
@@ -231,7 +248,7 @@ impl Ext2Fs {
         })
     }
 
-    /// Itera sobre as entradas de diretório contidas no Inode especificado
+    /// Itera sobre as entradas de diretório contidas no Inode especificado com verificação de integridade
     pub fn for_each_dir_entry<F>(&self, dir_inode: &Ext2Inode, mut callback: F) -> Result<(), &'static str>
     where
         F: FnMut(u32, u8, &str) -> bool,
@@ -240,11 +257,11 @@ impl Ext2Fs {
             return Err("O Inode alvo nao e um diretorio Ext2");
         }
 
-        let mut block_buf = [0u8; 1024];
+        let mut block_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
 
         for &block_num in dir_inode.direct_blocks.iter() {
             if block_num == 0 { break; }
-            self.read_block(block_num, &mut block_buf)?;
+            self.read_block(block_num, &mut block_buf[..self.block_size])?;
 
             let mut offset = 0usize;
             while offset + 8 <= self.block_size {
@@ -258,9 +275,12 @@ impl Ext2Fs {
                 let name_len = block_buf[offset + 6] as usize;
                 let file_type = block_buf[offset + 7];
 
-                if rec_len == 0 { break; }
+                // Proteção contra metadados malformados / corrompidos (loop infinito ou buffer overflow)
+                if rec_len < 8 || offset + rec_len > self.block_size {
+                    break;
+                }
 
-                if ino != 0 && offset + 8 + name_len <= self.block_size {
+                if ino != 0 && offset + 8 + name_len <= offset + rec_len {
                     if let Ok(name_str) = core::str::from_utf8(&block_buf[offset + 8..offset + 8 + name_len]) {
                         if !callback(ino, file_type, name_str) {
                             return Ok(());
@@ -333,8 +353,14 @@ impl FileSystem for Ext2Fs {
         })
     }
 
-    fn open(&self, path: &str, _flags: u32) -> VfsResult<u64> {
+    fn open(&self, path: &str, flags: u32) -> VfsResult<u64> {
         if !self.is_mounted { return Err(VfsError::IoError); }
+
+        // Rejeita qualquer tentativa de abertura com intenção de escrita (Ext2 é estritamente Read-Only)
+        if (flags & (crate::vfs::O_WRONLY | crate::vfs::O_RDWR | crate::vfs::O_CREAT | crate::vfs::O_TRUNC | crate::vfs::O_APPEND)) != 0 {
+            return Err(VfsError::PermissionDenied);
+        }
+
         let (ino, inode) = self.resolve_path(path)?;
 
         unsafe {
@@ -381,14 +407,14 @@ impl FileSystem for Ext2Fs {
         let offset_in_start = (offset as usize) % block_sz;
 
         let mut bytes_read = 0usize;
-        let mut block_buf = [0u8; 1024];
+        let mut block_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
 
         for blk_idx in start_block_idx..12 {
             if bytes_read >= bytes_to_read { break; }
             let blk_num = inode.direct_blocks[blk_idx];
             if blk_num == 0 { break; }
 
-            if self.read_block(blk_num, &mut block_buf).is_err() {
+            if self.read_block(blk_num, &mut block_buf[..block_sz]).is_err() {
                 return Err(VfsError::IoError);
             }
 
@@ -402,16 +428,16 @@ impl FileSystem for Ext2Fs {
     }
 
     fn write(&self, _handle: u64, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
-        // Protótipo Fase 2: Somente Leitura por segurança contra corrupção
-        Err(VfsError::NotSupported)
+        // Ext2: Somente Leitura por segurança contra corrupção
+        Err(VfsError::PermissionDenied)
     }
 
     fn create(&self, _path: &str) -> VfsResult<()> {
-        Err(VfsError::NotSupported)
+        Err(VfsError::PermissionDenied)
     }
 
     fn remove(&self, _path: &str) -> VfsResult<()> {
-        Err(VfsError::NotSupported)
+        Err(VfsError::PermissionDenied)
     }
 
     fn readdir(&self, path: &str, cb: &mut dyn FnMut(&str, NodeType)) {
@@ -428,6 +454,37 @@ impl FileSystem for Ext2Fs {
             });
         }
     }
+
+    fn capabilities(&self) -> FsCapabilities {
+        FsCapabilities {
+            read_only: true,
+            supports_create: false,
+            supports_remove: false,
+            supports_write: false,
+            supports_directories: true,
+            supports_journaling: false,
+            supports_permissions: true,
+            max_file_size: 2 * 1024 * 1024 * 1024 * 1024, // 2 TiB
+            name: "Ext2 (Read-Only)",
+        }
+    }
+
+    fn sync(&self) -> VfsResult<()> {
+        let _ = crate::drivers::block::flush_primary_cache();
+        Ok(())
+    }
+
+    fn unmount(&self) -> VfsResult<()> {
+        let _ = self.sync();
+        unsafe {
+            let fs_ptr = core::ptr::addr_of_mut!(EXT2_GLOBAL);
+            (*fs_ptr).is_mounted = false;
+            for slot in (*fs_ptr).open_files.iter_mut() {
+                slot.is_active = false;
+            }
+        }
+        Ok(())
+    }
 }
 
 // ── Instância Global e API de Montagem ─────────────────────────────────────────
@@ -435,10 +492,10 @@ impl FileSystem for Ext2Fs {
 pub static mut EXT2_GLOBAL: Ext2Fs = Ext2Fs::new();
 
 /// Monta uma partição Ext2 no ponto de montagem VFS indicado (ex: `"/ext2"` ou `"/mnt"`)
-pub fn mount_ext2_partition(prefix: &'static str, drive: u8, partition_lba: u32) -> Result<(), &'static str> {
+pub fn mount_ext2_partition(prefix: &'static str, drive: u8, partition_lba: u32, partition_sectors: u64) -> Result<(), &'static str> {
     unsafe {
         let fs = &mut *core::ptr::addr_of_mut!(EXT2_GLOBAL);
-        fs.init_from_partition(drive, partition_lba)?;
+        fs.init_from_partition(drive, partition_lba, partition_sectors)?;
         vfs::mount(prefix, fs).map_err(|_| "Falha ao registrar ponto de montagem Ext2 no VFS")?;
     }
     Ok(())

@@ -7,7 +7,6 @@
 ///   [ Boot Sector / BPB ] -> [ Setores Reservados ] -> [ FAT 1 ] -> [ FAT 2 ] -> [ Área de Dados (Clusters) ]
 
 use crate::vfs::{self, FileSystem, NodeType, Stat, VfsError, VfsResult};
-use crate::drivers::ide;
 
 pub const FAT32_EOF: u32 = 0x0FFF_FFF8;
 const MAX_OPEN_FILES: usize = 16;
@@ -43,6 +42,7 @@ struct OpenFile {
 pub struct Fat32Fs {
     drive: u8,
     partition_lba: u32,
+    partition_sectors: u64,
     bytes_per_sector: u16,
     sectors_per_cluster: u8,
     fat_start_lba: u32,
@@ -61,6 +61,7 @@ impl Fat32Fs {
         Self {
             drive: 0,
             partition_lba: 0,
+            partition_sectors: 0,
             bytes_per_sector: 512,
             sectors_per_cluster: 1,
             fat_start_lba: 0,
@@ -71,10 +72,30 @@ impl Fat32Fs {
         }
     }
 
+    #[inline]
+    fn read_sec(&self, lba: u32, buf: &mut [u8; 512]) -> Result<(), &'static str> {
+        if self.partition_sectors > 0 && (lba as u64) >= (self.partition_lba as u64 + self.partition_sectors) {
+            return Err("Acesso de leitura fora dos limites da particao FAT32");
+        }
+        crate::drivers::block::cached_read_sector(lba as u64, buf)
+    }
+
+    #[inline]
+    fn write_sec(&self, lba: u32, buf: &[u8; 512]) -> Result<(), &'static str> {
+        if self.partition_sectors > 0 && (lba as u64) >= (self.partition_lba as u64 + self.partition_sectors) {
+            return Err("Acesso de escrita fora dos limites da particao FAT32 (Bloqueado)");
+        }
+        crate::drivers::block::cached_write_sector(lba as u64, buf)
+    }
+
     /// Inicializa e monta o filesystem lendo o BPB (Boot Sector) da partição.
-    pub fn init_from_partition(&mut self, drive: u8, partition_lba: u32) -> Result<(), &'static str> {
+    pub fn init_from_partition(&mut self, drive: u8, partition_lba: u32, partition_sectors: u64) -> Result<(), &'static str> {
+        self.drive = drive;
+        self.partition_lba = partition_lba;
+        self.partition_sectors = partition_sectors;
+
         let mut bpb = [0u8; 512];
-        ide::read_sector(drive, partition_lba, &mut bpb)?;
+        self.read_sec(partition_lba, &mut bpb)?;
 
         // Valida assinatura de boot 0x55AA
         if bpb[510] != 0x55 || bpb[511] != 0xAA {
@@ -144,7 +165,7 @@ impl Fat32Fs {
         let entry_offset = (fat_offset % 512) as usize;
 
         let mut sector_buf = [0u8; 512];
-        ide::read_sector(self.drive, fat_sector, &mut sector_buf)?;
+        self.read_sec(fat_sector, &mut sector_buf)?;
 
         let next = (sector_buf[entry_offset] as u32)
             | ((sector_buf[entry_offset + 1] as u32) << 8)
@@ -170,7 +191,7 @@ impl Fat32Fs {
             let start_lba = self.cluster_to_lba(cur_cluster);
 
             for sec in 0..self.sectors_per_cluster {
-                ide::read_sector(self.drive, start_lba + sec as u32, &mut sector_buf)?;
+                self.read_sec(start_lba + sec as u32, &mut sector_buf)?;
 
                 for entry_idx in 0..(512 / 32) {
                     let offset = entry_idx * 32;
@@ -332,7 +353,7 @@ impl Fat32Fs {
         // Varre até 64 setores da tabela FAT (cobre 8.192 clusters = 32 MiB de disco)
         for sec in 0..64u32 {
             let fat_sec_lba = self.fat_start_lba + sec;
-            if ide::read_sector(self.drive, fat_sec_lba, &mut fat_sector_buf).is_err() {
+            if self.read_sec(fat_sec_lba, &mut fat_sector_buf).is_err() {
                 return Err(VfsError::IoError);
             }
 
@@ -355,7 +376,7 @@ impl Fat32Fs {
                     fat_sector_buf[offset + 2] = 0xFF;
                     fat_sector_buf[offset + 3] = 0x0F;
 
-                    if ide::write_sector(self.drive, fat_sec_lba, &fat_sector_buf).is_err() {
+                    if self.write_sec(fat_sec_lba, &fat_sector_buf).is_err() {
                         return Err(VfsError::IoError);
                     }
 
@@ -363,7 +384,7 @@ impl Fat32Fs {
                     let data_lba = self.cluster_to_lba(cluster_num);
                     let zero_buf = [0u8; 512];
                     for s in 0..self.sectors_per_cluster {
-                        let _ = ide::write_sector(self.drive, data_lba + s as u32, &zero_buf);
+                        let _ = self.write_sec(data_lba + s as u32, &zero_buf);
                     }
 
                     return Ok(cluster_num);
@@ -384,7 +405,7 @@ impl Fat32Fs {
             let fat_sector = self.fat_start_lba + (fat_offset / 512);
             let entry_offset = (fat_offset % 512) as usize;
 
-            if ide::read_sector(self.drive, fat_sector, &mut sector_buf).is_err() {
+            if self.read_sec(fat_sector, &mut sector_buf).is_err() {
                 return Err(VfsError::IoError);
             }
 
@@ -399,7 +420,7 @@ impl Fat32Fs {
             sector_buf[entry_offset + 2] = 0x00;
             sector_buf[entry_offset + 3] = 0x00;
 
-            if ide::write_sector(self.drive, fat_sector, &sector_buf).is_err() {
+            if self.write_sec(fat_sector, &sector_buf).is_err() {
                 return Err(VfsError::IoError);
             }
 
@@ -416,7 +437,7 @@ impl Fat32Fs {
 
         for sec in 0..self.sectors_per_cluster {
             let sec_lba = root_lba + sec as u32;
-            if ide::read_sector(self.drive, sec_lba, &mut dir_buf).is_err() {
+            if self.read_sec(sec_lba, &mut dir_buf).is_err() {
                 return Err(VfsError::IoError);
             }
 
@@ -436,7 +457,7 @@ impl Fat32Fs {
                     dir_buf[offset + 30] = ((new_size >> 16) & 0xFF) as u8;
                     dir_buf[offset + 31] = ((new_size >> 24) & 0xFF) as u8;
 
-                    if ide::write_sector(self.drive, sec_lba, &dir_buf).is_err() {
+                    if self.write_sec(sec_lba, &dir_buf).is_err() {
                         return Err(VfsError::IoError);
                     }
                     return Ok(());
@@ -452,6 +473,27 @@ impl Fat32Fs {
 impl FileSystem for Fat32Fs {
     fn name(&self) -> &'static str {
         "fat32"
+    }
+
+    fn capabilities(&self) -> crate::vfs::FsCapabilities {
+        crate::vfs::FsCapabilities::read_write("FAT32", 0xFFFF_FFFF)
+    }
+
+    fn sync(&self) -> VfsResult<()> {
+        crate::drivers::block::flush_primary_cache().map_err(|_| VfsError::IoError)?;
+        Ok(())
+    }
+
+    fn unmount(&self) -> VfsResult<()> {
+        self.sync()?;
+        unsafe {
+            let fs_ptr = core::ptr::addr_of_mut!(FAT32_GLOBAL);
+            for slot in (*fs_ptr).open_files.iter_mut() {
+                slot.is_active = false;
+            }
+            (*fs_ptr).is_mounted = false;
+        }
+        Ok(())
     }
 
     fn lookup(&self, path: &str) -> VfsResult<Stat> {
@@ -551,7 +593,7 @@ impl FileSystem for Fat32Fs {
             let mut sec_offset = cluster_offset % 512;
 
             for sec in start_sec..(self.sectors_per_cluster as usize) {
-                if ide::read_sector(self.drive, start_lba + sec as u32, &mut sector_buf).is_err() {
+                if self.read_sec(start_lba + sec as u32, &mut sector_buf).is_err() {
                     return Err(VfsError::IoError);
                 }
 
@@ -640,7 +682,7 @@ impl FileSystem for Fat32Fs {
                 let sec_lba = start_lba + sec as u32;
 
                 // Lê o setor para preservar bytes ao redor da região modificada
-                if ide::read_sector(self.drive, sec_lba, &mut sector_buf).is_err() {
+                if self.read_sec(sec_lba, &mut sector_buf).is_err() {
                     return Err(VfsError::IoError);
                 }
 
@@ -652,7 +694,7 @@ impl FileSystem for Fat32Fs {
                     .copy_from_slice(&buf[bytes_written..bytes_written + copy_count]);
 
                 // Escreve o setor modificado no disco físico via ATA PIO LBA28
-                if ide::write_sector(self.drive, sec_lba, &sector_buf).is_err() {
+                if self.write_sec(sec_lba, &sector_buf).is_err() {
                     return Err(VfsError::IoError);
                 }
 
@@ -709,7 +751,7 @@ impl FileSystem for Fat32Fs {
 
         for sec in 0..self.sectors_per_cluster {
             let sec_lba = root_lba + sec as u32;
-            if ide::read_sector(self.drive, sec_lba, &mut dir_buf).is_err() {
+            if self.read_sec(sec_lba, &mut dir_buf).is_err() {
                 return Err(VfsError::IoError);
             }
 
@@ -741,7 +783,7 @@ impl FileSystem for Fat32Fs {
                     dir_buf[offset + 30] = 0;
                     dir_buf[offset + 31] = 0;
 
-                    if ide::write_sector(self.drive, sec_lba, &dir_buf).is_err() {
+                    if self.write_sec(sec_lba, &dir_buf).is_err() {
                         return Err(VfsError::IoError);
                     }
 
@@ -768,7 +810,7 @@ impl FileSystem for Fat32Fs {
 
         for sec in 0..self.sectors_per_cluster {
             let sec_lba = root_lba + sec as u32;
-            if ide::read_sector(self.drive, sec_lba, &mut dir_buf).is_err() {
+            if self.read_sec(sec_lba, &mut dir_buf).is_err() {
                 return Err(VfsError::IoError);
             }
 
@@ -813,7 +855,7 @@ impl FileSystem for Fat32Fs {
 
                         // Marca entrada como excluída
                         dir_buf[offset] = 0xE5;
-                        if ide::write_sector(self.drive, sec_lba, &dir_buf).is_err() {
+                        if self.write_sec(sec_lba, &dir_buf).is_err() {
                             return Err(VfsError::IoError);
                         }
 
@@ -866,10 +908,10 @@ impl FileSystem for Fat32Fs {
 pub static mut FAT32_GLOBAL: Fat32Fs = Fat32Fs::new();
 
 /// Monta a partição FAT32 do disco especificado no ponto de montagem do VFS (ex: `"/disk"`).
-pub fn mount_fat32_partition(prefix: &'static str, drive: u8, partition_lba: u32) -> Result<(), &'static str> {
+pub fn mount_fat32_partition(prefix: &'static str, drive: u8, partition_lba: u32, partition_sectors: u64) -> Result<(), &'static str> {
     unsafe {
         let fs = &mut *core::ptr::addr_of_mut!(FAT32_GLOBAL);
-        fs.init_from_partition(drive, partition_lba)?;
+        fs.init_from_partition(drive, partition_lba, partition_sectors)?;
         vfs::mount(prefix, fs).map_err(|_| "Falha ao registrar ponto de montagem no VFS")?;
     }
     Ok(())

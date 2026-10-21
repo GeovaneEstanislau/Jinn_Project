@@ -103,8 +103,10 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         "rm" | "del" => cmd_rm(w, args),
         "df" => cmd_df(w),
         "mounts" => cmd_mounts(w),
+        "fsinfo" => cmd_fsinfo(w, args),
         "mount_fat" => cmd_mount_fat(w, args),
         "mount_ext2" => cmd_mount_ext2(w, args),
+        "umount" | "unmount" => cmd_umount(w, args),
 
         // ── JDA (Jinn Dataflow Architecture) ──────────────────────────────────
         "jda" => cmd_jda(w),
@@ -154,8 +156,10 @@ fn cmd_help(w: &mut Writer) {
     w.write_line("  rm <file>      — remove um arquivo do VFS/FAT32 (alias: del)");
     w.write_line("  df             — espaco e utilizacao dos sistemas de arquivos montados");
     w.write_line("  mounts         — lista pontos de montagem ativos no VFS");
+    w.write_line("  fsinfo [path]  — capacidades e contrato do sistema de arquivos");
     w.write_line("  mount_fat [lba]— monta particao FAT32 do disco em /disk");
     w.write_line("  mount_ext2 [lb]— monta particao Ext2 do disco em /ext2");
+    w.write_line("  umount <prefix>— desmonta sistema de arquivos (alias: unmount)");
     w.write_line("  jda            — topologia de hardware e telemetria JDA (Dataflow)");
     w.write_line("  jdabench       — executa benchmark do grafo Dataflow vs Baseline");
     w.write_line("  jdashm         — teste de ciclo de vida de memoria fisica compartilhada Zero-Copy");
@@ -942,6 +946,9 @@ fn cmd_df(w: &mut Writer) {
             "fat32" => {
                 w.write_line("31 MB       2 MB     29 MB    6%  RW (IDE hd0)");
             }
+            "ext2" => {
+                w.write_line("64 MB       4 MB     60 MB    6%  RO (Linux POSIX)");
+            }
             _ => {
                 w.write_line("Desconhecido");
             }
@@ -973,6 +980,7 @@ fn cmd_mounts(w: &mut Writer) {
 fn cmd_mount_fat(w: &mut Writer, args: &str) {
     let drive = 0u8; // Primary Master
     let mut target_lba = 0u32;
+    let mut target_sectors = 0u64;
 
     if !args.is_empty() {
         let mut val = 0u32;
@@ -988,6 +996,16 @@ fn cmd_mount_fat(w: &mut Writer, args: &str) {
         }
         if valid {
             target_lba = val;
+            if let Ok(mbr) = crate::drivers::ide::read_mbr(drive) {
+                if mbr.is_valid {
+                    for part_opt in mbr.partitions.iter().flatten() {
+                        if part_opt.start_lba == target_lba {
+                            target_sectors = part_opt.sector_count as u64;
+                            break;
+                        }
+                    }
+                }
+            }
         }
     } else {
         match crate::drivers::ide::read_mbr(drive) {
@@ -995,6 +1013,7 @@ fn cmd_mount_fat(w: &mut Writer, args: &str) {
                 for part_opt in mbr.partitions.iter().flatten() {
                     if part_opt.partition_type == 0x0B || part_opt.partition_type == 0x0C {
                         target_lba = part_opt.start_lba;
+                        target_sectors = part_opt.sector_count as u64;
                         break;
                     }
                 }
@@ -1006,10 +1025,15 @@ fn cmd_mount_fat(w: &mut Writer, args: &str) {
     w.set_color(Color::LightCyan, Color::Black);
     w.write_string("Montando FAT32 no Drive 0, LBA ");
     w.write_decimal(target_lba as usize);
+    if target_sectors > 0 {
+        w.write_string(" (");
+        w.write_decimal(target_sectors as usize);
+        w.write_string(" setores)");
+    }
     w.write_line(" em /disk...");
     w.set_color(Color::LightGray, Color::Black);
 
-    match crate::vfs::fat32::mount_fat32_partition("/disk", drive, target_lba) {
+    match crate::vfs::fat32::mount_fat32_partition("/disk", drive, target_lba, target_sectors) {
         Ok(()) => {
             w.set_color(Color::LightGreen, Color::Black);
             w.write_line("[OK] Volume FAT32 montado com sucesso em /disk!");
@@ -1029,6 +1053,7 @@ fn cmd_mount_fat(w: &mut Writer, args: &str) {
 fn cmd_mount_ext2(w: &mut Writer, args: &str) {
     let drive = 0u8; // Primary Master
     let mut target_lba = 0u32;
+    let mut target_sectors = 0u64;
     let prefix = "/ext2";
 
     if !args.is_empty() {
@@ -1045,6 +1070,16 @@ fn cmd_mount_ext2(w: &mut Writer, args: &str) {
         }
         if valid {
             target_lba = val;
+            if let Ok(mbr) = crate::drivers::ide::read_mbr(drive) {
+                if mbr.is_valid {
+                    for part_opt in mbr.partitions.iter().flatten() {
+                        if part_opt.start_lba == target_lba {
+                            target_sectors = part_opt.sector_count as u64;
+                            break;
+                        }
+                    }
+                }
+            }
         }
     } else {
         match crate::drivers::ide::read_mbr(drive) {
@@ -1052,6 +1087,7 @@ fn cmd_mount_ext2(w: &mut Writer, args: &str) {
                 for part_opt in mbr.partitions.iter().flatten() {
                     if part_opt.partition_type == 0x83 {
                         target_lba = part_opt.start_lba;
+                        target_sectors = part_opt.sector_count as u64;
                         break;
                     }
                 }
@@ -1063,12 +1099,17 @@ fn cmd_mount_ext2(w: &mut Writer, args: &str) {
     w.set_color(Color::LightCyan, Color::Black);
     w.write_string("Montando Ext2 no Drive 0, LBA ");
     w.write_decimal(target_lba as usize);
+    if target_sectors > 0 {
+        w.write_string(" (");
+        w.write_decimal(target_sectors as usize);
+        w.write_string(" setores)");
+    }
     w.write_string(" em ");
     w.write_string(prefix);
     w.write_line("...");
     w.set_color(Color::LightGray, Color::Black);
 
-    match crate::vfs::ext2::mount_ext2_partition(prefix, drive, target_lba) {
+    match crate::vfs::ext2::mount_ext2_partition(prefix, drive, target_lba, target_sectors) {
         Ok(()) => {
             w.set_color(Color::LightGreen, Color::Black);
             w.write_line("[OK] Volume Ext2 montado com sucesso em /ext2 (Read-Only)!");
@@ -1084,23 +1125,111 @@ fn cmd_mount_ext2(w: &mut Writer, args: &str) {
     }
 }
 
-/// `sync` — Descarrega caches voláteis modificados (dirty) para o disco físico.
-fn cmd_sync(w: &mut Writer) {
+/// `umount` — Desmonta um sistema de arquivos do VFS garantindo flush de dados.
+fn cmd_umount(w: &mut Writer, args: &str) {
+    let prefix = args.trim();
+    if prefix.is_empty() {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_line("Uso: umount <prefix> (ex: umount /disk ou umount /ext2)");
+        w.set_color(Color::LightGray, Color::Black);
+        return;
+    }
+
     w.set_color(Color::Yellow, Color::Black);
-    w.write_line("=== Jinn Storage Sync (FLUSH CACHE) ===");
+    w.write_string("Desmontando ");
+    w.write_string(prefix);
+    w.write_line("...");
+
+    match crate::vfs::unmount(prefix) {
+        Ok(()) => {
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_string("[OK] Ponto '");
+            w.write_string(prefix);
+            w.write_line("' sincronizado e desmontado com sucesso.");
+        }
+        Err(e) => {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_string("[Falha ao desmontar] ");
+            w.write_line(match e {
+                crate::vfs::VfsError::NotFound => "Ponto de montagem nao encontrado",
+                crate::vfs::VfsError::Busy => "Recurso ocupado",
+                _ => "Erro de E/S ou VFS",
+            });
+        }
+    }
+    w.set_color(Color::LightGray, Color::Black);
+}
+
+/// `fsinfo` — Inspeciona o contrato de capacidades e limites do filesystem montado.
+fn cmd_fsinfo(w: &mut Writer, args: &str) {
+    let path = if args.trim().is_empty() { "/" } else { args.trim() };
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_string("=== Capacidades e Contrato do Filesystem em: ");
+    w.write_string(path);
+    w.write_line(" ===");
     w.set_color(Color::LightGray, Color::Black);
 
-    match crate::drivers::block::flush_primary_cache() {
-        Ok(sectors) => {
+    match crate::vfs::query_capabilities(path) {
+        Ok(caps) => {
+            w.write_string("  Formato/Driver : ");
+            w.set_color(Color::LightCyan, Color::Black);
+            w.write_line(caps.name);
+            w.set_color(Color::LightGray, Color::Black);
+
+            w.write_string("  Modo de Acesso : ");
+            if caps.read_only {
+                w.set_color(Color::LightRed, Color::Black);
+                w.write_line("SOMENTE LEITURA (Read-Only protegido pelo VFS)");
+            } else {
+                w.set_color(Color::LightGreen, Color::Black);
+                w.write_line("LEITURA E ESCRITA (Read-Write)");
+            }
+            w.set_color(Color::LightGray, Color::Black);
+
+            w.write_string("  Criacao/Remocao: ");
+            w.write_line(if caps.supports_create && caps.supports_remove { "Habilitado (create & remove)" } else { "Nao suportado" });
+
+            w.write_string("  Subdiretorios  : ");
+            w.write_line(if caps.supports_directories { "Hierarquico (subdiretorios suportados)" } else { "Plano / Fixo" });
+
+            w.write_string("  Tamanho Max Arq: ");
+            if caps.max_file_size >= 1024 * 1024 * 1024 * 1024 {
+                w.write_decimal((caps.max_file_size / (1024 * 1024 * 1024 * 1024)) as usize);
+                w.write_line(" TiB");
+            } else if caps.max_file_size >= 1024 * 1024 {
+                w.write_decimal((caps.max_file_size / (1024 * 1024)) as usize);
+                w.write_line(" MiB");
+            } else {
+                w.write_decimal(caps.max_file_size as usize);
+                w.write_line(" Bytes");
+            }
+        }
+        Err(_) => {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_line("Nenhum sistema de arquivos associado ao caminho.");
+            w.set_color(Color::LightGray, Color::Black);
+        }
+    }
+}
+
+/// `sync` — Descarrega caches voláteis modificados (dirty) de todos os filesystems e cache de blocos.
+fn cmd_sync(w: &mut Writer) {
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_line("=== Jinn Storage Sync (VFS & Block Cache) ===");
+    w.set_color(Color::LightGray, Color::Black);
+
+    match crate::vfs::sync_all() {
+        Ok(()) => {
             w.set_color(Color::LightGreen, Color::Black);
-            w.write_string("[OK] Storage sincronizado com sucesso: ");
-            w.write_decimal(sectors);
-            w.write_line(" setores descarregados para o disco.");
+            w.write_line("[OK] Todos os sistemas de arquivos e o cache de blocos foram sincronizados.");
         }
         Err(e) => {
             w.set_color(Color::LightRed, Color::Black);
             w.write_string("[Falha ao sincronizar] ");
-            w.write_line(e);
+            w.write_line(match e {
+                crate::vfs::VfsError::IoError => "Erro de E/S no dispositivo de bloco",
+                _ => "Falha de sincronizacao no VFS",
+            });
         }
     }
     w.set_color(Color::LightGray, Color::Black);

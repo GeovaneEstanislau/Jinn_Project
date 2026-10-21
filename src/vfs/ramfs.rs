@@ -132,6 +132,28 @@ const NULL_INODE: u64 = 0xDEAD_0000;
 impl FileSystem for RamFs {
     fn name(&self) -> &'static str { "ramfs" }
 
+    fn capabilities(&self) -> crate::vfs::FsCapabilities {
+        crate::vfs::FsCapabilities {
+            read_only: false,
+            supports_create: true,
+            supports_remove: true,
+            supports_write: true,
+            supports_directories: true,
+            supports_journaling: false,
+            supports_permissions: false,
+            max_file_size: 4096,
+            name: "RamFS (/dev)",
+        }
+    }
+
+    fn sync(&self) -> VfsResult<()> {
+        Ok(())
+    }
+
+    fn unmount(&self) -> VfsResult<()> {
+        Ok(())
+    }
+
     fn lookup(&self, path: &str) -> VfsResult<Stat> {
         let inner = self.inner.lock();
         let name = path.trim_start_matches('/');

@@ -186,11 +186,17 @@ pub extern "C" fn _start() -> ! {
             for part_opt in mbr.partitions.iter() {
                 if let Some(part) = part_opt {
                     if part.partition_type == 0x0B || part.partition_type == 0x0C {
-                        if vfs::fat32::mount_fat32_partition("/disk", 0, part.start_lba).is_ok() {
+                        if vfs::fat32::mount_fat32_partition("/disk", 0, part.start_lba, part.sector_count as u64).is_ok() {
                             w.write_string("    Auto-montado FAT32 em /disk (LBA ");
                             w.write_decimal(part.start_lba as usize);
                             w.write_line(")");
                             break;
+                        }
+                    } else if part.partition_type == 0x83 {
+                        if vfs::ext2::mount_ext2_partition("/ext2", 0, part.start_lba, part.sector_count as u64).is_ok() {
+                            w.write_string("    Auto-montado Ext2 em /ext2 (LBA ");
+                            w.write_decimal(part.start_lba as usize);
+                            w.write_line(")");
                         }
                     }
                 }

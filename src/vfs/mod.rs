@@ -30,6 +30,7 @@ pub enum VfsError {
     NoSpace,
     NotSupported,
     IoError,
+    Busy,
 }
 
 pub type VfsResult<T> = Result<T, VfsError>;
@@ -52,6 +53,50 @@ pub enum NodeType {
     Symlink,
 }
 
+// ── Capabilities do Sistema de Arquivos ──────────────────────────────────────
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FsCapabilities {
+    pub read_only: bool,
+    pub supports_create: bool,
+    pub supports_remove: bool,
+    pub supports_write: bool,
+    pub supports_directories: bool,
+    pub supports_journaling: bool,
+    pub supports_permissions: bool,
+    pub max_file_size: u64,
+    pub name: &'static str,
+}
+
+impl FsCapabilities {
+    pub const fn read_only(name: &'static str, max_file_size: u64) -> Self {
+        Self {
+            read_only: true,
+            supports_create: false,
+            supports_remove: false,
+            supports_write: false,
+            supports_directories: true,
+            supports_journaling: false,
+            supports_permissions: true,
+            max_file_size,
+            name,
+        }
+    }
+
+    pub const fn read_write(name: &'static str, max_file_size: u64) -> Self {
+        Self {
+            read_only: false,
+            supports_create: true,
+            supports_remove: true,
+            supports_write: true,
+            supports_directories: true,
+            supports_journaling: false,
+            supports_permissions: false,
+            max_file_size,
+            name,
+        }
+    }
+}
+
 // ── VFS Node Metadata ─────────────────────────────────────────────────────────
 #[derive(Debug, Clone, Copy)]
 pub struct Stat {
@@ -65,6 +110,15 @@ pub struct Stat {
 pub trait FileSystem: Send + Sync {
     /// Return the filesystem name (e.g., "ramfs", "ext2").
     fn name(&self) -> &'static str;
+
+    /// Consulta formal das capacidades operacionais suportadas por este filesystem.
+    fn capabilities(&self) -> FsCapabilities;
+
+    /// Sincroniza metadados e blocos modificados pendentes para a mídia física subjacente.
+    fn sync(&self) -> VfsResult<()>;
+
+    /// Notifica o filesystem sobre sua desmontagem iminente, liberando descritores e caches.
+    fn unmount(&self) -> VfsResult<()>;
 
     /// Look up a node by path (relative to the mount point).
     fn lookup(&self, path: &str) -> VfsResult<Stat>;
@@ -92,6 +146,7 @@ pub trait FileSystem: Send + Sync {
 }
 
 // ── Mount Table ───────────────────────────────────────────────────────────────
+#[derive(Clone, Copy)]
 struct MountEntry {
     prefix: [u8; MAX_PATH_LEN],
     prefix_len: usize,
@@ -120,6 +175,35 @@ impl MountTable {
         self.entries[self.count] = Some(entry);
         self.count += 1;
         Ok(())
+    }
+
+    fn unmount(&mut self, prefix: &str) -> VfsResult<()> {
+        let mut found_idx = None;
+        for (i, e) in self.entries.iter().enumerate().take(self.count) {
+            if let Some(entry) = e {
+                let e_prefix = core::str::from_utf8(&entry.prefix[..entry.prefix_len]).unwrap_or("");
+                if e_prefix == prefix {
+                    found_idx = Some((i, entry.fs));
+                    break;
+                }
+            }
+        }
+
+        if let Some((idx, fs)) = found_idx {
+            // Sincroniza e desmonta o filesystem antes de remover da tabela de montagem
+            fs.sync()?;
+            fs.unmount()?;
+
+            // Compacta a tabela de montagem
+            for i in idx..(self.count - 1) {
+                self.entries[i] = self.entries[i + 1];
+            }
+            self.entries[self.count - 1] = None;
+            self.count -= 1;
+            Ok(())
+        } else {
+            Err(VfsError::NotFound)
+        }
     }
 
     /// Find the filesystem whose mount prefix is the longest match for `path`.
@@ -152,6 +236,24 @@ pub fn mount(prefix: &str, fs: &'static dyn FileSystem) -> VfsResult<()> {
     MOUNTS.lock().mount(prefix, fs)
 }
 
+/// Desmonta o sistema de arquivos montado no prefixo especificado (ex: `"/ext2"` ou `"/disk"`).
+pub fn unmount(prefix: &str) -> VfsResult<()> {
+    MOUNTS.lock().unmount(prefix)
+}
+
+/// Sincroniza todos os sistemas de arquivos atualmente montados no VFS.
+pub fn sync_all() -> VfsResult<()> {
+    let table = MOUNTS.lock();
+    for entry_opt in table.entries.iter().take(table.count) {
+        if let Some(ref entry) = entry_opt {
+            let _ = entry.fs.sync();
+        }
+    }
+    // Também sincroniza a cache de blocos física subjacente
+    let _ = crate::drivers::block::flush_primary_cache();
+    Ok(())
+}
+
 pub fn stat(path: &str) -> VfsResult<Stat> {
     let table = MOUNTS.lock();
     let (fs, rel) = table.resolve(path).ok_or(VfsError::NotFound)?;
@@ -161,6 +263,13 @@ pub fn stat(path: &str) -> VfsResult<Stat> {
 pub fn open(path: &str, flags: u32) -> VfsResult<u64> {
     let table = MOUNTS.lock();
     let (fs, rel) = table.resolve(path).ok_or(VfsError::NotFound)?;
+
+    // Proteção de Integridade: se o FS for Read-Only, rejeita qualquer flag de escrita precocemente
+    let is_write_intent = (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
+    if is_write_intent && fs.capabilities().read_only {
+        return Err(VfsError::PermissionDenied);
+    }
+
     fs.open(rel, flags)
 }
 
@@ -202,6 +311,13 @@ where
             cb(prefix, e.fs.name());
         }
     }
+}
+
+/// Consulta as capacidades formais e limitações do sistema de arquivos para o caminho especificado.
+pub fn query_capabilities(path: &str) -> VfsResult<FsCapabilities> {
+    let table = MOUNTS.lock();
+    let (fs, _) = table.resolve(path).ok_or(VfsError::NotFound)?;
+    Ok(fs.capabilities())
 }
 
 /// Lê todo o conteúdo de um arquivo do VFS para o buffer fornecido.

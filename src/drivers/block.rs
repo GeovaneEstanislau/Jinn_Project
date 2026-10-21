@@ -186,6 +186,14 @@ pub fn get_storage_profile() -> StorageProfile {
 }
 
 pub fn set_storage_profile(profile: StorageProfile) {
+    let old_policy = get_storage_policy();
+    let new_policy = profile.policy();
+
+    // Transição de segurança: se mudar de WriteBack para WriteThrough ou alterar limites, descarrega a cache
+    if old_policy.write_strategy == WriteStrategy::WriteBack || new_policy.write_strategy == WriteStrategy::WriteThrough {
+        let _ = flush_primary_cache();
+    }
+
     unsafe { *core::ptr::addr_of_mut!(ACTIVE_STORAGE_PROFILE) = profile; }
 }
 
@@ -308,6 +316,58 @@ impl BlockCache {
         slot.is_valid = true;
         slot.access_counter = self.clock;
     }
+
+    /// Insere ou atualiza um setor na cache, garantindo que se o slot LRU a ser evictado
+    /// for sujo (dirty), ele seja descarregado para o dispositivo subjacente antes da substituição.
+    /// Isso previne perda catastrófica de dados em cargas intensivas com WriteBack.
+    pub fn insert_evicting<D: BlockDevice>(&mut self, dev: &D, lba: u64, data: &[u8; DEFAULT_SECTOR_SIZE], is_dirty: bool) -> Result<(), &'static str> {
+        self.clock = self.clock.wrapping_add(1);
+        // 1. Atualiza se já presente
+        for slot in self.slots.iter_mut() {
+            if slot.is_valid && slot.lba == lba {
+                slot.data.copy_from_slice(data);
+                slot.is_dirty = is_dirty;
+                slot.access_counter = self.clock;
+                return Ok(());
+            }
+        }
+
+        // 2. Utiliza slot vazio se disponível
+        for slot in self.slots.iter_mut() {
+            if !slot.is_valid {
+                slot.lba = lba;
+                slot.data.copy_from_slice(data);
+                slot.is_dirty = is_dirty;
+                slot.is_valid = true;
+                slot.access_counter = self.clock;
+                return Ok(());
+            }
+        }
+
+        // 3. Política de substituição LRU (menor contador de acesso)
+        let mut min_idx = 0;
+        let mut min_val = u32::MAX;
+        for (i, slot) in self.slots.iter().enumerate() {
+            if slot.access_counter < min_val {
+                min_val = slot.access_counter;
+                min_idx = i;
+            }
+        }
+
+        // Proteção de Integridade: se o slot evictado for dirty, persiste no disco antes!
+        let slot = &mut self.slots[min_idx];
+        if slot.is_valid && slot.is_dirty {
+            dev.write_blocks(slot.lba, 1, &slot.data)?;
+            slot.is_dirty = false;
+        }
+
+        slot.lba = lba;
+        slot.data.copy_from_slice(data);
+        slot.is_dirty = is_dirty;
+        slot.is_valid = true;
+        slot.access_counter = self.clock;
+        Ok(())
+    }
 }
 
 /// Dispositivo de blocos com cache LRU na RAM para amortizar acessos físicos ao disco
@@ -367,7 +427,7 @@ impl<D: BlockDevice> BlockDevice for CachedBlockDevice<D> {
             } else {
                 let mut sector = [0u8; DEFAULT_SECTOR_SIZE];
                 self.inner.read_blocks(lba, 1, &mut sector)?;
-                cache.insert(lba, &sector, false);
+                let _ = cache.insert_evicting(&self.inner, lba, &sector, false);
                 buf[offset..offset + block_sz].copy_from_slice(&sector);
                 self.misses.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             }
@@ -383,24 +443,24 @@ impl<D: BlockDevice> BlockDevice for CachedBlockDevice<D> {
 
         match policy.write_strategy {
             WriteStrategy::WriteThrough => {
-                // Atualiza cache e escreve imediatamente no disco físico
+                // Atualiza cache (com evicção segura) e escreve imediatamente no disco físico
                 for i in 0..count {
                     let lba = start_block + i as u64;
                     let offset = i * block_sz;
                     let mut sector = [0u8; DEFAULT_SECTOR_SIZE];
                     sector.copy_from_slice(&buf[offset..offset + block_sz]);
-                    cache.insert(lba, &sector, false);
+                    let _ = cache.insert_evicting(&self.inner, lba, &sector, false);
                 }
                 self.inner.write_blocks(start_block, count, buf)
             }
             WriteStrategy::WriteBack => {
-                // Marca como dirty no cache para consolidação posterior
+                // Marca como dirty no cache com evicção segura de dirty anterior para consolidação posterior
                 for i in 0..count {
                     let lba = start_block + i as u64;
                     let offset = i * block_sz;
                     let mut sector = [0u8; DEFAULT_SECTOR_SIZE];
                     sector.copy_from_slice(&buf[offset..offset + block_sz]);
-                    cache.insert(lba, &sector, true);
+                    cache.insert_evicting(&self.inner, lba, &sector, true)?;
                 }
                 Ok(())
             }
@@ -424,6 +484,26 @@ pub static PRIMARY_CACHED_DEV: crate::memory::SpinLock<Option<CachedBlockDevice<
 pub fn init_primary_cache() {
     if let Ok(dev) = IdeBlockDevice::new(0) {
         *PRIMARY_CACHED_DEV.lock() = Some(CachedBlockDevice::new(dev));
+    }
+}
+
+/// Lê um setor do disco primário utilizando a camada de cache LRU
+pub fn cached_read_sector(lba: u64, buf: &mut [u8; DEFAULT_SECTOR_SIZE]) -> Result<(), &'static str> {
+    let mut dev_opt = PRIMARY_CACHED_DEV.lock();
+    if let Some(ref mut cdev) = *dev_opt {
+        cdev.read_blocks(lba, 1, buf)
+    } else {
+        crate::drivers::ide::read_sector(0, lba as u32, buf)
+    }
+}
+
+/// Escreve um setor no disco primário utilizando a camada de cache LRU e a estratégia ativa (WriteThrough ou WriteBack)
+pub fn cached_write_sector(lba: u64, buf: &[u8; DEFAULT_SECTOR_SIZE]) -> Result<(), &'static str> {
+    let mut dev_opt = PRIMARY_CACHED_DEV.lock();
+    if let Some(ref mut cdev) = *dev_opt {
+        cdev.write_blocks(lba, 1, buf)
+    } else {
+        crate::drivers::ide::write_sector(0, lba as u32, buf)
     }
 }
 
