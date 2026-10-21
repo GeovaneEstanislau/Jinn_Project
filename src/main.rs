@@ -260,20 +260,29 @@ pub extern "C" fn _start() -> ! {
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
 
+    w.write_string("[+] Subsistema Grafico (Limine Framebuffer)...");
+    if let Some(fb) = limine::framebuffer() {
+        gui::init();
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string(" OK ");
+        w.set_color(Color::LightCyan, Color::Black);
+        w.write_string("(");
+        w.write_decimal(fb.width as usize);
+        w.write_string("x");
+        w.write_decimal(fb.height as usize);
+        w.write_string("x");
+        w.write_decimal(fb.bpp as usize);
+        w.write_line(" bpp)");
+        w.set_color(Color::LightGray, Color::Black);
+    } else {
+        w.set_color(Color::Yellow, Color::Black);
+        w.write_line(" AVISO (Modo texto VGA legado)");
+        w.set_color(Color::LightGray, Color::Black);
+    }
+
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line("[SUCCESS] Jinn OS pronto - entregando controle ao Escalonador.");
     w.set_color(Color::LightGray, Color::Black);
-
-    // INICIALIZA A GUI E DESENHA UMA JANELA DE TESTE
-    gui::init();
-    gui::draw_window(700, 50, 300, 200, "Jinn OS - Info");
-    gui::draw_string_at("Desenvolvido em Rust", 710, 80, Color::Black, Some(Color::LightGray));
-    gui::draw_string_at("Modo Grafico Ativo", 710, 100, Color::DarkGray, Some(Color::LightGray));
-    gui::draw_string_at("Res: 1024x768", 710, 120, Color::Blue, Some(Color::LightGray));
-    gui::draw_string_at("Mouse PS/2 Ativo (IRQ 12)", 710, 140, Color::LightGreen, Some(Color::LightGray));
-
-    // Renderiza o cursor na posição central da tela (512, 384)
-    gui::update_cursor(512, 384);
 
     // Habilita interrupções. O APIC Timer vai disparar (IRQ0) e a primeira 
     // preempção vai abandonar a pilha de boot e iniciar as tasks (começando pelo shell).

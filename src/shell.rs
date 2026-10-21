@@ -84,7 +84,7 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         "uptime" => cmd_uptime(w),
 
         // ── Interface Gráfica ─────────────────────────────────────────────────
-        "gui" | "desktop" | "startx" => cmd_gui(w),
+        "aladdin" | "gui" | "desktop" | "startx" => cmd_gui(w),
 
         // ── Armazenamento / Discos ─────────────────────────────────────────────
         "disk" | "disks" | "ata" => cmd_disk(w),
@@ -163,7 +163,7 @@ fn cmd_help(w: &mut Writer) {
     w.write_line("  jda            — topologia de hardware e telemetria JDA (Dataflow)");
     w.write_line("  jdabench       — executa benchmark do grafo Dataflow vs Baseline");
     w.write_line("  jdashm         — teste de ciclo de vida de memoria fisica compartilhada Zero-Copy");
-    w.write_line("  gui            — inicia a interface grafica com janelas e mouse (alias: desktop)");
+    w.write_line("  aladdin        — desktop grafico Aladdin moderno (alias: gui, desktop, startx)");
     w.write_line("  reboot         — reinicia o sistema (triple fault)");
     w.write_line("");
     w.set_color(Color::DarkGray, Color::Black);
@@ -171,10 +171,20 @@ fn cmd_help(w: &mut Writer) {
     w.set_color(Color::LightGray, Color::Black);
 }
 
-/// `gui` / `desktop` — Inicia o ambiente gráfico interativo com janelas e mouse.
+/// `aladdin` / `gui` / `desktop` — Inicia o ambiente gráfico interativo com janelas e mouse.
 fn cmd_gui(w: &mut Writer) {
+    if !crate::gui::is_available() {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_line("[!] Erro: Adaptador grafico Limine Framebuffer nao disponivel.");
+        w.write_line("    O desktop Aladdin requer resolucao grafica de 1024x768.");
+        w.set_color(Color::LightGray, Color::Black);
+        return;
+    }
+
     w.set_color(Color::LightCyan, Color::Black);
-    w.write_line("Iniciando ambiente grafico Jinn Desktop...");
+    w.write_line("Iniciando sessao grafica Aladdin Desktop...");
+    w.set_color(Color::DarkGray, Color::Black);
+    w.write_line("  Dica: Pressione [ESC] ou clique em [X Sair] para retornar ao console.");
     w.set_color(Color::LightGray, Color::Black);
     crate::gui::run_desktop();
 }

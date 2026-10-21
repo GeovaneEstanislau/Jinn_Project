@@ -221,6 +221,25 @@ impl TerminalBuffer {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct CachedFileEntry {
+    pub name: [u8; 16],
+    pub name_len: usize,
+    pub is_elf: bool,
+    pub is_txt: bool,
+}
+
+impl CachedFileEntry {
+    pub const fn empty() -> Self {
+        Self {
+            name: [0; 16],
+            name_len: 0,
+            is_elf: false,
+            is_txt: false,
+        }
+    }
+}
+
 const MAX_WINDOWS: usize = 4;
 
 struct WindowManager {
@@ -236,9 +255,35 @@ struct WindowManager {
     preview_filename_len: usize,
     preview_content: [u8; 256],
     preview_content_len: usize,
+    file_cache: [CachedFileEntry; 6],
+    file_cache_count: usize,
+    file_cache_valid: bool,
 }
 
 impl WindowManager {
+    pub fn refresh_file_cache(&mut self) {
+        self.file_cache_count = 0;
+        let mut count = 0;
+        let cache_ptr = self.file_cache.as_mut_ptr();
+
+        let _ = crate::vfs::readdir("/disk", |name, _| {
+            if count < 6 {
+                let n_len = name.len().min(15);
+                unsafe {
+                    let slot = &mut *cache_ptr.add(count);
+                    slot.name[..n_len].copy_from_slice(&name.as_bytes()[..n_len]);
+                    slot.name_len = n_len;
+                    slot.is_elf = name.ends_with(".elf") || name.ends_with(".ELF");
+                    slot.is_txt = name.ends_with(".txt") || name.ends_with(".TXT");
+                }
+                count += 1;
+            }
+        });
+
+        self.file_cache_count = count;
+        self.file_cache_valid = true;
+    }
+
     pub fn terminal_handle_key(&mut self, ch: u8) {
         match ch {
             b'\n' | b'\r' => {
@@ -271,7 +316,7 @@ impl WindowManager {
                     // Processa comandos internos do terminal gráfico
                     match cmd_str {
                         "help" => {
-                            self.terminal.push_line("Cmds: help, clear, spawn, ps, uptime, reboot", 0x0038_BDF8);
+                            self.terminal.push_line("Cmds: help, clear, spawn, ps, uptime, ls, mem, reboot", 0x0038_BDF8);
                         }
                         "clear" => {
                             self.terminal.history_count = 0;
@@ -314,6 +359,16 @@ impl WindowManager {
                             pos += 2;
                             if let Ok(msg) = core::str::from_utf8(&buf[..pos]) {
                                 self.terminal.push_line(msg, 0x00F8_FAFC);
+                            }
+                        }
+                        "ls" => {
+                            self.refresh_file_cache();
+                            self.terminal.push_line("Arquivos em /disk:", 0x0038_BDF8);
+                            for i in 0..self.file_cache_count {
+                                let entry = &self.file_cache[i];
+                                if let Ok(name_str) = core::str::from_utf8(&entry.name[..entry.name_len]) {
+                                    self.terminal.push_line(name_str, if entry.is_elf { 0x0022_C55E } else { 0x00F8_FAFC });
+                                }
                             }
                         }
                         "reboot" => {
@@ -361,7 +416,19 @@ static mut WM: WindowManager = WindowManager {
     preview_filename_len: 0,
     preview_content: [0u8; 256],
     preview_content_len: 0,
+    file_cache: [CachedFileEntry::empty(); 6],
+    file_cache_count: 0,
+    file_cache_valid: false,
 };
+
+/// Verifica se o framebuffer e o backbuffer do ambiente gráfico estão inicializados e disponíveis.
+pub fn is_available() -> bool {
+    unsafe {
+        let info_ptr = core::ptr::addr_of!(FB_INFO);
+        let bb_ptr = core::ptr::addr_of!(BACKBUFFER);
+        (*info_ptr).is_some() && !(*bb_ptr).is_null()
+    }
+}
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
 
@@ -530,32 +597,118 @@ pub fn draw_pixel_bb(x: usize, y: usize, color: u32) {
 }
 
 pub fn fill_rect_bb(x: usize, y: usize, width: usize, height: usize, color: u32) {
-    let end_x = (x + width).min(DEFAULT_WIDTH);
-    let end_y = (y + height).min(DEFAULT_HEIGHT);
+    unsafe {
+        let bb = *core::ptr::addr_of!(BACKBUFFER);
+        if bb.is_null() || x >= DEFAULT_WIDTH || y >= DEFAULT_HEIGHT { return; }
+        let end_x = (x + width).min(DEFAULT_WIDTH);
+        let end_y = (y + height).min(DEFAULT_HEIGHT);
+        let row_len = end_x - x;
+        if row_len == 0 { return; }
 
-    for cy in y..end_y {
-        for cx in x..end_x {
-            draw_pixel_bb(cx, cy, color);
+        for cy in y..end_y {
+            let row_ptr = bb.add(cy * DEFAULT_WIDTH + x);
+            for i in 0..row_len {
+                core::ptr::write_volatile(row_ptr.add(i), color);
+            }
         }
     }
 }
 
 pub fn draw_char_bb(ch: u8, x: usize, y: usize, fg: u32, bg: Option<u32>) {
-    let glyph = font::get_glyph(ch);
-    for (y_offset, row_byte) in glyph.iter().enumerate() {
-        let cy = y + y_offset;
-        if cy >= DEFAULT_HEIGHT { break; }
-        for x_offset in 0..8 {
-            let cx = x + x_offset;
-            if cx >= DEFAULT_WIDTH { break; }
+    unsafe {
+        let bb = *core::ptr::addr_of!(BACKBUFFER);
+        if bb.is_null() || x >= DEFAULT_WIDTH || y >= DEFAULT_HEIGHT { return; }
+        let glyph = font::get_glyph(ch);
+        let max_y = (y + 16).min(DEFAULT_HEIGHT);
+        let max_x = (x + 8).min(DEFAULT_WIDTH);
 
-            if (row_byte & (1 << (7 - x_offset))) != 0 {
-                draw_pixel_bb(cx, cy, fg);
-            } else if let Some(bg_color) = bg {
-                draw_pixel_bb(cx, cy, bg_color);
+        for (y_offset, row_byte) in glyph.iter().enumerate() {
+            let cy = y + y_offset;
+            if cy >= max_y { break; }
+            let row_ptr = bb.add(cy * DEFAULT_WIDTH);
+            for x_offset in 0..8 {
+                let cx = x + x_offset;
+                if cx >= max_x { break; }
+
+                if (row_byte & (1 << (7 - x_offset))) != 0 {
+                    core::ptr::write_volatile(row_ptr.add(cx), fg);
+                } else if let Some(bg_color) = bg {
+                    core::ptr::write_volatile(row_ptr.add(cx), bg_color);
+                }
             }
         }
     }
+}
+
+/// Restaura os pixels originais sob o cursor no Backbuffer (desenho do cursor apagado).
+pub unsafe fn erase_cursor_bb() -> Option<DirtyRect> {
+    let cursor = &mut *core::ptr::addr_of_mut!(CURSOR);
+    let bb = *core::ptr::addr_of!(BACKBUFFER);
+    if !cursor.valid || bb.is_null() {
+        return None;
+    }
+
+    let cx_base = cursor.x;
+    let cy_base = cursor.y;
+    for cy in 0..CURSOR_H {
+        let py = cy_base + cy;
+        if py >= DEFAULT_HEIGHT { break; }
+        let row_ptr = bb.add(py * DEFAULT_WIDTH);
+        for cx in 0..CURSOR_W {
+            let px = cx_base + cx;
+            if px >= DEFAULT_WIDTH { break; }
+            let bg_color = cursor.saved_bg[cy * CURSOR_W + cx];
+            core::ptr::write_volatile(row_ptr.add(px), bg_color);
+        }
+    }
+
+    cursor.valid = false;
+    Some(DirtyRect::new(cx_base, cy_base, CURSOR_W, CURSOR_H))
+}
+
+/// Salva o fundo do Backbuffer sob as novas coordenadas e renderiza o sprite do cursor (< 5 µs).
+pub unsafe fn draw_cursor_bb(new_x: usize, new_y: usize) -> DirtyRect {
+    let cursor = &mut *core::ptr::addr_of_mut!(CURSOR);
+    let bb = *core::ptr::addr_of!(BACKBUFFER);
+
+    let cx_base = new_x.min(DEFAULT_WIDTH.saturating_sub(CURSOR_W));
+    let cy_base = new_y.min(DEFAULT_HEIGHT.saturating_sub(CURSOR_H));
+
+    cursor.x = cx_base;
+    cursor.y = cy_base;
+
+    if !bb.is_null() {
+        // 1. Salva os pixels de fundo
+        for cy in 0..CURSOR_H {
+            let py = cy_base + cy;
+            if py >= DEFAULT_HEIGHT { break; }
+            let row_ptr = bb.add(py * DEFAULT_WIDTH);
+            for cx in 0..CURSOR_W {
+                let px = cx_base + cx;
+                if px >= DEFAULT_WIDTH { break; }
+                cursor.saved_bg[cy * CURSOR_W + cx] = core::ptr::read_volatile(row_ptr.add(px));
+            }
+        }
+
+        // 2. Escreve os pixels do cursor
+        for (cy, line) in CURSOR_BITMAP.iter().enumerate() {
+            let py = cy_base + cy;
+            if py >= DEFAULT_HEIGHT { break; }
+            let row_ptr = bb.add(py * DEFAULT_WIDTH);
+            for (cx, ch) in line.bytes().enumerate() {
+                let px = cx_base + cx;
+                if px >= DEFAULT_WIDTH { break; }
+                match ch {
+                    b'#' => core::ptr::write_volatile(row_ptr.add(px), COLOR_BLACK),
+                    b'*' => core::ptr::write_volatile(row_ptr.add(px), COLOR_WHITE),
+                    _ => {} // Transparente
+                }
+            }
+        }
+    }
+
+    cursor.valid = true;
+    DirtyRect::new(cx_base, cy_base, CURSOR_W, CURSOR_H)
 }
 
 pub fn draw_string_bb(text: &str, x: usize, y: usize, fg: u32, bg: Option<u32>) {
@@ -746,71 +899,70 @@ pub fn swap_buffer_rect(rect: &DirtyRect) {
 
 // ── Renderização Completa do Compositor ────────────────────────────────────────
 
-pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>) {
+pub fn render_desktop_scene(mouse_x: usize, mouse_y: usize) {
     // 1. Limpa o fundo do Desktop com tom Abismo Ardósia do Aladdin
     fill_rect_bb(0, 0, DEFAULT_WIDTH, DEFAULT_HEIGHT, COLOR_ALADDIN_BG);
 
-    // 1.1. Barra Superior de Status (Aladdin Top Panel)
-    fill_rect_bb(0, 0, DEFAULT_WIDTH, 24, COLOR_ALADDIN_TOPPANEL);
-    draw_line_bb(0, 24, DEFAULT_WIDTH as isize, 24, COLOR_ALADDIN_BORDER);
-    draw_string_bb("[*] Aladdin Desktop", 12, 5, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_TOPPANEL));
+    // 1.1. Barra Superior Wingpanel (elementary OS 7 inspired)
+    fill_rect_bb(0, 0, DEFAULT_WIDTH, 26, COLOR_ALADDIN_TOPPANEL);
+    draw_line_bb(0, 26, DEFAULT_WIDTH as isize, 26, COLOR_ALADDIN_BORDER);
 
-    // Seletor dinâmico de Modo de Capacidade (Básico / Equilibrado / Avançado)
-    let mode = get_capability_mode();
-    let (mode_text, mode_fg) = match mode {
-        CapabilityMode::Basic => ("Modo: Basico (Eco)", COLOR_ALADDIN_TEXT_MUTED),
-        CapabilityMode::Balanced => ("Modo: Equilibrado", COLOR_ALADDIN_CYAN),
-        CapabilityMode::Advanced => ("Modo: Avancado (Glow)", COLOR_ALADDIN_PURPLE),
-    };
-    fill_rect_bb(200, 3, 175, 18, COLOR_ALADDIN_CARD_ALT);
-    draw_rect_outline_bb(200, 3, 175, 18, COLOR_ALADDIN_BORDER);
-    draw_string_bb(mode_text, 208, 5, mode_fg, Some(COLOR_ALADDIN_CARD_ALT));
-
-    // Seletor dinâmico de Perfil de Armazenamento JSA (Aladdin / Simbad / Workstation / POS)
-    let prof = crate::drivers::block::get_storage_profile();
-    let (prof_text, prof_fg) = match prof {
-        crate::drivers::block::StorageProfile::Aladdin => ("JSA: Aladdin (Home)", COLOR_ALADDIN_CYAN),
-        crate::drivers::block::StorageProfile::Simbad => ("JSA: Simbad (Server)", COLOR_ALADDIN_EMERALD),
-        crate::drivers::block::StorageProfile::Workstation => ("JSA: Workstation", COLOR_ALADDIN_PURPLE),
-        crate::drivers::block::StorageProfile::TerminalPos => ("JSA: POS (Resilient)", COLOR_ALADDIN_RUBY),
-    };
-    fill_rect_bb(385, 3, 175, 18, COLOR_ALADDIN_CARD_ALT);
-    draw_rect_outline_bb(385, 3, 175, 18, COLOR_ALADDIN_BORDER);
-    draw_string_bb(prof_text, 393, 5, prof_fg, Some(COLOR_ALADDIN_CARD_ALT));
-
-    // Indicadores do sistema no painel superior direito
-    let ticks = crate::timer::ticks();
-    let secs = ticks / 100;
-    let mut time_buf = [0u8; 16];
-    let time_prefix = b"Up: ";
-    time_buf[..4].copy_from_slice(time_prefix);
-    let mut pos = 4;
-    let mut s = secs;
-    if s == 0 {
-        time_buf[pos] = b'0';
-        pos += 1;
-    } else {
-        let start = pos;
-        while s > 0 && pos < 12 {
-            time_buf[pos] = b'0' + (s % 10) as u8;
-            s /= 10;
-            pos += 1;
-        }
-        time_buf[start..pos].reverse();
-    }
-    time_buf[pos] = b's';
-    pos += 1;
-    if let Ok(msg) = core::str::from_utf8(&time_buf[..pos]) {
-        draw_string_bb(msg, DEFAULT_WIDTH - 120, 5, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_TOPPANEL));
-    }
-
-    // Marca d'água elegante no canto inferior direito
-    draw_string_bb("Aladdin Desktop Engine v0.1", DEFAULT_WIDTH - 260, DEFAULT_HEIGHT - 64, COLOR_ALADDIN_PURPLE, None);
-    draw_string_bb("Jinn Microkernel x86_64", DEFAULT_WIDTH - 260, DEFAULT_HEIGHT - 48, COLOR_ALADDIN_TEXT_MUTED, None);
-
-    // 2. Renderiza as janelas em Z-order (da do fundo para a do topo)
     unsafe {
         let wm = &*core::ptr::addr_of!(WM);
+
+        // Launcher Pill [ # Aladdin ]
+        let launcher_bg = if wm.start_menu_open { COLOR_ALADDIN_CARD_ALT } else { COLOR_ALADDIN_TOPPANEL };
+        let launcher_bd = if wm.start_menu_open { COLOR_ALADDIN_CYAN } else { COLOR_ALADDIN_BORDER };
+        fill_rect_bb(8, 3, 114, 20, launcher_bg);
+        draw_rect_outline_bb(8, 3, 114, 20, launcher_bd);
+        draw_string_bb("[#] Aladdin", 16, 5, COLOR_ALADDIN_CYAN, Some(launcher_bg));
+
+        // Center Pill: Uptime & APIC Timer
+        let secs = (crate::timer::ticks() / 100) as usize;
+        fill_rect_bb(440, 3, 144, 20, COLOR_ALADDIN_CARD_ALT);
+        draw_rect_outline_bb(440, 3, 144, 20, COLOR_ALADDIN_BORDER);
+        draw_label_and_num("Up: ", secs, "s | 100Hz", 448, 5, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD_ALT));
+
+        // Right Pill 1: RAM Telemetry
+        let total_mb = crate::memory::total_bytes() / (1024 * 1024);
+        let used_mb = crate::memory::used_bytes() / (1024 * 1024);
+        fill_rect_bb(600, 3, 120, 20, COLOR_ALADDIN_CARD_ALT);
+        draw_rect_outline_bb(600, 3, 120, 20, COLOR_ALADDIN_BORDER);
+        draw_label_and_num("RAM: ", used_mb, "/", 608, 5, COLOR_ALADDIN_EMERALD, Some(COLOR_ALADDIN_CARD_ALT));
+        draw_label_and_num("", total_mb, "M", 672, 5, COLOR_ALADDIN_EMERALD, Some(COLOR_ALADDIN_CARD_ALT));
+
+        // Right Pill 2: JSA Storage Profile
+        let prof = crate::drivers::block::get_storage_profile();
+        let (prof_name, prof_fg) = match prof {
+            crate::drivers::block::StorageProfile::Aladdin => ("JSA: Aladdin", COLOR_ALADDIN_CYAN),
+            crate::drivers::block::StorageProfile::Simbad => ("JSA: Simbad", COLOR_ALADDIN_EMERALD),
+            crate::drivers::block::StorageProfile::Workstation => ("JSA: Workst", COLOR_ALADDIN_PURPLE),
+            crate::drivers::block::StorageProfile::TerminalPos => ("JSA: POS", COLOR_ALADDIN_RUBY),
+        };
+        fill_rect_bb(726, 3, 124, 20, COLOR_ALADDIN_CARD_ALT);
+        draw_rect_outline_bb(726, 3, 124, 20, COLOR_ALADDIN_BORDER);
+        draw_string_bb(prof_name, 734, 5, prof_fg, Some(COLOR_ALADDIN_CARD_ALT));
+
+        // Right Pill 3: FX Mode (Capability)
+        let mode = get_capability_mode();
+        let (mode_name, mode_fg) = match mode {
+            CapabilityMode::Basic => ("FX: Eco", COLOR_ALADDIN_TEXT_MUTED),
+            CapabilityMode::Balanced => ("FX: Bal", COLOR_ALADDIN_CYAN),
+            CapabilityMode::Advanced => ("FX: Glow", COLOR_ALADDIN_PURPLE),
+        };
+        fill_rect_bb(856, 3, 84, 20, COLOR_ALADDIN_CARD_ALT);
+        draw_rect_outline_bb(856, 3, 84, 20, COLOR_ALADDIN_BORDER);
+        draw_string_bb(mode_name, 864, 5, mode_fg, Some(COLOR_ALADDIN_CARD_ALT));
+
+        // Right Pill 4: Sair Button
+        fill_rect_bb(946, 3, 70, 20, COLOR_ALADDIN_RUBY);
+        draw_rect_outline_bb(946, 3, 70, 20, 0x00F8_7171);
+        draw_string_bb("[X] Sair", 952, 5, COLOR_WHITE, Some(COLOR_ALADDIN_RUBY));
+
+        // Marca d'água elegante no fundo
+        draw_string_bb("Aladdin Desktop 7.0 | Jinn Microkernel x86_64", DEFAULT_WIDTH - 370, DEFAULT_HEIGHT - 16, COLOR_ALADDIN_BORDER, None);
+
+        // 2. Renderiza as janelas em Z-order (da do fundo para a do topo)
         let top_idx = wm.order[MAX_WINDOWS - 1];
 
         for &win_idx in wm.order.iter() {
@@ -852,22 +1004,23 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
                 }
 
                 // Trio de botões de controle de janela (Minimizar [-], Maximizar/Restaurar [+]/[^], Fechar [X])
+                let btn_y = win.y + 4;
+
                 // 1. Botão de minimizar [-] em âmbar Aladdin
-                let btn_min_x = win.x + win.width - 66;
-                let btn_y = win.y + 3;
-                fill_rect_bb(btn_min_x, btn_y, 18, 18, COLOR_ALADDIN_AMBER);
-                draw_char_bb(b'-', btn_min_x + 5, btn_y + 1, COLOR_WHITE, Some(COLOR_ALADDIN_AMBER));
+                let btn_min_x = win.x + win.width - 64;
+                fill_rect_bb(btn_min_x, btn_y, 16, 16, COLOR_ALADDIN_AMBER);
+                draw_char_bb(b'-', btn_min_x + 4, btn_y, COLOR_WHITE, Some(COLOR_ALADDIN_AMBER));
 
                 // 2. Botão de maximizar/restaurar [+] / [^] em esmeralda Aladdin
                 let btn_max_x = win.x + win.width - 44;
                 let max_char = if win.is_maximized { b'^' } else { b'+' };
-                fill_rect_bb(btn_max_x, btn_y, 18, 18, COLOR_ALADDIN_EMERALD);
-                draw_char_bb(max_char, btn_max_x + 5, btn_y + 1, COLOR_WHITE, Some(COLOR_ALADDIN_EMERALD));
+                fill_rect_bb(btn_max_x, btn_y, 16, 16, COLOR_ALADDIN_EMERALD);
+                draw_char_bb(max_char, btn_max_x + 4, btn_y, COLOR_WHITE, Some(COLOR_ALADDIN_EMERALD));
 
                 // 3. Botão de fechar [X] estilizado em rubi Aladdin
-                let btn_close_x = win.x + win.width - 22;
-                fill_rect_bb(btn_close_x, btn_y, 18, 18, COLOR_ALADDIN_RUBY);
-                draw_char_bb(b'X', btn_close_x + 5, btn_y + 1, COLOR_WHITE, Some(COLOR_ALADDIN_RUBY));
+                let btn_close_x = win.x + win.width - 24;
+                fill_rect_bb(btn_close_x, btn_y, 16, 16, COLOR_ALADDIN_RUBY);
+                draw_char_bb(b'X', btn_close_x + 4, btn_y, COLOR_WHITE, Some(COLOR_ALADDIN_RUBY));
 
                 // Corpo da janela (Aladdin Card Surface)
                 fill_rect_bb(win.x, win.y + 25, win.width, win.height.saturating_sub(25), COLOR_ALADDIN_CARD);
@@ -932,19 +1085,19 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
                     }
 
                     // Botão interativo de spawn
-                    let btn_y = win.y + win.height - 34;
-                    fill_rect_bb(win.x + 8, btn_y, 220, 24, COLOR_BTN_BG);
-                    draw_rect_outline_bb(win.x + 8, btn_y, 220, 24, 0x0093_C5FD);
-                    draw_string_bb("+ Executar ola-mundo (U3)", win.x + 14, btn_y + 4, COLOR_WHITE, Some(COLOR_BTN_BG));
+                    let btn_action_y = win.y + win.height - 34;
+                    fill_rect_bb(win.x + 8, btn_action_y, 220, 24, COLOR_BTN_BG);
+                    draw_rect_outline_bb(win.x + 8, btn_action_y, 220, 24, 0x0093_C5FD);
+                    draw_string_bb("+ Executar ola-mundo (U3)", win.x + 14, btn_action_y + 4, COLOR_WHITE, Some(COLOR_BTN_BG));
 
                     if wm.spawn_count > 0 {
-                        draw_label_and_num("Apps: ", wm.spawn_count, " PIDs", win.x + 236, btn_y + 6, COLOR_ACCENT_GREEN, Some(COLOR_WIN_BG));
+                        draw_label_and_num("Apps: ", wm.spawn_count, " PIDs", win.x + 236, btn_action_y + 6, COLOR_ACCENT_GREEN, Some(COLOR_ALADDIN_CARD));
                     }
                 } else if win.id == 2 {
                     // ── Janela 2: Sobre o Jinn OS ─────────────────────────
                     for i in 0..win.line_count {
                         let line_y = win.y + 36 + (i * 20);
-                        draw_string_bb(win.lines[i], win.x + 12, line_y, COLOR_TEXT_DARK, Some(COLOR_WIN_BG));
+                        draw_string_bb(win.lines[i], win.x + 12, line_y, COLOR_ALADDIN_TEXT_PRI, Some(COLOR_ALADDIN_CARD));
                     }
                 } else if win.id == 3 {
                     // ── Janela 3: Gerenciador de Arquivos Aladdin (FAT32) ──
@@ -998,56 +1151,45 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
 
                         draw_string_bb("Modo: Somente Leitura | UTF-8", win.x + 12, win.y + 182, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD));
                     } else {
-                        // Card de arquivos do volume
+                        // Card de arquivos do volume (LÊ DO CACHE, ZERO DISK I/O NO RENDER LOOP)
                         let files_box_x = win.x + 12;
                         let files_box_y = win.y + 74;
                         let files_box_w = win.width - 24;
-                        let files_box_h = 96;
+                        let files_box_h = 100;
                         fill_rect_bb(files_box_x, files_box_y, files_box_w, files_box_h, COLOR_ALADDIN_CARD_ALT);
                         draw_rect_outline_bb(files_box_x, files_box_y, files_box_w, files_box_h, COLOR_ALADDIN_BORDER);
 
-                        // Varredura dinâmica de arquivos reais no volume /disk via VFS
-                        let mut file_count = 0usize;
-                        let mut file_names = [[0u8; 13]; 3];
-                        let mut file_lens = [0usize; 3];
-                        let mut file_is_elf = [false; 3];
-                        let mut file_is_txt = [false; 3];
+                        draw_string_bb("Arquivos Detectados em /disk:", files_box_x + 8, files_box_y + 8, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD_ALT));
+                        let btn_rf_x = files_box_x + files_box_w - 96;
+                        fill_rect_bb(btn_rf_x, files_box_y + 6, 88, 18, 0x001E_293B);
+                        draw_rect_outline_bb(btn_rf_x, files_box_y + 6, 88, 18, COLOR_ALADDIN_BORDER);
+                        draw_string_bb("[Atualizar]", btn_rf_x + 6, files_box_y + 8, COLOR_ALADDIN_TEXT_PRI, Some(0x001E_293B));
 
-                        let _ = crate::vfs::readdir("/disk", |name, _| {
-                            if file_count < 3 {
-                                let n_len = name.len().min(12);
-                                file_names[file_count][..n_len].copy_from_slice(&name.as_bytes()[..n_len]);
-                                file_lens[file_count] = n_len;
-                                file_is_elf[file_count] = name.ends_with(".elf") || name.ends_with(".ELF");
-                                file_is_txt[file_count] = name.ends_with(".txt") || name.ends_with(".TXT");
-                                file_count += 1;
-                            }
-                        });
-
-                        if file_count == 0 {
-                            draw_string_bb("(Nenhum arquivo detectado no volume /disk)", files_box_x + 12, files_box_y + 36, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD_ALT));
+                        if wm.file_cache_count == 0 {
+                            draw_string_bb("(Nenhum arquivo detectado no volume /disk)", files_box_x + 12, files_box_y + 40, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD_ALT));
                         } else {
-                            for i in 0..file_count {
-                                let item_y = files_box_y + 10 + (i * 26);
-                                let tag = if file_is_elf[i] { "[ELF] " } else if file_is_txt[i] { "[TXT] " } else { "[ARQ] " };
-                                let tag_color = if file_is_elf[i] { COLOR_ALADDIN_EMERALD } else { COLOR_ALADDIN_CYAN };
-                                draw_string_bb(tag, files_box_x + 12, item_y, tag_color, Some(COLOR_ALADDIN_CARD_ALT));
-                                if let Ok(name_str) = core::str::from_utf8(&file_names[i][..file_lens[i]]) {
-                                    draw_string_bb(name_str, files_box_x + 56, item_y, COLOR_ALADDIN_TEXT_PRI, Some(COLOR_ALADDIN_CARD_ALT));
+                            for i in 0..wm.file_cache_count.min(3) {
+                                let entry = &wm.file_cache[i];
+                                let item_y = files_box_y + 32 + (i * 22);
+                                let tag = if entry.is_elf { "[ELF] " } else if entry.is_txt { "[TXT] " } else { "[ARQ] " };
+                                let tag_color = if entry.is_elf { COLOR_ALADDIN_EMERALD } else { COLOR_ALADDIN_CYAN };
+                                draw_string_bb(tag, files_box_x + 8, item_y, tag_color, Some(COLOR_ALADDIN_CARD_ALT));
+                                if let Ok(name_str) = core::str::from_utf8(&entry.name[..entry.name_len]) {
+                                    draw_string_bb(name_str, files_box_x + 52, item_y, COLOR_ALADDIN_TEXT_PRI, Some(COLOR_ALADDIN_CARD_ALT));
                                 }
 
-                                // Botões de ação dinâmica
+                                // Botões de ação
                                 let btn_w = 68;
-                                let btn_h = 18;
+                                let btn_h = 16;
                                 let btn_x = files_box_x + files_box_w - btn_w - 8;
 
-                                if file_is_elf[i] {
-                                    fill_rect_bb(btn_x, item_y - 2, btn_w, btn_h, COLOR_BTN_BG);
-                                    draw_rect_outline_bb(btn_x, item_y - 2, btn_w, btn_h, 0x0093_C5FD);
+                                if entry.is_elf {
+                                    fill_rect_bb(btn_x, item_y - 1, btn_w, btn_h, COLOR_BTN_BG);
+                                    draw_rect_outline_bb(btn_x, item_y - 1, btn_w, btn_h, 0x0093_C5FD);
                                     draw_string_bb("> Rodar", btn_x + 6, item_y, COLOR_WHITE, Some(COLOR_BTN_BG));
-                                } else if file_is_txt[i] {
-                                    fill_rect_bb(btn_x, item_y - 2, btn_w, btn_h, 0x001E_293B);
-                                    draw_rect_outline_bb(btn_x, item_y - 2, btn_w, btn_h, COLOR_ALADDIN_BORDER);
+                                } else if entry.is_txt {
+                                    fill_rect_bb(btn_x, item_y - 1, btn_w, btn_h, 0x001E_293B);
+                                    draw_rect_outline_bb(btn_x, item_y - 1, btn_w, btn_h, COLOR_ALADDIN_BORDER);
                                     draw_string_bb("Ler VFS", btn_x + 6, item_y, COLOR_ALADDIN_CYAN, Some(0x001E_293B));
                                 }
                             }
@@ -1065,123 +1207,89 @@ pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>)
                 }
             }
         }
-    }
 
-    // 3. Barra de Tarefas (Taskbar) na parte inferior
-    let taskbar_y = DEFAULT_HEIGHT - 32;
-    fill_rect_bb(0, taskbar_y, DEFAULT_WIDTH, 32, COLOR_TASKBAR);
-    draw_line_bb(0, taskbar_y as isize, DEFAULT_WIDTH as isize, taskbar_y as isize, 0x0033_4155);
+        // 3. Elementary OS 7 Plank Dock (Bottom Dock)
+        let dock_x = 272;
+        let dock_y = 714;
+        let dock_w = 480;
+        let dock_h = 44;
 
-    unsafe {
-        let wm = &*core::ptr::addr_of!(WM);
-        let top_idx = wm.order[MAX_WINDOWS - 1];
+        fill_rect_bb(dock_x, dock_y, dock_w, dock_h, COLOR_ALADDIN_DOCK);
+        draw_rect_outline_bb(dock_x, dock_y, dock_w, dock_h, COLOR_ALADDIN_CYAN);
 
-        // Botão Iniciar [ Jinn OS ]
-        let is_start_hover = mouse_x >= 6 && mouse_x <= 116 && mouse_y >= taskbar_y + 4 && mouse_y <= taskbar_y + 28;
-        let start_bg = if is_start_hover || wm.start_menu_open { COLOR_START_HOVER } else { COLOR_START_BTN };
-        fill_rect_bb(6, taskbar_y + 4, 110, 24, start_bg);
-        draw_rect_outline_bb(6, taskbar_y + 4, 110, 24, 0x0060_A5FA);
-        draw_string_bb("  Jinn OS", 14, taskbar_y + 8, COLOR_WHITE, Some(start_bg));
-
-        // Abas das Janelas na Barra de Tarefas
-        let tab_defs = [
-            (" Monitor ", 126, 0),
-            (" Terminal", 232, 1),
-            (" Sobre   ", 338, 2),
-            (" Arquivos", 444, 3),
+        let dock_slots = [
+            ("[#] Monitor", 278, 0),
+            ("[>] Console", 372, 1),
+            ("[~] Arquivos", 466, 3),
+            ("[*] Apps U3", 560, usize::MAX),
+            ("[?] Sobre", 654, 2),
         ];
 
-        for &(label, tab_x, win_id) in tab_defs.iter() {
-            let win_opt = wm.windows[win_id];
-            let is_open = win_opt.map(|w| w.is_open).unwrap_or(false);
-            let is_min = win_opt.map(|w| w.is_minimized).unwrap_or(false);
-            let is_top = is_open && !is_min && (top_idx == win_id);
+        for &(label, slot_x, win_id) in dock_slots.iter() {
+            let is_hover = mouse_x >= slot_x && mouse_x < slot_x + 90 && mouse_y >= dock_y && mouse_y < dock_y + dock_h;
+            let slot_bg = if is_hover { COLOR_ALADDIN_CARD_ALT } else { COLOR_ALADDIN_DOCK };
+            fill_rect_bb(slot_x, dock_y + 4, 88, 34, slot_bg);
+            draw_string_bb(label, slot_x + 6, dock_y + 12, COLOR_ALADDIN_TEXT_PRI, Some(slot_bg));
 
-            let tab_bg = if is_top {
-                COLOR_ALADDIN_TOPPANEL
-            } else if is_open && !is_min {
-                0x001E_293B
-            } else if is_min {
-                0x0018_2030
-            } else {
-                0x000F_172A
-            };
-
-            let tab_fg = if is_top {
-                COLOR_ALADDIN_CYAN
-            } else if is_open && !is_min {
-                COLOR_WHITE
-            } else if is_min {
-                COLOR_ALADDIN_AMBER
-            } else {
-                0x0064_748B
-            };
-
-            fill_rect_bb(tab_x, taskbar_y + 4, 96, 24, tab_bg);
-            draw_rect_outline_bb(tab_x, taskbar_y + 4, 96, 24, if is_top { COLOR_ALADDIN_CYAN } else { 0x0033_4155 });
-
-            let prefix = if is_min { "_" } else if is_top { "*" } else { " " };
-            draw_string_bb(prefix, tab_x + 4, taskbar_y + 8, tab_fg, Some(tab_bg));
-            draw_string_bb(label, tab_x + 14, taskbar_y + 8, tab_fg, Some(tab_bg));
+            // Indicador de app ativa (Elementary OS dot/bar indicator)
+            if win_id != usize::MAX {
+                if let Some(w) = wm.windows[win_id] {
+                    if w.is_open && !w.is_minimized && top_idx == win_id {
+                        // Ativo e com foco: traço ciano luminescente
+                        fill_rect_bb(slot_x + 20, dock_y + 36, 48, 2, COLOR_ALADDIN_CYAN);
+                    } else if w.is_open && !w.is_minimized {
+                        // Aberto em segundo plano: ponto esmeralda
+                        fill_rect_bb(slot_x + 38, dock_y + 36, 12, 2, COLOR_ALADDIN_EMERALD);
+                    } else if w.is_minimized {
+                        // Minimizado: ponto âmbar
+                        fill_rect_bb(slot_x + 38, dock_y + 36, 12, 2, COLOR_ALADDIN_AMBER);
+                    }
+                }
+            }
         }
 
-        // Relógio / Info no canto direito da barra de tarefas
-        let secs = (crate::timer::ticks() / 100) as usize;
-        draw_label_and_num("Uptime: ", secs, "s | 1024x768", DEFAULT_WIDTH - 240, taskbar_y + 8, 0x0094_A3B8, Some(COLOR_TASKBAR));
-
-        // 4. Menu Iniciar Popup (se ativo)
+        // 4. Menu Iniciar Aladdin Applications Popup (se ativo)
         if wm.start_menu_open {
-            let menu_x = 6;
-            let menu_y = taskbar_y - 238;
-            let menu_w = 240;
-            let menu_h = 234;
+            let menu_x = 8;
+            let menu_y = 28;
+            let menu_w = 260;
+            let menu_h = 244;
 
-            // Sombra do menu
-            fill_rect_bb(menu_x + 2, menu_y + 2, menu_w, menu_h, 0x000A_0F1D);
-            // Corpo do menu
-            fill_rect_bb(menu_x, menu_y, menu_w, menu_h, COLOR_MENU_BG);
-            draw_rect_outline_bb(menu_x, menu_y, menu_w, menu_h, COLOR_MENU_BORDER);
+            // Sombra e fundo
+            fill_rect_bb(menu_x + 3, menu_y + 3, menu_w, menu_h, 0x0005_0710);
+            fill_rect_bb(menu_x, menu_y, menu_w, menu_h, 0x0011_1827);
+            draw_rect_outline_bb(menu_x, menu_y, menu_w, menu_h, COLOR_ALADDIN_CYAN);
 
-            // Cabeçalho do menu
-            fill_rect_bb(menu_x + 1, menu_y + 1, menu_w - 2, 28, COLOR_MENU_HEADER);
-            draw_string_bb("Jinn OS v0.0.3 Desktop", menu_x + 12, menu_y + 8, COLOR_WHITE, Some(COLOR_MENU_HEADER));
+            // Cabeçalho
+            fill_rect_bb(menu_x + 1, menu_y + 1, menu_w - 2, 24, 0x000F_172A);
+            draw_string_bb("Aladdin OS 7 Apps", menu_x + 10, menu_y + 5, COLOR_ALADDIN_CYAN, Some(0x000F_172A));
 
-            // Itens do menu
             let items = [
-                "1. Monitor de Sistema",
+                "1. Monitor de Recursos",
                 "2. Terminal Interativo",
                 "3. Arquivos /disk (FAT32)",
                 "4. Executar ola-mundo (U3)",
                 "5. Sobre o Jinn OS",
-                "6. Reiniciar Maquina",
-                "7. Sair para Shell (ESC)",
+                "6. Ciclar Perfil JSA",
+                "7. Reiniciar Maquina",
+                "8. Sair para Shell (ESC)",
             ];
 
             for (idx, &item) in items.iter().enumerate() {
-                let item_y = menu_y + 32 + (idx * 28);
-                let is_hover = mouse_x >= menu_x && mouse_x <= menu_x + menu_w && mouse_y >= item_y && mouse_y < item_y + 28;
-                let item_bg = if is_hover { COLOR_MENU_HOVER } else { COLOR_MENU_BG };
-                let item_fg = if is_hover { COLOR_WHITE } else { 0x00E2_E8F0 };
-                fill_rect_bb(menu_x + 1, item_y, menu_w - 2, 28, item_bg);
-                draw_string_bb(item, menu_x + 14, item_y + 6, item_fg, Some(item_bg));
+                let item_y = menu_y + 28 + (idx * 26);
+                let is_hover = mouse_x >= menu_x && mouse_x <= menu_x + menu_w && mouse_y >= item_y && mouse_y < item_y + 26;
+                let item_bg = if is_hover { COLOR_ALADDIN_CARD_ALT } else { 0x0011_1827 };
+                let item_fg = if is_hover { COLOR_ALADDIN_CYAN } else { COLOR_ALADDIN_TEXT_PRI };
+                fill_rect_bb(menu_x + 2, item_y, menu_w - 4, 25, item_bg);
+                draw_string_bb(item, menu_x + 10, item_y + 5, item_fg, Some(item_bg));
             }
         }
     }
+}
 
-    // 5. Renderiza o cursor do mouse no topo de tudo
-    for (cy, line) in CURSOR_BITMAP.iter().enumerate() {
-        for (cx, ch) in line.bytes().enumerate() {
-            let px = mouse_x + cx;
-            let py = mouse_y + cy;
-            match ch {
-                b'#' => draw_pixel_bb(px, py, COLOR_BLACK),
-                b'*' => draw_pixel_bb(px, py, COLOR_WHITE),
-                _ => {} // Transparente
-            }
-        }
-    }
-
-    // 6. Envia o frame final da RAM para a memória de vídeo (VRAM)
+pub fn render_desktop(mouse_x: usize, mouse_y: usize, damage: Option<DirtyRect>) {
+    render_desktop_scene(mouse_x, mouse_y);
+    unsafe { draw_cursor_bb(mouse_x, mouse_y); }
     if let Some(ref rect) = damage {
         swap_buffer_rect(rect);
     } else {
@@ -1207,7 +1315,7 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
             }
         }
 
-        // Se está arrastando alguma janela, atualiza suas coordenadas e calcula a região danificada
+        // Se está arrastando alguma janela, atualiza suas coordenadas
         let mut dragging_any = false;
         let mut drag_damage: Option<DirtyRect> = None;
         for win_opt in wm.windows.iter_mut() {
@@ -1218,7 +1326,7 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                     let new_x = mouse_x.saturating_sub(win.drag_offset_x);
                     let new_y = mouse_y.saturating_sub(win.drag_offset_y);
                     win.x = new_x.min(DEFAULT_WIDTH.saturating_sub(win.width));
-                    win.y = new_y.min((DEFAULT_HEIGHT - 32).saturating_sub(win.height));
+                    win.y = new_y.min((DEFAULT_HEIGHT - 48).saturating_sub(win.height));
                     dragging_any = true;
 
                     let old_box = DirtyRect::new(old_x.saturating_sub(2), old_y.saturating_sub(2), win.width + 4, win.height + 4);
@@ -1230,119 +1338,140 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
 
         // Se acabou de clicar com o botão esquerdo (transição de 0 para 1)
         if left_clicked && !prev_left_clicked && !dragging_any {
-            let taskbar_y = DEFAULT_HEIGHT - 32;
+            // 1. Wingpanel Superior (y: 0..26)
+            if mouse_y < 26 {
+                // Launcher Pill [# Aladdin]
+                if mouse_x >= 8 && mouse_x <= 122 {
+                    wm.start_menu_open = !wm.start_menu_open;
+                    return (false, None);
+                }
 
-            // 0. Clique no seletor de Modo de Capacidade no Painel Superior (x: 200..380, y: 0..24)
-            if mouse_y < 24 && mouse_x >= 200 && mouse_x <= 380 {
-                let next_mode = match get_capability_mode() {
-                    CapabilityMode::Basic => CapabilityMode::Balanced,
-                    CapabilityMode::Balanced => CapabilityMode::Advanced,
-                    CapabilityMode::Advanced => CapabilityMode::Basic,
-                };
-                set_capability_mode(next_mode);
-                return (false, None);
+                // RAM Pill
+                if mouse_x >= 600 && mouse_x <= 720 {
+                    if let Some(w) = wm.windows[0].as_mut() {
+                        w.is_open = true;
+                        w.is_minimized = false;
+                    }
+                    bring_to_front(0);
+                    return (false, None);
+                }
+
+                // JSA Storage Profile Pill (Aladdin -> Simbad -> Workstation -> POS)
+                if mouse_x >= 726 && mouse_x <= 850 {
+                    let next_prof = match crate::drivers::block::get_storage_profile() {
+                        crate::drivers::block::StorageProfile::Aladdin => crate::drivers::block::StorageProfile::Simbad,
+                        crate::drivers::block::StorageProfile::Simbad => crate::drivers::block::StorageProfile::Workstation,
+                        crate::drivers::block::StorageProfile::Workstation => crate::drivers::block::StorageProfile::TerminalPos,
+                        crate::drivers::block::StorageProfile::TerminalPos => crate::drivers::block::StorageProfile::Aladdin,
+                    };
+                    crate::drivers::block::set_storage_profile(next_prof);
+                    return (false, None);
+                }
+
+                // FX Mode Pill (Basic -> Balanced -> Advanced)
+                if mouse_x >= 856 && mouse_x <= 940 {
+                    let next_mode = match get_capability_mode() {
+                        CapabilityMode::Basic => CapabilityMode::Balanced,
+                        CapabilityMode::Balanced => CapabilityMode::Advanced,
+                        CapabilityMode::Advanced => CapabilityMode::Basic,
+                    };
+                    set_capability_mode(next_mode);
+                    return (false, None);
+                }
+
+                // Sair Button
+                if mouse_x >= 946 && mouse_x <= 1016 {
+                    wm.should_exit = true;
+                    return (false, None);
+                }
             }
 
-            // 0.1. Clique no seletor de Perfil JSA no Painel Superior (x: 385..560, y: 0..24)
-            if mouse_y < 24 && mouse_x >= 385 && mouse_x <= 560 {
-                let next_prof = match crate::drivers::block::get_storage_profile() {
-                    crate::drivers::block::StorageProfile::Aladdin => crate::drivers::block::StorageProfile::Simbad,
-                    crate::drivers::block::StorageProfile::Simbad => crate::drivers::block::StorageProfile::Workstation,
-                    crate::drivers::block::StorageProfile::Workstation => crate::drivers::block::StorageProfile::TerminalPos,
-                    crate::drivers::block::StorageProfile::TerminalPos => crate::drivers::block::StorageProfile::Aladdin,
-                };
-                crate::drivers::block::set_storage_profile(next_prof);
-                return (false, None);
-            }
-
-            // 1. Clique no Botão Iniciar [ Jinn OS ]
-            if mouse_x >= 6 && mouse_x <= 116 && mouse_y >= taskbar_y + 4 && mouse_y <= taskbar_y + 28 {
-                wm.start_menu_open = !wm.start_menu_open;
-                return (false, None);
-            }
-
-            // 2. Clique dentro do Menu Iniciar
+            // 2. Menu Iniciar Aladdin Apps Popup
             if wm.start_menu_open {
-                let menu_x = 6;
-                let menu_y = taskbar_y - 238;
-                let menu_w = 240;
-                if mouse_x >= menu_x && mouse_x <= menu_x + menu_w && mouse_y >= menu_y && mouse_y < taskbar_y {
-                    let item_idx = (mouse_y.saturating_sub(menu_y + 32)) / 28;
-                    match item_idx {
-                        0 => {
-                            // Monitor de Sistema
-                            if let Some(w) = wm.windows[0].as_mut() {
-                                w.is_open = true;
-                                w.is_minimized = false;
+                let menu_x = 8;
+                let menu_y = 28;
+                let menu_w = 260;
+                let menu_h = 244;
+                if mouse_x >= menu_x && mouse_x <= menu_x + menu_w && mouse_y >= menu_y && mouse_y <= menu_y + menu_h {
+                    if mouse_y >= menu_y + 28 {
+                        let item_idx = (mouse_y.saturating_sub(menu_y + 28)) / 26;
+                        match item_idx {
+                            0 => {
+                                if let Some(w) = wm.windows[0].as_mut() { w.is_open = true; w.is_minimized = false; }
+                                bring_to_front(0);
                             }
-                            bring_to_front(0);
-                        }
-                        1 => {
-                            // Terminal Interativo
-                            if let Some(w) = wm.windows[1].as_mut() {
-                                w.is_open = true;
-                                w.is_minimized = false;
+                            1 => {
+                                if let Some(w) = wm.windows[1].as_mut() { w.is_open = true; w.is_minimized = false; }
+                                bring_to_front(1);
                             }
-                            bring_to_front(1);
-                        }
-                        2 => {
-                            // Gerenciador de Arquivos (FAT32)
-                            if let Some(w) = wm.windows[3].as_mut() {
-                                w.is_open = true;
-                                w.is_minimized = false;
+                            2 => {
+                                if let Some(w) = wm.windows[3].as_mut() { w.is_open = true; w.is_minimized = false; }
+                                bring_to_front(3);
                             }
-                            bring_to_front(3);
-                        }
-                        3 => {
-                            // Executar ola-mundo
-                            spawn_user_app();
-                        }
-                        4 => {
-                            // Sobre o Jinn OS
-                            if let Some(w) = wm.windows[2].as_mut() {
-                                w.is_open = true;
-                                w.is_minimized = false;
+                            3 => {
+                                spawn_user_app();
                             }
-                            bring_to_front(2);
+                            4 => {
+                                if let Some(w) = wm.windows[2].as_mut() { w.is_open = true; w.is_minimized = false; }
+                                bring_to_front(2);
+                            }
+                            5 => {
+                                let next_prof = match crate::drivers::block::get_storage_profile() {
+                                    crate::drivers::block::StorageProfile::Aladdin => crate::drivers::block::StorageProfile::Simbad,
+                                    crate::drivers::block::StorageProfile::Simbad => crate::drivers::block::StorageProfile::Workstation,
+                                    crate::drivers::block::StorageProfile::Workstation => crate::drivers::block::StorageProfile::TerminalPos,
+                                    crate::drivers::block::StorageProfile::TerminalPos => crate::drivers::block::StorageProfile::Aladdin,
+                                };
+                                crate::drivers::block::set_storage_profile(next_prof);
+                            }
+                            6 => {
+                                reboot_machine();
+                            }
+                            7 => {
+                                wm.should_exit = true;
+                            }
+                            _ => {}
                         }
-                        5 => {
-                            // Reiniciar Maquina via triple fault
-                            reboot_machine();
-                        }
-                        6 => {
-                            // Sair para o Shell
-                            wm.should_exit = true;
-                        }
-                        _ => {}
                     }
                     wm.start_menu_open = false;
                     return (false, None);
                 } else {
-                    // Clique fora do menu fecha o menu
                     wm.start_menu_open = false;
                 }
             }
 
-            // 3. Clique nas Abas da Barra de Tarefas
-            if mouse_y >= taskbar_y + 4 && mouse_y <= taskbar_y + 28 {
-                let tab_defs = [(126, 0), (232, 1), (338, 2), (444, 3)];
-                for &(tx, win_id) in tab_defs.iter() {
-                    if mouse_x >= tx && mouse_x <= tx + 96 {
-                        let top_idx = wm.order[MAX_WINDOWS - 1];
-                        if let Some(w) = wm.windows[win_id].as_mut() {
-                            if !w.is_open {
-                                w.is_open = true;
-                                w.is_minimized = false;
-                                bring_to_front(win_id);
-                            } else if w.is_minimized {
-                                w.is_minimized = false;
-                                bring_to_front(win_id);
-                            } else if top_idx == win_id {
-                                // Já está aberta e no topo -> minimiza
-                                w.is_minimized = true;
-                            } else {
-                                // Aberta mas em segundo plano -> traz para o topo
-                                bring_to_front(win_id);
+            // 3. Elementary OS 7 Plank Dock (y: 714..758)
+            let dock_y = 714;
+            let dock_h = 44;
+            if mouse_y >= dock_y && mouse_y <= dock_y + dock_h {
+                let dock_slots = [
+                    (278, 0),
+                    (372, 1),
+                    (466, 3),
+                    (560, usize::MAX),
+                    (654, 2),
+                ];
+
+                for &(slot_x, win_id) in dock_slots.iter() {
+                    if mouse_x >= slot_x && mouse_x < slot_x + 90 {
+                        if win_id == usize::MAX {
+                            spawn_user_app();
+                            bring_to_front(1);
+                        } else {
+                            let top_idx = wm.order[MAX_WINDOWS - 1];
+                            if let Some(w) = wm.windows[win_id].as_mut() {
+                                if !w.is_open {
+                                    w.is_open = true;
+                                    w.is_minimized = false;
+                                    bring_to_front(win_id);
+                                } else if w.is_minimized {
+                                    w.is_minimized = false;
+                                    bring_to_front(win_id);
+                                } else if top_idx == win_id {
+                                    w.is_minimized = true;
+                                } else {
+                                    bring_to_front(win_id);
+                                }
                             }
                         }
                         return (false, None);
@@ -1350,7 +1479,7 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                 }
             }
 
-            // 4. Clique dentro de Janelas (arrasto, minimizar, maximizar, fechar ou botão de ação)
+            // 4. Clique dentro de Janelas (arrasto, controles ou botões internos)
             let mut clicked_win_idx = None;
             for i in (0..MAX_WINDOWS).rev() {
                 let win_idx = wm.order[i];
@@ -1360,12 +1489,12 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                     if mouse_x >= win.x && mouse_x < win.x + win.width &&
                        mouse_y >= win.y && mouse_y < win.y + win.height {
 
-                        let btn_y = win.y + 3;
+                        let btn_y = win.y + 4;
 
                         // 1. Botão de minimizar [-]
-                        let btn_min_x = win.x + win.width - 66;
-                        if mouse_x >= btn_min_x && mouse_x < btn_min_x + 18 &&
-                           mouse_y >= btn_y && mouse_y < btn_y + 18 {
+                        let btn_min_x = win.x + win.width - 64;
+                        if mouse_x >= btn_min_x && mouse_x < btn_min_x + 16 &&
+                           mouse_y >= btn_y && mouse_y < btn_y + 16 {
                             if let Some(w) = wm.windows[win_idx].as_mut() {
                                 w.is_minimized = true;
                             }
@@ -1374,8 +1503,8 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
 
                         // 2. Botão de maximizar/restaurar [+] / [^]
                         let btn_max_x = win.x + win.width - 44;
-                        if mouse_x >= btn_max_x && mouse_x < btn_max_x + 18 &&
-                           mouse_y >= btn_y && mouse_y < btn_y + 18 {
+                        if mouse_x >= btn_max_x && mouse_x < btn_max_x + 16 &&
+                           mouse_y >= btn_y && mouse_y < btn_y + 16 {
                             if let Some(w) = wm.windows[win_idx].as_mut() {
                                 if w.is_maximized {
                                     w.x = w.saved_x;
@@ -1389,9 +1518,9 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                                     w.saved_width = w.width;
                                     w.saved_height = w.height;
                                     w.x = 0;
-                                    w.y = 24;
+                                    w.y = 26;
                                     w.width = DEFAULT_WIDTH;
-                                    w.height = DEFAULT_HEIGHT - 32 - 24;
+                                    w.height = DEFAULT_HEIGHT - 26;
                                     w.is_maximized = true;
                                 }
                             }
@@ -1399,9 +1528,9 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                         }
 
                         // 3. Botão de fechar [X]
-                        let btn_close_x = win.x + win.width - 22;
-                        if mouse_x >= btn_close_x && mouse_x < btn_close_x + 18 &&
-                           mouse_y >= btn_y && mouse_y < btn_y + 18 {
+                        let btn_close_x = win.x + win.width - 24;
+                        if mouse_x >= btn_close_x && mouse_x < btn_close_x + 16 &&
+                           mouse_y >= btn_y && mouse_y < btn_y + 16 {
                             if let Some(w) = wm.windows[win_idx].as_mut() {
                                 w.is_open = false;
                                 w.is_minimized = false;
@@ -1412,7 +1541,7 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                         // Botão de ação na janela do Terminal (Window 1)
                         if win_idx == 1 {
                             let btn_action_y = win.y + win.height - 34;
-                            if mouse_x >= win.x + 12 && mouse_x <= win.x + 242 &&
+                            if mouse_x >= win.x + 8 && mouse_x <= win.x + 228 &&
                                mouse_y >= btn_action_y && mouse_y <= btn_action_y + 24 {
                                 spawn_user_app();
                                 bring_to_front(1);
@@ -1430,7 +1559,7 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                                 let btn_c_w = 76;
                                 let btn_c_x = p_x + p_w - btn_c_w - 4;
                                 if mouse_x >= btn_c_x && mouse_x <= btn_c_x + btn_c_w &&
-                                   mouse_y >= p_y + 2 && mouse_y <= p_y + 20 {
+                                   mouse_y >= p_y + 2 && mouse_y <= p_y + 18 {
                                     wm.preview_active = false;
                                     return (false, None);
                                 }
@@ -1438,38 +1567,48 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                                 let files_box_x = win.x + 12;
                                 let files_box_y = win.y + 74;
                                 let files_box_w = win.width - 24;
-                                let btn_w = 72;
-                                let btn_h = 18;
-                                let btn_x = files_box_x + files_box_w - btn_w - 8;
 
-                                // Clique em [Ler VFS] de README.TXT
-                                if mouse_x >= btn_x && mouse_x <= btn_x + btn_w &&
-                                   mouse_y >= files_box_y + 8 && mouse_y <= files_box_y + 8 + btn_h {
-                                    let mut preview = [0u8; 256];
-                                    let n = crate::vfs::read_file("/disk/README.TXT", &mut preview).unwrap_or(0);
-                                    wm.preview_content = preview;
-                                    wm.preview_content_len = n;
-                                    let fname = b"README.TXT";
-                                    wm.preview_filename[..fname.len()].copy_from_slice(fname);
-                                    wm.preview_filename_len = fname.len();
-                                    wm.preview_active = true;
-
-                                    if n > 0 {
-                                        if let Ok(s) = core::str::from_utf8(&preview[..n.min(38)]) {
-                                            wm.terminal.push_line(s, 0x00F8_FAFC);
-                                        }
-                                    } else {
-                                        wm.terminal.push_line("[README.TXT lido via VFS com sucesso]", 0x0022_C55E);
-                                    }
+                                // Botão [Atualizar] no header do box de arquivos
+                                let btn_rf_x = files_box_x + files_box_w - 96;
+                                if mouse_x >= btn_rf_x && mouse_x <= btn_rf_x + 88 &&
+                                   mouse_y >= files_box_y + 6 && mouse_y <= files_box_y + 24 {
+                                    wm.refresh_file_cache();
                                     return (false, None);
                                 }
 
-                                // Clique em [> Rodar] de OLA.ELF
-                                if mouse_x >= btn_x && mouse_x <= btn_x + btn_w &&
-                                   mouse_y >= files_box_y + 34 && mouse_y <= files_box_y + 34 + btn_h {
-                                    spawn_user_app();
-                                    bring_to_front(1);
-                                    return (false, None);
+                                // Botões nos arquivos em cache
+                                for i in 0..wm.file_cache_count.min(3) {
+                                    let item_y = files_box_y + 32 + (i * 22);
+                                    let btn_w = 68;
+                                    let btn_h = 16;
+                                    let btn_x = files_box_x + files_box_w - btn_w - 8;
+
+                                    if mouse_x >= btn_x && mouse_x <= btn_x + btn_w &&
+                                       mouse_y >= item_y - 1 && mouse_y <= item_y + btn_h {
+                                        let entry = &wm.file_cache[i];
+                                        if entry.is_elf {
+                                            spawn_user_app();
+                                            bring_to_front(1);
+                                            return (false, None);
+                                        } else if entry.is_txt {
+                                            let mut preview = [0u8; 256];
+                                            let mut path_buf = [0u8; 32];
+                                            let prefix = b"/disk/";
+                                            path_buf[..6].copy_from_slice(prefix);
+                                            let n_len = entry.name_len.min(24);
+                                            path_buf[6..6 + n_len].copy_from_slice(&entry.name[..n_len]);
+
+                                            if let Ok(path_str) = core::str::from_utf8(&path_buf[..6 + n_len]) {
+                                                let n = crate::vfs::read_file(path_str, &mut preview).unwrap_or(0);
+                                                wm.preview_content = preview;
+                                                wm.preview_content_len = n;
+                                                wm.preview_filename[..n_len].copy_from_slice(&entry.name[..n_len]);
+                                                wm.preview_filename_len = n_len;
+                                                wm.preview_active = true;
+                                            }
+                                            return (false, None);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1568,12 +1707,19 @@ pub fn run_desktop() {
     unsafe {
         let wm = &mut *core::ptr::addr_of_mut!(WM);
         wm.should_exit = false;
+        if !wm.file_cache_valid {
+            wm.refresh_file_cache();
+        }
     }
 
-    let mut last_mx = usize::MAX;
-    let mut last_my = usize::MAX;
-    let mut last_btn = 0xFF;
-    let mut last_ticks = 0u64;
+    let (mut last_mx, mut last_my, mut last_btn) = crate::interrupts::ps2_mouse::get_state();
+    let mut last_ticks = crate::timer::ticks();
+
+    // Render inicial
+    unsafe { erase_cursor_bb(); }
+    render_desktop_scene(last_mx, last_my);
+    unsafe { draw_cursor_bb(last_mx, last_my); }
+    swap_buffers();
 
     loop {
         // 1. Lê porta PS/2 caso a interrupção não tenha pego e alimenta o buffer
@@ -1595,11 +1741,12 @@ pub fn run_desktop() {
             }
         }
 
-        // 2. Processa caracteres do teclado para a janela de Terminal
+        // 2. Processa caracteres do buffer de teclado para o terminal interativo
         let mut key_pressed = false;
         while let Some(ch) = crate::keyboard_buffer::pop() {
-            if ch == 0x1B {
-                return;
+            if ch == 0x1B { // ASCII ESC
+                unsafe { (*core::ptr::addr_of_mut!(WM)).should_exit = true; }
+                break;
             }
             unsafe {
                 let wm = &mut *core::ptr::addr_of_mut!(WM);
@@ -1610,48 +1757,56 @@ pub fn run_desktop() {
                 }
             }
         }
+        unsafe {
+            if (*core::ptr::addr_of!(WM)).should_exit {
+                break;
+            }
+        }
 
-        // 3. Obtém coordenadas e botões atuais do mouse
+        // 3. Lê coordenadas e botões atuais do mouse
         let (mx, my, buttons) = crate::interrupts::ps2_mouse::get_state();
         let current_ticks = crate::timer::ticks();
 
-        // 4. Processa interação e arrasto de janelas
-        let (dragging_any, drag_damage) = handle_mouse(mx, my, buttons);
+        let (dragging_any, _drag_damage) = handle_mouse(mx, my, buttons);
 
-        // 5. Re-renderiza se houve movimento do mouse, clique, digitação, arrasto ou passou 10 ticks (100ms)
-        let mouse_moved = mx != last_mx || my != last_my;
+        let mouse_moved = (mx != last_mx) || (my != last_my);
         let button_changed = buttons != last_btn;
-        let time_changed  = current_ticks.saturating_sub(last_ticks) >= 10;
-        let state_changed = mouse_moved || button_changed || key_pressed || dragging_any;
+        let time_changed = current_ticks.saturating_sub(last_ticks) >= 50; // atualiza telemetria a cada 500ms
 
-        if state_changed || time_changed {
-            // Damage Tracking: se janela foi arrastada, atualiza apenas união dos quadros; se apenas cursor moveu, caixa do cursor
-            let damage = if dragging_any && drag_damage.is_some() {
-                drag_damage
-            } else if mouse_moved && !button_changed && !key_pressed && !time_changed && last_mx != usize::MAX {
-                let min_x = last_mx.min(mx);
-                let min_y = last_my.min(my);
-                let max_x = (last_mx.max(mx) + CURSOR_W + 2).min(DEFAULT_WIDTH);
-                let max_y = (last_my.max(my) + CURSOR_H + 2).min(DEFAULT_HEIGHT);
-                Some(DirtyRect::new(min_x, min_y, max_x.saturating_sub(min_x), max_y.saturating_sub(min_y)))
-            } else {
-                None // Redesenho completo para cliques, digitação ou tempo
-            };
+        let need_scene_redraw = button_changed || key_pressed || dragging_any || time_changed;
+
+        if need_scene_redraw {
+            // A cena precisa ser renderizada novamente (janelas, botões, digitação ou tempo)
+            unsafe { erase_cursor_bb(); }
+            render_desktop_scene(mx, my);
+            unsafe { draw_cursor_bb(mx, my); }
+            swap_buffers();
 
             last_mx = mx;
             last_my = my;
             last_btn = buttons;
             last_ticks = current_ticks;
-
-            // Renderiza e faz swap (incremental ou total conforme o damage)
-            render_desktop(mx, my, damage);
+        } else if mouse_moved {
+            // VIA RÁPIDA DE CURSOR (< 5 µs):
+            // Não redesenha o desktop nem toca nos discos!
+            unsafe {
+                let old_box = erase_cursor_bb();
+                let new_box = draw_cursor_bb(mx, my);
+                let damage = match old_box {
+                    Some(ob) => ob.union(&new_box),
+                    None => new_box,
+                };
+                swap_buffer_rect(&damage);
+            }
+            last_mx = mx;
+            last_my = my;
         } else {
-            // Cede uma fatia curta de CPU para que outras threads e timers rodem
-            core::hint::spin_loop();
+            // Em repouso: cede ciclos de CPU para tarefas preemptivas e idle halt
+            crate::scheduler::yield_now();
         }
     }
 
-    // Ao sair, limpa a tela para restaurar o console de texto
+    // Ao sair, limpa a tela para restaurar o console de texto VGA
     let mut writer = crate::vga::Writer::new();
     writer.clear_screen();
     writer.set_color(crate::vga::Color::LightCyan, crate::vga::Color::Black);
