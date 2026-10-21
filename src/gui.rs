@@ -313,10 +313,16 @@ impl WindowManager {
                         Err(_) => "",
                     };
 
+                    let (cmd, arg) = if let Some(idx) = cmd_str.find(' ') {
+                        (&cmd_str[..idx], cmd_str[idx + 1..].trim())
+                    } else {
+                        (cmd_str, "")
+                    };
+
                     // Processa comandos internos do terminal gráfico
-                    match cmd_str {
+                    match cmd {
                         "help" => {
-                            self.terminal.push_line("Cmds: help, clear, spawn, ps, uptime, ls, mem, reboot", 0x0038_BDF8);
+                            self.terminal.push_line("Cmds: help, clear, ps, mem, uptime, ls, cat, touch, rm, sync, spawn, reboot", 0x0038_BDF8);
                         }
                         "clear" => {
                             self.terminal.history_count = 0;
@@ -333,6 +339,29 @@ impl WindowManager {
                             buf[s.len()] = b'0' + ((count % 10) as u8);
                             if let Ok(msg) = core::str::from_utf8(&buf[..s.len() + 1]) {
                                 self.terminal.push_line(msg, 0x00F8_FAFC);
+                            }
+                        }
+                        "mem" => {
+                            let total_mb = crate::memory::total_bytes() / (1024 * 1024);
+                            let used_mb = crate::memory::used_bytes() / (1024 * 1024);
+                            let free_mb = total_mb.saturating_sub(used_mb);
+                            let mut mem_buf = [0u8; 46];
+                            let s_ram = "RAM: ";
+                            mem_buf[..s_ram.len()].copy_from_slice(s_ram.as_bytes());
+                            let mut pos = s_ram.len();
+                            pos += format_num(used_mb, &mut mem_buf[pos..]);
+                            mem_buf[pos] = b'/';
+                            pos += 1;
+                            pos += format_num(total_mb, &mut mem_buf[pos..]);
+                            let s_end = " MB (Livre: ";
+                            mem_buf[pos..pos + s_end.len()].copy_from_slice(s_end.as_bytes());
+                            pos += s_end.len();
+                            pos += format_num(free_mb, &mut mem_buf[pos..]);
+                            let s_close = "M)";
+                            mem_buf[pos..pos + s_close.len()].copy_from_slice(s_close.as_bytes());
+                            pos += s_close.len();
+                            if let Ok(msg) = core::str::from_utf8(&mem_buf[..pos]) {
+                                self.terminal.push_line(msg, 0x0022_C55E);
                             }
                         }
                         "uptime" => {
@@ -370,6 +399,88 @@ impl WindowManager {
                                     self.terminal.push_line(name_str, if entry.is_elf { 0x0022_C55E } else { 0x00F8_FAFC });
                                 }
                             }
+                        }
+                        "touch" => {
+                            if arg.is_empty() {
+                                self.terminal.push_line("Uso: touch <arquivo>", 0x00F8_7171);
+                            } else {
+                                let mut path_buf = [0u8; 32];
+                                let prefix = b"/disk/";
+                                path_buf[..6].copy_from_slice(prefix);
+                                let arg_bytes = arg.as_bytes();
+                                let arg_len = arg_bytes.len().min(24);
+                                path_buf[6..6 + arg_len].copy_from_slice(&arg_bytes[..arg_len]);
+                                if let Ok(p) = core::str::from_utf8(&path_buf[..6 + arg_len]) {
+                                    match crate::vfs::create(p) {
+                                        Ok(()) => {
+                                            let _ = crate::vfs::sync_all();
+                                            self.refresh_file_cache();
+                                            self.terminal.push_line("[OK] Arquivo criado em /disk!", 0x0022_C55E);
+                                        }
+                                        Err(_) => {
+                                            self.terminal.push_line("[ERRO] Falha ao criar arquivo.", 0x00F8_7171);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "cat" => {
+                            if arg.is_empty() {
+                                self.terminal.push_line("Uso: cat <arquivo>", 0x00F8_7171);
+                            } else {
+                                let mut path_buf = [0u8; 32];
+                                let prefix = b"/disk/";
+                                path_buf[..6].copy_from_slice(prefix);
+                                let arg_bytes = arg.as_bytes();
+                                let arg_len = arg_bytes.len().min(24);
+                                path_buf[6..6 + arg_len].copy_from_slice(&arg_bytes[..arg_len]);
+                                if let Ok(p) = core::str::from_utf8(&path_buf[..6 + arg_len]) {
+                                    let mut read_buf = [0u8; 128];
+                                    match crate::vfs::read_file(p, &mut read_buf) {
+                                        Ok(n) => {
+                                            if n > 0 {
+                                                let line_len = read_buf[..n].iter().position(|&b| b == b'\n').unwrap_or(n).min(44);
+                                                if let Ok(content_str) = core::str::from_utf8(&read_buf[..line_len]) {
+                                                    self.terminal.push_line(content_str, 0x00F8_FAFC);
+                                                }
+                                            } else {
+                                                self.terminal.push_line("(Arquivo vazio)", 0x0094_A3B8);
+                                            }
+                                        }
+                                        Err(_) => {
+                                            self.terminal.push_line("[ERRO] Arquivo nao encontrado.", 0x00F8_7171);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "rm" => {
+                            if arg.is_empty() {
+                                self.terminal.push_line("Uso: rm <arquivo>", 0x00F8_7171);
+                            } else {
+                                let mut path_buf = [0u8; 32];
+                                let prefix = b"/disk/";
+                                path_buf[..6].copy_from_slice(prefix);
+                                let arg_bytes = arg.as_bytes();
+                                let arg_len = arg_bytes.len().min(24);
+                                path_buf[6..6 + arg_len].copy_from_slice(&arg_bytes[..arg_len]);
+                                if let Ok(p) = core::str::from_utf8(&path_buf[..6 + arg_len]) {
+                                    match crate::vfs::remove(p) {
+                                        Ok(()) => {
+                                            let _ = crate::vfs::sync_all();
+                                            self.refresh_file_cache();
+                                            self.terminal.push_line("[OK] Arquivo removido de /disk!", 0x0022_C55E);
+                                        }
+                                        Err(_) => {
+                                            self.terminal.push_line("[ERRO] Falha ao remover arquivo.", 0x00F8_7171);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "sync" => {
+                            let _ = crate::vfs::sync_all();
+                            self.terminal.push_line("[OK] VFS & Cache sincronizados!", 0x0022_C55E);
                         }
                         "reboot" => {
                             reboot_machine();
@@ -1122,9 +1233,17 @@ pub fn render_desktop_scene(mouse_x: usize, mouse_y: usize) {
                             draw_string_bb(fn_str, p_x + 126, p_y + 3, COLOR_WHITE, Some(0x001E_293B));
                         }
 
-                        // Botão Fechar Preview
+                        // Botão Excluir no Preview
                         let btn_c_w = 76;
                         let btn_c_x = p_x + p_w - btn_c_w - 4;
+
+                        let btn_dp_w = 64;
+                        let btn_dp_x = btn_c_x - btn_dp_w - 4;
+                        fill_rect_bb(btn_dp_x, p_y + 2, btn_dp_w, 16, 0x002D_1215);
+                        draw_rect_outline_bb(btn_dp_x, p_y + 2, btn_dp_w, 16, 0x00EF_4444);
+                        draw_string_bb("Excluir", btn_dp_x + 5, p_y + 3, 0x00F8_7171, Some(0x002D_1215));
+
+                        // Botão Fechar Preview
                         fill_rect_bb(btn_c_x, p_y + 2, btn_c_w, 16, COLOR_ALADDIN_RUBY);
                         draw_string_bb("X Fechar", btn_c_x + 6, p_y + 3, COLOR_WHITE, Some(COLOR_ALADDIN_RUBY));
 
@@ -1159,10 +1278,21 @@ pub fn render_desktop_scene(mouse_x: usize, mouse_y: usize) {
                         fill_rect_bb(files_box_x, files_box_y, files_box_w, files_box_h, COLOR_ALADDIN_CARD_ALT);
                         draw_rect_outline_bb(files_box_x, files_box_y, files_box_w, files_box_h, COLOR_ALADDIN_BORDER);
 
-                        draw_string_bb("Arquivos Detectados em /disk:", files_box_x + 8, files_box_y + 8, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD_ALT));
-                        let btn_rf_x = files_box_x + files_box_w - 96;
-                        fill_rect_bb(btn_rf_x, files_box_y + 6, 88, 18, 0x001E_293B);
-                        draw_rect_outline_bb(btn_rf_x, files_box_y + 6, 88, 18, COLOR_ALADDIN_BORDER);
+                        draw_string_bb("Arquivos em /disk:", files_box_x + 8, files_box_y + 8, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD_ALT));
+
+                        // Botão [+ Novo]
+                        let btn_new_w = 60;
+                        let btn_rf_w = 88;
+                        let btn_rf_x = files_box_x + files_box_w - btn_rf_w - 8;
+                        let btn_new_x = btn_rf_x - btn_new_w - 6;
+
+                        fill_rect_bb(btn_new_x, files_box_y + 6, btn_new_w, 18, 0x001E_293B);
+                        draw_rect_outline_bb(btn_new_x, files_box_y + 6, btn_new_w, 18, COLOR_ALADDIN_EMERALD);
+                        draw_string_bb("+ Novo", btn_new_x + 6, files_box_y + 8, COLOR_ALADDIN_EMERALD, Some(0x001E_293B));
+
+                        // Botão [Atualizar]
+                        fill_rect_bb(btn_rf_x, files_box_y + 6, btn_rf_w, 18, 0x001E_293B);
+                        draw_rect_outline_bb(btn_rf_x, files_box_y + 6, btn_rf_w, 18, COLOR_ALADDIN_BORDER);
                         draw_string_bb("[Atualizar]", btn_rf_x + 6, files_box_y + 8, COLOR_ALADDIN_TEXT_PRI, Some(0x001E_293B));
 
                         if wm.file_cache_count == 0 {
@@ -1179,7 +1309,7 @@ pub fn render_desktop_scene(mouse_x: usize, mouse_y: usize) {
                                 }
 
                                 // Botões de ação
-                                let btn_w = 68;
+                                let btn_w = 64;
                                 let btn_h = 16;
                                 let btn_x = files_box_x + files_box_w - btn_w - 8;
 
@@ -1188,9 +1318,17 @@ pub fn render_desktop_scene(mouse_x: usize, mouse_y: usize) {
                                     draw_rect_outline_bb(btn_x, item_y - 1, btn_w, btn_h, 0x0093_C5FD);
                                     draw_string_bb("> Rodar", btn_x + 6, item_y, COLOR_WHITE, Some(COLOR_BTN_BG));
                                 } else if entry.is_txt {
+                                    // Botão [Ler VFS]
                                     fill_rect_bb(btn_x, item_y - 1, btn_w, btn_h, 0x001E_293B);
                                     draw_rect_outline_bb(btn_x, item_y - 1, btn_w, btn_h, COLOR_ALADDIN_BORDER);
-                                    draw_string_bb("Ler VFS", btn_x + 6, item_y, COLOR_ALADDIN_CYAN, Some(0x001E_293B));
+                                    draw_string_bb("Ler VFS", btn_x + 5, item_y, COLOR_ALADDIN_CYAN, Some(0x001E_293B));
+
+                                    // Botão [Del]
+                                    let btn_del_w = 40;
+                                    let btn_del_x = btn_x - btn_del_w - 6;
+                                    fill_rect_bb(btn_del_x, item_y - 1, btn_del_w, btn_h, 0x002D_1215);
+                                    draw_rect_outline_bb(btn_del_x, item_y - 1, btn_del_w, btn_h, 0x00EF_4444);
+                                    draw_string_bb("Del", btn_del_x + 8, item_y, 0x00F8_7171, Some(0x002D_1215));
                                 }
                             }
                         }
@@ -1552,12 +1690,48 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                         // Botões de ação na janela do Gerenciador de Arquivos (Window 3)
                         if win_idx == 3 {
                             if wm.preview_active {
-                                // Clique no botão [X Fechar] do Preview
                                 let p_x = win.x + 12;
                                 let p_y = win.y + 72;
                                 let p_w = win.width - 24;
                                 let btn_c_w = 76;
                                 let btn_c_x = p_x + p_w - btn_c_w - 4;
+                                let btn_dp_w = 64;
+                                let btn_dp_x = btn_c_x - btn_dp_w - 4;
+
+                                // Clique no botão [Excluir] do Preview
+                                if mouse_x >= btn_dp_x && mouse_x <= btn_dp_x + btn_dp_w &&
+                                   mouse_y >= p_y + 2 && mouse_y <= p_y + 18 {
+                                    let mut path_buf = [0u8; 32];
+                                    let prefix = b"/disk/";
+                                    path_buf[..6].copy_from_slice(prefix);
+                                    let n_len = wm.preview_filename_len.min(24);
+                                    path_buf[6..6 + n_len].copy_from_slice(&wm.preview_filename[..n_len]);
+
+                                    if let Ok(path_str) = core::str::from_utf8(&path_buf[..6 + n_len]) {
+                                        match crate::vfs::remove(path_str) {
+                                            Ok(()) => {
+                                                let _ = crate::vfs::sync_all();
+                                                wm.refresh_file_cache();
+                                                wm.preview_active = false;
+                                                let mut msg_buf = [0u8; 48];
+                                                let pfx = "[OK] Removido: ";
+                                                msg_buf[..pfx.len()].copy_from_slice(pfx.as_bytes());
+                                                let mut pos = pfx.len();
+                                                msg_buf[pos..pos + n_len].copy_from_slice(&wm.preview_filename[..n_len]);
+                                                pos += n_len;
+                                                if let Ok(msg) = core::str::from_utf8(&msg_buf[..pos]) {
+                                                    wm.terminal.push_line(msg, 0x0022_C55E);
+                                                }
+                                            }
+                                            Err(_) => {
+                                                wm.terminal.push_line("[ERRO] Falha ao excluir arquivo.", 0x00F8_7171);
+                                            }
+                                        }
+                                    }
+                                    return (false, None);
+                                }
+
+                                // Clique no botão [X Fechar] do Preview
                                 if mouse_x >= btn_c_x && mouse_x <= btn_c_x + btn_c_w &&
                                    mouse_y >= p_y + 2 && mouse_y <= p_y + 18 {
                                     wm.preview_active = false;
@@ -1568,9 +1742,51 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                                 let files_box_y = win.y + 74;
                                 let files_box_w = win.width - 24;
 
+                                // Botão [+ Novo] no header do box de arquivos
+                                let btn_new_w = 60;
+                                let btn_rf_w = 88;
+                                let btn_rf_x = files_box_x + files_box_w - btn_rf_w - 8;
+                                let btn_new_x = btn_rf_x - btn_new_w - 6;
+
+                                if mouse_x >= btn_new_x && mouse_x <= btn_new_x + btn_new_w &&
+                                   mouse_y >= files_box_y + 6 && mouse_y <= files_box_y + 24 {
+                                    let candidates = [
+                                        ("/disk/NOTA.TXT", "NOTA.TXT"),
+                                        ("/disk/DOC.TXT", "DOC.TXT"),
+                                        ("/disk/IDEIA.TXT", "IDEIA.TXT"),
+                                        ("/disk/LOG.TXT", "LOG.TXT"),
+                                    ];
+                                    let mut created = false;
+                                    for (path, name) in &candidates {
+                                        if crate::vfs::stat(path).is_err() {
+                                            if crate::vfs::create(path).is_ok() {
+                                                let initial = b"Arquivo criado via Aladdin Desktop 7.0 no Jinn OS!\nArmazenamento FAT32 + Cache LRU ativo.\n";
+                                                let _ = crate::vfs::write_file(path, initial);
+                                                let _ = crate::vfs::sync_all();
+                                                wm.refresh_file_cache();
+                                                let mut msg_buf = [0u8; 48];
+                                                let pfx = "[OK] Criado: ";
+                                                msg_buf[..pfx.len()].copy_from_slice(pfx.as_bytes());
+                                                let mut pos = pfx.len();
+                                                let n_bytes = name.as_bytes();
+                                                msg_buf[pos..pos + n_bytes.len()].copy_from_slice(n_bytes);
+                                                pos += n_bytes.len();
+                                                if let Ok(msg) = core::str::from_utf8(&msg_buf[..pos]) {
+                                                    wm.terminal.push_line(msg, 0x0022_C55E);
+                                                }
+                                                created = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if !created {
+                                        wm.terminal.push_line("[AVISO] Limite de novos arquivos atingido.", 0x00F5_9E0B);
+                                    }
+                                    return (false, None);
+                                }
+
                                 // Botão [Atualizar] no header do box de arquivos
-                                let btn_rf_x = files_box_x + files_box_w - 96;
-                                if mouse_x >= btn_rf_x && mouse_x <= btn_rf_x + 88 &&
+                                if mouse_x >= btn_rf_x && mouse_x <= btn_rf_x + btn_rf_w &&
                                    mouse_y >= files_box_y + 6 && mouse_y <= files_box_y + 24 {
                                     wm.refresh_file_cache();
                                     return (false, None);
@@ -1579,30 +1795,69 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                                 // Botões nos arquivos em cache
                                 for i in 0..wm.file_cache_count.min(3) {
                                     let item_y = files_box_y + 32 + (i * 22);
-                                    let btn_w = 68;
+                                    let btn_w = 64;
                                     let btn_h = 16;
                                     let btn_x = files_box_x + files_box_w - btn_w - 8;
 
+                                    let (is_elf, is_txt, n_len, entry_name) = {
+                                        let e = &wm.file_cache[i];
+                                        (e.is_elf, e.is_txt, e.name_len.min(24), e.name)
+                                    };
+
+                                    // Botão Excluir (Del) para arquivos de texto
+                                    if is_txt {
+                                        let btn_del_w = 40;
+                                        let btn_del_x = btn_x - btn_del_w - 6;
+                                        if mouse_x >= btn_del_x && mouse_x <= btn_del_x + btn_del_w &&
+                                           mouse_y >= item_y - 1 && mouse_y <= item_y + btn_h {
+                                            let mut path_buf = [0u8; 32];
+                                            let prefix = b"/disk/";
+                                            path_buf[..6].copy_from_slice(prefix);
+                                            path_buf[6..6 + n_len].copy_from_slice(&entry_name[..n_len]);
+
+                                            if let Ok(path_str) = core::str::from_utf8(&path_buf[..6 + n_len]) {
+                                                match crate::vfs::remove(path_str) {
+                                                    Ok(()) => {
+                                                        let _ = crate::vfs::sync_all();
+                                                        wm.refresh_file_cache();
+                                                        let mut msg_buf = [0u8; 48];
+                                                        let pfx = "[OK] Removido: ";
+                                                        msg_buf[..pfx.len()].copy_from_slice(pfx.as_bytes());
+                                                        let mut pos = pfx.len();
+                                                        msg_buf[pos..pos + n_len].copy_from_slice(&entry_name[..n_len]);
+                                                        pos += n_len;
+                                                        if let Ok(msg) = core::str::from_utf8(&msg_buf[..pos]) {
+                                                            wm.terminal.push_line(msg, 0x0022_C55E);
+                                                        }
+                                                    }
+                                                    Err(_) => {
+                                                        wm.terminal.push_line("[ERRO] Falha ao remover arquivo.", 0x00F8_7171);
+                                                    }
+                                                }
+                                            }
+                                            return (false, None);
+                                        }
+                                    }
+
+                                    // Botão Principal (Rodar ou Ler VFS)
                                     if mouse_x >= btn_x && mouse_x <= btn_x + btn_w &&
                                        mouse_y >= item_y - 1 && mouse_y <= item_y + btn_h {
-                                        let entry = &wm.file_cache[i];
-                                        if entry.is_elf {
+                                        if is_elf {
                                             spawn_user_app();
                                             bring_to_front(1);
                                             return (false, None);
-                                        } else if entry.is_txt {
+                                        } else if is_txt {
                                             let mut preview = [0u8; 256];
                                             let mut path_buf = [0u8; 32];
                                             let prefix = b"/disk/";
                                             path_buf[..6].copy_from_slice(prefix);
-                                            let n_len = entry.name_len.min(24);
-                                            path_buf[6..6 + n_len].copy_from_slice(&entry.name[..n_len]);
+                                            path_buf[6..6 + n_len].copy_from_slice(&entry_name[..n_len]);
 
                                             if let Ok(path_str) = core::str::from_utf8(&path_buf[..6 + n_len]) {
                                                 let n = crate::vfs::read_file(path_str, &mut preview).unwrap_or(0);
                                                 wm.preview_content = preview;
                                                 wm.preview_content_len = n;
-                                                wm.preview_filename[..n_len].copy_from_slice(&entry.name[..n_len]);
+                                                wm.preview_filename[..n_len].copy_from_slice(&entry_name[..n_len]);
                                                 wm.preview_filename_len = n_len;
                                                 wm.preview_active = true;
                                             }
