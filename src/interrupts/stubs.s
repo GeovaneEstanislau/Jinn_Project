@@ -88,16 +88,71 @@ irq_stub 47    # IRQ15 — ATA Secondary
 
 # ── Common exception handler ──────────────────────────────────────────────────
 exception_common:
-    # Stack at this point: [vector, error_code, rip, cs, rflags, rsp, ss]
-    mov rdi, [rsp]       # vector
-    mov rsi, [rsp + 8]   # error code
-    mov rdx, rsp         # frame pointer (arg3)
+    # Save all caller-saved + callee-saved registers (identical to irq_common)
+    push rax
+    push rcx
+    push rdx
+    push rbx
+    push rbp
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
 
+    # At this point:
+    # [rsp..rsp+14*8]  = 15 GPRs (r15 at rsp, rax at rsp+14*8)
+    # [rsp + 15*8]     = vector number
+    # [rsp + 16*8]     = error code
+    # [rsp + 17*8]     = rip
+    # [rsp + 18*8]     = cs
+    # [rsp + 19*8]     = rflags
+    # [rsp + 20*8]     = rsp
+    # [rsp + 21*8]     = ss
+
+    mov rdi, [rsp + 15*8]        # vector
+    mov rsi, [rsp + 16*8]        # error code
+    mov rdx, rsp                 # frame pointer
+
+    # Align stack to 16 bytes
     mov rbp, rsp
     and rsp, -16
     call exception_dispatch
     mov rsp, rbp
-    
+
+    # Check if recovery/context switch was requested (Ring 3 fault handled)
+    test rax, rax
+    jz .exc_panic
+
+    # Context switch: load new task's RSP returned by scheduler
+    mov rsp, rax
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rbp
+    pop rbx
+    pop rdx
+    pop rcx
+    pop rax
+
+    # Clean up dummy vector + error code
+    add rsp, 16
+    iretq
+
+.exc_panic:
     cli
 .exc_halt:
     hlt

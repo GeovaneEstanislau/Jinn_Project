@@ -23,6 +23,21 @@ unsafe fn sys_write(fd: u64, buf: *const u8, len: u64) -> i64 {
 }
 
 #[inline(always)]
+unsafe fn sys_read(fd: u64, buf: *mut u8, len: u64) -> i64 {
+    syscall3(2, fd, buf as u64, len)
+}
+
+#[inline(always)]
+unsafe fn sys_open(path: &[u8], flags: u32) -> i64 {
+    syscall3(15, path.as_ptr() as u64, path.len() as u64, flags as u64)
+}
+
+#[inline(always)]
+unsafe fn sys_close(fd: u64) -> i64 {
+    syscall3(16, fd, 0, 0)
+}
+
+#[inline(always)]
 unsafe fn sys_sleep(ms: u64) -> i64 {
     syscall3(11, ms, 0, 0)
 }
@@ -52,6 +67,7 @@ unsafe fn sys_exit(code: i32) -> ! {
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     let msg1 = b"[U3] ola-mundo ativo em Ring 3!\n";
+    let msg_file = b"[U3] Testando VFS via Syscall 15 open / 2 read (/disk/README.TXT)...\n";
     let msg2 = b"[U3] Solicitando buffer JDA Zero-Copy (Syscall 12 alloc)...\n";
     let msg3 = b"[U3] Submetendo Job JDA Zero-Copy (Syscall 14: Fletcher32 Checksum)...\n";
     let msg4 = b"[U3] Job JDA processado com sucesso! Liberando (Syscall 13 release)...\n";
@@ -59,6 +75,22 @@ pub extern "C" fn _start() -> ! {
     let msg6 = b"[U3] Acordou com sucesso! Encerrando processo.\n";
     unsafe {
         let _ = sys_write(1, msg1.as_ptr(), msg1.len() as u64);
+
+        // Teste de VFS em Ring 3
+        let _ = sys_write(1, msg_file.as_ptr(), msg_file.len() as u64);
+        let fd = sys_open(b"/disk/README.TXT", 0);
+        if fd >= 0 {
+            let mut fbuf = [0u8; 64];
+            let n = sys_read(fd as u64, fbuf.as_mut_ptr(), 64);
+            if n > 0 {
+                let msg_ok = b"[U3] Leitura VFS bem-sucedida! Conteudo: ";
+                let _ = sys_write(1, msg_ok.as_ptr(), msg_ok.len() as u64);
+                let _ = sys_write(1, fbuf.as_ptr(), n as u64);
+                let _ = sys_write(1, b"\n".as_ptr(), 1);
+            }
+            let _ = sys_close(fd as u64);
+        }
+
         let _ = sys_write(1, msg2.as_ptr(), msg2.len() as u64);
 
         let handle = sys_jda_shm_alloc(false);

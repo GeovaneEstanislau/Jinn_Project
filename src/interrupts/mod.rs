@@ -78,26 +78,81 @@ pub extern "C" fn irq_dispatch(vector: u64, _frame: *mut usize) -> usize {
 /// `vector`     — exception number (0–31)
 /// `error_code` — pushed by CPU for some exceptions, 0 for others
 /// `frame`      — stack pointer at exception site
+///
+/// Retorna 0 se a exceção foi fatal para o kernel (halt), ou o `saved_rsp`
+/// da próxima tarefa se a falha veio de Ring 3 e foi recuperada pelo escalonador.
 #[no_mangle]
-pub extern "C" fn exception_dispatch(vector: u64, error_code: u64, _frame: *mut usize) {
+pub extern "C" fn exception_dispatch(vector: u64, error_code: u64, frame: *mut usize) -> usize {
+    let cs = unsafe { *frame.add(18) };
+    let rip = unsafe { *frame.add(17) };
+    let is_user = (cs & 3) == 3;
+
+    if is_user {
+        let current_pid = crate::scheduler::current_pid();
+        let mut cr2: u64 = 0;
+        if vector == 14 {
+            unsafe { core::arch::asm!("mov {}, cr2", out(reg) cr2, options(nomem, nostack)); }
+        }
+
+        let mut writer = crate::vga::Writer::new();
+        writer.set_color(crate::vga::Color::LightRed, crate::vga::Color::Black);
+        writer.write_line("\n====================================================");
+        writer.write_string(" [!] FALHA DE PROCESSO EM RING 3 (PID ");
+        writer.write_decimal(current_pid);
+        writer.write_string("): ");
+        writer.write_string(exception_name(vector));
+        writer.write_string(" (#");
+        writer.write_decimal(vector as usize);
+        writer.write_line(")");
+        writer.write_string("     RIP: ");
+        writer.write_hex_u64(rip as u64);
+        if vector == 14 {
+            writer.write_string("  CR2 (endereco invalido): ");
+            writer.write_hex_u64(cr2);
+        }
+        if error_code != 0 {
+            writer.write_string("  Error Code: ");
+            writer.write_hex_u64(error_code);
+        }
+        writer.write_line("");
+        writer.write_line("     Encerrando processo com segfault e recuperando escalonador...");
+        writer.write_line("====================================================");
+        writer.set_color(crate::vga::Color::LightGray, crate::vga::Color::Black);
+
+        // Termina a tarefa faltosa (libera PML4 e FDs)
+        let sched = crate::scheduler::get();
+        sched.exit_task(current_pid, 128 + vector as i32);
+        crate::ipc::unregister(current_pid);
+
+        // Força o escalonador a selecionar a próxima tarefa pronta
+        return sched.preempt(frame as usize);
+    }
+
+    // Se a falha ocorreu em Ring 0 (código do kernel), pânico irrecuperável:
     let mut writer = crate::vga::Writer::new();
     writer.set_color(crate::vga::Color::LightRed, crate::vga::Color::Black);
     writer.write_line("\n====================================================");
-    writer.write_string(" [!] CPU EXCEPTION #");
+    writer.write_string(" [!] KERNEL PANIC — CPU EXCEPTION #");
     writer.write_decimal(vector as usize);
     let name = exception_name(vector);
     writer.write_string(" — ");
     writer.write_line(name);
+    writer.write_string("     RIP: ");
+    writer.write_hex_u64(rip as u64);
+    if vector == 14 {
+        let mut cr2: u64 = 0;
+        unsafe { core::arch::asm!("mov {}, cr2", out(reg) cr2, options(nomem, nostack)); }
+        writer.write_string("     CR2: ");
+        writer.write_hex_u64(cr2);
+    }
     if error_code != 0 {
         writer.write_string("     Error Code: ");
         writer.write_hex_u64(error_code);
-        writer.write_line("");
     }
+    writer.write_line("");
     writer.write_line("====================================================");
-    writer.write_line(" Sistema parado. Reinicie a maquina.");
-    loop {
-        core::hint::spin_loop();
-    }
+    writer.write_line(" Kernel parado.");
+    0
 }
 
 fn exception_name(vec: u64) -> &'static str {

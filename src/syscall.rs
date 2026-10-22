@@ -25,11 +25,40 @@ use crate::memory;
 use crate::scheduler;
 
 // ── Error Codes ───────────────────────────────────────────────────────────────
-pub const ENOSYS:   isize = -38;  // Function not implemented
-pub const EINVAL:   isize = -22;  // Invalid argument
-pub const ENOMEM:   isize = -12;  // Out of memory
-pub const ENOBUFS:  isize = -105; // No buffer space available
 pub const EPERM:    isize = -1;   // Operation not permitted
+pub const EBADF:    isize = -9;   // Bad file descriptor
+pub const ENOMEM:   isize = -12;  // Out of memory
+pub const EFAULT:   isize = -14;  // Bad address
+pub const EINVAL:   isize = -22;  // Invalid argument
+pub const EMFILE:   isize = -24;  // Too many open files
+pub const ENOSYS:   isize = -38;  // Function not implemented
+pub const ENOBUFS:  isize = -105; // No buffer space available
+
+pub const USER_SPACE_MIN: usize = 0x0000_0000_0001_0000; // 64 KiB NULL guard
+pub const USER_SPACE_MAX: usize = 0x0000_8000_0000_0000; // Limite canônico de usuário
+
+/// Verifica se a tarefa atual executa em modo de usuário (Ring 3).
+fn is_current_task_user() -> bool {
+    let pid = scheduler::current_pid();
+    if let Some(Some(task)) = scheduler::get().tasks.get(pid) {
+        task.ring == scheduler::Ring::User
+    } else {
+        false
+    }
+}
+
+/// Valida se um buffer fornecido por Ring 3 está contido no espaço de usuário permitido.
+pub fn validate_user_buffer(ptr: *const u8, len: usize) -> Result<(), isize> {
+    if ptr.is_null() || len == 0 {
+        return Err(EINVAL);
+    }
+    let addr = ptr as usize;
+    let end = addr.checked_add(len).ok_or(EFAULT)?;
+    if addr < USER_SPACE_MIN || end > USER_SPACE_MAX {
+        return Err(EFAULT);
+    }
+    Ok(())
+}
 
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 
@@ -61,6 +90,8 @@ pub extern "C" fn syscall_dispatch(
         12 => sys_jda_shm_alloc(arg0 != 0),
         13 => sys_jda_shm_release(arg0),
         14 => sys_jda_submit(arg0, arg1, arg2),
+        15 => sys_open(arg0 as *const u8, arg1, arg2 as u32),
+        16 => sys_close(arg0),
         _  => ENOSYS,
     }
 }
@@ -77,10 +108,16 @@ fn sys_exit(code: i32) -> isize {
 }
 
 /// `write(fd, buf, len)` — Write `len` bytes from `buf` to file descriptor `fd`.
-/// fd 1 = stdout (VGA), fd 2 = stderr (VGA red).
+/// fd 1 = stdout (VGA), fd 2 = stderr (VGA red), fd 3..7 = VFS files.
 fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
     if buf.is_null() || len == 0 { return EINVAL; }
     if len > 65536 { return EINVAL; }
+
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(buf, len) {
+            return e;
+        }
+    }
 
     match fd {
         1 | 2 => {
@@ -94,14 +131,44 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
             }
             len as isize
         }
+        3..=7 => {
+            let pid = scheduler::current_pid();
+            let sched = scheduler::get();
+            if let Some(Some(task)) = sched.tasks.get_mut(pid) {
+                if let Some(fd_entry) = &mut task.fds[fd] {
+                    if let Ok(p_str) = core::str::from_utf8(&fd_entry.path[..fd_entry.path_len]) {
+                        let slice = unsafe { core::slice::from_raw_parts(buf, len) };
+                        match crate::vfs::write(p_str, fd_entry.vfs_handle, fd_entry.offset, slice) {
+                            Ok(n) => {
+                                fd_entry.offset += n as u64;
+                                n as isize
+                            }
+                            Err(_) => EPERM,
+                        }
+                    } else {
+                        EBADF
+                    }
+                } else {
+                    EBADF
+                }
+            } else {
+                EBADF
+            }
+        }
         _ => EINVAL,
     }
 }
 
 /// `read(fd, buf, len)` — Read up to `len` bytes into `buf`.
-/// fd 0 = stdin (keyboard buffer).
+/// fd 0 = stdin (keyboard buffer), fd 3..7 = VFS files.
 fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
     if buf.is_null() || len == 0 { return EINVAL; }
+
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(buf as *const u8, len) {
+            return e;
+        }
+    }
 
     match fd {
         0 => {
@@ -115,7 +182,100 @@ fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
             }
             count as isize
         }
+        3..=7 => {
+            let pid = scheduler::current_pid();
+            let sched = scheduler::get();
+            if let Some(Some(task)) = sched.tasks.get_mut(pid) {
+                if let Some(fd_entry) = &mut task.fds[fd] {
+                    if let Ok(p_str) = core::str::from_utf8(&fd_entry.path[..fd_entry.path_len]) {
+                        let slice = unsafe { core::slice::from_raw_parts_mut(buf, len) };
+                        match crate::vfs::read(p_str, fd_entry.vfs_handle, fd_entry.offset, slice) {
+                            Ok(n) => {
+                                fd_entry.offset += n as u64;
+                                n as isize
+                            }
+                            Err(_) => EBADF,
+                        }
+                    } else {
+                        EBADF
+                    }
+                } else {
+                    EBADF
+                }
+            } else {
+                EBADF
+            }
+        }
         _ => EINVAL,
+    }
+}
+
+/// `open(path_ptr, path_len, flags)` — Open a file from VFS and assign a task FD.
+fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> isize {
+    if path_ptr.is_null() || path_len == 0 || path_len > 64 {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(path_ptr, path_len) {
+            return e;
+        }
+    }
+
+    let mut path_buf = [0u8; 64];
+    unsafe {
+        core::ptr::copy_nonoverlapping(path_ptr, path_buf.as_mut_ptr(), path_len);
+    }
+    let path_str = match core::str::from_utf8(&path_buf[..path_len]) {
+        Ok(s) => s,
+        Err(_) => return EINVAL,
+    };
+
+    let vfs_handle = match crate::vfs::open(path_str, flags) {
+        Ok(h) => h,
+        Err(_) => return -2, // ENOENT
+    };
+
+    let pid = scheduler::current_pid();
+    let sched = scheduler::get();
+    if let Some(Some(task)) = sched.tasks.get_mut(pid) {
+        for fd in 3..scheduler::MAX_TASK_FDS {
+            if task.fds[fd].is_none() {
+                task.fds[fd] = Some(scheduler::TaskFileDescriptor {
+                    vfs_handle,
+                    path: path_buf,
+                    path_len,
+                    offset: 0,
+                    flags,
+                });
+                return fd as isize;
+            }
+        }
+        let _ = crate::vfs::close(path_str, vfs_handle);
+        EMFILE
+    } else {
+        let _ = crate::vfs::close(path_str, vfs_handle);
+        EPERM
+    }
+}
+
+/// `close(fd)` — Close a previously opened file descriptor.
+fn sys_close(fd: usize) -> isize {
+    if fd < 3 || fd >= scheduler::MAX_TASK_FDS {
+        return EBADF;
+    }
+    let pid = scheduler::current_pid();
+    let sched = scheduler::get();
+    if let Some(Some(task)) = sched.tasks.get_mut(pid) {
+        if let Some(entry) = task.fds[fd].take() {
+            if let Ok(p_str) = core::str::from_utf8(&entry.path[..entry.path_len]) {
+                let _ = crate::vfs::close(p_str, entry.vfs_handle);
+            }
+            0
+        } else {
+            EBADF
+        }
+    } else {
+        EBADF
     }
 }
 
@@ -136,6 +296,11 @@ fn sys_ipc_send(to_pid: u32, tag: u32, payload: *const u8) -> isize {
     let data = if payload.is_null() {
         &[][..]
     } else {
+        if is_current_task_user() {
+            if let Err(e) = validate_user_buffer(payload, 64) {
+                return e;
+            }
+        }
         unsafe { core::slice::from_raw_parts(payload, 64) }
     };
     let msg = Message::new(from, to_pid, tag, data);
@@ -147,6 +312,11 @@ fn sys_ipc_send(to_pid: u32, tag: u32, payload: *const u8) -> isize {
 
 /// `ipc_recv(buf, len)` — Receive a pending IPC message. Returns bytes written.
 fn sys_ipc_recv(buf: *mut u8, len: usize) -> isize {
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(buf as *const u8, len) {
+            return e;
+        }
+    }
     let pid = scheduler::current_pid();
     match ipc::recv(pid) {
         None => 0,

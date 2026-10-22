@@ -302,3 +302,19 @@ pub unsafe fn sys_jda_shm_release(handle: u64) -> i64 {
 pub unsafe fn sys_jda_submit(job_type: u64, handle: u64, len: u64) -> i64 {
     syscall3(14, job_type, handle, len)
 }
+
+// ── Syscall 15 — open ────────────────────────────────────────────────────────
+
+/// Abre um arquivo no VFS para leitura ou escrita e retorna um file descriptor (FD >= 3).
+#[inline(always)]
+pub unsafe fn sys_open(path: &str, flags: u32) -> i64 {
+    syscall3(15, path.as_ptr() as u64, path.len() as u64, flags as u64)
+}
+
+// ── Syscall 16 — close ───────────────────────────────────────────────────────
+
+/// Fecha um descritor de arquivo aberto previamente via `sys_open`.
+#[inline(always)]
+pub unsafe fn sys_close(fd: u64) -> i64 {
+    syscall3(16, fd, 0, 0)
+}

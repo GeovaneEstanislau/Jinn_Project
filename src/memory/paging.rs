@@ -86,6 +86,9 @@ unsafe fn walk_or_create(table: *mut PageTable, idx: usize, flags: u64) -> *mut 
         let new_table = alloc_table();
         let phys = virt_to_phys(new_table as u64);
         *entry = PageEntry::new(phys, flags | PRESENT | WRITABLE);
+    } else if (flags & USER) != 0 {
+        // Garante que privilégio de usuário seja propagado pelas tabelas intermediárias
+        entry.0 |= USER;
     }
     phys_to_virt(entry.phys_addr()) as *mut PageTable
 }
@@ -156,6 +159,41 @@ pub unsafe fn unmap_page(pml4: *mut PageTable, virt: u64) {
     core::arch::asm!("invlpg [{0}]", in(reg) virt, options(nostack));
 }
 
+/// Lookup the physical address and flags of a mapped virtual page.
+pub unsafe fn lookup_page(pml4: *mut PageTable, virt: u64) -> Option<(u64, u64)> {
+    let pml4_e = (*pml4).entries[pml4_idx(virt)];
+    if !pml4_e.is_present() { return None; }
+    let pdpt = phys_to_virt(pml4_e.phys_addr()) as *mut PageTable;
+
+    let pdpt_e = (*pdpt).entries[pdpt_idx(virt)];
+    if !pdpt_e.is_present() { return None; }
+    let pd = phys_to_virt(pdpt_e.phys_addr()) as *mut PageTable;
+
+    let pd_e = (*pd).entries[pd_idx(virt)];
+    if !pd_e.is_present() { return None; }
+    if pd_e.flags() & HUGE_PAGE != 0 {
+        let offset = virt & 0x1F_FFFF;
+        return Some((pd_e.phys_addr() + offset, pd_e.flags()));
+    }
+
+    let pt = phys_to_virt(pd_e.phys_addr()) as *mut PageTable;
+    let pt_e = (*pt).entries[pt_idx(virt)];
+    if !pt_e.is_present() { return None; }
+    Some((pt_e.phys_addr(), pt_e.flags()))
+}
+
+static mut KERNEL_PML4_PHYS: u64 = 0;
+
+/// Returns the physical address of the kernel PML4 (initialized on boot).
+pub fn kernel_pml4_phys() -> u64 {
+    unsafe {
+        if KERNEL_PML4_PHYS == 0 {
+            KERNEL_PML4_PHYS = current_cr3();
+        }
+        KERNEL_PML4_PHYS
+    }
+}
+
 /// Read the current CR3 (physical address of active PML4).
 pub fn current_cr3() -> u64 {
     let cr3: u64;
@@ -177,6 +215,8 @@ pub unsafe fn load_cr3(pml4_phys: u64) {
 /// Returns the physical address of the new PML4.
 pub fn clone_kernel_pml4() -> u64 {
     unsafe {
+        // Assegura que o PML4 mestre do kernel está gravado
+        let _ = kernel_pml4_phys();
         let current_pml4 = phys_to_virt(current_cr3()) as *const PageTable;
         let new_table_virt = alloc_table();
         
@@ -194,6 +234,12 @@ pub fn clone_kernel_pml4() -> u64 {
 /// Only iterates through entries 0..256 (the user half) to avoid freeing
 /// kernel pages, which are shared across all address spaces.
 pub unsafe fn free_user_pml4(pml4_phys: u64) {
+    // Se a CPU estiver ativa no PML4 que será destruído, troca imediatamente
+    // de volta para o PML4 mestre do kernel antes de liberar as tabelas.
+    if current_cr3() == pml4_phys {
+        load_cr3(kernel_pml4_phys());
+    }
+
     let pml4 = phys_to_virt(pml4_phys) as *mut PageTable;
     
     // Free lower half (user space, indices 0..256)

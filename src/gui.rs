@@ -139,29 +139,29 @@ impl ProcessHost for JinnProcess {
     }
 
     fn spawn_app(&mut self, path: &str) -> Result<usize, ()> {
-        unsafe {
-            static mut ELF_BUF: [u8; 64 * 1024] = [0u8; 64 * 1024];
-            let buf_ptr = core::ptr::addr_of_mut!(ELF_BUF);
-            let mut vfs_len = 0;
-            if let Ok(n) = crate::vfs::read_file(path, &mut (*buf_ptr)) {
-                vfs_len = n;
-            } else if let Ok(n) = crate::vfs::read_file("/disk/ola-mundo.elf", &mut (*buf_ptr)) {
-                vfs_len = n;
-            }
-            let elf_data: Option<&[u8]> = if vfs_len > 0 {
-                Some(core::slice::from_raw_parts((*buf_ptr).as_ptr(), vfs_len))
-            } else {
-                crate::limine::get_module(0)
-            };
-            if let Some(data) = elf_data {
-                let pid = crate::scheduler::get().add_user_task("user_app[U3]", data);
-                if pid > 0 {
-                    crate::ipc::register(pid);
-                    return Ok(pid);
-                }
-            }
-            Err(())
+        let pid = crate::scheduler::get().add_user_task_from_vfs("user_app[U3]", path);
+        if pid > 0 {
+            crate::ipc::register(pid);
+            return Ok(pid);
         }
+        // Fallback: tenta caminhos padrão no disco se o caminho direto falhou
+        let fallback_paths = ["/disk/OLA.ELF", "/disk/ola-mundo.elf", "/ext2/OLA.ELF"];
+        for fb_path in fallback_paths {
+            let fb_pid = crate::scheduler::get().add_user_task_from_vfs("user_app[U3]", fb_path);
+            if fb_pid > 0 {
+                crate::ipc::register(fb_pid);
+                return Ok(fb_pid);
+            }
+        }
+        // Fallback final: módulo Limine injetado no boot
+        if let Some(data) = crate::limine::get_module(0) {
+            let boot_pid = crate::scheduler::get().add_user_task("user_app[U3]", data);
+            if boot_pid > 0 {
+                crate::ipc::register(boot_pid);
+                return Ok(boot_pid);
+            }
+        }
+        Err(())
     }
 }
 
