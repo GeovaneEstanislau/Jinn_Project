@@ -258,6 +258,7 @@ struct WindowManager {
     file_cache: [CachedFileEntry; 6],
     file_cache_count: usize,
     file_cache_valid: bool,
+    pub active_volume: u8,
 }
 
 impl WindowManager {
@@ -265,8 +266,9 @@ impl WindowManager {
         self.file_cache_count = 0;
         let mut count = 0;
         let cache_ptr = self.file_cache.as_mut_ptr();
+        let target = if self.active_volume == 1 { "/ext2" } else { "/disk" };
 
-        let _ = crate::vfs::readdir("/disk", |name, _| {
+        let _ = crate::vfs::readdir(target, |name, _| {
             if count < 6 {
                 let n_len = name.len().min(15);
                 unsafe {
@@ -322,10 +324,29 @@ impl WindowManager {
                     // Processa comandos internos do terminal gráfico
                     match cmd {
                         "help" => {
-                            self.terminal.push_line("Cmds: help, clear, ps, mem, uptime, ls, cat, touch, rm, sync, spawn, reboot", 0x0038_BDF8);
+                            self.terminal.push_line("Cmds: help, clear, ps, mem, uptime, mounts, ls, cat, touch, rm, sync, spawn, reboot", 0x0038_BDF8);
                         }
                         "clear" => {
                             self.terminal.history_count = 0;
+                        }
+                        "mounts" => {
+                            self.terminal.push_line("Pontos de montagem ativos:", 0x0038_BDF8);
+                            crate::vfs::list_mounts(|prefix, fs_name| {
+                                let mut line_buf = [0u8; 40];
+                                let mut pos = 0;
+                                let p_bytes = prefix.as_bytes();
+                                let f_bytes = fs_name.as_bytes();
+                                line_buf[..p_bytes.len()].copy_from_slice(p_bytes);
+                                pos += p_bytes.len();
+                                let sep = " -> ";
+                                line_buf[pos..pos + sep.len()].copy_from_slice(sep.as_bytes());
+                                pos += sep.len();
+                                line_buf[pos..pos + f_bytes.len()].copy_from_slice(f_bytes);
+                                pos += f_bytes.len();
+                                if let Ok(s) = core::str::from_utf8(&line_buf[..pos]) {
+                                    self.terminal.push_line(s, 0x0022_C55E);
+                                }
+                            });
                         }
                         "spawn" | "run" => {
                             spawn_user_app();
@@ -391,13 +412,33 @@ impl WindowManager {
                             }
                         }
                         "ls" => {
-                            self.refresh_file_cache();
-                            self.terminal.push_line("Arquivos em /disk:", 0x0038_BDF8);
-                            for i in 0..self.file_cache_count {
-                                let entry = &self.file_cache[i];
-                                if let Ok(name_str) = core::str::from_utf8(&entry.name[..entry.name_len]) {
-                                    self.terminal.push_line(name_str, if entry.is_elf { 0x0022_C55E } else { 0x00F8_FAFC });
-                                }
+                            let target = if arg.is_empty() {
+                                if self.active_volume == 1 { "/ext2" } else { "/disk" }
+                            } else {
+                                arg
+                            };
+                            let mut hbuf = [0u8; 32];
+                            let pfx = "Arquivos em ";
+                            hbuf[..pfx.len()].copy_from_slice(pfx.as_bytes());
+                            let mut pos = pfx.len();
+                            let t_bytes = target.as_bytes();
+                            let t_len = t_bytes.len().min(16);
+                            hbuf[pos..pos + t_len].copy_from_slice(&t_bytes[..t_len]);
+                            pos += t_len;
+                            hbuf[pos] = b':';
+                            pos += 1;
+                            if let Ok(hs) = core::str::from_utf8(&hbuf[..pos]) {
+                                self.terminal.push_line(hs, 0x0038_BDF8);
+                            }
+                            let mut c = 0;
+                            let _ = crate::vfs::readdir(target, |name, ftype| {
+                                let is_dir = ftype == crate::vfs::NodeType::Directory;
+                                let color = if is_dir { 0x0038_BDF8 } else if name.ends_with(".elf") || name.ends_with(".ELF") { 0x0022_C55E } else { 0x00F8_FAFC };
+                                self.terminal.push_line(name, color);
+                                c += 1;
+                            });
+                            if c == 0 {
+                                self.terminal.push_line("(Vazio ou diretorio inexistente)", 0x0094_A3B8);
                             }
                         }
                         "touch" => {
@@ -405,20 +446,27 @@ impl WindowManager {
                                 self.terminal.push_line("Uso: touch <arquivo>", 0x00F8_7171);
                             } else {
                                 let mut path_buf = [0u8; 32];
-                                let prefix = b"/disk/";
-                                path_buf[..6].copy_from_slice(prefix);
-                                let arg_bytes = arg.as_bytes();
-                                let arg_len = arg_bytes.len().min(24);
-                                path_buf[6..6 + arg_len].copy_from_slice(&arg_bytes[..arg_len]);
-                                if let Ok(p) = core::str::from_utf8(&path_buf[..6 + arg_len]) {
+                                let p_bytes = arg.as_bytes();
+                                let p_len = p_bytes.len().min(31);
+                                let p_str = if arg.starts_with('/') {
+                                    path_buf[..p_len].copy_from_slice(&p_bytes[..p_len]);
+                                    core::str::from_utf8(&path_buf[..p_len])
+                                } else {
+                                    let prefix = if self.active_volume == 1 { b"/ext2/" } else { b"/disk/" };
+                                    path_buf[..6].copy_from_slice(prefix);
+                                    let alen = p_bytes.len().min(24);
+                                    path_buf[6..6 + alen].copy_from_slice(&p_bytes[..alen]);
+                                    core::str::from_utf8(&path_buf[..6 + alen])
+                                };
+                                if let Ok(p) = p_str {
                                     match crate::vfs::create(p) {
                                         Ok(()) => {
                                             let _ = crate::vfs::sync_all();
                                             self.refresh_file_cache();
-                                            self.terminal.push_line("[OK] Arquivo criado em /disk!", 0x0022_C55E);
+                                            self.terminal.push_line("[OK] Arquivo criado!", 0x0022_C55E);
                                         }
                                         Err(_) => {
-                                            self.terminal.push_line("[ERRO] Falha ao criar arquivo.", 0x00F8_7171);
+                                            self.terminal.push_line("[ERRO] Falha ao criar (Permissao ou RO).", 0x00F8_7171);
                                         }
                                     }
                                 }
@@ -429,12 +477,19 @@ impl WindowManager {
                                 self.terminal.push_line("Uso: cat <arquivo>", 0x00F8_7171);
                             } else {
                                 let mut path_buf = [0u8; 32];
-                                let prefix = b"/disk/";
-                                path_buf[..6].copy_from_slice(prefix);
-                                let arg_bytes = arg.as_bytes();
-                                let arg_len = arg_bytes.len().min(24);
-                                path_buf[6..6 + arg_len].copy_from_slice(&arg_bytes[..arg_len]);
-                                if let Ok(p) = core::str::from_utf8(&path_buf[..6 + arg_len]) {
+                                let p_bytes = arg.as_bytes();
+                                let p_len = p_bytes.len().min(31);
+                                let p_str = if arg.starts_with('/') {
+                                    path_buf[..p_len].copy_from_slice(&p_bytes[..p_len]);
+                                    core::str::from_utf8(&path_buf[..p_len])
+                                } else {
+                                    let prefix = if self.active_volume == 1 { b"/ext2/" } else { b"/disk/" };
+                                    path_buf[..6].copy_from_slice(prefix);
+                                    let alen = p_bytes.len().min(24);
+                                    path_buf[6..6 + alen].copy_from_slice(&p_bytes[..alen]);
+                                    core::str::from_utf8(&path_buf[..6 + alen])
+                                };
+                                if let Ok(p) = p_str {
                                     let mut read_buf = [0u8; 128];
                                     match crate::vfs::read_file(p, &mut read_buf) {
                                         Ok(n) => {
@@ -459,20 +514,27 @@ impl WindowManager {
                                 self.terminal.push_line("Uso: rm <arquivo>", 0x00F8_7171);
                             } else {
                                 let mut path_buf = [0u8; 32];
-                                let prefix = b"/disk/";
-                                path_buf[..6].copy_from_slice(prefix);
-                                let arg_bytes = arg.as_bytes();
-                                let arg_len = arg_bytes.len().min(24);
-                                path_buf[6..6 + arg_len].copy_from_slice(&arg_bytes[..arg_len]);
-                                if let Ok(p) = core::str::from_utf8(&path_buf[..6 + arg_len]) {
+                                let p_bytes = arg.as_bytes();
+                                let p_len = p_bytes.len().min(31);
+                                let p_str = if arg.starts_with('/') {
+                                    path_buf[..p_len].copy_from_slice(&p_bytes[..p_len]);
+                                    core::str::from_utf8(&path_buf[..p_len])
+                                } else {
+                                    let prefix = if self.active_volume == 1 { b"/ext2/" } else { b"/disk/" };
+                                    path_buf[..6].copy_from_slice(prefix);
+                                    let alen = p_bytes.len().min(24);
+                                    path_buf[6..6 + alen].copy_from_slice(&p_bytes[..alen]);
+                                    core::str::from_utf8(&path_buf[..6 + alen])
+                                };
+                                if let Ok(p) = p_str {
                                     match crate::vfs::remove(p) {
                                         Ok(()) => {
                                             let _ = crate::vfs::sync_all();
                                             self.refresh_file_cache();
-                                            self.terminal.push_line("[OK] Arquivo removido de /disk!", 0x0022_C55E);
+                                            self.terminal.push_line("[OK] Arquivo removido!", 0x0022_C55E);
                                         }
                                         Err(_) => {
-                                            self.terminal.push_line("[ERRO] Falha ao remover arquivo.", 0x00F8_7171);
+                                            self.terminal.push_line("[ERRO] Falha ao remover (Permissao ou RO).", 0x00F8_7171);
                                         }
                                     }
                                 }
@@ -530,6 +592,7 @@ static mut WM: WindowManager = WindowManager {
     file_cache: [CachedFileEntry::empty(); 6],
     file_cache_count: 0,
     file_cache_valid: false,
+    active_volume: 0,
 };
 
 /// Verifica se o framebuffer e o backbuffer do ambiente gráfico estão inicializados e disponíveis.
@@ -1211,37 +1274,63 @@ pub fn render_desktop_scene(mouse_x: usize, mouse_y: usize) {
                         draw_string_bb(win.lines[i], win.x + 12, line_y, COLOR_ALADDIN_TEXT_PRI, Some(COLOR_ALADDIN_CARD));
                     }
                 } else if win.id == 3 {
-                    // ── Janela 3: Gerenciador de Arquivos Aladdin (FAT32) ──
-                    draw_string_bb("--- Armazenamento Jinn / VFS ---", win.x + 12, win.y + 36, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD));
-                    draw_string_bb("Ponto de Montagem: /disk (FAT32 em IDE hd0)", win.x + 12, win.y + 54, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD));
+                    // ── Janela 3: Gerenciador de Arquivos Aladdin (FAT32 & Ext2) ──
+                    draw_string_bb("--- Armazenamento Jinn / VFS ---", win.x + 12, win.y + 32, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD));
+
+                    // Abas Seletoras de Volume: /disk (FAT32) e /ext2 (Ext2)
+                    let tab_d_w = 114;
+                    let tab_e_w = 114;
+                    let tab_d_x = win.x + 12;
+                    let tab_e_x = tab_d_x + tab_d_w + 8;
+                    let tab_y = win.y + 48;
+                    let tab_h = 18;
+
+                    let is_v0 = wm.active_volume == 0;
+                    let bg_d = if is_v0 { 0x001E_293B } else { COLOR_ALADDIN_CARD };
+                    let bd_d = if is_v0 { COLOR_ALADDIN_CYAN } else { COLOR_ALADDIN_BORDER };
+                    let fg_d = if is_v0 { COLOR_ALADDIN_CYAN } else { COLOR_ALADDIN_TEXT_MUTED };
+                    fill_rect_bb(tab_d_x, tab_y, tab_d_w, tab_h, bg_d);
+                    draw_rect_outline_bb(tab_d_x, tab_y, tab_d_w, tab_h, bd_d);
+                    draw_string_bb("/disk (FAT32)", tab_d_x + 6, tab_y + 3, fg_d, Some(bg_d));
+
+                    let is_v1 = wm.active_volume == 1;
+                    let bg_e = if is_v1 { 0x001E_293B } else { COLOR_ALADDIN_CARD };
+                    let bd_e = if is_v1 { COLOR_ALADDIN_CYAN } else { COLOR_ALADDIN_BORDER };
+                    let fg_e = if is_v1 { COLOR_ALADDIN_CYAN } else { COLOR_ALADDIN_TEXT_MUTED };
+                    fill_rect_bb(tab_e_x, tab_y, tab_e_w, tab_h, bg_e);
+                    draw_rect_outline_bb(tab_e_x, tab_y, tab_e_w, tab_h, bd_e);
+                    draw_string_bb("/ext2 (Ext2)", tab_e_x + 8, tab_y + 3, fg_e, Some(bg_e));
 
                     if wm.preview_active {
                         // Painel de Visualização de Arquivo Integrado (Quick Look / File Preview)
                         let p_x = win.x + 12;
-                        let p_y = win.y + 72;
+                        let p_y = win.y + 70;
                         let p_w = win.width - 24;
-                        let p_h = 104;
+                        let p_h = 106;
 
                         fill_rect_bb(p_x, p_y, p_w, p_h, 0x000F_172A);
                         draw_rect_outline_bb(p_x, p_y, p_w, p_h, COLOR_ALADDIN_BORDER_ACT);
 
                         // Barra de topo do preview
                         fill_rect_bb(p_x + 1, p_y + 1, p_w - 2, 20, 0x001E_293B);
-                        draw_string_bb("Preview: /disk/", p_x + 6, p_y + 3, COLOR_ALADDIN_CYAN, Some(0x001E_293B));
+                        let pfx_str = if wm.active_volume == 1 { "Preview: /ext2/" } else { "Preview: /disk/" };
+                        draw_string_bb(pfx_str, p_x + 6, p_y + 3, COLOR_ALADDIN_CYAN, Some(0x001E_293B));
                         let fn_len = wm.preview_filename_len.min(16);
                         if let Ok(fn_str) = core::str::from_utf8(&wm.preview_filename[..fn_len]) {
                             draw_string_bb(fn_str, p_x + 126, p_y + 3, COLOR_WHITE, Some(0x001E_293B));
                         }
 
-                        // Botão Excluir no Preview
                         let btn_c_w = 76;
                         let btn_c_x = p_x + p_w - btn_c_w - 4;
 
-                        let btn_dp_w = 64;
-                        let btn_dp_x = btn_c_x - btn_dp_w - 4;
-                        fill_rect_bb(btn_dp_x, p_y + 2, btn_dp_w, 16, 0x002D_1215);
-                        draw_rect_outline_bb(btn_dp_x, p_y + 2, btn_dp_w, 16, 0x00EF_4444);
-                        draw_string_bb("Excluir", btn_dp_x + 5, p_y + 3, 0x00F8_7171, Some(0x002D_1215));
+                        // Botão Excluir no Preview (somente no volume RW /disk)
+                        if wm.active_volume == 0 {
+                            let btn_dp_w = 64;
+                            let btn_dp_x = btn_c_x - btn_dp_w - 4;
+                            fill_rect_bb(btn_dp_x, p_y + 2, btn_dp_w, 16, 0x002D_1215);
+                            draw_rect_outline_bb(btn_dp_x, p_y + 2, btn_dp_w, 16, 0x00EF_4444);
+                            draw_string_bb("Excluir", btn_dp_x + 5, p_y + 3, 0x00F8_7171, Some(0x002D_1215));
+                        }
 
                         // Botão Fechar Preview
                         fill_rect_bb(btn_c_x, p_y + 2, btn_c_w, 16, COLOR_ALADDIN_RUBY);
@@ -1268,27 +1357,35 @@ pub fn render_desktop_scene(mouse_x: usize, mouse_y: usize) {
                             }
                         }
 
-                        draw_string_bb("Modo: Somente Leitura | UTF-8", win.x + 12, win.y + 182, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD));
+                        let mode_lbl = if wm.active_volume == 1 { "Modo: Ext2 Read-Only | UTF-8" } else { "Modo: FAT32 Read-Write | UTF-8" };
+                        draw_string_bb(mode_lbl, win.x + 12, win.y + 182, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD));
                     } else {
                         // Card de arquivos do volume (LÊ DO CACHE, ZERO DISK I/O NO RENDER LOOP)
                         let files_box_x = win.x + 12;
-                        let files_box_y = win.y + 74;
+                        let files_box_y = win.y + 70;
                         let files_box_w = win.width - 24;
-                        let files_box_h = 100;
+                        let files_box_h = 104;
                         fill_rect_bb(files_box_x, files_box_y, files_box_w, files_box_h, COLOR_ALADDIN_CARD_ALT);
                         draw_rect_outline_bb(files_box_x, files_box_y, files_box_w, files_box_h, COLOR_ALADDIN_BORDER);
 
-                        draw_string_bb("Arquivos em /disk:", files_box_x + 8, files_box_y + 8, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD_ALT));
+                        let f_title = if wm.active_volume == 1 { "Arquivos em /ext2 (RO):" } else { "Arquivos em /disk (RW):" };
+                        draw_string_bb(f_title, files_box_x + 8, files_box_y + 8, COLOR_ALADDIN_CYAN, Some(COLOR_ALADDIN_CARD_ALT));
 
-                        // Botão [+ Novo]
-                        let btn_new_w = 60;
                         let btn_rf_w = 88;
                         let btn_rf_x = files_box_x + files_box_w - btn_rf_w - 8;
-                        let btn_new_x = btn_rf_x - btn_new_w - 6;
 
-                        fill_rect_bb(btn_new_x, files_box_y + 6, btn_new_w, 18, 0x001E_293B);
-                        draw_rect_outline_bb(btn_new_x, files_box_y + 6, btn_new_w, 18, COLOR_ALADDIN_EMERALD);
-                        draw_string_bb("+ Novo", btn_new_x + 6, files_box_y + 8, COLOR_ALADDIN_EMERALD, Some(0x001E_293B));
+                        if wm.active_volume == 0 {
+                            // Botão [+ Novo]
+                            let btn_new_w = 60;
+                            let btn_new_x = btn_rf_x - btn_new_w - 6;
+                            fill_rect_bb(btn_new_x, files_box_y + 6, btn_new_w, 18, 0x001E_293B);
+                            draw_rect_outline_bb(btn_new_x, files_box_y + 6, btn_new_w, 18, COLOR_ALADDIN_EMERALD);
+                            draw_string_bb("+ Novo", btn_new_x + 6, files_box_y + 8, COLOR_ALADDIN_EMERALD, Some(0x001E_293B));
+                        } else {
+                            let ro_w = 90;
+                            let ro_x = btn_rf_x - ro_w - 6;
+                            draw_string_bb("(Somente Leitura)", ro_x, files_box_y + 8, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD_ALT));
+                        }
 
                         // Botão [Atualizar]
                         fill_rect_bb(btn_rf_x, files_box_y + 6, btn_rf_w, 18, 0x001E_293B);
@@ -1296,7 +1393,7 @@ pub fn render_desktop_scene(mouse_x: usize, mouse_y: usize) {
                         draw_string_bb("[Atualizar]", btn_rf_x + 6, files_box_y + 8, COLOR_ALADDIN_TEXT_PRI, Some(0x001E_293B));
 
                         if wm.file_cache_count == 0 {
-                            draw_string_bb("(Nenhum arquivo detectado no volume /disk)", files_box_x + 12, files_box_y + 40, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD_ALT));
+                            draw_string_bb("(Nenhum arquivo detectado neste volume)", files_box_x + 12, files_box_y + 40, COLOR_ALADDIN_TEXT_MUTED, Some(COLOR_ALADDIN_CARD_ALT));
                         } else {
                             for i in 0..wm.file_cache_count.min(3) {
                                 let entry = &wm.file_cache[i];
@@ -1323,12 +1420,14 @@ pub fn render_desktop_scene(mouse_x: usize, mouse_y: usize) {
                                     draw_rect_outline_bb(btn_x, item_y - 1, btn_w, btn_h, COLOR_ALADDIN_BORDER);
                                     draw_string_bb("Ler VFS", btn_x + 5, item_y, COLOR_ALADDIN_CYAN, Some(0x001E_293B));
 
-                                    // Botão [Del]
-                                    let btn_del_w = 40;
-                                    let btn_del_x = btn_x - btn_del_w - 6;
-                                    fill_rect_bb(btn_del_x, item_y - 1, btn_del_w, btn_h, 0x002D_1215);
-                                    draw_rect_outline_bb(btn_del_x, item_y - 1, btn_del_w, btn_h, 0x00EF_4444);
-                                    draw_string_bb("Del", btn_del_x + 8, item_y, 0x00F8_7171, Some(0x002D_1215));
+                                    // Botão [Del] (apenas no volume RW /disk)
+                                    if wm.active_volume == 0 {
+                                        let btn_del_w = 40;
+                                        let btn_del_x = btn_x - btn_del_w - 6;
+                                        fill_rect_bb(btn_del_x, item_y - 1, btn_del_w, btn_h, 0x002D_1215);
+                                        draw_rect_outline_bb(btn_del_x, item_y - 1, btn_del_w, btn_h, 0x00EF_4444);
+                                        draw_string_bb("Del", btn_del_x + 8, item_y, 0x00F8_7171, Some(0x002D_1215));
+                                    }
                                 }
                             }
                         }
@@ -1689,17 +1788,44 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
 
                         // Botões de ação na janela do Gerenciador de Arquivos (Window 3)
                         if win_idx == 3 {
+                            // 1. Abas Seletoras de Volume: /disk (FAT32) e /ext2 (Ext2)
+                            let tab_d_w = 114;
+                            let tab_e_w = 114;
+                            let tab_d_x = win.x + 12;
+                            let tab_e_x = tab_d_x + tab_d_w + 8;
+                            let tab_y = win.y + 48;
+                            let tab_h = 18;
+
+                            if mouse_y >= tab_y && mouse_y <= tab_y + tab_h {
+                                if mouse_x >= tab_d_x && mouse_x <= tab_d_x + tab_d_w {
+                                    if wm.active_volume != 0 {
+                                        wm.active_volume = 0;
+                                        wm.preview_active = false;
+                                        wm.refresh_file_cache();
+                                        return (false, None);
+                                    }
+                                } else if mouse_x >= tab_e_x && mouse_x <= tab_e_x + tab_e_w {
+                                    if wm.active_volume != 1 {
+                                        wm.active_volume = 1;
+                                        wm.preview_active = false;
+                                        wm.refresh_file_cache();
+                                        return (false, None);
+                                    }
+                                }
+                            }
+
                             if wm.preview_active {
                                 let p_x = win.x + 12;
-                                let p_y = win.y + 72;
+                                let p_y = win.y + 70;
                                 let p_w = win.width - 24;
                                 let btn_c_w = 76;
                                 let btn_c_x = p_x + p_w - btn_c_w - 4;
                                 let btn_dp_w = 64;
                                 let btn_dp_x = btn_c_x - btn_dp_w - 4;
 
-                                // Clique no botão [Excluir] do Preview
-                                if mouse_x >= btn_dp_x && mouse_x <= btn_dp_x + btn_dp_w &&
+                                // Clique no botão [Excluir] do Preview (apenas volume RW /disk)
+                                if wm.active_volume == 0 &&
+                                   mouse_x >= btn_dp_x && mouse_x <= btn_dp_x + btn_dp_w &&
                                    mouse_y >= p_y + 2 && mouse_y <= p_y + 18 {
                                     let mut path_buf = [0u8; 32];
                                     let prefix = b"/disk/";
@@ -1739,16 +1865,17 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                                 }
                             } else {
                                 let files_box_x = win.x + 12;
-                                let files_box_y = win.y + 74;
+                                let files_box_y = win.y + 70;
                                 let files_box_w = win.width - 24;
 
-                                // Botão [+ Novo] no header do box de arquivos
-                                let btn_new_w = 60;
+                                // Botão [+ Novo] no header do box de arquivos (apenas volume RW /disk)
                                 let btn_rf_w = 88;
                                 let btn_rf_x = files_box_x + files_box_w - btn_rf_w - 8;
+                                let btn_new_w = 60;
                                 let btn_new_x = btn_rf_x - btn_new_w - 6;
 
-                                if mouse_x >= btn_new_x && mouse_x <= btn_new_x + btn_new_w &&
+                                if wm.active_volume == 0 &&
+                                   mouse_x >= btn_new_x && mouse_x <= btn_new_x + btn_new_w &&
                                    mouse_y >= files_box_y + 6 && mouse_y <= files_box_y + 24 {
                                     let candidates = [
                                         ("/disk/NOTA.TXT", "NOTA.TXT"),
@@ -1804,8 +1931,8 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                                         (e.is_elf, e.is_txt, e.name_len.min(24), e.name)
                                     };
 
-                                    // Botão Excluir (Del) para arquivos de texto
-                                    if is_txt {
+                                    // Botão Excluir (Del) para arquivos de texto (apenas volume RW /disk)
+                                    if wm.active_volume == 0 && is_txt {
                                         let btn_del_w = 40;
                                         let btn_del_x = btn_x - btn_del_w - 6;
                                         if mouse_x >= btn_del_x && mouse_x <= btn_del_x + btn_del_w &&
@@ -1849,7 +1976,7 @@ pub fn handle_mouse(mouse_x: usize, mouse_y: usize, buttons: u8) -> (bool, Optio
                                         } else if is_txt {
                                             let mut preview = [0u8; 256];
                                             let mut path_buf = [0u8; 32];
-                                            let prefix = b"/disk/";
+                                            let prefix = if wm.active_volume == 1 { b"/ext2/" } else { b"/disk/" };
                                             path_buf[..6].copy_from_slice(prefix);
                                             path_buf[6..6 + n_len].copy_from_slice(&entry_name[..n_len]);
 
