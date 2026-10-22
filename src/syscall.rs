@@ -19,6 +19,11 @@
 ///   7  — alloc_page()             Allocate a physical frame (returns phys addr)
 ///   8  — free_page(phys)          Free a physical frame
 ///   9  — spawn(fn_ptr, name_ptr)  Spawn a new kernel task
+///   15 — open(path, len, flags)   Open file and return per-task FD (3..=7)
+///   16 — close(fd)                Close file descriptor
+///   20 — window_create(title, len, dim) Create Aladdin desktop window
+///   21 — window_update(id, buf, len)   Update Aladdin window client buffer
+///   22 — window_close(id)              Close Aladdin desktop window
 
 use crate::ipc::{self, Message};
 use crate::memory;
@@ -92,6 +97,9 @@ pub extern "C" fn syscall_dispatch(
         14 => sys_jda_submit(arg0, arg1, arg2),
         15 => sys_open(arg0 as *const u8, arg1, arg2 as u32),
         16 => sys_close(arg0),
+        20 => sys_window_create(arg0 as *const u8, arg1, arg2),
+        21 => sys_window_update(arg0, arg1 as *const u32, arg2),
+        22 => sys_window_close(arg0),
         _  => ENOSYS,
     }
 }
@@ -127,6 +135,7 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
                 w.set_color(crate::vga::Color::LightRed, crate::vga::Color::Black);
             }
             for &byte in slice {
+                crate::serial_write_byte(byte);
                 w.write_byte(byte);
             }
             len as isize
@@ -479,6 +488,67 @@ fn sys_jda_submit(job_type: usize, handle: usize, len: usize) -> isize {
     crate::jda::telemetry::record_operation_completed(100);
 
     res
+}
+
+// ── Aladdin Graphics Syscalls ─────────────────────────────────────────────────
+
+/// `sys_window_create(title_ptr, title_len, packed_dim)` — Cria uma janela no Aladdin Desktop.
+/// `packed_dim`: `(width << 16) | (height & 0xFFFF)`.
+/// Retorna o ID da janela (>= 0) em caso de sucesso, ou código de erro negativo.
+fn sys_window_create(title_ptr: *const u8, title_len: usize, packed_dim: usize) -> isize {
+    let pid = scheduler::current_pid();
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(title_ptr, title_len) {
+            return e;
+        }
+    }
+    if title_ptr.is_null() || title_len == 0 || title_len > 48 {
+        return EINVAL;
+    }
+    let title_slice = unsafe { core::slice::from_raw_parts(title_ptr, title_len) };
+    let title_str = match core::str::from_utf8(title_slice) {
+        Ok(s) => s,
+        Err(_) => return EINVAL,
+    };
+    let width = (packed_dim >> 16) & 0xFFFF;
+    let height = packed_dim & 0xFFFF;
+    if width == 0 || height == 0 || width > 1024 || height > 768 {
+        return EINVAL;
+    }
+
+    match crate::gui::window_create(pid, title_str, width, height) {
+        Ok(id) => id as isize,
+        Err(err) => err,
+    }
+}
+
+/// `sys_window_update(win_id, buffer_ptr, buffer_len_bytes)` — Apresenta pixels na janela.
+fn sys_window_update(win_id: usize, buffer_ptr: *const u32, buffer_len_bytes: usize) -> isize {
+    let pid = scheduler::current_pid();
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(buffer_ptr as *const u8, buffer_len_bytes) {
+            return e;
+        }
+    }
+    if buffer_ptr.is_null() || buffer_len_bytes == 0 || (buffer_len_bytes % 4) != 0 {
+        return EINVAL;
+    }
+    let pixel_count = buffer_len_bytes / 4;
+    let pixel_slice = unsafe { core::slice::from_raw_parts(buffer_ptr, pixel_count) };
+
+    match crate::gui::window_update(pid, win_id, pixel_slice) {
+        Ok(()) => 0,
+        Err(err) => err,
+    }
+}
+
+/// `sys_window_close(win_id)` — Fecha a janela pertencente ao processo.
+fn sys_window_close(win_id: usize) -> isize {
+    let pid = scheduler::current_pid();
+    match crate::gui::window_close(pid, win_id) {
+        Ok(()) => 0,
+        Err(err) => err,
+    }
 }
 
 // ── Kernel-internal invoke ────────────────────────────────────────────────────

@@ -191,6 +191,56 @@ pub fn is_available() -> bool {
     }
 }
 
+/// Cria uma nova janela de cliente para o processo `owner_pid`.
+/// `title`: título exibido na barra da janela.
+/// `width`, `height`: dimensões da área cliente de desenho em pixels.
+pub fn window_create(owner_pid: usize, title: &str, width: usize, height: usize) -> Result<usize, isize> {
+    if width == 0 || height == 0 || width > 1024 || height > 768 {
+        return Err(crate::syscall::EINVAL);
+    }
+    unsafe {
+        if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
+            session.create_client_window(owner_pid, title, width, height)
+                .map_err(|_| crate::syscall::EMFILE)
+        } else {
+            Err(crate::syscall::ENOSYS)
+        }
+    }
+}
+
+/// Atualiza o conteúdo gráfico da janela `win_id` com os pixels do `buffer` (formato 0x00RRGGBB).
+pub fn window_update(owner_pid: usize, win_id: usize, buffer: &[u32]) -> Result<(), isize> {
+    unsafe {
+        if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
+            session.update_client_buffer(owner_pid, win_id, buffer)
+                .map_err(|_| crate::syscall::EINVAL)
+        } else {
+            Err(crate::syscall::ENOSYS)
+        }
+    }
+}
+
+/// Fecha a janela `win_id` pertencente ao processo `owner_pid`.
+pub fn window_close(owner_pid: usize, win_id: usize) -> Result<(), isize> {
+    unsafe {
+        if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
+            session.close_client_window(owner_pid, win_id)
+                .map_err(|_| crate::syscall::EBADF)
+        } else {
+            Err(crate::syscall::ENOSYS)
+        }
+    }
+}
+
+/// Fecha todas as janelas do processo `pid` (chamado no encerramento da tarefa).
+pub fn close_windows_for_pid(pid: usize) {
+    unsafe {
+        if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
+            session.close_windows_for_pid(pid);
+        }
+    }
+}
+
 pub fn run_desktop() {
     unsafe {
         let bb_ptr = *core::ptr::addr_of!(BACKBUFFER);

@@ -318,3 +318,34 @@ pub unsafe fn sys_open(path: &str, flags: u32) -> i64 {
 pub unsafe fn sys_close(fd: u64) -> i64 {
     syscall3(16, fd, 0, 0)
 }
+
+// ── Syscall 20 — window_create ────────────────────────────────────────────────
+
+/// Cria uma nova janela de cliente no Aladdin Desktop.
+/// `title`: título exibido na barra superior da janela.
+/// `client_w`, `client_h`: largura e altura da área útil de desenho em pixels.
+/// Retorna o ID da janela (>= 0), ou código de erro negativo.
+#[inline(always)]
+pub unsafe fn sys_window_create(title: &str, client_w: usize, client_h: usize) -> i64 {
+    let packed = (((client_w & 0xFFFF) as u64) << 16) | ((client_h & 0xFFFF) as u64);
+    syscall3(20, title.as_ptr() as u64, title.len() as u64, packed)
+}
+
+// ── Syscall 21 — window_update ────────────────────────────────────────────────
+
+/// Apresenta um buffer de pixels (0x00RRGGBB) na janela de cliente.
+/// `win_id`: identificador da janela retornado por `sys_window_create`.
+/// `buffer`: fatia com exatamente `client_w * client_h` pixels.
+#[inline(always)]
+pub unsafe fn sys_window_update(win_id: usize, buffer: &[u32]) -> i64 {
+    let len_bytes = buffer.len() * core::mem::size_of::<u32>();
+    syscall3(21, win_id as u64, buffer.as_ptr() as u64, len_bytes as u64)
+}
+
+// ── Syscall 22 — window_close ─────────────────────────────────────────────────
+
+/// Fecha a janela de cliente no Aladdin Desktop e libera seus recursos.
+#[inline(always)]
+pub unsafe fn sys_window_close(win_id: usize) -> i64 {
+    syscall3(22, win_id as u64, 0, 0)
+}

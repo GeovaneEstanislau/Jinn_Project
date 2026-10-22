@@ -33,7 +33,7 @@ use vga::{Color, Writer};
 const KERNEL_NAME:    &str = "Jinn Microkernel";
 const KERNEL_VERSION: &str = "0.0.3-userspace";
 
-fn serial_write_byte(byte: u8) {
+pub fn serial_write_byte(byte: u8) {
     unsafe {
         core::arch::asm!(
             "out dx, al",
@@ -44,7 +44,7 @@ fn serial_write_byte(byte: u8) {
     }
 }
 
-fn serial_write(message: &[u8]) {
+pub fn serial_write(message: &[u8]) {
     for &byte in message {
         serial_write_byte(byte);
     }

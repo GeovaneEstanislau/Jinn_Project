@@ -49,8 +49,8 @@ pub struct TaskFileDescriptor {
 /// Tamanho da pilha de kernel de cada tarefa (8 KiB — ring 0).
 pub const KSTACK_SIZE: usize = 8192;
 
-/// Tamanho da pilha de usuário de cada tarefa (64 KiB — ring 3).
-pub const USTACK_SIZE: usize = 65536;
+/// Tamanho da pilha de usuário de cada tarefa (256 KiB — ring 3).
+pub const USTACK_SIZE: usize = 262144;
 
 /// Endereço virtual base das pilhas de usuário.
 /// Cada tarefa recebe: USER_STACK_BASE - (id * USTACK_SIZE).
@@ -456,6 +456,9 @@ impl Scheduler {
                     }
                 }
             }
+
+            // Fecha todas as janelas do Aladdin Desktop criadas pela tarefa
+            crate::gui::close_windows_for_pid(pid);
 
             // Libera a memória de páginas de usuário e o próprio PML4
             if task.ring == Ring::User {

@@ -58,11 +58,31 @@ unsafe fn sys_jda_submit(job_type: u64, handle: u64, len: u64) -> i64 {
 }
 
 #[inline(always)]
+unsafe fn sys_window_create(title: &[u8], width: usize, height: usize) -> i64 {
+    let packed = (((width & 0xFFFF) as u64) << 16) | ((height & 0xFFFF) as u64);
+    syscall3(20, title.as_ptr() as u64, title.len() as u64, packed)
+}
+
+#[inline(always)]
+unsafe fn sys_window_update(win_id: usize, buf: &[u32]) -> i64 {
+    syscall3(21, win_id as u64, buf.as_ptr() as u64, (buf.len() * 4) as u64)
+}
+
+#[inline(always)]
+unsafe fn sys_window_close(win_id: usize) -> i64 {
+    syscall3(22, win_id as u64, 0, 0)
+}
+
+#[inline(always)]
 unsafe fn sys_exit(code: i32) -> ! {
     loop {
         syscall3(0, code as u64, 0, 0);
     }
 }
+
+const WIN_W: usize = 280;
+const WIN_H: usize = 160;
+static mut WIN_BUF: [u32; WIN_W * WIN_H] = [0; WIN_W * WIN_H];
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
@@ -71,8 +91,12 @@ pub extern "C" fn _start() -> ! {
     let msg2 = b"[U3] Solicitando buffer JDA Zero-Copy (Syscall 12 alloc)...\n";
     let msg3 = b"[U3] Submetendo Job JDA Zero-Copy (Syscall 14: Fletcher32 Checksum)...\n";
     let msg4 = b"[U3] Job JDA processado com sucesso! Liberando (Syscall 13 release)...\n";
-    let msg5 = b"[U3] Pipeline JDA Zero-Copy validado! Entrando em sono (500ms)...\n";
-    let msg6 = b"[U3] Acordou com sucesso! Encerrando processo.\n";
+    let msg5 = b"[U3] Pipeline JDA Zero-Copy validado!\n";
+    let msg_win = b"[U3] Criando janela no Aladdin Desktop (Syscall 20)...\n";
+    let msg_win_ok = b"[U3] Janela criada com sucesso! Desenhando superficie de cliente...\n";
+    let msg_win_up = b"[U3] Buffer de pixels enviado (Syscall 21). Exibindo por 1000ms...\n";
+    let msg_win_cl = b"[U3] Fechando janela (Syscall 22)...\n";
+    let msg6 = b"[U3] Concluido com sucesso! Encerrando processo.\n";
     unsafe {
         let _ = sys_write(1, msg1.as_ptr(), msg1.len() as u64);
 
@@ -104,7 +128,37 @@ pub extern "C" fn _start() -> ! {
             let _ = sys_write(1, msg5.as_ptr(), msg5.len() as u64);
         }
 
-        let _ = sys_sleep(500);
+        // Teste de Janela Gráfica no Aladdin Desktop via Syscalls 20, 21, 22
+        let _ = sys_write(1, msg_win.as_ptr(), msg_win.len() as u64);
+        let win_id = sys_window_create(b"Janela Ring 3 Demo", WIN_W, WIN_H);
+        if win_id >= 0 {
+            let _ = sys_write(1, msg_win_ok.as_ptr(), msg_win_ok.len() as u64);
+
+            let buf_raw_mut = core::ptr::addr_of_mut!(WIN_BUF) as *mut u32;
+            for y in 0..WIN_H {
+                for x in 0..WIN_W {
+                    let r = (x * 255 / WIN_W) as u32;
+                    let g = (y * 255 / WIN_H) as u32;
+                    let b = 180u32;
+                    let color = if x < 2 || x >= WIN_W - 2 || y < 2 || y >= WIN_H - 2 {
+                        0x0000_D2FF
+                    } else {
+                        (r << 16) | (g << 8) | b
+                    };
+                    *buf_raw_mut.add(y * WIN_W + x) = color;
+                }
+            }
+            let buf_slice = core::slice::from_raw_parts(buf_raw_mut as *const u32, WIN_W * WIN_H);
+            let _ = sys_window_update(win_id as usize, buf_slice);
+            let _ = sys_write(1, msg_win_up.as_ptr(), msg_win_up.len() as u64);
+
+            let _ = sys_sleep(1000);
+
+            let _ = sys_write(1, msg_win_cl.as_ptr(), msg_win_cl.len() as u64);
+            let _ = sys_window_close(win_id as usize);
+        }
+
+        let _ = sys_sleep(200);
         let _ = sys_write(1, msg6.as_ptr(), msg6.len() as u64);
         sys_exit(0);
     }
