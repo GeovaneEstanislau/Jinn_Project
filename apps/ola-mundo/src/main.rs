@@ -73,6 +73,56 @@ unsafe fn sys_window_close(win_id: usize) -> i64 {
     syscall3(22, win_id as u64, 0, 0)
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ProcessResourceStat {
+    pub pid: u32,
+    pub state: u32,
+    pub allocated_frames: u32,
+    pub peak_allocated_frames: u32,
+    pub open_fds: u32,
+    pub open_windows: u32,
+    pub open_jda_buffers: u32,
+    pub open_sockets: u32,
+    pub cpu_ticks: u64,
+    pub ctx_switches: u64,
+    pub limit_violations: u32,
+    pub last_violation_code: i32,
+    pub max_frames: u32,
+    pub max_fds: u32,
+    pub max_windows: u32,
+    pub max_sockets: u32,
+}
+
+#[inline(always)]
+unsafe fn sys_res_stat(target_pid: u64, stat: &mut ProcessResourceStat) -> i64 {
+    syscall3(25, target_pid, stat as *mut _ as u64, core::mem::size_of::<ProcessResourceStat>() as u64)
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct SockAddrIn {
+    pub sin_family: u16,
+    pub sin_port: u16,
+    pub sin_addr: [u8; 4],
+    pub sin_zero: [u8; 8],
+}
+
+#[inline(always)]
+unsafe fn sys_socket(domain: u32, sock_type: u32, protocol: u32) -> i64 {
+    syscall3(30, domain as u64, sock_type as u64, protocol as u64)
+}
+
+#[inline(always)]
+unsafe fn sys_connect(sockfd: u64, addr: &SockAddrIn) -> i64 {
+    syscall3(31, sockfd, addr as *const _ as u64, core::mem::size_of::<SockAddrIn>() as u64)
+}
+
+#[inline(always)]
+unsafe fn sys_send(sockfd: u64, buf: *const u8, len: usize) -> i64 {
+    syscall3(35, sockfd, buf as u64, len as u64)
+}
+
 #[inline(always)]
 unsafe fn sys_exit(code: i32) -> ! {
     loop {
@@ -135,6 +185,64 @@ pub extern "C" fn _start() -> ! {
             }
             let _ = sys_jda_shm_release(handle as u64);
             let _ = sys_write(1, msg5.as_ptr(), msg5.len() as u64);
+        }
+
+        // Teste de Contabilidade e Métricas de Recursos (Syscall 25)
+        let mut stat: ProcessResourceStat = core::mem::zeroed();
+        let ret_stat = sys_res_stat(0, &mut stat);
+        if ret_stat == 0 {
+            let msg_res_ok = b"[U3] Syscall 25 res_stat OK! Frames alocados: ";
+            let _ = sys_write(1, msg_res_ok.as_ptr(), msg_res_ok.len() as u64);
+            let frames_char = (b'0' + ((stat.allocated_frames % 10) as u8));
+            let _ = sys_write(1, &frames_char as *const u8, 1);
+            let _ = sys_write(1, b"\n".as_ptr(), 1);
+        } else {
+            let msg_res_err = b"[U3] Syscall 25 falhou com erro!\n";
+            let _ = sys_write(1, msg_res_err.as_ptr(), msg_res_err.len() as u64);
+        }
+
+        // Teste de Limites de Recursos: alocar buffers JDA ate atingir o limite max_jda_buffers (4)
+        let mut jda_handles = [0i64; 5];
+        for i in 0..4 {
+            jda_handles[i] = sys_jda_shm_alloc(false);
+        }
+        // A 5a tentativa deve falhar com -ENOBUFS (-105)
+        let overflow_jda = sys_jda_shm_alloc(false);
+        if overflow_jda == -105 {
+            let msg_lim_ok = b"[U3] Limite de buffers JDA (4) atingido com sucesso: kernel retornou -ENOBUFS (-105)!\n";
+            let _ = sys_write(1, msg_lim_ok.as_ptr(), msg_lim_ok.len() as u64);
+        }
+        // Libera os 4 handles alocados
+        for i in 0..4 {
+            if jda_handles[i] >= 0 {
+                let _ = sys_jda_shm_release(jda_handles[i] as u64);
+            }
+        }
+
+        // Teste de Sockets e Rede em Ring 3 (Syscalls 30, 31, 35)
+        let sockfd = sys_socket(2, 2, 0); // AF_INET (2), SOCK_DGRAM (2)
+        if sockfd >= 0 {
+            let msg_sock_ok = b"[U3] Syscall 30 socket criada com sucesso!\n";
+            let _ = sys_write(1, msg_sock_ok.as_ptr(), msg_sock_ok.len() as u64);
+
+            let server_addr = SockAddrIn {
+                sin_family: 2,
+                sin_port: 80u16.to_be(),
+                sin_addr: [10, 0, 2, 2], // Gateway / Host QEMU
+                sin_zero: [0; 8],
+            };
+            let ret_conn = sys_connect(sockfd as u64, &server_addr);
+            if ret_conn == 0 {
+                let msg_conn_ok = b"[U3] Syscall 31 connect bem-sucedido para 10.0.2.2:80!\n";
+                let _ = sys_write(1, msg_conn_ok.as_ptr(), msg_conn_ok.len() as u64);
+
+                let req = b"PING / HTTP/1.0\r\n\r\n";
+                let sent = sys_send(sockfd as u64, req.as_ptr(), req.len());
+                if sent > 0 {
+                    let msg_send_ok = b"[U3] Syscall 35 send transmitiu datagrama pela VirtIO-Net!\n";
+                    let _ = sys_write(1, msg_send_ok.as_ptr(), msg_send_ok.len() as u64);
+                }
+            }
         }
 
         // Teste de Janela Gráfica no Aladdin Desktop via Syscalls 20, 21, 22

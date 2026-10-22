@@ -309,6 +309,8 @@ if (-not $NoRun) {
         "-boot", "order=d",
         "-cdrom", $isoPath,
         "-m", "512M",
+        "-netdev", "user,id=net0",
+        "-device", "virtio-net-pci,netdev=net0",
         "-serial", "stdio"
     )
     if (Test-Path $diskImg) {

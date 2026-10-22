@@ -129,6 +129,10 @@ pub extern "C" fn exception_dispatch(vector: u64, error_code: u64, frame: *mut u
     }
 
     // Se a falha ocorreu em Ring 0 (código do kernel), pânico irrecuperável:
+    crate::serial_write(b"\n[!] KERNEL PANIC: CPU EXCEPTION in Ring 0! Vector: ");
+    let vec_byte = b'0' + (vector as u8);
+    crate::serial_write(&[vec_byte, b'\n']);
+
     let mut writer = crate::vga::Writer::new();
     writer.set_color(crate::vga::Color::LightRed, crate::vga::Color::Black);
     writer.write_line("\n====================================================");

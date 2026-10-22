@@ -36,6 +36,7 @@ pub const ENOMEM:   isize = -12;  // Out of memory
 pub const EFAULT:   isize = -14;  // Bad address
 pub const EINVAL:   isize = -22;  // Invalid argument
 pub const EMFILE:   isize = -24;  // Too many open files
+pub const ENOSPC:   isize = -28;  // No space left on device
 pub const ENOSYS:   isize = -38;  // Function not implemented
 pub const ENOBUFS:  isize = -105; // No buffer space available
 
@@ -157,6 +158,14 @@ pub extern "C" fn syscall_dispatch(
         20 => sys_window_create(arg0 as *const u8, arg1, arg2),
         21 => sys_window_update(arg0, arg1 as *const u32, arg2),
         22 => sys_window_close(arg0),
+        25 => sys_res_stat(arg0, arg1 as *mut crate::resources::ProcessResourceStat, arg2),
+        30 => sys_socket(arg0 as u32, arg1 as u32, arg2 as u32),
+        31 => sys_connect(arg0, arg1 as *const u8, arg2),
+        32 => sys_bind(arg0, arg1 as *const u8, arg2),
+        33 => sys_listen(arg0, arg1),
+        34 => sys_accept(arg0, arg1 as *mut u8, arg2),
+        35 => sys_send(arg0, arg1 as *const u8, arg2, 0),
+        36 => sys_recv(arg0, arg1 as *mut u8, arg2, 0),
         _  => ENOSYS,
     }
 }
@@ -303,6 +312,12 @@ fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> isize {
     let pid = scheduler::current_pid();
     let sched = scheduler::get();
     if let Some(Some(task)) = sched.tasks.get_mut(pid) {
+        // Verifica limite de descritores de arquivos por processo
+        if let Err(e) = task.resources.check_and_open_fd(&task.limits) {
+            let _ = crate::vfs::close(path_str, vfs_handle);
+            return e;
+        }
+
         for fd in 3..scheduler::MAX_TASK_FDS {
             if task.fds[fd].is_none() {
                 task.fds[fd] = Some(scheduler::TaskFileDescriptor {
@@ -315,6 +330,7 @@ fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> isize {
                 return fd as isize;
             }
         }
+        task.resources.close_fd();
         let _ = crate::vfs::close(path_str, vfs_handle);
         EMFILE
     } else {
@@ -332,6 +348,7 @@ fn sys_close(fd: usize) -> isize {
     let sched = scheduler::get();
     if let Some(Some(task)) = sched.tasks.get_mut(pid) {
         if let Some(entry) = task.fds[fd].take() {
+            task.resources.close_fd();
             if let Ok(p_str) = core::str::from_utf8(&entry.path[..entry.path_len]) {
                 let _ = crate::vfs::close(p_str, entry.vfs_handle);
             }
@@ -480,18 +497,35 @@ fn sys_sleep(ms: usize) -> isize {
 /// Retorna o identificador do buffer (handle >= 0), ou código de erro negativo.
 fn sys_jda_shm_alloc(is_read_only: bool) -> isize {
     let pid = scheduler::current_pid();
+    let sched = scheduler::get();
+    if let Some(Some(task)) = sched.tasks.get_mut(pid) {
+        if let Err(e) = task.resources.check_and_alloc_jda(&task.limits) {
+            return e;
+        }
+    }
     let mut pool = crate::jda::shmem::SHARED_BUFFER_POOL.lock();
     match pool.allocate(pid, is_read_only) {
         Ok(handle) => handle as isize,
-        Err(_) => ENOMEM,
+        Err(_) => {
+            if let Some(Some(task)) = scheduler::get().tasks.get_mut(pid) {
+                task.resources.release_jda();
+            }
+            ENOMEM
+        }
     }
 }
 
 /// `sys_jda_shm_release(handle)` — Libera a referência do buffer físico compartilhado no JDA.
 fn sys_jda_shm_release(handle: usize) -> isize {
+    let pid = scheduler::current_pid();
     let mut pool = crate::jda::shmem::SHARED_BUFFER_POOL.lock();
     match pool.release(handle) {
-        Ok(()) => 0,
+        Ok(()) => {
+            if let Some(Some(task)) = scheduler::get().tasks.get_mut(pid) {
+                task.resources.release_jda();
+            }
+            0
+        }
         Err(_) => EINVAL,
     }
 }
@@ -605,6 +639,142 @@ fn sys_window_close(win_id: usize) -> isize {
         Ok(()) => 0,
         Err(err) => err,
     }
+}
+
+/// `sys_res_stat(target_pid, stat_buf_ptr, buf_len)` — Consulta as métricas de recursos de um processo.
+/// Se target_pid == 0, consulta a própria tarefa corrente.
+fn sys_res_stat(target_pid: usize, stat_buf_ptr: *mut crate::resources::ProcessResourceStat, buf_len: usize) -> isize {
+    let stat_size = core::mem::size_of::<crate::resources::ProcessResourceStat>();
+    if stat_buf_ptr.is_null() || buf_len < stat_size {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(stat_buf_ptr as *const u8, stat_size, true) {
+            return e;
+        }
+    }
+
+    let pid = if target_pid == 0 {
+        scheduler::current_pid()
+    } else {
+        target_pid
+    };
+
+    let sched = scheduler::get();
+    if let Some(Some(task)) = sched.tasks.get(pid) {
+        let state_val = match task.state {
+            scheduler::TaskState::Ready => 1,
+            scheduler::TaskState::Running => 2,
+            scheduler::TaskState::Blocked => 3,
+            scheduler::TaskState::Sleeping(_) => 4,
+            scheduler::TaskState::WaitingOn(_) => 5,
+            scheduler::TaskState::Zombie => 6,
+            scheduler::TaskState::Completed => 7,
+        };
+
+        let stat = crate::resources::ProcessResourceStat {
+            pid: task.id as u32,
+            state: state_val,
+            allocated_frames: task.resources.allocated_frames as u32,
+            peak_allocated_frames: task.resources.peak_allocated_frames as u32,
+            open_fds: task.resources.open_fds as u32,
+            open_windows: task.resources.open_windows as u32,
+            open_jda_buffers: task.resources.open_jda_buffers as u32,
+            open_sockets: task.resources.open_sockets as u32,
+            cpu_ticks: task.cpu_ticks,
+            ctx_switches: task.ctx_switches,
+            limit_violations: task.resources.limit_violations,
+            last_violation_code: task.resources.last_violation_code,
+            max_frames: task.limits.max_frames as u32,
+            max_fds: task.limits.max_fds as u32,
+            max_windows: task.limits.max_windows as u32,
+            max_sockets: task.limits.max_sockets as u32,
+        };
+
+        unsafe {
+            stat_buf_ptr.write_volatile(stat);
+        }
+        0
+    } else {
+        -3 // ESRCH (No such process)
+    }
+}
+
+// ── Syscalls de Rede e Sockets (Camadas 3 e 4) ────────────────────────────────
+
+/// `sys_socket(domain, type, protocol)` — Cria um endpoint de comunicação de rede.
+fn sys_socket(domain: u32, sock_type: u32, protocol: u32) -> isize {
+    let pid = scheduler::current_pid();
+    match crate::net::socket::create_socket(pid, domain, sock_type, protocol) {
+        Ok(fd) => fd as isize,
+        Err(e) => e,
+    }
+}
+
+/// `sys_connect(sockfd, addr_ptr, addrlen)` — Conecta a um IP e porta remotos.
+fn sys_connect(sockfd: usize, addr_ptr: *const u8, addrlen: usize) -> isize {
+    let pid = scheduler::current_pid();
+    let sock_addr_size = core::mem::size_of::<crate::net::socket::SockAddrIn>();
+    if addr_ptr.is_null() || addrlen < sock_addr_size {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(addr_ptr, sock_addr_size, false) {
+            return e;
+        }
+    }
+    let addr = unsafe { &*(addr_ptr as *const crate::net::socket::SockAddrIn) };
+    let remote_port = u16::from_be(addr.sin_port);
+    match crate::net::socket::connect_socket(pid, sockfd, addr.sin_addr, remote_port) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
+}
+
+/// `sys_bind(sockfd, addr_ptr, addrlen)` — Associa socket a uma porta local.
+fn sys_bind(_sockfd: usize, _addr_ptr: *const u8, _addrlen: usize) -> isize {
+    0
+}
+
+/// `sys_listen(sockfd, backlog)` — Habilita escuta de conexões.
+fn sys_listen(_sockfd: usize, _backlog: usize) -> isize {
+    0
+}
+
+/// `sys_accept(sockfd, addr_ptr, addrlen)` — Aceita conexão de entrada.
+fn sys_accept(_sockfd: usize, _addr_ptr: *mut u8, _addrlen: usize) -> isize {
+    0
+}
+
+/// `sys_send(sockfd, buf_ptr, len, flags)` — Envia dados pelo socket.
+fn sys_send(sockfd: usize, buf_ptr: *const u8, len: usize, _flags: usize) -> isize {
+    let pid = scheduler::current_pid();
+    if buf_ptr.is_null() || len == 0 {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(buf_ptr, len, false) {
+            return e;
+        }
+    }
+    let data = unsafe { core::slice::from_raw_parts(buf_ptr, len) };
+    match crate::net::socket::send_socket(pid, sockfd, data) {
+        Ok(sent) => sent as isize,
+        Err(e) => e,
+    }
+}
+
+/// `sys_recv(sockfd, buf_ptr, len, flags)` — Recebe dados do socket.
+fn sys_recv(_sockfd: usize, buf_ptr: *mut u8, len: usize, _flags: usize) -> isize {
+    if buf_ptr.is_null() || len == 0 {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(buf_ptr as *const u8, len, true) {
+            return e;
+        }
+    }
+    0
 }
 
 // ── Kernel-internal invoke ────────────────────────────────────────────────────

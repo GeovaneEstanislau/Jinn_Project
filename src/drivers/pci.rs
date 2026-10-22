@@ -255,6 +255,22 @@ pub fn find_device(class: u8, subclass: u8) -> Option<PciDevice> {
     None
 }
 
+/// Procura por um dispositivo PCI específico pelo Vendor ID e Device ID.
+pub fn find_device_by_id(vendor_id: u16, device_id: u16) -> Option<PciDevice> {
+    unsafe {
+        let count = *core::ptr::addr_of!(PCI_DEVICE_COUNT);
+        let dev_ptr = core::ptr::addr_of!(PCI_DEVICES);
+        for i in 0..count {
+            if let Some(dev) = (*dev_ptr)[i] {
+                if dev.vendor_id == vendor_id && dev.device_id == device_id {
+                    return Some(dev);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Inicializa o subsistema PCI e faz a descoberta inicial dos dispositivos.
 pub fn init() {
     scan();

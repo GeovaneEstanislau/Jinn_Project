@@ -168,6 +168,12 @@ pub struct Task {
     // ── Descritores de Arquivos do Processo ───────────────────────────────
     /// Descritores de arquivos abertos pela tarefa no VFS.
     pub fds: [Option<TaskFileDescriptor>; MAX_TASK_FDS],
+
+    // ── Gerenciamento e Limites de Recursos ────────────────────────────────
+    /// Contabilidade em tempo real dos recursos alocados.
+    pub resources: crate::resources::ProcessResources,
+    /// Limites configuráveis de consumo para esta tarefa.
+    pub limits: crate::resources::ResourceLimits,
 }
 
 // ── Estrutura do escalonador ──────────────────────────────────────────────────
@@ -303,6 +309,11 @@ impl Scheduler {
             unsafe { (sp as *mut u64).write_volatile(0); }
         }
 
+        let mut res = crate::resources::ProcessResources::new();
+        let limits = crate::resources::ResourceLimits::user_default();
+        // 64 frames alocados para a pilha de usuário (256 KiB)
+        let _ = res.check_and_alloc_frames(USTACK_SIZE / 4096, &limits);
+
         self.tasks[id] = Some(Task {
             id,
             name,
@@ -317,6 +328,8 @@ impl Scheduler {
             ctx_switches: 0,
             quantum_remaining: QUANTUM_NORMAL,
             fds: [None; MAX_TASK_FDS],
+            resources: res,
+            limits,
         });
         self.next_id = id + 1;
         id
@@ -382,6 +395,9 @@ impl Scheduler {
                     TaskPriority::Idle     => QUANTUM_IDLE,
                 };
 
+                let res = crate::resources::ProcessResources::new();
+                let limits = crate::resources::ResourceLimits::kernel_default();
+
                 self.tasks[id] = Some(Task {
                     id,
                     name,
@@ -396,6 +412,8 @@ impl Scheduler {
                     ctx_switches: 0,
                     quantum_remaining: quantum,
                     fds: [None; MAX_TASK_FDS],
+                    resources: res,
+                    limits,
                 });
                 self.next_id = id + 1;
                 return id;
@@ -463,13 +481,23 @@ impl Scheduler {
             // Libera todos os buffers Zero-Copy alocados no JDA pelo processo
             crate::jda::shmem::SHARED_BUFFER_POOL.lock().release_all_for_pid(pid);
 
+            // Fecha todos os sockets de rede pertencentes ao processo
+            crate::net::socket::close_all_for_pid(pid);
+
             // Desregistra a caixa de mensagens IPC da tarefa
             crate::ipc::unregister(pid);
 
             // Libera a memória de páginas de usuário e o próprio PML4
             if task.ring == Ring::User {
                 unsafe { paging::free_user_pml4(task.pml4_phys); }
+                task.resources.allocated_frames = 0;
             }
+
+            // Zera contadores de recursos ativos após desalocação completa
+            task.resources.open_fds = 0;
+            task.resources.open_windows = 0;
+            task.resources.open_jda_buffers = 0;
+            task.resources.open_sockets = 0;
         }
 
         // Desbloqueia quem estiver esperando esta tarefa via WaitingOn
@@ -656,8 +684,8 @@ impl Scheduler {
                     task.quantum_remaining -= 1;
                 }
 
-                // Se a tarefa foi cedida manualmente (yield) ou esgotou seu quantum
-                if YIELDED.load(Ordering::SeqCst) || task.quantum_remaining == 0 {
+                // Se a tarefa terminou (Zombie), foi cedida manualmente (yield) ou esgotou seu quantum
+                if task.state == TaskState::Zombie || YIELDED.load(Ordering::SeqCst) || task.quantum_remaining == 0 {
                     force_switch = true;
                 }
             }
@@ -719,6 +747,25 @@ impl Scheduler {
                         }
 
                         return task.saved_rsp;
+                    }
+                }
+            }
+        }
+
+        // Se a tarefa atual terminou (Zombie), ela JAMAIS pode continuar executando!
+        // Despacha a tarefa Idle (PID 0) como fallback absoluto
+        if let Some(cur) = self.current {
+            if let Some(task) = &self.tasks[cur] {
+                if task.state == TaskState::Zombie {
+                    if let Some(idle) = &mut self.tasks[0] {
+                        idle.state = TaskState::Running;
+                        self.current = Some(0);
+                        CURRENT_TASK.store(0, Ordering::SeqCst);
+                        let current_cr3 = paging::current_cr3();
+                        if current_cr3 != idle.pml4_phys {
+                            unsafe { paging::load_cr3(idle.pml4_phys); }
+                        }
+                        return idle.saved_rsp;
                     }
                 }
             }
@@ -828,6 +875,8 @@ fn idle_task_entry() {
     loop {
         // Em segundo plano na thread Idle, verifica e descarrega caches dirty do storage (WriteBack / Simbad)
         crate::drivers::block::periodic_flush_check();
+        // Processa recepção de pacotes de rede e firewall JinnWall
+        crate::net::poll();
         unsafe { core::arch::asm!("hlt"); }
     }
 }

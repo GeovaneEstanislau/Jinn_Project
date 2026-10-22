@@ -198,10 +198,23 @@ pub fn window_create(owner_pid: usize, title: &str, width: usize, height: usize)
     if width == 0 || height == 0 || width > 1024 || height > 768 {
         return Err(crate::syscall::EINVAL);
     }
+    // Verifica limites de recursos configurados para a tarefa
+    if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(owner_pid) {
+        if let Err(e) = task.resources.check_and_open_window(&task.limits) {
+            return Err(e);
+        }
+    }
     unsafe {
         if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
-            session.create_client_window(owner_pid, title, width, height)
-                .map_err(|_| crate::syscall::EMFILE)
+            match session.create_client_window(owner_pid, title, width, height) {
+                Ok(win_id) => Ok(win_id),
+                Err(_) => {
+                    if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(owner_pid) {
+                        task.resources.close_window();
+                    }
+                    Err(crate::syscall::EMFILE)
+                }
+            }
         } else {
             Err(crate::syscall::ENOSYS)
         }
@@ -228,12 +241,18 @@ pub fn window_update(owner_pid: usize, win_id: usize, buffer: &[u32]) -> Result<
 pub fn window_close(owner_pid: usize, win_id: usize) -> Result<(), isize> {
     unsafe {
         if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
-            session.close_client_window(owner_pid, win_id)
+            let res = session.close_client_window(owner_pid, win_id)
                 .map_err(|e| match e {
                     aladdin::wm::WindowOpError::NotFound => crate::syscall::EBADF,
                     aladdin::wm::WindowOpError::PermissionDenied => crate::syscall::EPERM,
                     aladdin::wm::WindowOpError::InvalidDimensions => crate::syscall::EINVAL,
-                })
+                });
+            if res.is_ok() {
+                if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(owner_pid) {
+                    task.resources.close_window();
+                }
+            }
+            res
         } else {
             Err(crate::syscall::ENOSYS)
         }
@@ -246,6 +265,9 @@ pub fn close_windows_for_pid(pid: usize) {
         if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
             session.close_windows_for_pid(pid);
         }
+    }
+    if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(pid) {
+        task.resources.open_windows = 0;
     }
 }
 

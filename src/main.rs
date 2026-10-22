@@ -19,7 +19,9 @@ pub mod jda;
 pub mod keyboard_buffer;
 pub mod limine;
 pub mod memory;
+pub mod net;
 pub mod pit;
+pub mod resources;
 pub mod scheduler;
 pub mod shell;
 pub mod syscall;
@@ -104,6 +106,7 @@ pub extern "C" fn _start() -> ! {
     w.write_string("[+] GDT e TSS (Ring 3 Ready)...");
     serial_write(b"GDT start\n");
     gdt::init();
+    unsafe { cpu::enable_sse(); }
     serial_write(b"GDT done\n");
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
@@ -152,7 +155,7 @@ pub extern "C" fn _start() -> ! {
     w.write_decimal(drivers::pci::device_count());
     w.write_line(" encontrados");
 
-    w.write_string("[+] IDE / ATA Controller...");
+    w.write_string("[+] IDE / ATA Controller e Cache LRU...");
     drivers::ide::init();
     drivers::block::init_primary_cache();
     w.set_color(Color::LightGreen, Color::Black);
@@ -221,6 +224,24 @@ pub extern "C" fn _start() -> ! {
     } else {
         w.set_color(Color::Yellow, Color::Black);
         w.write_line(" WARN (Desativado)");
+    }
+    w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string("[+] Pilha de Rede & Firewall JinnWall...");
+    net::init();
+    w.set_color(Color::LightGreen, Color::Black);
+    w.write_string(" OK ");
+    w.set_color(Color::LightCyan, Color::Black);
+    if let Some(dev) = drivers::net::virtio::get_device() {
+        if dev.is_available {
+            w.write_string("(VirtIO-Net @ 0x");
+            w.write_hex_u16(dev.io_base);
+            w.write_line(")");
+        } else {
+            w.write_line("(Loopback Virtual)");
+        }
+    } else {
+        w.write_line("(Inativo)");
     }
     w.set_color(Color::LightGray, Color::Black);
 

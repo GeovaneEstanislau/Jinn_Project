@@ -294,6 +294,20 @@ pub unsafe fn read_cr4() -> u64 {
     val
 }
 
+/// Habilita instruções SSE/SSE2 no processador configurando CR0 e CR4.
+/// Obrigatório em x86-64 para execução de código gerado por compiladores modernos (ex: rustc/LLVM).
+pub unsafe fn enable_sse() {
+    let mut cr0 = read_cr0();
+    cr0 &= !(1 << 2); // Limpa bit 2 (EM - Emulação de coprocessador)
+    cr0 |= 1 << 1;    // Define bit 1 (MP - Monitor coprocessor)
+    core::arch::asm!("mov cr0, {}", in(reg) cr0, options(nomem, nostack, preserves_flags));
+
+    let mut cr4 = read_cr4();
+    cr4 |= 1 << 9;    // Define bit 9 (OSFXSR - Suporte a FXSAVE/FXRSTOR e instruções SSE)
+    cr4 |= 1 << 10;   // Define bit 10 (OSXMMEXCPT - Suporte a exceções SIMD unmasked)
+    core::arch::asm!("mov cr4, {}", in(reg) cr4, options(nomem, nostack, preserves_flags));
+}
+
 #[inline]
 pub unsafe fn read_rflags() -> u64 {
     let val: u64;

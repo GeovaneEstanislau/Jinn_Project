@@ -203,7 +203,7 @@ pub fn get_storage_policy() -> StoragePolicy {
 
 // ── Cache de Blocos na Memória RAM (Block Cache) ──────────────────────────────
 
-pub const CACHE_SLOTS: usize = 32;
+pub const CACHE_SLOTS: usize = 8;
 
 #[derive(Clone, Copy)]
 pub struct CacheSlot {
@@ -483,7 +483,8 @@ pub static PRIMARY_CACHED_DEV: crate::memory::SpinLock<Option<CachedBlockDevice<
 /// Inicializa o dispositivo de blocos primário com cache LRU
 pub fn init_primary_cache() {
     if let Ok(dev) = IdeBlockDevice::new(0) {
-        *PRIMARY_CACHED_DEV.lock() = Some(CachedBlockDevice::new(dev));
+        let mut lock = PRIMARY_CACHED_DEV.lock();
+        *lock = Some(CachedBlockDevice::new(dev));
     }
 }
 
