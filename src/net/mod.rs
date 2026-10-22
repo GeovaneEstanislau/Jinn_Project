@@ -136,10 +136,16 @@ pub fn poll() {
                         PROTO_UDP => {
                             if dst_port == dhcp::DHCP_CLIENT_PORT {
                                 dhcp::handle_dhcp_reply(ip_pkt.payload);
+                            } else {
+                                let udp_payload = if ip_pkt.payload.len() >= 8 { &ip_pkt.payload[8..] } else { ip_pkt.payload };
+                                socket::dispatch_incoming_packet(PROTO_UDP, ip_pkt.header.src_ip, src_port, dst_port, udp_payload);
                             }
                         }
                         PROTO_TCP => {
                             // Tráfego TCP entregue ao subsistema de sockets
+                            let tcp_hdr_len = if ip_pkt.payload.len() >= 13 { ((ip_pkt.payload[12] >> 4) as usize) * 4 } else { 20 };
+                            let tcp_payload = if ip_pkt.payload.len() >= tcp_hdr_len { &ip_pkt.payload[tcp_hdr_len..] } else { &[] };
+                            socket::dispatch_incoming_packet(PROTO_TCP, ip_pkt.header.src_ip, src_port, dst_port, tcp_payload);
                         }
                         _ => {}
                     }

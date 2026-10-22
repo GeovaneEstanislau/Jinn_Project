@@ -203,8 +203,8 @@ pub fn validate_elf(elf_data: &[u8]) -> Result<ElfInfo, ElfError> {
 }
 
 /// Analisa e carrega um executável ELF64 em memória na tabela de páginas (`pml4_phys`).
-/// Retorna o endereço virtual do ponto de entrada (`e_entry`).
-pub fn load_elf(elf_data: &[u8], pml4_phys: u64) -> Result<u64, ElfError> {
+/// Retorna uma tupla com o endereço virtual do ponto de entrada (`e_entry`) e a contagem de frames físicos alocados.
+pub fn load_elf(elf_data: &[u8], pml4_phys: u64) -> Result<(u64, usize), ElfError> {
     // 1. Validação estrita inicial
     let info = validate_elf(elf_data)?;
 
@@ -215,6 +215,7 @@ pub fn load_elf(elf_data: &[u8], pml4_phys: u64) -> Result<u64, ElfError> {
     let phentsize = ehdr.e_phentsize as usize;
 
     let pml4 = paging::phys_to_virt(pml4_phys) as *mut paging::PageTable;
+    let mut total_allocated_frames = 0usize;
 
     // 2. Carregamento e mapeamento físico dos segmentos PT_LOAD
     for i in 0..phnum {
@@ -269,6 +270,7 @@ pub fn load_elf(elf_data: &[u8], pml4_phys: u64) -> Result<u64, ElfError> {
 
                 // Se a página é nova, zera seu conteúdo completamente (BSS e segurança)
                 if is_new_page {
+                    total_allocated_frames += 1;
                     unsafe {
                         core::ptr::write_bytes(frame_virt, 0, 4096);
                     }
@@ -306,13 +308,13 @@ pub fn load_elf(elf_data: &[u8], pml4_phys: u64) -> Result<u64, ElfError> {
         }
     }
 
-    Ok(info.entry_point)
+    Ok((info.entry_point, total_allocated_frames))
 }
 
 /// Carrega um executável ELF64 a partir do Virtual Filesystem (VFS) para o PML4 do processo.
 ///
 /// Suporta arquivos em partições FAT32 (`/disk/...`) e Ext2 (`/ext2/...`).
-pub fn load_elf_from_vfs(path: &str, pml4_phys: u64) -> Result<u64, ElfError> {
+pub fn load_elf_from_vfs(path: &str, pml4_phys: u64) -> Result<(u64, usize), ElfError> {
     let stat = crate::vfs::stat(path).map_err(|_| ElfError::VfsError)?;
     if stat.node_type != crate::vfs::NodeType::File {
         return Err(ElfError::VfsError);

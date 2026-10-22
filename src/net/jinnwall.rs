@@ -162,4 +162,18 @@ impl JinnWall {
             }
         }
     }
+
+    /// Retorna a quantidade atual de fluxos ativos na tabela de conntrack
+    pub fn active_connections(&self) -> usize {
+        let mut count = 0;
+        for e in self.table.iter() {
+            if e.is_some() { count += 1; }
+        }
+        count
+    }
+
+    /// Retorna a quantidade total de pacotes bloqueados (DROP)
+    pub fn drops(&self) -> u64 {
+        self.packets_dropped.load(core::sync::atomic::Ordering::Relaxed)
+    }
 }

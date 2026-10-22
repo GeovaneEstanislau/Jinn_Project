@@ -339,12 +339,20 @@ fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> isize {
     }
 }
 
-/// `close(fd)` — Close a previously opened file descriptor.
+/// `close(fd)` — Close a previously opened file or socket descriptor.
 fn sys_close(fd: usize) -> isize {
+    let pid = scheduler::current_pid();
+
+    // 1. Tenta fechar como socket de rede pertencente ao processo
+    if let Ok(()) = crate::net::socket::close_socket(pid, fd) {
+        return 0;
+    }
+
+    // 2. Se não for socket, valida faixa de descritores de arquivo VFS
     if fd < 3 || fd >= scheduler::MAX_TASK_FDS {
         return EBADF;
     }
-    let pid = scheduler::current_pid();
+
     let sched = scheduler::get();
     if let Some(Some(task)) = sched.tasks.get_mut(pid) {
         if let Some(entry) = task.fds[fd].take() {
@@ -416,18 +424,70 @@ fn sys_ipc_recv(buf: *mut u8, len: usize) -> isize {
     }
 }
 
-/// `alloc_page()` — Allocate one physical 4 KiB frame.
+/// `alloc_page()` — Allocate one physical 4 KiB frame for the process.
+/// In Ring 3, maps the frame into the task's user space (heap base: 0x0000_1000_0000)
+/// and enforces `max_frames` limit.
 fn sys_alloc_page() -> isize {
-    match memory::alloc_frame() {
-        Some(phys) => phys as isize,
-        None       => ENOMEM,
+    let pid = scheduler::current_pid();
+    let sched = scheduler::get();
+    if let Some(Some(task)) = sched.tasks.get_mut(pid) {
+        if let Err(e) = task.resources.check_and_alloc_frames(1, &task.limits) {
+            return e;
+        }
+        match memory::alloc_frame() {
+            Some(phys) => {
+                if task.ring == scheduler::Ring::User {
+                    let pml4 = crate::memory::paging::phys_to_virt(task.pml4_phys) as *mut crate::memory::paging::PageTable;
+                    let mut vaddr = 0x0000_1000_0000;
+                    while vaddr < 0x0000_2000_0000 {
+                        if unsafe { crate::memory::paging::lookup_page(pml4, vaddr) }.is_none() {
+                            break;
+                        }
+                        vaddr += 4096;
+                    }
+                    unsafe {
+                        crate::memory::paging::map_page(pml4, vaddr, phys, crate::memory::paging::USER_RW);
+                        let virt_ptr = crate::memory::paging::phys_to_virt(phys) as *mut u8;
+                        core::ptr::write_bytes(virt_ptr, 0, 4096);
+                    }
+                    vaddr as isize
+                } else {
+                    phys as isize
+                }
+            }
+            None => {
+                task.resources.free_frames(1);
+                ENOMEM
+            }
+        }
+    } else {
+        ENOMEM
     }
 }
 
-/// `free_page(phys)` — Free a previously allocated physical frame.
-fn sys_free_page(phys: u64) -> isize {
-    memory::free_frame(phys);
-    0
+/// `free_page(addr)` — Free a previously allocated page or frame.
+fn sys_free_page(addr: u64) -> isize {
+    let pid = scheduler::current_pid();
+    let sched = scheduler::get();
+    if let Some(Some(task)) = sched.tasks.get_mut(pid) {
+        if task.ring == scheduler::Ring::User {
+            let pml4 = crate::memory::paging::phys_to_virt(task.pml4_phys) as *mut crate::memory::paging::PageTable;
+            if let Some((phys, _)) = unsafe { crate::memory::paging::lookup_page(pml4, addr) } {
+                unsafe { crate::memory::paging::unmap_page(pml4, addr); }
+                memory::free_frame(phys);
+                task.resources.free_frames(1);
+                0
+            } else {
+                EFAULT
+            }
+        } else {
+            task.resources.free_frames(1);
+            memory::free_frame(addr);
+            0
+        }
+    } else {
+        EINVAL
+    }
 }
 
 /// `spawn(fn_ptr, name_ptr, ring_flag)` — Spawn a new task.
@@ -519,14 +579,14 @@ fn sys_jda_shm_alloc(is_read_only: bool) -> isize {
 fn sys_jda_shm_release(handle: usize) -> isize {
     let pid = scheduler::current_pid();
     let mut pool = crate::jda::shmem::SHARED_BUFFER_POOL.lock();
-    match pool.release(handle) {
+    match pool.release(pid, handle) {
         Ok(()) => {
             if let Some(Some(task)) = scheduler::get().tasks.get_mut(pid) {
                 task.resources.release_jda();
             }
             0
         }
-        Err(_) => EINVAL,
+        Err(_) => EPERM,
     }
 }
 
@@ -534,10 +594,11 @@ fn sys_jda_shm_release(handle: usize) -> isize {
 /// Processa o buffer físico Zero-Copy identificado por `handle` sem duplicar memória.
 /// Retorna o resultado numérico do processamento (ex: checksum ou soma acumulada) ou erro negativo.
 fn sys_jda_submit(job_type: usize, handle: usize, len: usize) -> isize {
+    let pid = scheduler::current_pid();
     let pool = crate::jda::shmem::SHARED_BUFFER_POOL.lock();
-    let phys = match pool.get_phys_addr(handle) {
+    let phys = match pool.get_phys_addr(pid, handle) {
         Some(p) => p,
-        None => return EINVAL,
+        None => return EPERM,
     };
     let data_len = len.min(4096);
     let virt = crate::memory::paging::phys_to_virt(phys) as *mut u8;
@@ -765,7 +826,8 @@ fn sys_send(sockfd: usize, buf_ptr: *const u8, len: usize, _flags: usize) -> isi
 }
 
 /// `sys_recv(sockfd, buf_ptr, len, flags)` — Recebe dados do socket.
-fn sys_recv(_sockfd: usize, buf_ptr: *mut u8, len: usize, _flags: usize) -> isize {
+fn sys_recv(sockfd: usize, buf_ptr: *mut u8, len: usize, _flags: usize) -> isize {
+    let pid = scheduler::current_pid();
     if buf_ptr.is_null() || len == 0 {
         return EINVAL;
     }
@@ -774,7 +836,11 @@ fn sys_recv(_sockfd: usize, buf_ptr: *mut u8, len: usize, _flags: usize) -> isiz
             return e;
         }
     }
-    0
+    let dest = unsafe { core::slice::from_raw_parts_mut(buf_ptr, len) };
+    match crate::net::socket::recv_socket(pid, sockfd, dest) {
+        Ok(read_bytes) => read_bytes as isize,
+        Err(e) => e,
+    }
 }
 
 // ── Kernel-internal invoke ────────────────────────────────────────────────────

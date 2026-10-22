@@ -78,9 +78,12 @@ impl SharedBufferPool {
     }
 
     /// Decrementa a contagem de referências. Libera o frame físico se atingir 0
-    pub fn release(&mut self, handle: usize) -> Result<(), &'static str> {
+    pub fn release(&mut self, caller_pid: usize, handle: usize) -> Result<(), &'static str> {
         if handle >= MAX_SHARED_BUFFERS || !self.buffers[handle].is_allocated {
             return Err("Descritor de buffer compartilhado invalido");
+        }
+        if caller_pid != 0 && self.buffers[handle].owner_pid != caller_pid {
+            return Err("Permissao negada: buffer pertence a outro processo");
         }
 
         if self.buffers[handle].ref_count > 1 {
@@ -105,10 +108,14 @@ impl SharedBufferPool {
         }
     }
 
-    /// Obtém o endereço físico do buffer
-    pub fn get_phys_addr(&self, handle: usize) -> Option<u64> {
+    /// Obtém o endereço físico do buffer validando a propriedade de `caller_pid`
+    pub fn get_phys_addr(&self, caller_pid: usize, handle: usize) -> Option<u64> {
         if handle < MAX_SHARED_BUFFERS && self.buffers[handle].is_allocated {
-            Some(self.buffers[handle].frame_phys_addr)
+            if caller_pid == 0 || self.buffers[handle].owner_pid == caller_pid {
+                Some(self.buffers[handle].frame_phys_addr)
+            } else {
+                None
+            }
         } else {
             None
         }

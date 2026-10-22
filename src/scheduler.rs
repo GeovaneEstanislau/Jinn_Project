@@ -232,15 +232,15 @@ impl Scheduler {
                 let pml4_phys = paging::clone_kernel_pml4();
 
                 // 2. Carregar o ELF no PML4 do processo
-                let entry_virt = match crate::elf::load_elf(elf_data, pml4_phys) {
-                    Ok(entry) => entry,
+                let (entry_virt, elf_frames) = match crate::elf::load_elf(elf_data, pml4_phys) {
+                    Ok(res) => res,
                     Err(_) => {
                         unsafe { paging::free_user_pml4(pml4_phys); }
                         return 0;
                     }
                 };
 
-                return self.setup_and_register_user_task(id, name, entry_virt, pml4_phys);
+                return self.setup_and_register_user_task(id, name, entry_virt, pml4_phys, elf_frames);
             }
             id += 1;
         }
@@ -256,15 +256,15 @@ impl Scheduler {
                 let pml4_phys = paging::clone_kernel_pml4();
 
                 // 2. Carregar o ELF do VFS no PML4 do processo
-                let entry_virt = match crate::elf::load_elf_from_vfs(path, pml4_phys) {
-                    Ok(entry) => entry,
+                let (entry_virt, elf_frames) = match crate::elf::load_elf_from_vfs(path, pml4_phys) {
+                    Ok(res) => res,
                     Err(_) => {
                         unsafe { paging::free_user_pml4(pml4_phys); }
                         return 0;
                     }
                 };
 
-                return self.setup_and_register_user_task(id, name, entry_virt, pml4_phys);
+                return self.setup_and_register_user_task(id, name, entry_virt, pml4_phys, elf_frames);
             }
             id += 1;
         }
@@ -278,6 +278,7 @@ impl Scheduler {
         name: &'static str,
         entry_virt: u64,
         pml4_phys: u64,
+        elf_frames: usize,
     ) -> usize {
         // Pilha de kernel (Ring 0)
         let kstack_base = unsafe { KSTACKS[id].as_ptr() as usize };
@@ -311,8 +312,8 @@ impl Scheduler {
 
         let mut res = crate::resources::ProcessResources::new();
         let limits = crate::resources::ResourceLimits::user_default();
-        // 64 frames alocados para a pilha de usuário (256 KiB)
-        let _ = res.check_and_alloc_frames(USTACK_SIZE / 4096, &limits);
+        // Frames alocados para a pilha de usuário (256 KiB = 64 frames) + frames do ELF
+        let _ = res.check_and_alloc_frames((USTACK_SIZE / 4096) + elf_frames, &limits);
 
         self.tasks[id] = Some(Task {
             id,
@@ -463,6 +464,10 @@ impl Scheduler {
     /// Também desbloqueia qualquer tarefa que esteja esperando via `waitpid`.
     pub fn exit_task(&mut self, pid: usize, code: i32) {
         if let Some(Some(task)) = self.tasks.get_mut(pid) {
+            // Evita execução duplicada e double-free no PML4 se a tarefa já estiver finalizada
+            if task.state == TaskState::Zombie || task.state == TaskState::Completed {
+                return;
+            }
             task.state     = TaskState::Zombie;
             task.exit_code = code;
 

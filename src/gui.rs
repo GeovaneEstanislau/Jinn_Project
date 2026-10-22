@@ -69,6 +69,9 @@ pub struct JinnSystem;
 impl SystemHost for JinnSystem {
     fn stats(&self) -> SystemStats {
         let ticks = crate::timer::ticks();
+        let net_ip = unsafe { crate::net::dhcp::DHCP_CLIENT.ip };
+        let jinnwall_active_conns = unsafe { crate::net::jinnwall::JINNWALL.active_connections() };
+        let jinnwall_drops = unsafe { crate::net::jinnwall::JINNWALL.drops() };
         SystemStats {
             uptime_secs: (ticks / 100) as usize,
             task_count: crate::scheduler::get().task_count(),
@@ -76,6 +79,9 @@ impl SystemHost for JinnSystem {
             used_ram_mb: crate::memory::used_bytes() / (1024 * 1024),
             total_ram_mb: crate::memory::total_bytes() / (1024 * 1024),
             current_tick: ticks,
+            net_ip,
+            jinnwall_active_conns,
+            jinnwall_drops,
         }
     }
 

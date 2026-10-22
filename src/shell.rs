@@ -1958,7 +1958,7 @@ fn cmd_jdashm(w: &mut Writer) {
     // 1. Aloca um buffer físico de 4 KiB
     match pool.allocate(0, false) {
         Ok(handle) => {
-            let phys = pool.get_phys_addr(handle).unwrap_or(0);
+            let phys = pool.get_phys_addr(0, handle).unwrap_or(0);
             w.write_string("  1. Buffer Alocado (ID ");
             w.write_decimal(handle);
             w.write_string(") : Frame Fisico 0x");
@@ -2016,11 +2016,11 @@ fn cmd_jdashm(w: &mut Writer) {
             }
 
             // 4. Libera primeira referência (produtor concluiu)
-            pool.release(handle).ok();
+            pool.release(0, handle).ok();
             w.write_line("  4. [OK] Release parcial: ref_count = 1 (Frame retido com sucesso)");
 
             // 5. Libera segunda referência (consumidor concluiu -> libera frame físico de volta)
-            pool.release(handle).ok();
+            pool.release(0, handle).ok();
             w.set_color(Color::LightGreen, Color::Black);
             w.write_line("  5. [OK] Release final: ref_count = 0 (Frame fisico liberado ao bitmap PMM)");
             w.set_color(Color::LightGray, Color::Black);

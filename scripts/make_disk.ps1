@@ -188,7 +188,7 @@ for ($i = 0; $i -lt $elfClustersNeeded; $i++) {
     if ($i -eq $elfClustersNeeded - 1) {
         Set-FatEntry $currentClus 0x0FFFFFFF
     } else {
-        Set-FatEntry $currentClus [uint32]($currentClus + 1)
+        Set-FatEntry $currentClus ([uint32]($currentClus + 1))
     }
 }
 

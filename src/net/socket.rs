@@ -51,6 +51,30 @@ impl Socket {
             rx_tail: 0,
         }
     }
+
+    /// Enfileira dados recebidos da rede na fila do socket
+    pub fn push_rx(&mut self, data: &[u8]) -> bool {
+        let next_head = (self.rx_head + 1) % 4;
+        if next_head == self.rx_tail {
+            return false; // Fila cheia
+        }
+        let len = data.len().min(SOCK_RX_BUF_SIZE);
+        self.rx_buf[self.rx_head][..len].copy_from_slice(&data[..len]);
+        self.rx_len[self.rx_head] = len;
+        self.rx_head = next_head;
+        true
+    }
+
+    /// Desenfileira dados recebidos para o buffer de destino
+    pub fn pop_rx(&mut self, dest: &mut [u8]) -> Option<usize> {
+        if self.rx_head == self.rx_tail {
+            return None; // Fila vazia
+        }
+        let len = self.rx_len[self.rx_tail].min(dest.len());
+        dest[..len].copy_from_slice(&self.rx_buf[self.rx_tail][..len]);
+        self.rx_tail = (self.rx_tail + 1) % 4;
+        Some(len)
+    }
 }
 
 pub static mut SOCKET_TABLE: [Option<Socket>; MAX_SOCKETS] = [None; MAX_SOCKETS];
@@ -205,5 +229,39 @@ pub fn send_socket(pid: usize, sockfd: usize, data: &[u8]) -> Result<usize, isiz
         }
 
         Ok(payload_len)
+    }
+}
+
+/// Despacha um payload recebido e aprovado pelo firewall JinnWall para o socket correspondente.
+pub fn dispatch_incoming_packet(proto: u8, src_ip: [u8; 4], src_port: u16, dst_port: u16, payload: &[u8]) -> bool {
+    let sock_type = if proto == crate::net::ipv4::PROTO_TCP { SOCK_STREAM } else { SOCK_DGRAM };
+    unsafe {
+        for slot in SOCKET_TABLE.iter_mut() {
+            if let Some(ref mut sock) = slot {
+                if sock.sock_type == sock_type && (sock.local_port == dst_port || sock.local_port == 0) {
+                    if !sock.is_connected || (sock.remote_ip == src_ip && (sock.remote_port == src_port || sock.remote_port == 0)) {
+                        return sock.push_rx(payload);
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Recebe dados do buffer do socket para o espaço de usuário.
+pub fn recv_socket(pid: usize, sockfd: usize, dest: &mut [u8]) -> Result<usize, isize> {
+    unsafe {
+        let sock = match SOCKET_TABLE.get_mut(sockfd).and_then(|s| s.as_mut()) {
+            Some(s) => s,
+            None => return Err(EBADF),
+        };
+        if sock.owner_pid != pid {
+            return Err(EPERM);
+        }
+        match sock.pop_rx(dest) {
+            Some(len) => Ok(len),
+            None => Ok(0), // Fila vazia
+        }
     }
 }
