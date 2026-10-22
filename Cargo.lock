@@ -3,5 +3,12 @@
 version = 4
 
 [[package]]
+name = "aladdin"
+version = "0.1.0"
+
+[[package]]
 name = "jinn"
 version = "0.0.1"
+dependencies = [
+ "aladdin",
+]

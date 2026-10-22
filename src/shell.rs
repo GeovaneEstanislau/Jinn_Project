@@ -1266,6 +1266,10 @@ fn cmd_reboot(w: &mut Writer) -> ! {
 pub fn task_entry() {
     let mut w = Writer::new();
     w.set_position(21, 0);
+    // Inicializacao direta no Aladdin Desktop (padrao moderno)
+    if crate::gui::is_available() {
+        crate::gui::run_desktop();
+    }
     run(&mut w);
 }
 
@@ -1975,5 +1979,144 @@ fn cmd_jdashm(w: &mut Writer) {
         }
     }
     w.set_color(Color::LightGray, Color::Black);
+}
+
+/// Executa comandos de string vindos do terminal gráfico do Aladdin e despacha linhas coloridas.
+pub fn execute_string_command<F>(cmd: &str, mut output: F)
+where
+    F: FnMut(&str, u32),
+{
+    let cmd = cmd.trim();
+    if cmd.is_empty() { return; }
+
+    let (verb, args) = match cmd.find(' ') {
+        Some(i) => (&cmd[..i], cmd[i + 1..].trim()),
+        None => (cmd, ""),
+    };
+
+    match verb {
+        "help" => {
+            output("Comandos do Shell Jinn:", 0x00F5_9E0B);
+            output("  help       - exibe esta lista", 0x0094_A3B8);
+            output("  uname      - informacoes do microkernel", 0x0094_A3B8);
+            output("  mem        - uso de memoria fisica", 0x0094_A3B8);
+            output("  ps         - lista de tarefas ativas", 0x0094_A3B8);
+            output("  uptime     - tempo de execucao", 0x0094_A3B8);
+            output("  ls [path]  - lista arquivos no VFS", 0x0094_A3B8);
+            output("  cat <file> - exibe conteudo de texto", 0x0094_A3B8);
+            output("  df         - sistemas de arquivos montados", 0x0094_A3B8);
+            output("  pci        - lista dispositivos PCI", 0x0094_A3B8);
+            output("  reboot     - reinicia o computador", 0x0094_A3B8);
+        }
+        "uname" => {
+            output("Jinn Microkernel v0.0.3-userspace (x86_64, Ring 0/3)", 0x0038_BDF8);
+        }
+        "mem" | "meminfo" => {
+            output("=== Memoria RAM ===", 0x00F5_9E0B);
+            let total = crate::memory::total_bytes() / (1024 * 1024);
+            let used = crate::memory::used_bytes() / (1024 * 1024);
+            let free = total.saturating_sub(used);
+            let mut buf = [0u8; 32];
+            // Total
+            output("Memoria total:", 0x0094_A3B8);
+            let mut len = aladdin::compositor::format_num(total, &mut buf);
+            if let Ok(s) = core::str::from_utf8(&buf[..len]) { output(s, 0x0022_C55E); }
+            output("Memoria livre (MB):", 0x0094_A3B8);
+            len = aladdin::compositor::format_num(free, &mut buf);
+            if let Ok(s) = core::str::from_utf8(&buf[..len]) { output(s, 0x0038_BDF8); }
+        }
+        "ps" | "tasks" => {
+            output("Tarefas Ativas no Escalonador:", 0x00F5_9E0B);
+            let sched = crate::scheduler::get();
+            for slot in sched.tasks.iter() {
+                if let Some(t) = slot {
+                    output(t.name, 0x00F8_FAFC);
+                }
+            }
+        }
+        "uptime" => {
+            let secs = (crate::timer::ticks() / 100) as usize;
+            let mut buf = [0u8; 16];
+            let len = aladdin::compositor::format_num(secs, &mut buf);
+            if let Ok(s) = core::str::from_utf8(&buf[..len]) {
+                output("Uptime (segundos):", 0x0094_A3B8);
+                output(s, 0x0038_BDF8);
+            }
+        }
+        "ls" | "dir" => {
+            let target = if args.is_empty() { "/disk" } else { args };
+            output("Conteudo do VFS:", 0x0038_BDF8);
+            let mut count = 0;
+            let _ = crate::vfs::readdir(target, |name, _| {
+                output(name, 0x0022_C55E);
+                count += 1;
+            });
+            if count == 0 {
+                output("(diretorio vazio ou nao encontrado)", 0x0094_A3B8);
+            }
+        }
+        "cat" => {
+            if args.is_empty() {
+                output("Uso: cat <caminho>", 0x00EF_4444);
+            } else {
+                let mut buf = [0u8; 128];
+                match crate::vfs::read_file(args, &mut buf) {
+                    Ok(n) => {
+                        if let Ok(s) = core::str::from_utf8(&buf[..n]) {
+                            output(s, 0x00F8_FAFC);
+                        } else {
+                            output("[Arquivo binario]", 0x0094_A3B8);
+                        }
+                    }
+                    Err(_) => output("Falha ao ler arquivo", 0x00EF_4444),
+                }
+            }
+        }
+        "touch" => {
+            if args.is_empty() {
+                output("Uso: touch <caminho>", 0x00EF_4444);
+            } else {
+                match crate::vfs::write_file(args, b"") {
+                    Ok(_) => output("Arquivo criado com sucesso", 0x0022_C55E),
+                    Err(_) => output("Falha ao criar arquivo", 0x00EF_4444),
+                }
+            }
+        }
+        "rm" | "del" => {
+            if args.is_empty() {
+                output("Uso: rm <caminho>", 0x00EF_4444);
+            } else {
+                match crate::vfs::remove(args) {
+                    Ok(_) => output("Arquivo removido com sucesso", 0x0022_C55E),
+                    Err(_) => output("Falha ao remover arquivo", 0x00EF_4444),
+                }
+            }
+        }
+        "df" | "mounts" => {
+            output("Sistemas de Arquivos Montados:", 0x0038_BDF8);
+            crate::vfs::list_mounts(|pfx, _fs_name| {
+                output(pfx, 0x00F8_FAFC);
+            });
+        }
+        "pci" | "lspci" => {
+            output("Dispositivos PCI Detectados:", 0x0038_BDF8);
+            let dev_count = crate::drivers::pci::device_count();
+            let mut buf = [0u8; 16];
+            let len = aladdin::compositor::format_num(dev_count, &mut buf);
+            if let Ok(s) = core::str::from_utf8(&buf[..len]) {
+                output(s, 0x0022_C55E);
+            }
+        }
+        "reboot" => {
+            unsafe {
+                let null_idt: [u8; 10] = [0u8; 10];
+                core::arch::asm!("lidt [{}]", "int 3", in(reg) null_idt.as_ptr(), options(nostack));
+            }
+            loop { core::hint::spin_loop(); }
+        }
+        _ => {
+            output("Comando desconhecido. Digite 'help'.", 0x00EF_4444);
+        }
+    }
 }
 
