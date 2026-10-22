@@ -113,6 +113,9 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         "jdabench" => cmd_jdabench(w),
         "jdashm" => cmd_jdashm(w),
 
+        // ── Diagnósticos e Auto-Testes ─────────────────────────────────────────
+        "selftest" | "test" => cmd_selftest(w),
+
         // ── Sistema ───────────────────────────────────────────────────────────
         "reboot" => cmd_reboot(w),
 
@@ -1241,6 +1244,56 @@ fn cmd_sync(w: &mut Writer) {
                 _ => "Falha de sincronizacao no VFS",
             });
         }
+    }
+    w.set_color(Color::LightGray, Color::Black);
+}
+
+/// `selftest` — Executa a bateria de testes de conformidade, segurança do ELF loader e validação de memória.
+fn cmd_selftest(w: &mut Writer) {
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_line("================================================================================");
+    w.set_color(Color::LightCyan, Color::Black);
+    w.write_line(" [SELFTEST] Bateria de Testes de Seguranca e Integridade do Jinn OS");
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_line("================================================================================");
+    w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string(" [*] Executando 13 testes negativos do ELF Loader...\n");
+    let (passed, total) = crate::elf_tests::run_elf_security_selftests();
+    w.write_string("     Resultado ELF: ");
+    if passed == total {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string("APROVADO (");
+        w.write_decimal(passed);
+        w.write_string("/");
+        w.write_decimal(total);
+        w.write_line(")");
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string("FALHA (");
+        w.write_decimal(passed);
+        w.write_string("/");
+        w.write_decimal(total);
+        w.write_line(")");
+    }
+    w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string(" [*] Testando validacao de ponteiros de usuario (Syscall EFAULT)...\n");
+    // Teste 1: Ponteiro NULL
+    let r_null = crate::syscall::validate_user_buffer(core::ptr::null(), 10, false);
+    // Teste 2: Ponteiro no espaço do Kernel
+    let r_kern = crate::syscall::validate_user_buffer(0xFFFF_8000_0000_0000 as *const u8, 10, false);
+    // Teste 3: Endereço não mapeado no espaço de usuário
+    let r_unmap = crate::syscall::validate_user_buffer(0x0000_1000_0000 as *const u8, 4096, false);
+
+    if r_null == Err(crate::syscall::EINVAL) && r_kern == Err(crate::syscall::EFAULT) && r_unmap == Err(crate::syscall::EFAULT) {
+        w.write_string("     Resultado Validacao de Memoria: ");
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_line("APROVADO (NULL, Kernel-Space e Unmapped rejeitados com seguranca)");
+    } else {
+        w.write_string("     Resultado Validacao de Memoria: ");
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_line("FALHA");
     }
     w.set_color(Color::LightGray, Color::Black);
 }

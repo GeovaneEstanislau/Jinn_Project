@@ -87,6 +87,8 @@ static mut WIN_BUF: [u32; WIN_W * WIN_H] = [0; WIN_W * WIN_H];
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     let msg1 = b"[U3] ola-mundo ativo em Ring 3!\n";
+    let msg_sec = b"[U3] Teste seguranca: validando rejeicao de ponteiro invalido...\n";
+    let msg_sec_ok = b"[U3] Syscall 1 rejeitou ponteiro 0xDEADBEEF com -EFAULT (-14)!\n";
     let msg_file = b"[U3] Testando VFS via Syscall 15 open / 2 read (/disk/README.TXT)...\n";
     let msg2 = b"[U3] Solicitando buffer JDA Zero-Copy (Syscall 12 alloc)...\n";
     let msg3 = b"[U3] Submetendo Job JDA Zero-Copy (Syscall 14: Fletcher32 Checksum)...\n";
@@ -99,6 +101,13 @@ pub extern "C" fn _start() -> ! {
     let msg6 = b"[U3] Concluido com sucesso! Encerrando processo.\n";
     unsafe {
         let _ = sys_write(1, msg1.as_ptr(), msg1.len() as u64);
+
+        // Teste de Segurança: passagem de ponteiro não mapeado (0xDEADBEEF) para o kernel
+        let _ = sys_write(1, msg_sec.as_ptr(), msg_sec.len() as u64);
+        let ret_bad = sys_write(1, 0xDEAD_BEEF as *const u8, 100);
+        if ret_bad == -14 { // -EFAULT
+            let _ = sys_write(1, msg_sec_ok.as_ptr(), msg_sec_ok.len() as u64);
+        }
 
         // Teste de VFS em Ring 3
         let _ = sys_write(1, msg_file.as_ptr(), msg_file.len() as u64);
@@ -129,6 +138,12 @@ pub extern "C" fn _start() -> ! {
         }
 
         // Teste de Janela Gráfica no Aladdin Desktop via Syscalls 20, 21, 22
+        let ret_fake_win = sys_window_update(99, core::slice::from_raw_parts(core::ptr::addr_of!(WIN_BUF) as *const u32, WIN_W * WIN_H));
+        if ret_fake_win == -9 { // -EBADF
+            let msg_win_ebadf = b"[U3] Syscall 21 rejeitou ID de janela inexistente com -EBADF (-9)!\n";
+            let _ = sys_write(1, msg_win_ebadf.as_ptr(), msg_win_ebadf.len() as u64);
+        }
+
         let _ = sys_write(1, msg_win.as_ptr(), msg_win.len() as u64);
         let win_id = sys_window_create(b"Janela Ring 3 Demo", WIN_W, WIN_H);
         if win_id >= 0 {

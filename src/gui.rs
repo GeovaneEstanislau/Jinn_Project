@@ -213,7 +213,11 @@ pub fn window_update(owner_pid: usize, win_id: usize, buffer: &[u32]) -> Result<
     unsafe {
         if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
             session.update_client_buffer(owner_pid, win_id, buffer)
-                .map_err(|_| crate::syscall::EINVAL)
+                .map_err(|e| match e {
+                    aladdin::wm::WindowOpError::NotFound => crate::syscall::EBADF,
+                    aladdin::wm::WindowOpError::PermissionDenied => crate::syscall::EPERM,
+                    aladdin::wm::WindowOpError::InvalidDimensions => crate::syscall::EINVAL,
+                })
         } else {
             Err(crate::syscall::ENOSYS)
         }
@@ -225,7 +229,11 @@ pub fn window_close(owner_pid: usize, win_id: usize) -> Result<(), isize> {
     unsafe {
         if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
             session.close_client_window(owner_pid, win_id)
-                .map_err(|_| crate::syscall::EBADF)
+                .map_err(|e| match e {
+                    aladdin::wm::WindowOpError::NotFound => crate::syscall::EBADF,
+                    aladdin::wm::WindowOpError::PermissionDenied => crate::syscall::EPERM,
+                    aladdin::wm::WindowOpError::InvalidDimensions => crate::syscall::EINVAL,
+                })
         } else {
             Err(crate::syscall::ENOSYS)
         }

@@ -94,6 +94,17 @@ impl SharedBufferPool {
         Ok(())
     }
 
+    /// Libera todos os buffers físicos alocados pertencentes a `pid`.
+    /// Chamado automaticamente pelo escalonador no encerramento da tarefa (`exit_task`).
+    pub fn release_all_for_pid(&mut self, pid: usize) {
+        for i in 0..MAX_SHARED_BUFFERS {
+            if self.buffers[i].is_allocated && self.buffers[i].owner_pid == pid {
+                memory::free_frame(self.buffers[i].frame_phys_addr);
+                self.buffers[i] = PhysicalPageBuffer::empty();
+            }
+        }
+    }
+
     /// Obtém o endereço físico do buffer
     pub fn get_phys_addr(&self, handle: usize) -> Option<u64> {
         if handle < MAX_SHARED_BUFFERS && self.buffers[handle].is_allocated {

@@ -10,6 +10,7 @@ pub mod cpu;
 pub mod drivers;
 pub mod elf;
 pub mod font;
+pub mod elf_tests;
 pub mod gdt;
 pub mod gui;
 pub mod interrupts;
@@ -222,6 +223,40 @@ pub extern "C" fn _start() -> ! {
         w.write_line(" WARN (Desativado)");
     }
     w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string("[+] Testes de Seguranca do ELF Loader...");
+    let (passed, total) = elf_tests::run_elf_security_selftests();
+    if passed == total {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string(" OK (");
+        w.write_decimal(passed);
+        w.write_string("/");
+        w.write_decimal(total);
+        w.write_line(" aprovados)");
+        w.set_color(Color::LightGray, Color::Black);
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string(" FALHA (");
+        w.write_decimal(passed);
+        w.write_string("/");
+        w.write_decimal(total);
+        w.write_line(")");
+        w.set_color(Color::LightGray, Color::Black);
+    }
+
+    w.write_string("[+] Validacao de Memoria e Syscalls EFAULT...");
+    let r_null = crate::syscall::validate_user_buffer(core::ptr::null(), 10, false);
+    let r_kern = crate::syscall::validate_user_buffer(0xFFFF_8000_0000_0000 as *const u8, 10, false);
+    let r_unmap = crate::syscall::validate_user_buffer(0x0000_1000_0000 as *const u8, 4096, false);
+    if r_null == Err(crate::syscall::EINVAL) && r_kern == Err(crate::syscall::EFAULT) && r_unmap == Err(crate::syscall::EFAULT) {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_line(" OK (NULL, Kernel-Space e Unmapped rejeitados)");
+        w.set_color(Color::LightGray, Color::Black);
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_line(" FALHA");
+        w.set_color(Color::LightGray, Color::Black);
+    }
 
     w.write_string("[+] Escalonador e Processos...");
     let sched = scheduler::get();

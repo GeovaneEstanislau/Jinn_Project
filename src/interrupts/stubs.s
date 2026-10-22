@@ -213,48 +213,57 @@ irq_common:
     iretq
 
 # ── Syscall stub (vetor 0x80 — int 0x80 vindo do Ring 3 ou Ring 0) ───────────
-#
-# Convenção de chamada do USUÁRIO (in):
-#   RAX = número da syscall
-#   RDI = arg0
-#   RSI = arg1
-#   RDX = arg2
-#
-# Convenção System V AMD64 ABI para syscall_dispatch(nr, arg0, arg1, arg2):
-#   RDI = nr    ← RAX do usuário
-#   RSI = arg0  ← RDI do usuário
-#   RDX = arg1  ← RSI do usuário
-#   RCX = arg2  ← RDX do usuário
-#
-# Retorno: RAX = valor de retorno (negativo = errno)
 .global isr128_stub
 isr128_stub:
-    # Salva registradores caller-saved que o Rust pode usar internamente
-    push r11
-    push r10
-    push r9
-    push r8
-    push rbp
+    push 0                       # dummy error code
+    push 128                     # vector 128 (0x80)
+    push rax
+    push rcx
+    push rdx
     push rbx
+    push rbp
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
 
-    # Remapeia argumentos: (RAX, RDI, RSI, RDX) → (RDI, RSI, RDX, RCX)
-    mov rcx, rdx       # arg2 → RCX (4º parâmetro SysV)
-    mov rdx, rsi       # arg1 → RDX (3º parâmetro SysV)
-    mov rsi, rdi       # arg0 → RSI (2º parâmetro SysV)
-    mov rdi, rax       # nr   → RDI (1º parâmetro SysV)
+    mov rdi, rsp                 # frame pointer as 1st argument to syscall_dispatch_framed
 
     # Alinha a pilha a 16 bytes (obrigatório pela ABI antes de CALL)
     mov rbp, rsp
     and rsp, -16
-    call syscall_dispatch
+    call syscall_dispatch_framed
     mov rsp, rbp
 
-    # Restaura registradores
-    pop rbx
-    pop rbp
-    pop r8
-    pop r9
-    pop r10
+    # Se syscall_dispatch_framed retornou non-zero (troca de contexto em exit ou yield):
+    test rax, rax
+    jz .no_syscall_switch
+    mov rsp, rax
+.no_syscall_switch:
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
     pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rbp
+    pop rbx
+    pop rdx
+    pop rcx
+    pop rax
+
+    # Remove vector + dummy error code
+    add rsp, 16
     iretq
 

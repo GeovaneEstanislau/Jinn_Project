@@ -52,8 +52,10 @@ fn is_current_task_user() -> bool {
     }
 }
 
-/// Valida se um buffer fornecido por Ring 3 está contido no espaço de usuário permitido.
-pub fn validate_user_buffer(ptr: *const u8, len: usize) -> Result<(), isize> {
+/// Valida se um buffer fornecido por Ring 3 está contido no espaço de usuário permitido
+/// e se todas as páginas virtuais que o compõem estão devidamente mapeadas no PML4 ativo
+/// com o bit USER ativo (e WRITABLE, se `write_access` for verdadeiro).
+pub fn validate_user_buffer(ptr: *const u8, len: usize, write_access: bool) -> Result<(), isize> {
     if ptr.is_null() || len == 0 {
         return Err(EINVAL);
     }
@@ -62,10 +64,65 @@ pub fn validate_user_buffer(ptr: *const u8, len: usize) -> Result<(), isize> {
     if addr < USER_SPACE_MIN || end > USER_SPACE_MAX {
         return Err(EFAULT);
     }
+
+    // Consulta as tabelas de páginas ativas da tarefa para verificar a presença de cada página
+    let pml4_phys = crate::memory::paging::current_cr3();
+    let pml4 = crate::memory::paging::phys_to_virt(pml4_phys) as *mut crate::memory::paging::PageTable;
+
+    let start_page = (addr as u64) & !0xFFF;
+    let end_page = ((end as u64).saturating_add(0xFFF)) & !0xFFF;
+    let mut page = start_page;
+
+    while page < end_page {
+        unsafe {
+            match crate::memory::paging::lookup_page(pml4, page) {
+                Some((_phys, flags)) => {
+                    if (flags & crate::memory::paging::USER) == 0 {
+                        return Err(EFAULT);
+                    }
+                    if write_access && (flags & crate::memory::paging::WRITABLE) == 0 {
+                        return Err(EFAULT);
+                    }
+                }
+                None => return Err(EFAULT),
+            }
+        }
+        page = page.saturating_add(4096);
+    }
+
     Ok(())
 }
 
 // ── Dispatcher ────────────────────────────────────────────────────────────────
+
+/// Chamado diretamente por `isr128_stub` com o ponteiro do frame completo de registradores.
+/// Permite alternar de tarefa atomicamente em `sys_exit` (0) e `sys_yield` (3),
+/// garantindo que processos encerrados jamais retornem para o espaço de usuário.
+#[no_mangle]
+pub extern "C" fn syscall_dispatch_framed(frame: *mut usize) -> usize {
+    let nr   = unsafe { *frame.add(14) }; // saved RAX
+    let arg0 = unsafe { *frame.add(8) };  // saved RDI
+    let arg1 = unsafe { *frame.add(9) };  // saved RSI
+    let arg2 = unsafe { *frame.add(12) }; // saved RDX
+
+    match nr {
+        0 => {
+            // sys_exit: encerra a tarefa, libera todos os recursos e faz preempção imediata
+            let pid = scheduler::current_pid();
+            scheduler::get().exit_task(pid, arg0 as i32);
+            scheduler::get().preempt(frame as usize)
+        }
+        3 => {
+            // sys_yield: cede a CPU voluntariamente de forma imediata
+            scheduler::get().preempt(frame as usize)
+        }
+        _ => {
+            let ret = syscall_dispatch(nr, arg0, arg1, arg2);
+            unsafe { *frame.add(14) = ret as usize; } // atualiza o RAX salvo com o código de retorno
+            0 // 0 indica para o stub continuar na mesma tarefa
+        }
+    }
+}
 
 /// Called from `irq_dispatch` when vector == 0x80.
 /// All arguments are passed through registers by the caller.
@@ -122,7 +179,7 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
     if len > 65536 { return EINVAL; }
 
     if is_current_task_user() {
-        if let Err(e) = validate_user_buffer(buf, len) {
+        if let Err(e) = validate_user_buffer(buf, len, false) {
             return e;
         }
     }
@@ -135,7 +192,6 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
                 w.set_color(crate::vga::Color::LightRed, crate::vga::Color::Black);
             }
             for &byte in slice {
-                crate::serial_write_byte(byte);
                 w.write_byte(byte);
             }
             len as isize
@@ -174,7 +230,7 @@ fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
     if buf.is_null() || len == 0 { return EINVAL; }
 
     if is_current_task_user() {
-        if let Err(e) = validate_user_buffer(buf as *const u8, len) {
+        if let Err(e) = validate_user_buffer(buf as *const u8, len, true) {
             return e;
         }
     }
@@ -225,7 +281,7 @@ fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> isize {
         return EINVAL;
     }
     if is_current_task_user() {
-        if let Err(e) = validate_user_buffer(path_ptr, path_len) {
+        if let Err(e) = validate_user_buffer(path_ptr, path_len, false) {
             return e;
         }
     }
@@ -306,7 +362,7 @@ fn sys_ipc_send(to_pid: u32, tag: u32, payload: *const u8) -> isize {
         &[][..]
     } else {
         if is_current_task_user() {
-            if let Err(e) = validate_user_buffer(payload, 64) {
+            if let Err(e) = validate_user_buffer(payload, 64, false) {
                 return e;
             }
         }
@@ -322,7 +378,7 @@ fn sys_ipc_send(to_pid: u32, tag: u32, payload: *const u8) -> isize {
 /// `ipc_recv(buf, len)` — Receive a pending IPC message. Returns bytes written.
 fn sys_ipc_recv(buf: *mut u8, len: usize) -> isize {
     if is_current_task_user() {
-        if let Err(e) = validate_user_buffer(buf as *const u8, len) {
+        if let Err(e) = validate_user_buffer(buf as *const u8, len, true) {
             return e;
         }
     }
@@ -498,7 +554,7 @@ fn sys_jda_submit(job_type: usize, handle: usize, len: usize) -> isize {
 fn sys_window_create(title_ptr: *const u8, title_len: usize, packed_dim: usize) -> isize {
     let pid = scheduler::current_pid();
     if is_current_task_user() {
-        if let Err(e) = validate_user_buffer(title_ptr, title_len) {
+        if let Err(e) = validate_user_buffer(title_ptr, title_len, false) {
             return e;
         }
     }
@@ -526,7 +582,7 @@ fn sys_window_create(title_ptr: *const u8, title_len: usize, packed_dim: usize) 
 fn sys_window_update(win_id: usize, buffer_ptr: *const u32, buffer_len_bytes: usize) -> isize {
     let pid = scheduler::current_pid();
     if is_current_task_user() {
-        if let Err(e) = validate_user_buffer(buffer_ptr as *const u8, buffer_len_bytes) {
+        if let Err(e) = validate_user_buffer(buffer_ptr as *const u8, buffer_len_bytes, false) {
             return e;
         }
     }

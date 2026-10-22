@@ -460,6 +460,12 @@ impl Scheduler {
             // Fecha todas as janelas do Aladdin Desktop criadas pela tarefa
             crate::gui::close_windows_for_pid(pid);
 
+            // Libera todos os buffers Zero-Copy alocados no JDA pelo processo
+            crate::jda::shmem::SHARED_BUFFER_POOL.lock().release_all_for_pid(pid);
+
+            // Desregistra a caixa de mensagens IPC da tarefa
+            crate::ipc::unregister(pid);
+
             // Libera a memória de páginas de usuário e o próprio PML4
             if task.ring == Ring::User {
                 unsafe { paging::free_user_pml4(task.pml4_phys); }

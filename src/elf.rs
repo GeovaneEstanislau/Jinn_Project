@@ -17,7 +17,7 @@ const EV_CURRENT: u32 = 1;
 const ET_EXEC: u16 = 2; // Executável estático
 const EM_X86_64: u16 = 62; // AMD x86-64
 
-const PT_LOAD: u32 = 1;
+pub const PT_LOAD: u32 = 1;
 
 // Segment Flags
 pub const PF_X: u32 = 1 << 0; // Executável
@@ -82,15 +82,22 @@ pub enum ElfError {
     ArithmeticOverflow,
     OutOfMemory,
     VfsError,
+    SecurityPolicyViolation,
+}
+
+/// Metadados verificados de um executável ELF64 válido
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ElfInfo {
+    pub entry_point: u64,
+    pub phnum: usize,
+    pub load_segments: usize,
 }
 
 // ── API Pública ───────────────────────────────────────────────────────────────
 
-/// Analisa e carrega um executável ELF64 em memória na tabela de páginas (`pml4_phys`).
-/// Retorna o endereço virtual do ponto de entrada (`e_entry`).
-///
-/// Realiza validações estritas de cabeçalho, limites de segmentos e proteção de memória.
-pub fn load_elf(elf_data: &[u8], pml4_phys: u64) -> Result<u64, ElfError> {
+/// Valida estritamente a conformidade de um binário ELF64 para execução em Ring 3.
+/// Não realiza alocação de memória nem depende de tabelas de páginas ativas.
+pub fn validate_elf(elf_data: &[u8]) -> Result<ElfInfo, ElfError> {
     if elf_data.len() < core::mem::size_of::<Elf64_Ehdr>() {
         return Err(ElfError::BufferTooSmall);
     }
@@ -144,10 +151,9 @@ pub fn load_elf(elf_data: &[u8], pml4_phys: u64) -> Result<u64, ElfError> {
         return Err(ElfError::SegmentTruncated);
     }
 
-    let pml4 = paging::phys_to_virt(pml4_phys) as *mut paging::PageTable;
     let mut load_segments_count = 0;
 
-    // 4. Carregamento e mapeamento dos segmentos PT_LOAD
+    // 4. Verificação estrita de cada segmento PT_LOAD
     for i in 0..phnum {
         let phdr_offset = phoff + (i * phentsize);
         let phdr_ptr = unsafe {
@@ -176,7 +182,59 @@ pub fn load_elf(elf_data: &[u8], pml4_phys: u64) -> Result<u64, ElfError> {
                 return Err(ElfError::InvalidVirtualAddress);
             }
 
-            // Define permissões de página (Política de proteção W^X)
+            // Política de Segurança W^X: segmento nunca pode ser W (gravável) e X (executável) simultaneamente
+            let is_writable = (phdr.p_flags & PF_W) != 0;
+            let is_exec = (phdr.p_flags & PF_X) != 0;
+            if is_writable && is_exec {
+                return Err(ElfError::SecurityPolicyViolation);
+            }
+        }
+    }
+
+    if load_segments_count == 0 {
+        return Err(ElfError::InvalidProgramHeaders);
+    }
+
+    Ok(ElfInfo {
+        entry_point: ehdr.e_entry,
+        phnum,
+        load_segments: load_segments_count,
+    })
+}
+
+/// Analisa e carrega um executável ELF64 em memória na tabela de páginas (`pml4_phys`).
+/// Retorna o endereço virtual do ponto de entrada (`e_entry`).
+pub fn load_elf(elf_data: &[u8], pml4_phys: u64) -> Result<u64, ElfError> {
+    // 1. Validação estrita inicial
+    let info = validate_elf(elf_data)?;
+
+    let ehdr_ptr = elf_data.as_ptr() as *const Elf64_Ehdr;
+    let ehdr = unsafe { &*ehdr_ptr };
+    let phoff = ehdr.e_phoff as usize;
+    let phnum = ehdr.e_phnum as usize;
+    let phentsize = ehdr.e_phentsize as usize;
+
+    let pml4 = paging::phys_to_virt(pml4_phys) as *mut paging::PageTable;
+
+    // 2. Carregamento e mapeamento físico dos segmentos PT_LOAD
+    for i in 0..phnum {
+        let phdr_offset = phoff + (i * phentsize);
+        let phdr_ptr = unsafe {
+            elf_data.as_ptr().add(phdr_offset) as *const Elf64_Phdr
+        };
+        let phdr = unsafe { &*phdr_ptr };
+
+        if phdr.p_type == PT_LOAD {
+            if phdr.p_memsz == 0 {
+                continue;
+            }
+
+            let mem_end = match phdr.p_vaddr.checked_add(phdr.p_memsz) {
+                Some(e) => e,
+                None => return Err(ElfError::ArithmeticOverflow),
+            };
+
+            // Define permissões de página (Política W^X confirmada)
             let mut page_flags = paging::PRESENT | paging::USER;
             let is_writable = (phdr.p_flags & PF_W) != 0;
             let is_exec = (phdr.p_flags & PF_X) != 0;
@@ -248,11 +306,7 @@ pub fn load_elf(elf_data: &[u8], pml4_phys: u64) -> Result<u64, ElfError> {
         }
     }
 
-    if load_segments_count == 0 {
-        return Err(ElfError::InvalidProgramHeaders);
-    }
-
-    Ok(ehdr.e_entry)
+    Ok(info.entry_point)
 }
 
 /// Carrega um executável ELF64 a partir do Virtual Filesystem (VFS) para o PML4 do processo.
