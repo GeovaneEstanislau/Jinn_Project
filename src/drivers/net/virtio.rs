@@ -203,9 +203,10 @@ impl VirtioNetDevice {
             let elem = &used.ring[(self.rx_last_used_idx as usize) % QUEUE_SIZE];
             let desc_idx = (elem.id as usize) % QUEUE_SIZE;
             let packet_len = elem.len as usize;
+            let safe_pkt_len = packet_len.min(BUFFER_SIZE);
 
             let hdr_size = core::mem::size_of::<VirtioNetHdr>();
-            let frame_len = if packet_len > hdr_size { packet_len - hdr_size } else { 0 };
+            let frame_len = if safe_pkt_len > hdr_size { safe_pkt_len - hdr_size } else { 0 };
 
             let copied = frame_len.min(dest.len());
             if copied > 0 {

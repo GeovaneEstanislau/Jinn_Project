@@ -33,8 +33,15 @@ static CONTEXT_SWITCHES: AtomicU64 = AtomicU64::new(0);
 /// Número máximo de tarefas simultâneas no sistema.
 pub const MAX_TASKS: usize = 16;
 
-/// Número máximo de descritores de arquivos por tarefa.
+/// Número máximo de descritores de arquivos e sockets por tarefa.
 pub const MAX_TASK_FDS: usize = 8;
+
+/// Número máximo de páginas dinâmicas que uma tarefa pode alocar via sys_alloc_page.
+pub const MAX_DYNAMIC_PAGES: usize = 32;
+
+/// Faixa de endereçamento virtual reservada para o heap de usuário.
+pub const USER_HEAP_BASE: u64 = 0x0000_1000_0000;
+pub const USER_HEAP_MAX:  u64 = 0x0000_2000_0000;
 
 /// Descritor de arquivo aberto por uma tarefa no VFS.
 #[derive(Debug, Clone, Copy)]
@@ -44,6 +51,13 @@ pub struct TaskFileDescriptor {
     pub path_len: usize,
     pub offset: u64,
     pub flags: u32,
+}
+
+/// Descritor unificado por processo (Arquivo VFS ou Socket de Rede).
+#[derive(Debug, Clone, Copy)]
+pub enum TaskDescriptor {
+    File(TaskFileDescriptor),
+    Socket(usize), // índice na SOCKET_TABLE global
 }
 
 /// Tamanho da pilha de kernel de cada tarefa (8 KiB — ring 0).
@@ -165,9 +179,17 @@ pub struct Task {
     /// Quantum restante antes da próxima preempção forçada.
     pub quantum_remaining: u64,
 
-    // ── Descritores de Arquivos do Processo ───────────────────────────────
-    /// Descritores de arquivos abertos pela tarefa no VFS.
-    pub fds: [Option<TaskFileDescriptor>; MAX_TASK_FDS],
+    // ── Descritores Unificados do Processo ────────────────────────────────
+    /// Descritores unificados abertos pela tarefa (VFS ou Sockets de Rede).
+    pub fds: [Option<TaskDescriptor>; MAX_TASK_FDS],
+
+    // ── Páginas Dinâmicas de Usuário (Heap) ───────────────────────────────
+    /// Registro explícito de páginas virtuais alocadas via sys_alloc_page (0 se livre).
+    pub dynamic_pages: [u64; MAX_DYNAMIC_PAGES],
+
+    // ── Idempotência no Ciclo de Vida ─────────────────────────────────────
+    /// Flag atômica que assegura que a rotina de limpeza execute rigorosamente uma única vez.
+    pub cleanup_done: bool,
 
     // ── Gerenciamento e Limites de Recursos ────────────────────────────────
     /// Contabilidade em tempo real dos recursos alocados.
@@ -329,6 +351,8 @@ impl Scheduler {
             ctx_switches: 0,
             quantum_remaining: QUANTUM_NORMAL,
             fds: [None; MAX_TASK_FDS],
+            dynamic_pages: [0; MAX_DYNAMIC_PAGES],
+            cleanup_done: false,
             resources: res,
             limits,
         });
@@ -413,6 +437,8 @@ impl Scheduler {
                     ctx_switches: 0,
                     quantum_remaining: quantum,
                     fds: [None; MAX_TASK_FDS],
+                    dynamic_pages: [0; MAX_DYNAMIC_PAGES],
+                    cleanup_done: false,
                     resources: res,
                     limits,
                 });
@@ -465,17 +491,25 @@ impl Scheduler {
     pub fn exit_task(&mut self, pid: usize, code: i32) {
         if let Some(Some(task)) = self.tasks.get_mut(pid) {
             // Evita execução duplicada e double-free no PML4 se a tarefa já estiver finalizada
-            if task.state == TaskState::Zombie || task.state == TaskState::Completed {
+            if task.cleanup_done || task.state == TaskState::Zombie || task.state == TaskState::Completed {
                 return;
             }
-            task.state     = TaskState::Zombie;
-            task.exit_code = code;
+            task.cleanup_done = true;
+            task.state        = TaskState::Zombie;
+            task.exit_code    = code;
 
-            // Fecha todos os descritores de arquivos abertos pela tarefa no VFS
+            // Fecha todos os descritores unificados (VFS ou Sockets)
             for fd_opt in task.fds.iter_mut() {
-                if let Some(fd) = fd_opt.take() {
-                    if let Ok(p_str) = core::str::from_utf8(&fd.path[..fd.path_len]) {
-                        let _ = crate::vfs::close(p_str, fd.vfs_handle);
+                if let Some(desc) = fd_opt.take() {
+                    match desc {
+                        TaskDescriptor::File(fd) => {
+                            if let Ok(p_str) = core::str::from_utf8(&fd.path[..fd.path_len]) {
+                                let _ = crate::vfs::close(p_str, fd.vfs_handle);
+                            }
+                        }
+                        TaskDescriptor::Socket(sock_idx) => {
+                            let _ = crate::net::socket::close_socket(pid, sock_idx);
+                        }
                     }
                 }
             }
@@ -498,7 +532,8 @@ impl Scheduler {
                 task.resources.allocated_frames = 0;
             }
 
-            // Zera contadores de recursos ativos após desalocação completa
+            // Zera contadores de recursos ativos e registro de páginas dinâmicas
+            task.dynamic_pages = [0; MAX_DYNAMIC_PAGES];
             task.resources.open_fds = 0;
             task.resources.open_windows = 0;
             task.resources.open_jda_buffers = 0;

@@ -134,11 +134,12 @@ pub fn poll() {
                             );
                         }
                         PROTO_UDP => {
-                            if dst_port == dhcp::DHCP_CLIENT_PORT {
-                                dhcp::handle_dhcp_reply(ip_pkt.payload);
-                            } else {
-                                let udp_payload = if ip_pkt.payload.len() >= 8 { &ip_pkt.payload[8..] } else { ip_pkt.payload };
-                                socket::dispatch_incoming_packet(PROTO_UDP, ip_pkt.header.src_ip, src_port, dst_port, udp_payload);
+                            if let Ok(udp) = udp::UdpPacket::parse(ip_pkt.payload) {
+                                if udp.dst_port == dhcp::DHCP_CLIENT_PORT {
+                                    dhcp::handle_dhcp_reply(udp.payload);
+                                } else {
+                                    socket::dispatch_incoming_packet(PROTO_UDP, ip_pkt.header.src_ip, udp.src_port, udp.dst_port, udp.payload);
+                                }
                             }
                         }
                         PROTO_TCP => {

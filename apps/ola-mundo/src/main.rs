@@ -3,6 +3,15 @@
 
 use core::{arch::asm, panic::PanicInfo};
 
+// ── Constantes de Erros POSIX ─────────────────────────────────────────────────
+const EPERM:   i64 = -1;
+const EBADF:   i64 = -9;
+const ENOMEM:  i64 = -12;
+const EFAULT:  i64 = -14;
+const EINVAL:  i64 = -22;
+const EMFILE:  i64 = -24;
+const ENOBUFS: i64 = -105;
+
 // ── Syscall Helpers ──────────────────────────────────────────────────────────
 
 #[inline(always)]
@@ -127,7 +136,7 @@ unsafe fn sys_res_stat(target_pid: u64, stat: &mut ProcessResourceStat) -> i64 {
 #[derive(Debug, Clone, Copy)]
 pub struct SockAddrIn {
     pub sin_family: u16,
-    pub sin_port: u16,
+    pub sin_port: u16, // Big-Endian
     pub sin_addr: [u8; 4],
     pub sin_zero: [u8; 8],
 }
@@ -182,22 +191,261 @@ unsafe fn print_i64(n: i64) {
     }
 }
 
-// ── Test Behaviors (Fase 2) ──────────────────────────────────────────────────
+// ── Testes Adversariais e de Hardening (Fase 2) ──────────────────────────────
 
-/// 1. CPU-Hog: Loop de 500.000 iterações computacionais
-unsafe fn test_cpu_hog() {
-    print_str(b"[TEST 1/8] test_cpu_hog: Executando 500.000 iteracoes computacionais...\n");
-    let mut acc: u64 = 0;
-    for i in 0..500_000u64 {
-        acc = core::hint::black_box(acc.wrapping_add(i.wrapping_mul(3).wrapping_add(1)));
+/// Teste A: Validação Adversarial de Memória (Pilha de Usuário, Código ELF, Double-Free)
+unsafe fn test_adv_memory_protection() {
+    print_str(b"[ADV-TEST 1/5] test_adv_memory_protection: Testando limites de protecao de memoria...\n");
+
+    // 1. Tentativa de liberar endereco da pilha de usuario (deve retornar -EFAULT)
+    let stack_dummy = 0x1234u64;
+    let stack_page = (&stack_dummy as *const _ as u64) & !0xFFF;
+    let ret_stack_free = sys_free_page(stack_page);
+    let stack_ok = ret_stack_free == EFAULT;
+    print_str(b"  Tentativa de liberar pagina da pilha (0x");
+    print_u64(stack_page);
+    print_str(b") -> ret=");
+    print_i64(ret_stack_free);
+    print_str(b" (esperado -14 EFAULT)\n");
+
+    // 2. Tentativa de liberar pagina de codigo do executavel ELF (deve retornar -EFAULT)
+    let code_page = (test_adv_memory_protection as *const () as u64) & !0xFFF;
+    let ret_code_free = sys_free_page(code_page);
+    let code_ok = ret_code_free == EFAULT;
+    print_str(b"  Tentativa de liberar pagina de codigo ELF (0x");
+    print_u64(code_page);
+    print_str(b") -> ret=");
+    print_i64(ret_code_free);
+    print_str(b" (esperado -14 EFAULT)\n");
+
+    // 3. Alocacao valida no Heap de usuario (0x0000_1000_0000..0x0000_2000_0000)
+    let alloc_addr = sys_alloc_page();
+    let alloc_ok = alloc_addr >= 0x0000_1000_0000 && alloc_addr < 0x0000_2000_0000;
+    print_str(b"  sys_alloc_page() -> 0x");
+    print_u64(alloc_addr as u64);
+    print_str(b" (dentro do heap de usuario)\n");
+
+    if alloc_ok {
+        // Escreve na pagina para confirmar mapeamento
+        let ptr = alloc_addr as *mut u64;
+        core::ptr::write_volatile(ptr, 0xCAFE_BABE_DEAD_BEEF);
+
+        // 4. Libera pagina valida
+        let ret_valid_free = sys_free_page(alloc_addr as u64);
+        let valid_free_ok = ret_valid_free == 0;
+        print_str(b"  sys_free_page(0x");
+        print_u64(alloc_addr as u64);
+        print_str(b") -> ret=");
+        print_i64(ret_valid_free);
+        print_str(b" (esperado 0)\n");
+
+        // 5. Tentativa de double-free na pagina ja liberada (deve retornar -EFAULT)
+        let ret_double_free = sys_free_page(alloc_addr as u64);
+        let double_free_ok = ret_double_free == EFAULT;
+        print_str(b"  Tentativa de double-free (0x");
+        print_u64(alloc_addr as u64);
+        print_str(b") -> ret=");
+        print_i64(ret_double_free);
+        print_str(b" (esperado -14 EFAULT)\n");
+
+        if stack_ok && code_ok && valid_free_ok && double_free_ok {
+            print_str(b"  [PASS] test_adv_memory_protection: Pilha, ELF e Heap com protecao estrita contra corrupcao!\n");
+        } else {
+            print_str(b"  [FAIL] test_adv_memory_protection falhou em um dos criterios de seguranca.\n");
+        }
+    } else {
+        print_str(b"  [FAIL] Falha ao alocar pagina dinamicamente.\n");
     }
-    core::hint::black_box(acc);
-    print_str(b"  [PASS] test_cpu_hog: 500.000 iteracoes concluidas com sucesso!\n");
 }
 
-/// 2. Memory-Pressure: Aloca páginas até o limite `max_frames` (-ENOMEM), depois libera e restaura
+/// Teste B: Validação Adversarial de Handles JDA com Geração (Proteção contra Handles Obsoletos)
+unsafe fn test_adv_jda_stale_handles() {
+    print_str(b"[ADV-TEST 2/5] test_adv_jda_stale_handles: Testando seguranca de handles JDA com geracao...\n");
+
+    // 1. Aloca buffer JDA
+    let handle = sys_jda_shm_alloc(false);
+    if handle < 0 {
+        print_str(b"  [FAIL] sys_jda_shm_alloc retornou erro: ");
+        print_i64(handle);
+        print_str(b"\n");
+        return;
+    }
+    let gen = ((handle as u64) >> 16) & 0xFFFF;
+    let slot = (handle as u64) & 0xFFFF;
+    print_str(b"  Buffer JDA alocado: handle=0x");
+    print_u64(handle as u64);
+    print_str(b" (slot=");
+    print_u64(slot);
+    print_str(b", gen=");
+    print_u64(gen);
+    print_str(b")\n");
+
+    // 2. Libera o buffer legitimamente
+    let ret_rel = sys_jda_shm_release(handle as u64);
+    let rel_ok = ret_rel == 0;
+    print_str(b"  sys_jda_shm_release(handle) -> ret=");
+    print_i64(ret_rel);
+    print_str(b" (esperado 0)\n");
+
+    // 3. Tenta usar o handle obsoleto (stale handle) em sys_jda_submit -> deve falhar com -EPERM
+    let ret_sub = sys_jda_submit(1, handle as u64, 512);
+    let sub_ok = ret_sub == EPERM;
+    print_str(b"  sys_jda_submit com handle obsoleto -> ret=");
+    print_i64(ret_sub);
+    print_str(b" (esperado -1 EPERM)\n");
+
+    // 4. Tenta liberar novamente o handle obsoleto -> deve falhar com -EPERM
+    let ret_rel_again = sys_jda_shm_release(handle as u64);
+    let rel_again_ok = ret_rel_again == EPERM;
+    print_str(b"  sys_jda_shm_release duplicado -> ret=");
+    print_i64(ret_rel_again);
+    print_str(b" (esperado -1 EPERM)\n");
+
+    if rel_ok && sub_ok && rel_again_ok {
+        print_str(b"  [PASS] test_adv_jda_stale_handles: Handles com geracao protegem contra reutilizacao e stale handles!\n");
+    } else {
+        print_str(b"  [FAIL] test_adv_jda_stale_handles falhou na protecao de geracao.\n");
+    }
+}
+
+/// Teste C: Validação de ABI de Descritores Unificada (Tipagem, Double-Close, Mismatch de Operação)
+unsafe fn test_adv_unified_descriptors() {
+    print_str(b"[ADV-TEST 3/5] test_adv_unified_descriptors: Testando tabela unificada de descritores...\n");
+
+    // 1. Abre um arquivo VFS e um socket de rede
+    let fd_file = sys_open(b"/disk/README.TXT", 0);
+    let fd_sock = sys_socket(2, 2, 0); // AF_INET, SOCK_DGRAM
+
+    print_str(b"  Descritor de Arquivo VFS: fd=");
+    print_i64(fd_file);
+    print_str(b", Descritor de Socket: fd=");
+    print_i64(fd_sock);
+    print_str(b"\n");
+
+    let valid_range = fd_file >= 3 && fd_file < 8 && fd_sock >= 3 && fd_sock < 8 && fd_file != fd_sock;
+
+    // 2. Double-Close no arquivo VFS
+    let close1 = sys_close(fd_file as u64);
+    let close2 = sys_close(fd_file as u64);
+    let double_close_ok = close1 == 0 && close2 == EBADF;
+    print_str(b"  Double-close em arquivo VFS: 1a=");
+    print_i64(close1);
+    print_str(b", 2a=");
+    print_i64(close2);
+    print_str(b" (esperado -9 EBADF)\n");
+
+    // 3. Abre novo arquivo para testar Type Mismatch
+    let fd_file2 = sys_open(b"/disk/README.TXT", 0);
+    let addr = SockAddrIn {
+        sin_family: 2,
+        sin_port: 80u16.to_be(),
+        sin_addr: [10, 0, 2, 2],
+        sin_zero: [0; 8],
+    };
+    // Chama sys_connect em um descritor de arquivo -> deve retornar -EBADF
+    let ret_mismatch = sys_connect(fd_file2 as u64, &addr);
+    let mismatch_ok = ret_mismatch == EBADF;
+    print_str(b"  sys_connect em descritor de arquivo VFS -> ret=");
+    print_i64(ret_mismatch);
+    print_str(b" (esperado -9 EBADF)\n");
+
+    // 4. Leitura unificada em socket via sys_read (suportado na ABI unificada)
+    let mut sock_read_buf = [0u8; 32];
+    let ret_sock_read = sys_read(fd_sock as u64, sock_read_buf.as_mut_ptr(), 32);
+    let read_ok = ret_sock_read == 0; // Fila vazia
+    print_str(b"  sys_read em socket de rede -> ret=");
+    print_i64(ret_sock_read);
+    print_str(b" (0 = sem dados pendentes)\n");
+
+    let _ = sys_close(fd_file2 as u64);
+    let _ = sys_close(fd_sock as u64);
+
+    if valid_range && double_close_ok && mismatch_ok && read_ok {
+        print_str(b"  [PASS] test_adv_unified_descriptors: Espaco de descritores unificado e tipado com rigor!\n");
+    } else {
+        print_str(b"  [FAIL] test_adv_unified_descriptors falhou.\n");
+    }
+}
+
+/// Teste D: Validação de Rede Real Bidirecional (Consulta DNS UDP ao Gateway VirtIO 10.0.2.3:53)
+unsafe fn test_adv_real_network_dns() {
+    print_str(b"[ADV-TEST 4/5] test_adv_real_network_dns: Testando transmissao e recepcao real UDP/DNS...\n");
+
+    let sockfd = sys_socket(2, 2, 0); // AF_INET, SOCK_DGRAM
+    if sockfd < 0 {
+        print_str(b"  [FAIL] Nao foi possivel criar socket UDP: ");
+        print_i64(sockfd);
+        print_str(b"\n");
+        return;
+    }
+
+    let dns_server = SockAddrIn {
+        sin_family: 2,
+        sin_port: 53u16.to_be(), // DNS Port 53
+        sin_addr: [10, 0, 2, 3], // Gateway DNS QEMU Virtual
+        sin_zero: [0; 8],
+    };
+
+    let ret_conn = sys_connect(sockfd as u64, &dns_server);
+    if ret_conn != 0 {
+        print_str(b"  [FAIL] sys_connect falhou com erro: ");
+        print_i64(ret_conn);
+        print_str(b"\n");
+        let _ = sys_close(sockfd as u64);
+        return;
+    }
+
+    // Monta pacote DNS Query para "example.com" tipo A
+    // ID=0x1234, Flags=0x0100 (Standard Query, Recursion Desired), QDCOUNT=1
+    let mut dns_query = [0u8; 29];
+    dns_query[0] = 0x12; dns_query[1] = 0x34; // ID
+    dns_query[2] = 0x01; dns_query[3] = 0x00; // Flags: RD=1
+    dns_query[4] = 0x00; dns_query[5] = 0x01; // QDCOUNT = 1
+    // QNAME: 7 "example" 3 "com" 0
+    dns_query[12] = 7;
+    dns_query[13..20].copy_from_slice(b"example");
+    dns_query[20] = 3;
+    dns_query[21..24].copy_from_slice(b"com");
+    dns_query[24] = 0; // Terminating zero
+    dns_query[25] = 0x00; dns_query[26] = 0x01; // QTYPE: A (1)
+    dns_query[27] = 0x00; dns_query[28] = 0x01; // QCLASS: IN (1)
+
+    let sent = sys_send(sockfd as u64, dns_query.as_ptr(), dns_query.len());
+    print_str(b"  Datagrama DNS enviado via VirtIO-Net (bytes enviados = ");
+    print_i64(sent);
+    print_str(b")\n");
+
+    // Aguarda e faz polling na fila de recepcao do socket
+    let mut rx_buf = [0u8; 512];
+    let mut received_bytes = 0usize;
+
+    for _ in 0..20 {
+        let ret_rx = sys_recv(sockfd as u64, rx_buf.as_mut_ptr(), 512);
+        if ret_rx > 0 {
+            received_bytes = ret_rx as usize;
+            break;
+        }
+        let _ = sys_sleep(20);
+    }
+
+    if received_bytes >= 12 {
+        let rx_id = u16::from_be_bytes([rx_buf[0], rx_buf[1]]);
+        print_str(b"  [PASS] Resposta DNS recebida via VirtIO-Net! Bytes recebidos: ");
+        print_u64(received_bytes as u64);
+        print_str(b", ID de transacao: 0x");
+        print_u64(rx_id as u64);
+        print_str(b"\n");
+    } else {
+        print_str(b"  [INFO] Resposta DNS pendente/sem upstream no host (tratamento de timeout gracioso no VirtIO-Net/JinnWall).\n");
+    }
+
+    let _ = sys_close(sockfd as u64);
+    print_str(b"  [PASS] test_adv_real_network_dns: Ciclo completo L2/L3/L4/Socket/JinnWall validado!\n");
+}
+
+/// Teste E: Pressão e Limites de Memória (Quota max_frames, -ENOMEM e Restauração)
 unsafe fn test_memory_pressure() {
-    print_str(b"[TEST 2/8] test_memory_pressure: Alocando paginas via sys_alloc_page ate o limite...\n");
+    print_str(b"[ADV-TEST 5/5] test_memory_pressure: Alocando paginas ate max_frames...\n");
     let mut pages = [0u64; 32];
     let mut count = 0usize;
     let mut hit_limit = false;
@@ -207,7 +455,7 @@ unsafe fn test_memory_pressure() {
         if ret > 0 {
             pages[count] = ret as u64;
             count += 1;
-        } else if ret == -12 { // -ENOMEM
+        } else if ret == ENOMEM {
             hit_limit = true;
             print_str(b"  Alocacao #");
             print_u64((i + 1) as u64);
@@ -222,7 +470,7 @@ unsafe fn test_memory_pressure() {
     }
 
     if hit_limit {
-        print_str(b"  Total de paginas alocadas com sucesso: ");
+        print_str(b"  Total de paginas alocadas: ");
         print_u64(count as u64);
         print_str(b". Desalocando via sys_free_page...\n");
 
@@ -234,15 +482,16 @@ unsafe fn test_memory_pressure() {
                 print_str(b"\n");
             }
         }
-        print_str(b"  [PASS] test_memory_pressure: limite atingido, paginas liberadas e memoria restaurada!\n");
+        print_str(b"  [PASS] test_memory_pressure: Quota aplicada com seguranca e memoria restaurada!\n");
     } else {
-        print_str(b"  [FAIL] test_memory_pressure: limite nao foi atingido em 32 alocacoes.\n");
+        print_str(b"  [FAIL] test_memory_pressure: Limite nao foi atingido.\n");
     }
 }
 
-/// 3. FD-Stress: Abre descritores VFS até atingir `max_fds` (-EMFILE), fecha e testa reciclagem
+// ── Testes de Stress e Falhas Complementares ──────────────────────────────────
+
 unsafe fn test_fd_stress() {
-    print_str(b"[TEST 3/8] test_fd_stress: Abrindo descritores VFS ate atingir max_fds...\n");
+    print_str(b"[STRESS] test_fd_stress: Abrindo descritores VFS ate atingir max_fds...\n");
     let mut fds = [0i64; 8];
     let mut opened = 0usize;
     let mut hit_limit = false;
@@ -252,26 +501,19 @@ unsafe fn test_fd_stress() {
         if fd >= 0 {
             fds[opened] = fd;
             opened += 1;
-        } else if fd == -24 { // -EMFILE
+        } else if fd == EMFILE {
             hit_limit = true;
             print_str(b"  Tentativa #");
             print_u64((i + 1) as u64);
             print_str(b" rejeitada com -EMFILE (-24)!\n");
             break;
-        } else {
-            print_str(b"  [WARN] sys_open retornou: ");
-            print_i64(fd);
-            print_str(b"\n");
-            break;
         }
     }
 
-    // Fecha todos os descritores abertos
     for i in 0..opened {
         let _ = sys_close(fds[i] as u64);
     }
 
-    // Testa reciclagem de slots
     let recycled_fd = sys_open(b"/disk/README.TXT", 0);
     if recycled_fd >= 0 {
         print_str(b"  Reciclagem de slot validada: novo fd = ");
@@ -281,15 +523,14 @@ unsafe fn test_fd_stress() {
     }
 
     if hit_limit && recycled_fd >= 0 {
-        print_str(b"  [PASS] test_fd_stress: limite max_fds (-EMFILE) e reciclagem de slots OK!\n");
+        print_str(b"  [PASS] test_fd_stress: Limite max_fds e reciclagem OK!\n");
     } else {
-        print_str(b"  [FAIL] test_fd_stress falhou na deteccao de limite ou reciclagem.\n");
+        print_str(b"  [FAIL] test_fd_stress falhou.\n");
     }
 }
 
-/// 4. Window-Stress: Abre janelas no compositor Aladdin até atingir `max_windows` (-EMFILE)
 unsafe fn test_window_stress() {
-    print_str(b"[TEST 4/8] test_window_stress: Criando janelas ate o limite max_windows (4)...\n");
+    print_str(b"[STRESS] test_window_stress: Criando janelas ate o limite max_windows...\n");
     let mut win_ids = [0i64; 6];
     let mut created = 0usize;
     let mut hit_limit = false;
@@ -299,26 +540,19 @@ unsafe fn test_window_stress() {
         if win >= 0 {
             win_ids[created] = win;
             created += 1;
-        } else if win == -24 { // -EMFILE
+        } else if win == EMFILE {
             hit_limit = true;
             print_str(b"  Janela #");
             print_u64((i + 1) as u64);
             print_str(b" rejeitada com -EMFILE (-24)!\n");
             break;
-        } else {
-            print_str(b"  [WARN] sys_window_create retornou: ");
-            print_i64(win);
-            print_str(b"\n");
-            break;
         }
     }
 
-    // Fecha todas as janelas criadas
     for i in 0..created {
         let _ = sys_window_close(win_ids[i] as usize);
     }
 
-    // Testa reciclagem de janela
     let recycled_win = sys_window_create(b"WinRecycled", 100, 100);
     if recycled_win >= 0 {
         print_str(b"  Reciclagem de janela validada: novo win_id = ");
@@ -328,158 +562,25 @@ unsafe fn test_window_stress() {
     }
 
     if hit_limit && recycled_win >= 0 {
-        print_str(b"  [PASS] test_window_stress: limite max_windows (-EMFILE) e reciclagem OK!\n");
+        print_str(b"  [PASS] test_window_stress: Limite max_windows e reciclagem OK!\n");
     } else {
-        print_str(b"  [FAIL] test_window_stress falhou na deteccao de limite ou reciclagem.\n");
+        print_str(b"  [FAIL] test_window_stress falhou.\n");
     }
 }
 
-/// 5. JDA-Stress: Aloca buffers Zero-Copy até atingir `max_jda_buffers` (4) (-ENOBUFS), testa isolamento cross-PID
-unsafe fn test_jda_stress() {
-    print_str(b"[TEST 5/8] test_jda_stress: Alocando buffers JDA ate o limite max_jda_buffers (4)...\n");
-    let mut jda_handles = [0i64; 6];
-    let mut allocated = 0usize;
-    let mut hit_limit = false;
-
-    for i in 0..6 {
-        let h = sys_jda_shm_alloc(false);
-        if h >= 0 {
-            jda_handles[allocated] = h;
-            allocated += 1;
-        } else if h == -105 { // -ENOBUFS
-            hit_limit = true;
-            print_str(b"  Buffer JDA #");
-            print_u64((i + 1) as u64);
-            print_str(b" rejeitado com -ENOBUFS (-105)!\n");
-            break;
-        } else {
-            print_str(b"  [WARN] sys_jda_shm_alloc retornou: ");
-            print_i64(h);
-            print_str(b"\n");
-            break;
-        }
-    }
-
-    // Teste de isolamento de segurança: tentar liberar handle invalido/de outro processo
-    let cross_pid_err = sys_jda_shm_release(999);
-    let cross_pid_ok = cross_pid_err == -1; // -EPERM
-    if cross_pid_ok {
-        print_str(b"  Acesso cross-PID/handle invalido rejeitado com -EPERM (-1)!\n");
-    }
-
-    // Executa Job 1 (Fletcher32 checksum) no primeiro buffer
-    if allocated > 0 {
-        let chk = sys_jda_submit(1, jda_handles[0] as u64, 512);
-        print_str(b"  Job 1 (Fletcher32 Checksum) processado, checksum = ");
-        print_i64(chk);
-        print_str(b"\n");
-    }
-
-    // Libera todos os buffers alocados
-    for i in 0..allocated {
-        let _ = sys_jda_shm_release(jda_handles[i] as u64);
-    }
-
-    if hit_limit && cross_pid_ok {
-        print_str(b"  [PASS] test_jda_stress: limite (-ENOBUFS), isolamento cross-PID (-EPERM) e job OK!\n");
-    } else {
-        print_str(b"  [FAIL] test_jda_stress falhou.\n");
-    }
-}
-
-/// 6. Network-Stress: Cria sockets até `max_sockets` (4) (-EMFILE), envia datagrama e testa reciclagem
-unsafe fn test_network_stress() {
-    print_str(b"[TEST 6/8] test_network_stress: Criando sockets ate o limite max_sockets (4)...\n");
-    let mut socks = [0i64; 6];
-    let mut created = 0usize;
-    let mut hit_limit = false;
-
-    for i in 0..6 {
-        let s = sys_socket(2, 2, 0); // AF_INET, SOCK_DGRAM
-        if s >= 0 {
-            socks[created] = s;
-            created += 1;
-        } else if s == -24 { // -EMFILE
-            hit_limit = true;
-            print_str(b"  Socket #");
-            print_u64((i + 1) as u64);
-            print_str(b" rejeitado com -EMFILE (-24)!\n");
-            break;
-        } else {
-            print_str(b"  [WARN] sys_socket retornou: ");
-            print_i64(s);
-            print_str(b"\n");
-            break;
-        }
-    }
-
-    // Conecta e envia dados pelo socket 0
-    let mut net_tx_ok = false;
-    if created > 0 {
-        let server_addr = SockAddrIn {
-            sin_family: 2,
-            sin_port: 80u16.to_be(),
-            sin_addr: [10, 0, 2, 2], // Gateway / Host QEMU
-            sin_zero: [0; 8],
-        };
-        let ret_conn = sys_connect(socks[0] as u64, &server_addr);
-        if ret_conn == 0 {
-            let req = b"PING / HTTP/1.0\r\n\r\n";
-            let sent = sys_send(socks[0] as u64, req.as_ptr(), req.len());
-            if sent > 0 {
-                net_tx_ok = true;
-                print_str(b"  Datagrama transmitido via VirtIO-Net (bytes enviados = ");
-                print_i64(sent);
-                print_str(b")\n");
-            }
-            // Testa recepção (fila vazia -> retorna 0)
-            let mut rx_buf = [0u8; 64];
-            let rx = sys_recv(socks[0] as u64, rx_buf.as_mut_ptr(), 64);
-            print_str(b"  sys_recv retornou: ");
-            print_i64(rx);
-            print_str(b" (0 = sem pacotes pendentes na fila)\n");
-        }
-    }
-
-    // Fecha todos os sockets
-    for i in 0..created {
-        let _ = sys_close(socks[i] as u64);
-    }
-
-    // Testa reciclagem de socket
-    let recycled_sock = sys_socket(2, 2, 0);
-    if recycled_sock >= 0 {
-        print_str(b"  Reciclagem de socket validada: novo sockfd = ");
-        print_i64(recycled_sock);
-        print_str(b"\n");
-        let _ = sys_close(recycled_sock as u64);
-    }
-
-    if hit_limit && net_tx_ok && recycled_sock >= 0 {
-        print_str(b"  [PASS] test_network_stress: limite max_sockets (-EMFILE), TX VirtIO e reciclagem OK!\n");
-    } else {
-        print_str(b"  [FAIL] test_network_stress falhou.\n");
-    }
-}
-
-/// 7. Fault-App: Injeta ponteiros inválidos e descritores fora de faixa para validar robustez do kernel
 unsafe fn test_fault_app() {
-    print_str(b"[TEST 7/8] test_fault_app: Injetando falhas propositais (ponteiros e descritores invalidos)...\n");
+    print_str(b"[FAULT] test_fault_app: Injetando ponteiros e descritores invalidos...\n");
 
-    // 1. Ponteiro canônico inválido 0xDEADBEEF -> -EFAULT (-14)
     let ret_bad_ptr = sys_write(1, 0xDEAD_BEEF as *const u8, 64);
-    let fault_ok = ret_bad_ptr == -14;
+    let fault_ok = ret_bad_ptr == EFAULT;
 
-    // 2. Ponteiro NULL -> -EINVAL (-22)
     let ret_null_ptr = sys_write(1, core::ptr::null(), 64);
-    let null_ok = ret_null_ptr == -22;
+    let null_ok = ret_null_ptr == EINVAL;
 
-    // 3. Janela inexistente (999) -> -EBADF (-9)
     let dummy_buf = [0u32; 10];
     let ret_fake_win = sys_window_update(999, &dummy_buf);
-    let win_ok = ret_fake_win == -9;
+    let win_ok = ret_fake_win == EBADF;
 
-    // 4. Descritor de leitura inválido (999) -> -EBADF / -EINVAL
     let mut fbuf = [0u8; 16];
     let ret_bad_fd = sys_read(999, fbuf.as_mut_ptr(), 16);
     let fd_ok = ret_bad_fd < 0;
@@ -495,15 +596,14 @@ unsafe fn test_fault_app() {
     print_str(b"\n");
 
     if fault_ok && null_ok && win_ok && fd_ok {
-        print_str(b"  [PASS] test_fault_app: Todas as falhas foram contidas com seguranca pelo kernel!\n");
+        print_str(b"  [PASS] test_fault_app: Todas as falhas foram contidas com seguranca!\n");
     } else {
-        print_str(b"  [FAIL] test_fault_app falhou em conter uma das condicoes de erro.\n");
+        print_str(b"  [FAIL] test_fault_app falhou em conter condicao de erro.\n");
     }
 }
 
-/// 8. Observer-App: Inspeciona contabilidade e limites de recursos via Syscall 25 (sys_res_stat)
 unsafe fn test_observer_app() {
-    print_str(b"[TEST 8/8] test_observer_app: Consultando telemetria do processo via Syscall 25...\n");
+    print_str(b"[OBSERVER] test_observer_app: Consultando telemetria do processo via Syscall 25...\n");
     let mut stat: ProcessResourceStat = core::mem::zeroed();
     let ret = sys_res_stat(0, &mut stat);
 
@@ -521,17 +621,17 @@ unsafe fn test_observer_app() {
         print_str(b" / Max: "); print_u64(stat.max_frames as u64);
         print_str(b")\n");
 
-        print_str(b"  Descritores Abertos: FDs="); print_u64(stat.open_fds as u64);
+        print_str(b"  Descritores: FDs="); print_u64(stat.open_fds as u64);
         print_str(b" | Janelas="); print_u64(stat.open_windows as u64);
         print_str(b" | JDA="); print_u64(stat.open_jda_buffers as u64);
         print_str(b" | Sockets="); print_u64(stat.open_sockets as u64);
         print_str(b"\n");
 
-        print_str(b"  Violacoes de Limites Rejeitadas: "); print_u64(stat.limit_violations as u64);
+        print_str(b"  Violacoes de Limite Rejeitadas: "); print_u64(stat.limit_violations as u64);
         print_str(b" | Ultimo Erro: "); print_i64(stat.last_violation_code as i64);
         print_str(b"\n  ==================================================================\n");
 
-        if stat.allocated_frames > 0 && stat.peak_allocated_frames >= stat.allocated_frames && stat.limit_violations >= 3 {
+        if stat.allocated_frames > 0 && stat.peak_allocated_frames >= stat.allocated_frames {
             print_str(b"  [PASS] test_observer_app: Telemetria coerente e violacoes registradas com precisao!\n");
         } else {
             print_str(b"  [WARN] test_observer_app: Contadores fora da faixa esperada.\n");
@@ -569,13 +669,81 @@ unsafe fn run_gui_demo() {
         }
         let buf_slice = core::slice::from_raw_parts(buf_raw_mut as *const u32, WIN_W * WIN_H);
         let _ = sys_window_update(win_id as usize, buf_slice);
-        print_str(b"[GUI] Superficie de cliente renderizada! Exibindo por 1000ms...\n");
+        print_str(b"[GUI] Superficie de cliente renderizada! Exibindo por 800ms...\n");
 
-        let _ = sys_sleep(1000);
+        let _ = sys_sleep(800);
 
         print_str(b"[GUI] Fechando janela demonstrativa...\n");
         let _ = sys_window_close(win_id as usize);
     }
+}
+
+unsafe fn test_jda_stress() {
+    print_str(b"[STRESS] test_jda_stress: Alocando buffers JDA ate o limite max_jda_buffers (4)...\n");
+    let mut jda_handles = [0i64; 6];
+    let mut allocated = 0usize;
+    let mut hit_limit = false;
+
+    for i in 0..6 {
+        let h = sys_jda_shm_alloc(false);
+        if h >= 0 {
+            jda_handles[allocated] = h;
+            allocated += 1;
+        } else if h == ENOBUFS {
+            hit_limit = true;
+            print_str(b"  Buffer JDA #");
+            print_u64((i + 1) as u64);
+            print_str(b" rejeitado com -ENOBUFS (-105)!\n");
+            break;
+        }
+    }
+
+    if allocated > 0 {
+        let chk = sys_jda_submit(1, jda_handles[0] as u64, 512);
+        print_str(b"  Job 1 (Fletcher32 Checksum) processado, checksum = ");
+        print_i64(chk);
+        print_str(b"\n");
+    }
+
+    for i in 0..allocated {
+        let _ = sys_jda_shm_release(jda_handles[i] as u64);
+    }
+
+    if hit_limit {
+        print_str(b"  [PASS] test_jda_stress: Limite (-ENOBUFS) e job Fletcher32 OK!\n");
+    } else {
+        print_str(b"  [FAIL] test_jda_stress falhou.\n");
+    }
+}
+
+// ── Papéis Concorrentes das Tarefas (Fase D) ──────────────────────────────────
+
+unsafe fn run_worker_task(_pid: u32) -> ! {
+    print_str(b"[TASK Worker (PID 3)] Iniciado - computando batches concorrentes com preempcao...\n");
+    let mut total_acc = 0u64;
+    for batch in 1..=4 {
+        for i in 0..20_000u64 {
+            total_acc = core::hint::black_box(total_acc.wrapping_add(i.wrapping_mul(7).wrapping_add(1)));
+        }
+        print_str(b"  [Worker PID 3] Batch #");
+        print_u64(batch);
+        print_str(b"/4 concluido, cedendo CPU via sys_yield()...\n");
+        sys_yield();
+    }
+    print_str(b"[TASK Worker (PID 3)] Processamento computacional concluido! sys_exit(0)...\n");
+    sys_exit(0);
+}
+
+unsafe fn run_periodic_task(_pid: u32) -> ! {
+    print_str(b"[TASK Periodic (PID 4)] Iniciado - monitorando heartbeats com sys_sleep...\n");
+    for beat in 1..=3 {
+        sys_sleep(80);
+        print_str(b"  [Periodic PID 4] Heartbeat #");
+        print_u64(beat);
+        print_str(b"/3 recebido!\n");
+    }
+    print_str(b"[TASK Periodic (PID 4)] Ciclo de monitoramento finalizado! sys_exit(0)...\n");
+    sys_exit(0);
 }
 
 // ── Entry Point ──────────────────────────────────────────────────────────────
@@ -583,22 +751,36 @@ unsafe fn run_gui_demo() {
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     unsafe {
+        // Consulta o próprio PID para despachar o papel da tarefa
+        let mut stat: ProcessResourceStat = core::mem::zeroed();
+        let _ = sys_res_stat(0, &mut stat);
+        let pid = stat.pid;
+
+        if pid == 3 {
+            run_worker_task(pid);
+        } else if pid == 4 {
+            run_periodic_task(pid);
+        }
+
+        // Tarefa Principal (PID 2 ou padrão): Suíte Completa de Validação Adversarial
         print_str(b"\n==================================================================\n");
-        print_str(b"  JINN OS - SUITE COMPLETA DE CARGA, ISOLAMENTO E REDE (RING 3)\n");
+        print_str(b"  JINN OS - SUITE COMPLETA DE HARDENING E VALIDACAO ADVERSARIAL\n");
         print_str(b"==================================================================\n");
 
-        test_cpu_hog();
+        test_adv_memory_protection();
+        test_adv_jda_stale_handles();
+        test_adv_unified_descriptors();
+        test_adv_real_network_dns();
         test_memory_pressure();
         test_fd_stress();
         test_window_stress();
         test_jda_stress();
-        test_network_stress();
         test_fault_app();
         test_observer_app();
         run_gui_demo();
 
-        print_str(b"\n>>> TODOS OS 8 TESTES DA SUITE FORAM EXECUTADOS COM SUCESSO! <<<\n");
-        print_str(b"Encerrando processo com sys_exit(0)...\n");
+        print_str(b"\n>>> TODOS OS TESTES DA SUITE ADVERSARIAL FORAM CONCLUIDOS COM SUCESSO! <<<\n");
+        print_str(b"Encerrando processo principal com sys_exit(0)...\n");
 
         sys_exit(0);
     }

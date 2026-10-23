@@ -36,12 +36,25 @@ impl PhysicalPageBuffer {
 
 pub struct SharedBufferPool {
     buffers: [PhysicalPageBuffer; MAX_SHARED_BUFFERS],
+    generations: [u16; MAX_SHARED_BUFFERS],
 }
 
 impl SharedBufferPool {
     pub const fn new() -> Self {
         Self {
             buffers: [PhysicalPageBuffer::empty(); MAX_SHARED_BUFFERS],
+            generations: [1; MAX_SHARED_BUFFERS],
+        }
+    }
+
+    /// Valida e decodifica um handle (geração de 16 bits + índice de 16 bits)
+    fn decode_handle(&self, handle: usize) -> Option<usize> {
+        let slot = handle & 0xFFFF;
+        let gen = ((handle >> 16) & 0xFFFF) as u16;
+        if slot < MAX_SHARED_BUFFERS && self.buffers[slot].is_allocated && self.generations[slot] == gen {
+            Some(slot)
+        } else {
+            None
         }
     }
 
@@ -51,6 +64,7 @@ impl SharedBufferPool {
 
         for i in 0..MAX_SHARED_BUFFERS {
             if !self.buffers[i].is_allocated {
+                let gen = self.generations[i];
                 self.buffers[i] = PhysicalPageBuffer {
                     id: i,
                     frame_phys_addr: frame as u64,
@@ -60,7 +74,8 @@ impl SharedBufferPool {
                     owner_pid,
                     is_allocated: true,
                 };
-                return Ok(i);
+                let handle = ((gen as usize) << 16) | (i & 0xFFFF);
+                return Ok(handle);
             }
         }
 
@@ -70,28 +85,28 @@ impl SharedBufferPool {
 
     /// Incrementa a contagem de referências ao vincular o buffer a um novo nó ou processo
     pub fn retain(&mut self, handle: usize) -> Result<u64, &'static str> {
-        if handle >= MAX_SHARED_BUFFERS || !self.buffers[handle].is_allocated {
-            return Err("Descritor de buffer compartilhado invalido");
-        }
-        self.buffers[handle].ref_count += 1;
-        Ok(self.buffers[handle].frame_phys_addr)
+        let slot = self.decode_handle(handle).ok_or("Descritor de buffer compartilhado invalido ou obsoleto")?;
+        self.buffers[slot].ref_count += 1;
+        Ok(self.buffers[slot].frame_phys_addr)
     }
 
     /// Decrementa a contagem de referências. Libera o frame físico se atingir 0
     pub fn release(&mut self, caller_pid: usize, handle: usize) -> Result<(), &'static str> {
-        if handle >= MAX_SHARED_BUFFERS || !self.buffers[handle].is_allocated {
-            return Err("Descritor de buffer compartilhado invalido");
-        }
-        if caller_pid != 0 && self.buffers[handle].owner_pid != caller_pid {
+        let slot = self.decode_handle(handle).ok_or("Descritor de buffer compartilhado invalido ou obsoleto")?;
+        if caller_pid != 0 && self.buffers[slot].owner_pid != caller_pid {
             return Err("Permissao negada: buffer pertence a outro processo");
         }
 
-        if self.buffers[handle].ref_count > 1 {
-            self.buffers[handle].ref_count -= 1;
+        if self.buffers[slot].ref_count > 1 {
+            self.buffers[slot].ref_count -= 1;
         } else {
             // Última referência: devolve o frame físico ao alocador de memória
-            memory::free_frame(self.buffers[handle].frame_phys_addr);
-            self.buffers[handle] = PhysicalPageBuffer::empty();
+            memory::free_frame(self.buffers[slot].frame_phys_addr);
+            self.buffers[slot] = PhysicalPageBuffer::empty();
+            self.generations[slot] = self.generations[slot].wrapping_add(1);
+            if self.generations[slot] == 0 {
+                self.generations[slot] = 1;
+            }
         }
 
         Ok(())
@@ -104,18 +119,19 @@ impl SharedBufferPool {
             if self.buffers[i].is_allocated && self.buffers[i].owner_pid == pid {
                 memory::free_frame(self.buffers[i].frame_phys_addr);
                 self.buffers[i] = PhysicalPageBuffer::empty();
+                self.generations[i] = self.generations[i].wrapping_add(1);
+                if self.generations[i] == 0 {
+                    self.generations[i] = 1;
+                }
             }
         }
     }
 
     /// Obtém o endereço físico do buffer validando a propriedade de `caller_pid`
     pub fn get_phys_addr(&self, caller_pid: usize, handle: usize) -> Option<u64> {
-        if handle < MAX_SHARED_BUFFERS && self.buffers[handle].is_allocated {
-            if caller_pid == 0 || self.buffers[handle].owner_pid == caller_pid {
-                Some(self.buffers[handle].frame_phys_addr)
-            } else {
-                None
-            }
+        let slot = self.decode_handle(handle)?;
+        if caller_pid == 0 || self.buffers[slot].owner_pid == caller_pid {
+            Some(self.buffers[slot].frame_phys_addr)
         } else {
             None
         }
@@ -130,10 +146,8 @@ impl SharedBufferPool {
         start_block: u64,
         count: usize,
     ) -> Result<(), &'static str> {
-        if handle >= MAX_SHARED_BUFFERS || !self.buffers[handle].is_allocated {
-            return Err("Descritor de buffer compartilhado invalido");
-        }
-        let phys = self.buffers[handle].frame_phys_addr;
+        let slot = self.decode_handle(handle).ok_or("Descritor de buffer compartilhado invalido ou obsoleto")?;
+        let phys = self.buffers[slot].frame_phys_addr;
         let total_bytes = count * dev.block_size();
         if total_bytes > 4096 {
             return Err("Quantidade de blocos excede a capacidade do frame de 4 KiB");
@@ -152,10 +166,8 @@ impl SharedBufferPool {
         start_block: u64,
         count: usize,
     ) -> Result<(), &'static str> {
-        if handle >= MAX_SHARED_BUFFERS || !self.buffers[handle].is_allocated {
-            return Err("Descritor de buffer compartilhado invalido");
-        }
-        let phys = self.buffers[handle].frame_phys_addr;
+        let slot = self.decode_handle(handle).ok_or("Descritor de buffer compartilhado invalido ou obsoleto")?;
+        let phys = self.buffers[slot].frame_phys_addr;
         let total_bytes = count * dev.block_size();
         if total_bytes > 4096 {
             return Err("Quantidade de blocos excede a capacidade do frame de 4 KiB");

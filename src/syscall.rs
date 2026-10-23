@@ -209,18 +209,30 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
             let pid = scheduler::current_pid();
             let sched = scheduler::get();
             if let Some(Some(task)) = sched.tasks.get_mut(pid) {
-                if let Some(fd_entry) = &mut task.fds[fd] {
-                    if let Ok(p_str) = core::str::from_utf8(&fd_entry.path[..fd_entry.path_len]) {
-                        let slice = unsafe { core::slice::from_raw_parts(buf, len) };
-                        match crate::vfs::write(p_str, fd_entry.vfs_handle, fd_entry.offset, slice) {
-                            Ok(n) => {
-                                fd_entry.offset += n as u64;
-                                n as isize
+                if let Some(desc) = &mut task.fds[fd] {
+                    match desc {
+                        scheduler::TaskDescriptor::File(fd_entry) => {
+                            if let Ok(p_str) = core::str::from_utf8(&fd_entry.path[..fd_entry.path_len]) {
+                                let slice = unsafe { core::slice::from_raw_parts(buf, len) };
+                                match crate::vfs::write(p_str, fd_entry.vfs_handle, fd_entry.offset, slice) {
+                                    Ok(n) => {
+                                        fd_entry.offset += n as u64;
+                                        n as isize
+                                    }
+                                    Err(_) => EPERM,
+                                }
+                            } else {
+                                EBADF
                             }
-                            Err(_) => EPERM,
                         }
-                    } else {
-                        EBADF
+                        scheduler::TaskDescriptor::Socket(sock_idx) => {
+                            let sock_id = *sock_idx;
+                            let slice = unsafe { core::slice::from_raw_parts(buf, len) };
+                            match crate::net::socket::send_socket(pid, sock_id, slice) {
+                                Ok(n) => n as isize,
+                                Err(e) => e,
+                            }
+                        }
                     }
                 } else {
                     EBADF
@@ -234,7 +246,7 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
 }
 
 /// `read(fd, buf, len)` — Read up to `len` bytes into `buf`.
-/// fd 0 = stdin (keyboard buffer), fd 3..7 = VFS files.
+/// fd 0 = stdin (keyboard buffer), fd 3..7 = VFS files ou sockets de rede.
 fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
     if buf.is_null() || len == 0 { return EINVAL; }
 
@@ -260,18 +272,30 @@ fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
             let pid = scheduler::current_pid();
             let sched = scheduler::get();
             if let Some(Some(task)) = sched.tasks.get_mut(pid) {
-                if let Some(fd_entry) = &mut task.fds[fd] {
-                    if let Ok(p_str) = core::str::from_utf8(&fd_entry.path[..fd_entry.path_len]) {
-                        let slice = unsafe { core::slice::from_raw_parts_mut(buf, len) };
-                        match crate::vfs::read(p_str, fd_entry.vfs_handle, fd_entry.offset, slice) {
-                            Ok(n) => {
-                                fd_entry.offset += n as u64;
-                                n as isize
+                if let Some(desc) = &mut task.fds[fd] {
+                    match desc {
+                        scheduler::TaskDescriptor::File(fd_entry) => {
+                            if let Ok(p_str) = core::str::from_utf8(&fd_entry.path[..fd_entry.path_len]) {
+                                let slice = unsafe { core::slice::from_raw_parts_mut(buf, len) };
+                                match crate::vfs::read(p_str, fd_entry.vfs_handle, fd_entry.offset, slice) {
+                                    Ok(n) => {
+                                        fd_entry.offset += n as u64;
+                                        n as isize
+                                    }
+                                    Err(_) => EBADF,
+                                }
+                            } else {
+                                EBADF
                             }
-                            Err(_) => EBADF,
                         }
-                    } else {
-                        EBADF
+                        scheduler::TaskDescriptor::Socket(sock_idx) => {
+                            let sock_id = *sock_idx;
+                            let slice = unsafe { core::slice::from_raw_parts_mut(buf, len) };
+                            match crate::net::socket::recv_socket(pid, sock_id, slice) {
+                                Ok(n) => n as isize,
+                                Err(e) => e,
+                            }
+                        }
                     }
                 } else {
                     EBADF
@@ -320,13 +344,13 @@ fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> isize {
 
         for fd in 3..scheduler::MAX_TASK_FDS {
             if task.fds[fd].is_none() {
-                task.fds[fd] = Some(scheduler::TaskFileDescriptor {
+                task.fds[fd] = Some(scheduler::TaskDescriptor::File(scheduler::TaskFileDescriptor {
                     vfs_handle,
                     path: path_buf,
                     path_len,
                     offset: 0,
                     flags,
-                });
+                }));
                 return fd as isize;
             }
         }
@@ -339,30 +363,33 @@ fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> isize {
     }
 }
 
-/// `close(fd)` — Close a previously opened file or socket descriptor.
+/// `close(fd)` — Close a previously opened file or socket descriptor from the unified table.
 fn sys_close(fd: usize) -> isize {
-    let pid = scheduler::current_pid();
-
-    // 1. Tenta fechar como socket de rede pertencente ao processo
-    if let Ok(()) = crate::net::socket::close_socket(pid, fd) {
-        return 0;
-    }
-
-    // 2. Se não for socket, valida faixa de descritores de arquivo VFS
     if fd < 3 || fd >= scheduler::MAX_TASK_FDS {
         return EBADF;
     }
 
+    let pid = scheduler::current_pid();
     let sched = scheduler::get();
     if let Some(Some(task)) = sched.tasks.get_mut(pid) {
-        if let Some(entry) = task.fds[fd].take() {
-            task.resources.close_fd();
-            if let Ok(p_str) = core::str::from_utf8(&entry.path[..entry.path_len]) {
-                let _ = crate::vfs::close(p_str, entry.vfs_handle);
+        if let Some(desc) = task.fds[fd].take() {
+            match desc {
+                scheduler::TaskDescriptor::File(entry) => {
+                    task.resources.close_fd();
+                    if let Ok(p_str) = core::str::from_utf8(&entry.path[..entry.path_len]) {
+                        let _ = crate::vfs::close(p_str, entry.vfs_handle);
+                    }
+                    0
+                }
+                scheduler::TaskDescriptor::Socket(sock_idx) => {
+                    match crate::net::socket::close_socket(pid, sock_idx) {
+                        Ok(()) => 0,
+                        Err(e) => e,
+                    }
+                }
             }
-            0
         } else {
-            EBADF
+            EBADF // Previne double-close e descritor não alocado
         }
     } else {
         EBADF
@@ -425,31 +452,63 @@ fn sys_ipc_recv(buf: *mut u8, len: usize) -> isize {
 }
 
 /// `alloc_page()` — Allocate one physical 4 KiB frame for the process.
-/// In Ring 3, maps the frame into the task's user space (heap base: 0x0000_1000_0000)
-/// and enforces `max_frames` limit.
+/// In Ring 3, maps the frame into the task's user space (heap base: USER_HEAP_BASE)
+/// and enforces `max_frames` limit and dynamic page metadata registration.
 fn sys_alloc_page() -> isize {
     let pid = scheduler::current_pid();
     let sched = scheduler::get();
     if let Some(Some(task)) = sched.tasks.get_mut(pid) {
+        // 1. Quota de frames verificada ANTES de comprometer o recurso
         if let Err(e) = task.resources.check_and_alloc_frames(1, &task.limits) {
             return e;
         }
+
+        // 2. Procura um slot livre no vetor de páginas dinâmicas da tarefa
+        let mut slot_idx = None;
+        for (i, p) in task.dynamic_pages.iter().enumerate() {
+            if *p == 0 {
+                slot_idx = Some(i);
+                break;
+            }
+        }
+        let slot_idx = match slot_idx {
+            Some(i) => i,
+            None => {
+                task.resources.free_frames(1);
+                return ENOMEM;
+            }
+        };
+
         match memory::alloc_frame() {
             Some(phys) => {
                 if task.ring == scheduler::Ring::User {
                     let pml4 = crate::memory::paging::phys_to_virt(task.pml4_phys) as *mut crate::memory::paging::PageTable;
-                    let mut vaddr = 0x0000_1000_0000;
-                    while vaddr < 0x0000_2000_0000 {
+                    // Procura endereço virtual livre estritamente na faixa USER_HEAP_BASE..USER_HEAP_MAX
+                    let mut vaddr = scheduler::USER_HEAP_BASE;
+                    let mut found = false;
+                    while vaddr < scheduler::USER_HEAP_MAX {
                         if unsafe { crate::memory::paging::lookup_page(pml4, vaddr) }.is_none() {
+                            found = true;
                             break;
                         }
                         vaddr += 4096;
                     }
+
+                    if !found {
+                        // Rollback integral se a faixa de heap virtual estiver esgotada
+                        memory::free_frame(phys);
+                        task.resources.free_frames(1);
+                        return ENOMEM;
+                    }
+
                     unsafe {
                         crate::memory::paging::map_page(pml4, vaddr, phys, crate::memory::paging::USER_RW);
                         let virt_ptr = crate::memory::paging::phys_to_virt(phys) as *mut u8;
                         core::ptr::write_bytes(virt_ptr, 0, 4096);
                     }
+
+                    // Registra a propriedade da página dinâmica na tarefa
+                    task.dynamic_pages[slot_idx] = vaddr;
                     vaddr as isize
                 } else {
                     phys as isize
@@ -466,18 +525,46 @@ fn sys_alloc_page() -> isize {
 }
 
 /// `free_page(addr)` — Free a previously allocated page or frame.
+/// Em Ring 3, exige validação de propriedade e alinhamento, rejeitando páginas
+/// pertencentes à pilha, ELF, kernel ou já liberadas (proteção contra double-free).
 fn sys_free_page(addr: u64) -> isize {
+    // 1. Alinhamento obrigatório de 4 KiB
+    if (addr & 0xFFF) != 0 {
+        return EINVAL;
+    }
+
     let pid = scheduler::current_pid();
     let sched = scheduler::get();
     if let Some(Some(task)) = sched.tasks.get_mut(pid) {
         if task.ring == scheduler::Ring::User {
+            // 2. Rejeição estrita de faixa: deve pertencer exclusivamente à região do heap dinâmico
+            if addr < scheduler::USER_HEAP_BASE || addr >= scheduler::USER_HEAP_MAX {
+                return EFAULT; // Rejeita pilha, ELF, kernel e endereços arbitrários
+            }
+
+            // 3. Validação de PROPRIEDADE: verifica se o endereço está registrado no vetor de páginas dinâmicas
+            let mut found_slot = None;
+            for (i, &p) in task.dynamic_pages.iter().enumerate() {
+                if p == addr {
+                    found_slot = Some(i);
+                    break;
+                }
+            }
+
+            let slot_idx = match found_slot {
+                Some(i) => i,
+                None => return EFAULT, // Página não alocada ou já liberada (proteção contra double-free)
+            };
+
             let pml4 = crate::memory::paging::phys_to_virt(task.pml4_phys) as *mut crate::memory::paging::PageTable;
             if let Some((phys, _)) = unsafe { crate::memory::paging::lookup_page(pml4, addr) } {
                 unsafe { crate::memory::paging::unmap_page(pml4, addr); }
                 memory::free_frame(phys);
-                task.resources.free_frames(1);
+                task.dynamic_pages[slot_idx] = 0; // Remove do registro de páginas dinâmicas
+                task.resources.free_frames(1);    // Atualiza contabilidade
                 0
             } else {
+                task.dynamic_pages[slot_idx] = 0;
                 EFAULT
             }
         } else {
@@ -763,18 +850,48 @@ fn sys_res_stat(target_pid: usize, stat_buf_ptr: *mut crate::resources::ProcessR
 
 // ── Syscalls de Rede e Sockets (Camadas 3 e 4) ────────────────────────────────
 
-/// `sys_socket(domain, type, protocol)` — Cria um endpoint de comunicação de rede.
+/// `sys_socket(domain, type, protocol)` — Cria um endpoint de comunicação de rede e associa a um descritor unificado.
 fn sys_socket(domain: u32, sock_type: u32, protocol: u32) -> isize {
     let pid = scheduler::current_pid();
-    match crate::net::socket::create_socket(pid, domain, sock_type, protocol) {
-        Ok(fd) => fd as isize,
-        Err(e) => e,
+    let sock_idx = match crate::net::socket::create_socket(pid, domain, sock_type, protocol) {
+        Ok(idx) => idx,
+        Err(e) => return e,
+    };
+
+    let sched = scheduler::get();
+    if let Some(Some(task)) = sched.tasks.get_mut(pid) {
+        for fd in 3..scheduler::MAX_TASK_FDS {
+            if task.fds[fd].is_none() {
+                task.fds[fd] = Some(scheduler::TaskDescriptor::Socket(sock_idx));
+                return fd as isize;
+            }
+        }
+        let _ = crate::net::socket::close_socket(pid, sock_idx);
+        EMFILE
+    } else {
+        let _ = crate::net::socket::close_socket(pid, sock_idx);
+        EPERM
     }
 }
 
-/// `sys_connect(sockfd, addr_ptr, addrlen)` — Conecta a um IP e porta remotos.
-fn sys_connect(sockfd: usize, addr_ptr: *const u8, addrlen: usize) -> isize {
+/// `sys_connect(fd, addr_ptr, addrlen)` — Conecta a um IP e porta remotos usando descritor unificado.
+fn sys_connect(fd: usize, addr_ptr: *const u8, addrlen: usize) -> isize {
+    if fd < 3 || fd >= scheduler::MAX_TASK_FDS {
+        return EBADF;
+    }
     let pid = scheduler::current_pid();
+    let sock_idx = {
+        let sched = scheduler::get();
+        if let Some(Some(task)) = sched.tasks.get(pid) {
+            match task.fds[fd] {
+                Some(scheduler::TaskDescriptor::Socket(idx)) => idx,
+                _ => return EBADF,
+            }
+        } else {
+            return EPERM;
+        }
+    };
+
     let sock_addr_size = core::mem::size_of::<crate::net::socket::SockAddrIn>();
     if addr_ptr.is_null() || addrlen < sock_addr_size {
         return EINVAL;
@@ -786,7 +903,7 @@ fn sys_connect(sockfd: usize, addr_ptr: *const u8, addrlen: usize) -> isize {
     }
     let addr = unsafe { &*(addr_ptr as *const crate::net::socket::SockAddrIn) };
     let remote_port = u16::from_be(addr.sin_port);
-    match crate::net::socket::connect_socket(pid, sockfd, addr.sin_addr, remote_port) {
+    match crate::net::socket::connect_socket(pid, sock_idx, addr.sin_addr, remote_port) {
         Ok(()) => 0,
         Err(e) => e,
     }
@@ -807,9 +924,24 @@ fn sys_accept(_sockfd: usize, _addr_ptr: *mut u8, _addrlen: usize) -> isize {
     0
 }
 
-/// `sys_send(sockfd, buf_ptr, len, flags)` — Envia dados pelo socket.
-fn sys_send(sockfd: usize, buf_ptr: *const u8, len: usize, _flags: usize) -> isize {
+/// `sys_send(fd, buf_ptr, len, flags)` — Envia dados pelo socket usando descritor unificado.
+fn sys_send(fd: usize, buf_ptr: *const u8, len: usize, _flags: usize) -> isize {
+    if fd < 3 || fd >= scheduler::MAX_TASK_FDS {
+        return EBADF;
+    }
     let pid = scheduler::current_pid();
+    let sock_idx = {
+        let sched = scheduler::get();
+        if let Some(Some(task)) = sched.tasks.get(pid) {
+            match task.fds[fd] {
+                Some(scheduler::TaskDescriptor::Socket(idx)) => idx,
+                _ => return EBADF,
+            }
+        } else {
+            return EPERM;
+        }
+    };
+
     if buf_ptr.is_null() || len == 0 {
         return EINVAL;
     }
@@ -819,15 +951,30 @@ fn sys_send(sockfd: usize, buf_ptr: *const u8, len: usize, _flags: usize) -> isi
         }
     }
     let data = unsafe { core::slice::from_raw_parts(buf_ptr, len) };
-    match crate::net::socket::send_socket(pid, sockfd, data) {
+    match crate::net::socket::send_socket(pid, sock_idx, data) {
         Ok(sent) => sent as isize,
         Err(e) => e,
     }
 }
 
-/// `sys_recv(sockfd, buf_ptr, len, flags)` — Recebe dados do socket.
-fn sys_recv(sockfd: usize, buf_ptr: *mut u8, len: usize, _flags: usize) -> isize {
+/// `sys_recv(fd, buf_ptr, len, flags)` — Recebe dados do socket usando descritor unificado.
+fn sys_recv(fd: usize, buf_ptr: *mut u8, len: usize, _flags: usize) -> isize {
+    if fd < 3 || fd >= scheduler::MAX_TASK_FDS {
+        return EBADF;
+    }
     let pid = scheduler::current_pid();
+    let sock_idx = {
+        let sched = scheduler::get();
+        if let Some(Some(task)) = sched.tasks.get(pid) {
+            match task.fds[fd] {
+                Some(scheduler::TaskDescriptor::Socket(idx)) => idx,
+                _ => return EBADF,
+            }
+        } else {
+            return EPERM;
+        }
+    };
+
     if buf_ptr.is_null() || len == 0 {
         return EINVAL;
     }
@@ -837,7 +984,7 @@ fn sys_recv(sockfd: usize, buf_ptr: *mut u8, len: usize, _flags: usize) -> isize
         }
     }
     let dest = unsafe { core::slice::from_raw_parts_mut(buf_ptr, len) };
-    match crate::net::socket::recv_socket(pid, sockfd, dest) {
+    match crate::net::socket::recv_socket(pid, sock_idx, dest) {
         Ok(read_bytes) => read_bytes as isize,
         Err(e) => e,
     }

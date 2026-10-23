@@ -304,11 +304,27 @@ pub extern "C" fn _start() -> ! {
                 ipc::register(u1_pid);
                 w.write_string("    Processo Ring 3 criado: PID ");
                 w.write_decimal(u1_pid);
-                w.write_line("");
+                w.write_line(" (Suite Principal)");
             } else {
                 w.set_color(Color::LightRed, Color::Black);
                 w.write_line("    [ERRO] Falha ao carregar ELF para Ring 3!");
                 w.set_color(Color::LightGray, Color::Black);
+            }
+
+            let u2_pid = sched.add_user_task("worker[U3]", elf_data);
+            if u2_pid > 0 {
+                ipc::register(u2_pid);
+                w.write_string("    Processo Ring 3 criado: PID ");
+                w.write_decimal(u2_pid);
+                w.write_line(" (Worker Computacional)");
+            }
+
+            let u3_pid = sched.add_user_task("periodic[U3]", elf_data);
+            if u3_pid > 0 {
+                ipc::register(u3_pid);
+                w.write_string("    Processo Ring 3 criado: PID ");
+                w.write_decimal(u3_pid);
+                w.write_line(" (Tarefa Periodica)");
             }
         }
     } else {
