@@ -248,8 +248,61 @@ unsafe fn test_adv_memory_protection() {
         print_i64(ret_double_free);
         print_str(b" (esperado -14 EFAULT)\n");
 
-        if stack_ok && code_ok && valid_free_ok && double_free_ok {
-            print_str(b"  [PASS] test_adv_memory_protection: Pilha, ELF e Heap com protecao estrita contra corrupcao!\n");
+        // 6. Validacao de desalinhamento de pagina (deve retornar -EINVAL)
+        let unaligned_addr = (alloc_addr as u64) + 0x40;
+        let ret_unaligned = sys_free_page(unaligned_addr);
+        let unaligned_ok = ret_unaligned == EINVAL;
+        print_str(b"  Tentativa de liberar endereco desalinhado (0x");
+        print_u64(unaligned_addr);
+        print_str(b") -> ret=");
+        print_i64(ret_unaligned);
+        print_str(b" (esperado -22 EINVAL)\n");
+
+        // 7. Tentativa de liberar ponteiro nulo e endereco de kernel (deve retornar -EFAULT)
+        let ret_null = sys_free_page(0);
+        let ret_kernel = sys_free_page(0xFFFF_8000_0000_0000);
+        let ptr_boundary_ok = ret_null == EFAULT && ret_kernel == EFAULT;
+        print_str(b"  Tentativa de liberar NULL e endereco de Kernel -> ret_null=");
+        print_i64(ret_null);
+        print_str(b", ret_kernel=");
+        print_i64(ret_kernel);
+        print_str(b" (esperado -14 EFAULT)\n");
+
+        // 8. Sanitizacao e Zeramento de Pagina Reciclada (protecao contra data leak)
+        let p_dirty = sys_alloc_page();
+        let mut sanitization_ok = false;
+        if p_dirty > 0 {
+            let p_ptr = p_dirty as *mut u64;
+            // Preenche toda a pagina com padrao de teste
+            for i in 0..512 {
+                core::ptr::write_volatile(p_ptr.add(i), 0xA5A5_5A5A_BEEF_CAFE);
+            }
+            let _ = sys_free_page(p_dirty as u64);
+
+            // Aloca novamente: o kernel deve entregar a pagina 100% zerada
+            let p_clean = sys_alloc_page();
+            if p_clean > 0 {
+                let clean_ptr = p_clean as *const u64;
+                let mut all_zeros = true;
+                for i in 0..512 {
+                    if core::ptr::read_volatile(clean_ptr.add(i)) != 0 {
+                        all_zeros = false;
+                        break;
+                    }
+                }
+                sanitization_ok = all_zeros;
+                let _ = sys_free_page(p_clean as u64);
+            }
+        }
+        print_str(b"  Sanitizacao de memoria (zero-fill em paginas recicladas): ");
+        if sanitization_ok {
+            print_str(b"OK (sem vazamento de dados)\n");
+        } else {
+            print_str(b"FALHA (dados anteriores residuais detectados!)\n");
+        }
+
+        if stack_ok && code_ok && valid_free_ok && double_free_ok && unaligned_ok && ptr_boundary_ok && sanitization_ok {
+            print_str(b"  [PASS] test_adv_memory_protection: Pilha, ELF, Heap, Alinhamento e Sanitizacao validados com rigor!\n");
         } else {
             print_str(b"  [FAIL] test_adv_memory_protection falhou em um dos criterios de seguranca.\n");
         }
@@ -720,6 +773,15 @@ unsafe fn test_jda_stress() {
 
 unsafe fn run_worker_task(_pid: u32) -> ! {
     print_str(b"[TASK Worker (PID 3)] Iniciado - computando batches concorrentes com preempcao...\n");
+    // Aloca pagina no heap proprio para demonstrar isolamento de memoria entre processos Ring 3
+    let worker_page = sys_alloc_page();
+    if worker_page > 0 {
+        let ptr = worker_page as *mut u64;
+        core::ptr::write_volatile(ptr, 0x3333_3333_4444_4444);
+        print_str(b"  [Worker PID 3] Pagina alocada no heap isolado: 0x");
+        print_u64(worker_page as u64);
+        print_str(b" (assinatura escrita: 0x3333333344444444)\n");
+    }
     let mut total_acc = 0u64;
     for batch in 1..=4 {
         for i in 0..20_000u64 {
@@ -731,6 +793,7 @@ unsafe fn run_worker_task(_pid: u32) -> ! {
         sys_yield();
     }
     print_str(b"[TASK Worker (PID 3)] Processamento computacional concluido! sys_exit(0)...\n");
+    // Encerra a tarefa sem desalocar worker_page explicitamente: o kernel deve recuperar tudo via free_user_pml4
     sys_exit(0);
 }
 
