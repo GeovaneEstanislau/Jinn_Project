@@ -2,7 +2,7 @@
 //! Conecta o microkernel x86_64 aos contratos da crate externa 'aladdin'.
 
 use crate::limine;
-pub use aladdin::contracts::system::CapabilityMode;
+pub use aladdin::contracts::system::{CapabilityMode, JinnWallProfile};
 use aladdin::contracts::framebuffer::{DirtyRect, FramebufferDevice};
 use aladdin::contracts::system::{SystemHost, SystemStats};
 use aladdin::contracts::vfs::VfsHost;
@@ -72,6 +72,13 @@ impl SystemHost for JinnSystem {
         let net_ip = unsafe { crate::net::dhcp::DHCP_CLIENT.ip };
         let jinnwall_active_conns = unsafe { crate::net::jinnwall::JINNWALL.active_connections() };
         let jinnwall_drops = unsafe { crate::net::jinnwall::JINNWALL.drops() };
+        let jinnwall_inspected = unsafe { crate::net::jinnwall::JINNWALL.inspected() };
+        let jinnwall_accepted = unsafe { crate::net::jinnwall::JINNWALL.accepted() };
+        let jinnwall_profile = match unsafe { crate::net::jinnwall::JINNWALL.profile() } {
+            crate::net::jinnwall::FirewallProfile::PublicSecure => JinnWallProfile::PublicSecure,
+            crate::net::jinnwall::FirewallProfile::Development => JinnWallProfile::Development,
+        };
+
         SystemStats {
             uptime_secs: (ticks / 100) as usize,
             task_count: crate::scheduler::get().task_count(),
@@ -82,6 +89,9 @@ impl SystemHost for JinnSystem {
             net_ip,
             jinnwall_active_conns,
             jinnwall_drops,
+            jinnwall_inspected,
+            jinnwall_accepted,
+            jinnwall_profile,
         }
     }
 
@@ -101,6 +111,33 @@ impl SystemHost for JinnSystem {
             crate::drivers::block::StorageProfile::TerminalPos => crate::drivers::block::StorageProfile::Aladdin,
         };
         crate::drivers::block::set_storage_profile(next_prof);
+    }
+
+    fn jinnwall_profile(&self) -> JinnWallProfile {
+        match unsafe { crate::net::jinnwall::JINNWALL.profile() } {
+            crate::net::jinnwall::FirewallProfile::PublicSecure => JinnWallProfile::PublicSecure,
+            crate::net::jinnwall::FirewallProfile::Development => JinnWallProfile::Development,
+        }
+    }
+
+    fn set_jinnwall_profile(&self, profile: JinnWallProfile) {
+        unsafe {
+            let prof = match profile {
+                JinnWallProfile::PublicSecure => crate::net::jinnwall::FirewallProfile::PublicSecure,
+                JinnWallProfile::Development => crate::net::jinnwall::FirewallProfile::Development,
+            };
+            crate::net::jinnwall::JINNWALL.set_profile(prof);
+        }
+    }
+
+    fn toggle_jinnwall_profile(&self) -> JinnWallProfile {
+        unsafe {
+            let next = crate::net::jinnwall::JINNWALL.toggle_profile();
+            match next {
+                crate::net::jinnwall::FirewallProfile::PublicSecure => JinnWallProfile::PublicSecure,
+                crate::net::jinnwall::FirewallProfile::Development => JinnWallProfile::Development,
+            }
+        }
     }
 
     fn reboot(&self) -> ! {

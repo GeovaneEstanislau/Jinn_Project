@@ -279,6 +279,46 @@ pub extern "C" fn _start() -> ! {
         w.set_color(Color::LightGray, Color::Black);
     }
 
+    w.write_string("[+] Testes RFC 1035 e Cache DNS...");
+    let (dns_passed, dns_total) = net::dns::run_dns_selftests();
+    if dns_passed == dns_total {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string(" OK (");
+        w.write_decimal(dns_passed);
+        w.write_string("/");
+        w.write_decimal(dns_total);
+        w.write_line(" aprovados)");
+        w.set_color(Color::LightGray, Color::Black);
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string(" FALHA (");
+        w.write_decimal(dns_passed);
+        w.write_string("/");
+        w.write_decimal(dns_total);
+        w.write_line(")");
+        w.set_color(Color::LightGray, Color::Black);
+    }
+
+    w.write_string("[+] Testes de Politicas e SPI JinnWall...");
+    let (jw_passed, jw_total) = net::jinnwall::run_jinnwall_selftests();
+    if jw_passed == jw_total {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string(" OK (");
+        w.write_decimal(jw_passed);
+        w.write_string("/");
+        w.write_decimal(jw_total);
+        w.write_line(" aprovados)");
+        w.set_color(Color::LightGray, Color::Black);
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string(" FALHA (");
+        w.write_decimal(jw_passed);
+        w.write_string("/");
+        w.write_decimal(jw_total);
+        w.write_line(")");
+        w.set_color(Color::LightGray, Color::Black);
+    }
+
     w.write_string("[+] Escalonador e Processos...");
     let sched = scheduler::get();
 

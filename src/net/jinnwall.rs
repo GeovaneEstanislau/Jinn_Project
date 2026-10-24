@@ -3,7 +3,7 @@
 //! Filtra e inspeciona pacotes nas camadas L2, L3 e L4 de forma nativa e
 //! independente da interface gráfica.
 
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 pub const MAX_CONNTRACK: usize = 64;
 
@@ -24,9 +24,18 @@ pub enum FilterVerdict {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FirewallProfile {
     /// Bloqueia todo tráfego de entrada não solicitado (Padrão de Segurança).
-    PublicSecure,
-    /// Permite tráfego local de desenvolvimento (ex: portas 8080, 3000).
-    Development,
+    PublicSecure = 0,
+    /// Permite tráfego local de desenvolvimento restrito (portas 8080 e 3000).
+    Development = 1,
+}
+
+impl FirewallProfile {
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::PublicSecure => "PublicSecure",
+            Self::Development => "Development",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -41,7 +50,7 @@ pub struct ConntrackEntry {
 }
 
 pub struct JinnWall {
-    pub profile: FirewallProfile,
+    pub profile_atomic: AtomicU8,
     pub table: [Option<ConntrackEntry>; MAX_CONNTRACK],
     pub packets_inspected: AtomicU64,
     pub packets_accepted: AtomicU64,
@@ -50,7 +59,7 @@ pub struct JinnWall {
 }
 
 pub static mut JINNWALL: JinnWall = JinnWall {
-    profile: FirewallProfile::PublicSecure,
+    profile_atomic: AtomicU8::new(0), // 0 = PublicSecure
     table: [None; MAX_CONNTRACK],
     packets_inspected: AtomicU64::new(0),
     packets_accepted: AtomicU64::new(0),
@@ -59,6 +68,32 @@ pub static mut JINNWALL: JinnWall = JinnWall {
 };
 
 impl JinnWall {
+    pub fn profile(&self) -> FirewallProfile {
+        match self.profile_atomic.load(Ordering::SeqCst) {
+            1 => FirewallProfile::Development,
+            _ => FirewallProfile::PublicSecure,
+        }
+    }
+
+    pub fn set_profile(&self, prof: FirewallProfile) {
+        let val = match prof {
+            FirewallProfile::PublicSecure => 0,
+            FirewallProfile::Development => 1,
+        };
+        self.profile_atomic.store(val, Ordering::SeqCst);
+    }
+
+    pub fn toggle_profile(&self) -> FirewallProfile {
+        let cur = self.profile_atomic.load(Ordering::SeqCst);
+        let next = if cur == 0 { 1 } else { 0 };
+        self.profile_atomic.store(next, Ordering::SeqCst);
+        if next == 1 {
+            FirewallProfile::Development
+        } else {
+            FirewallProfile::PublicSecure
+        }
+    }
+
     /// Inspeciona pacote de entrada (INPUT)
     pub fn filter_in(
         &mut self,
@@ -93,7 +128,7 @@ impl JinnWall {
         // Se este pacote é resposta a uma conexão que nós iniciamos (dst_port == nossa src_port e dst_ip == nosso IP)
         for entry_opt in self.table.iter_mut() {
             if let Some(entry) = entry_opt {
-                // Expira entradas antigas (> 60 segundos)
+                // Expira entradas antigas (> 60 segundos = 6000 ticks)
                 if current_tick.saturating_sub(entry.last_seen_tick) > 6000 {
                     *entry_opt = None;
                     continue;
@@ -112,8 +147,8 @@ impl JinnWall {
             }
         }
 
-        // 5. Se perfil for Development e porta for autorizada:
-        if self.profile == FirewallProfile::Development {
+        // 5. Se perfil for Development e porta for autorizada explicitamente (8080 ou 3000):
+        if self.profile() == FirewallProfile::Development {
             if dst_port == 8080 || dst_port == 3000 {
                 self.packets_accepted.fetch_add(1, Ordering::Relaxed);
                 return FilterVerdict::Accept;
@@ -172,8 +207,94 @@ impl JinnWall {
         count
     }
 
+    /// Retorna a quantidade total de pacotes inspecionados
+    pub fn inspected(&self) -> u64 {
+        self.packets_inspected.load(Ordering::Relaxed)
+    }
+
+    /// Retorna a quantidade total de pacotes aceitos
+    pub fn accepted(&self) -> u64 {
+        self.packets_accepted.load(Ordering::Relaxed)
+    }
+
     /// Retorna a quantidade total de pacotes bloqueados (DROP)
     pub fn drops(&self) -> u64 {
-        self.packets_dropped.load(core::sync::atomic::Ordering::Relaxed)
+        self.packets_dropped.load(Ordering::Relaxed)
     }
+}
+
+// ─── SUÍTE DE AUTO-TESTES DO JINNWALL (EXECUÇÃO NO BOOT DO KERNEL) ───────────
+
+/// Executa suíte de auto-testes das políticas e estado do firewall JinnWall.
+/// Retorna `(aprovados, total)`.
+pub fn run_jinnwall_selftests() -> (usize, usize) {
+    let mut passed = 0;
+    let total = 8;
+
+    let mut jw = JinnWall {
+        profile_atomic: AtomicU8::new(0),
+        table: [None; MAX_CONNTRACK],
+        packets_inspected: AtomicU64::new(0),
+        packets_accepted: AtomicU64::new(0),
+        packets_dropped: AtomicU64::new(0),
+        port_scans_blocked: AtomicU32::new(0),
+    };
+
+    // 1. Perfil inicial deve ser PublicSecure
+    if jw.profile() == FirewallProfile::PublicSecure && jw.profile().name() == "PublicSecure" {
+        passed += 1;
+    }
+
+    // 2. Alternância atômica de perfil
+    let p_dev = jw.toggle_profile();
+    let p_sec = jw.toggle_profile();
+    if p_dev == FirewallProfile::Development && p_sec == FirewallProfile::PublicSecure {
+        passed += 1;
+    }
+
+    // 3. Em PublicSecure, tráfego de entrada não solicitado para porta 8080 deve ser DROPPED
+    jw.set_profile(FirewallProfile::PublicSecure);
+    let v_drop = jw.filter_in([192, 168, 1, 50], [10, 0, 2, 15], crate::net::ipv4::PROTO_TCP, 54321, 8080, 100);
+    if v_drop == FilterVerdict::Drop {
+        passed += 1;
+    }
+
+    // 4. Em Development, tráfego para porta 8080 deve ser ACCEPTED
+    jw.set_profile(FirewallProfile::Development);
+    let v_dev_8080 = jw.filter_in([192, 168, 1, 50], [10, 0, 2, 15], crate::net::ipv4::PROTO_TCP, 54321, 8080, 100);
+    if v_dev_8080 == FilterVerdict::Accept {
+        passed += 1;
+    }
+
+    // 5. Em Development, porta 3000 deve ser ACCEPTED, mas porta 9999 deve ser DROPPED
+    let v_dev_3000 = jw.filter_in([192, 168, 1, 50], [10, 0, 2, 15], crate::net::ipv4::PROTO_TCP, 54321, 3000, 100);
+    let v_dev_9999 = jw.filter_in([192, 168, 1, 50], [10, 0, 2, 15], crate::net::ipv4::PROTO_TCP, 54321, 9999, 100);
+    if v_dev_3000 == FilterVerdict::Accept && v_dev_9999 == FilterVerdict::Drop {
+        passed += 1;
+    }
+
+    // 6. Conntrack: fluxo de saída registrado aceita pacote de retorno em PublicSecure
+    jw.set_profile(FirewallProfile::PublicSecure);
+    jw.track_out([10, 0, 2, 15], [93, 184, 216, 34], crate::net::ipv4::PROTO_UDP, 53535, 53, 500);
+    assert_eq!(jw.active_connections(), 1);
+    let v_ret = jw.filter_in([93, 184, 216, 34], [10, 0, 2, 15], crate::net::ipv4::PROTO_UDP, 53, 53535, 505);
+    if v_ret == FilterVerdict::Accept {
+        passed += 1;
+    }
+
+    // 7. Defesa Anti-Spoofing: origem 0.0.0.0 ou 255.255.255.255 é sempre DROPPED
+    let v_spoof1 = jw.filter_in([0, 0, 0, 0], [10, 0, 2, 15], crate::net::ipv4::PROTO_TCP, 1234, 80, 600);
+    let v_spoof2 = jw.filter_in([255, 255, 255, 255], [10, 0, 2, 15], crate::net::ipv4::PROTO_TCP, 1234, 80, 600);
+    if v_spoof1 == FilterVerdict::Drop && v_spoof2 == FilterVerdict::Drop {
+        passed += 1;
+    }
+
+    // 8. Contadores de telemetria refletem exatamente os pacotes processados
+    if jw.inspected() > 0 && jw.accepted() > 0 && jw.drops() > 0 {
+        if jw.inspected() == jw.accepted() + jw.drops() {
+            passed += 1;
+        }
+    }
+
+    (passed, total)
 }

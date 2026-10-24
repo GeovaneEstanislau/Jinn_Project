@@ -116,6 +116,12 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         // ── Diagnósticos e Auto-Testes ─────────────────────────────────────────
         "selftest" | "test" => cmd_selftest(w),
 
+        // ── Rede & DNS ────────────────────────────────────────────────────────
+        "netinfo" | "ifconfig" | "net" => cmd_netinfo(w),
+        "dns" => cmd_dns(w, args),
+        "dnscache" => cmd_dnscache(w),
+        "jinnwall" | "firewall" => cmd_jinnwall(w, args),
+
         // ── Sistema ───────────────────────────────────────────────────────────
         "reboot" => cmd_reboot(w),
 
@@ -166,6 +172,10 @@ fn cmd_help(w: &mut Writer) {
     w.write_line("  jda            — topologia de hardware e telemetria JDA (Dataflow)");
     w.write_line("  jdabench       — executa benchmark do grafo Dataflow vs Baseline");
     w.write_line("  jdashm         — teste de ciclo de vida de memoria fisica compartilhada Zero-Copy");
+    w.write_line("  netinfo        — configuracao IP, gateway, DNS e interface VirtIO");
+    w.write_line("  dns <host>     — resolve nome de dominio para IPv4 via UDP/53");
+    w.write_line("  dnscache       — lista entradas e TTL no cache local DNS");
+    w.write_line("  jinnwall [dev] — exibe status e gerencia perfil do firewall SPI");
     w.write_line("  aladdin        — desktop grafico Aladdin moderno (alias: gui, desktop, startx)");
     w.write_line("  reboot         — reinicia o sistema (triple fault)");
     w.write_line("");
@@ -2034,6 +2044,202 @@ fn cmd_jdashm(w: &mut Writer) {
     w.set_color(Color::LightGray, Color::Black);
 }
 
+/// `dns` — Resolve um nome de domínio para IPv4.
+fn cmd_dns(w: &mut Writer, args: &str) {
+    if args.is_empty() {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_line("Uso: dns <hostname>");
+        w.set_color(Color::LightGray, Color::Black);
+        return;
+    }
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_string("Resolvendo DNS para: ");
+    w.set_color(Color::LightCyan, Color::Black);
+    w.write_line(args);
+    w.set_color(Color::LightGray, Color::Black);
+
+    match crate::net::dns::resolve(args) {
+        Some(ip) => {
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_string("  [OK] Endereco IP: ");
+            w.write_decimal(ip[0] as usize);
+            w.write_string(".");
+            w.write_decimal(ip[1] as usize);
+            w.write_string(".");
+            w.write_decimal(ip[2] as usize);
+            w.write_string(".");
+            w.write_decimal(ip[3] as usize);
+            w.write_line("");
+            w.set_color(Color::LightGray, Color::Black);
+        }
+        None => {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_line("  [FALHA] Nao foi possivel resolver o nome (timeout ou inexistente).");
+            w.set_color(Color::LightGray, Color::Black);
+        }
+    }
+}
+
+/// `dnscache` — Exibe entradas ativas no cache local DNS.
+fn cmd_dnscache(w: &mut Writer) {
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_line("=== Cache Local DNS (RFC 1035) ===");
+    w.set_color(Color::LightGray, Color::Black);
+
+    let current_tick = crate::timer::ticks();
+    unsafe {
+        let mut count = 0;
+        for (idx, slot) in crate::net::dns::DNS_CACHE.entries.iter().enumerate() {
+            if let Some(entry) = slot {
+                count += 1;
+                w.write_string("  [");
+                w.write_decimal(idx);
+                w.write_string("] ");
+                if let Ok(name_str) = core::str::from_utf8(&entry.name[..entry.name_len as usize]) {
+                    w.set_color(Color::LightCyan, Color::Black);
+                    w.write_string(name_str);
+                }
+                w.set_color(Color::LightGray, Color::Black);
+                w.write_string(" -> ");
+                w.set_color(Color::LightGreen, Color::Black);
+                w.write_decimal(entry.ip[0] as usize);
+                w.write_string(".");
+                w.write_decimal(entry.ip[1] as usize);
+                w.write_string(".");
+                w.write_decimal(entry.ip[2] as usize);
+                w.write_string(".");
+                w.write_decimal(entry.ip[3] as usize);
+
+                w.set_color(Color::DarkGray, Color::Black);
+                if entry.expire_tick == 0 {
+                    w.write_line(" (estatico)");
+                } else if current_tick > entry.expire_tick {
+                    w.write_line(" (expirado)");
+                } else {
+                    let rem_sec = (entry.expire_tick - current_tick) / 100;
+                    w.write_string(" (ttl: ");
+                    w.write_decimal(rem_sec as usize);
+                    w.write_line("s)");
+                }
+                w.set_color(Color::LightGray, Color::Black);
+            }
+        }
+        if count == 0 {
+            w.write_line("  (nenhuma entrada no cache)");
+        }
+    }
+}
+
+/// `netinfo` — Exibe status de interface de rede VirtIO e endereçamento.
+fn cmd_netinfo(w: &mut Writer) {
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_line("=== Configuracao de Rede & VirtIO ===");
+    w.set_color(Color::LightGray, Color::Black);
+
+    if let Some(dev) = crate::drivers::net::virtio::get_device() {
+        let mac = dev.mac_address();
+        w.write_string("  Placa de Rede : VirtIO-Net (MAC: ");
+        w.write_hex_u8(mac[0]); w.write_string(":");
+        w.write_hex_u8(mac[1]); w.write_string(":");
+        w.write_hex_u8(mac[2]); w.write_string(":");
+        w.write_hex_u8(mac[3]); w.write_string(":");
+        w.write_hex_u8(mac[4]); w.write_string(":");
+        w.write_hex_u8(mac[5]); w.write_line(")");
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_line("  Placa de Rede : VirtIO-Net nao encontrada.");
+        w.set_color(Color::LightGray, Color::Black);
+    }
+
+    unsafe {
+        let ip = crate::net::dhcp::DHCP_CLIENT.ip;
+        let gw = crate::net::dhcp::DHCP_CLIENT.gateway;
+        let dns = crate::net::dhcp::DHCP_CLIENT.dns;
+
+        w.write_string("  Endereco IP   : ");
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_decimal(ip[0] as usize); w.write_string(".");
+        w.write_decimal(ip[1] as usize); w.write_string(".");
+        w.write_decimal(ip[2] as usize); w.write_string(".");
+        w.write_decimal(ip[3] as usize); w.write_line("");
+        w.set_color(Color::LightGray, Color::Black);
+
+        w.write_string("  Gateway       : ");
+        w.write_decimal(gw[0] as usize); w.write_string(".");
+        w.write_decimal(gw[1] as usize); w.write_string(".");
+        w.write_decimal(gw[2] as usize); w.write_string(".");
+        w.write_decimal(gw[3] as usize); w.write_line("");
+
+        w.write_string("  Servidor DNS  : ");
+        w.write_decimal(dns[0] as usize); w.write_string(".");
+        w.write_decimal(dns[1] as usize); w.write_string(".");
+        w.write_decimal(dns[2] as usize); w.write_string(".");
+        w.write_decimal(dns[3] as usize); w.write_line("");
+
+        let profile_str = match crate::net::jinnwall::JINNWALL.profile() {
+            crate::net::jinnwall::FirewallProfile::PublicSecure => "PublicSecure (Bloqueio Rigido)",
+            crate::net::jinnwall::FirewallProfile::Development => "Development (Portas 8080/3000)",
+        };
+        w.write_string("  JinnWall SPI  : ");
+        w.set_color(Color::LightCyan, Color::Black);
+        w.write_line(profile_str);
+        w.set_color(Color::LightGray, Color::Black);
+    }
+}
+
+/// `jinnwall` — Status e controle do firewall SPI JinnWall.
+fn cmd_jinnwall(w: &mut Writer, args: &str) {
+    unsafe {
+        if args == "dev" {
+            crate::net::jinnwall::JINNWALL.set_profile(crate::net::jinnwall::FirewallProfile::Development);
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_line("JinnWall: Perfil alterado para 'Development' (Portas 8080 e 3000 abertas).");
+            w.set_color(Color::LightGray, Color::Black);
+            return;
+        } else if args == "secure" || args == "public" {
+            crate::net::jinnwall::JINNWALL.set_profile(crate::net::jinnwall::FirewallProfile::PublicSecure);
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_line("JinnWall: Perfil alterado para 'PublicSecure' (Bloqueio estrito de conexoes).");
+            w.set_color(Color::LightGray, Color::Black);
+            return;
+        }
+
+        w.set_color(Color::Yellow, Color::Black);
+        w.write_line("=== Status do Firewall JinnWall (SPI) ===");
+        w.set_color(Color::LightGray, Color::Black);
+
+        let prof = crate::net::jinnwall::JINNWALL.profile().name();
+        w.write_string("  Perfil Ativo         : ");
+        w.set_color(Color::LightCyan, Color::Black);
+        w.write_line(prof);
+        w.set_color(Color::LightGray, Color::Black);
+
+        w.write_string("  Pacotes Inspecionados: ");
+        w.write_decimal(crate::net::jinnwall::JINNWALL.inspected() as usize);
+        w.write_line("");
+
+        w.write_string("  Pacotes Aceitos      : ");
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_decimal(crate::net::jinnwall::JINNWALL.accepted() as usize);
+        w.write_line("");
+        w.set_color(Color::LightGray, Color::Black);
+
+        w.write_string("  Pacotes Descartados  : ");
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_decimal(crate::net::jinnwall::JINNWALL.drops() as usize);
+        w.write_line("");
+        w.set_color(Color::LightGray, Color::Black);
+
+        w.write_string("  Conexoes Conntrack   : ");
+        w.write_decimal(crate::net::jinnwall::JINNWALL.active_connections());
+        w.write_line(" fluxos ativos");
+
+        w.set_color(Color::DarkGray, Color::Black);
+        w.write_line("  Use: 'jinnwall dev' ou 'jinnwall secure' para alternar o perfil.");
+        w.set_color(Color::LightGray, Color::Black);
+    }
+}
+
 /// Executa comandos de string vindos do terminal gráfico do Aladdin e despacha linhas coloridas.
 pub fn execute_string_command<F>(cmd: &str, mut output: F)
 where
@@ -2158,6 +2364,76 @@ where
             let len = aladdin::compositor::format_num(dev_count, &mut buf);
             if let Ok(s) = core::str::from_utf8(&buf[..len]) {
                 output(s, 0x0022_C55E);
+            }
+        }
+        "net" | "netinfo" | "ifconfig" => {
+            output("=== Configuracao de Rede ===", 0x00F5_9E0B);
+            unsafe {
+                let ip = crate::net::dhcp::DHCP_CLIENT.ip;
+                output("IP Local:", 0x0094_A3B8);
+                let mut buf = [0u8; 32];
+                let mut len = 0;
+                for (idx, oct) in ip.iter().enumerate() {
+                    let mut b = [0u8; 8];
+                    let l = aladdin::compositor::format_num(*oct as usize, &mut b);
+                    buf[len..(len + l)].copy_from_slice(&b[..l]);
+                    len += l;
+                    if idx < 3 { buf[len] = b'.'; len += 1; }
+                }
+                if let Ok(s) = core::str::from_utf8(&buf[..len]) { output(s, 0x0022_C55E); }
+            }
+        }
+        "dns" => {
+            if args.is_empty() {
+                output("Uso: dns <hostname>", 0x00EF_4444);
+            } else {
+                output("Resolvendo DNS...", 0x0094_A3B8);
+                match crate::net::dns::resolve(args) {
+                    Some(ip) => {
+                        let mut buf = [0u8; 32];
+                        let mut len = 0;
+                        for (idx, oct) in ip.iter().enumerate() {
+                            let mut b = [0u8; 8];
+                            let l = aladdin::compositor::format_num(*oct as usize, &mut b);
+                            buf[len..(len + l)].copy_from_slice(&b[..l]);
+                            len += l;
+                            if idx < 3 { buf[len] = b'.'; len += 1; }
+                        }
+                        if let Ok(s) = core::str::from_utf8(&buf[..len]) { output(s, 0x0022_C55E); }
+                    }
+                    None => {
+                        output("Falha ao resolver nome (timeout/NXDOMAIN)", 0x00EF_4444);
+                    }
+                }
+            }
+        }
+        "dnscache" => {
+            output("=== Cache Local DNS ===", 0x00F5_9E0B);
+            unsafe {
+                for slot in crate::net::dns::DNS_CACHE.entries.iter() {
+                    if let Some(entry) = slot {
+                        if let Ok(name_str) = core::str::from_utf8(&entry.name[..entry.name_len as usize]) {
+                            output(name_str, 0x0038_BDF8);
+                        }
+                    }
+                }
+            }
+        }
+        "jinnwall" | "firewall" => {
+            unsafe {
+                if args == "dev" {
+                    crate::net::jinnwall::JINNWALL.set_profile(crate::net::jinnwall::FirewallProfile::Development);
+                    output("JinnWall: Perfil alterado para 'Development'", 0x0022_C55E);
+                } else if args == "secure" || args == "public" {
+                    crate::net::jinnwall::JINNWALL.set_profile(crate::net::jinnwall::FirewallProfile::PublicSecure);
+                    output("JinnWall: Perfil alterado para 'PublicSecure'", 0x0022_C55E);
+                } else {
+                    let prof = match crate::net::jinnwall::JINNWALL.profile() {
+                        crate::net::jinnwall::FirewallProfile::PublicSecure => "Perfil: PublicSecure",
+                        crate::net::jinnwall::FirewallProfile::Development => "Perfil: Development",
+                    };
+                    output(prof, 0x0038_BDF8);
+                }
             }
         }
         "reboot" => {

@@ -486,17 +486,22 @@ unsafe fn test_adv_real_network_dns() {
 
     if received_bytes >= 12 {
         let rx_id = u16::from_be_bytes([rx_buf[0], rx_buf[1]]);
-        print_str(b"  [PASS] Resposta DNS recebida via VirtIO-Net! Bytes recebidos: ");
-        print_u64(received_bytes as u64);
-        print_str(b", ID de transacao: 0x");
-        print_u64(rx_id as u64);
-        print_str(b"\n");
+        if rx_id == 0x1234 {
+            print_str(b"  [PASS] Resposta DNS recebida via VirtIO-Net! Bytes recebidos: ");
+            print_u64(received_bytes as u64);
+            print_str(b", ID de transacao verificado: 0x1234\n");
+            print_str(b"  [PASS] test_adv_real_network_dns: Ciclo completo L2/L3/L4/Socket/JinnWall com upstream validado!\n");
+        } else {
+            print_str(b"  [WARN] Resposta DNS recebida com ID discrepante: 0x");
+            print_u64(rx_id as u64);
+            print_str(b" (esperado 0x1234)\n");
+        }
     } else {
-        print_str(b"  [INFO] Resposta DNS pendente/sem upstream no host (tratamento de timeout gracioso no VirtIO-Net/JinnWall).\n");
+        print_str(b"  [WARN] Resposta DNS upstream nao recebida (timeout no gateway virtual QEMU 10.0.2.3).\n");
+        print_str(b"  [INFO] Transmissao UDP e tracking JinnWall confirmados; resolucao externa pendente de conectividade upstream.\n");
     }
 
     let _ = sys_close(sockfd as u64);
-    print_str(b"  [PASS] test_adv_real_network_dns: Ciclo completo L2/L3/L4/Socket/JinnWall validado!\n");
 }
 
 /// Teste E: Pressão e Limites de Memória (Quota max_frames, -ENOMEM e Restauração)

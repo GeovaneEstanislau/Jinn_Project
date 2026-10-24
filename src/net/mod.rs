@@ -2,6 +2,7 @@
 
 pub mod arp;
 pub mod dhcp;
+pub mod dns;
 pub mod ethernet;
 pub mod icmp;
 pub mod ipv4;
@@ -47,6 +48,10 @@ pub fn init() {
             let total_len = 14 + 20 + 8 + dhcp_len;
             let _ = dev.transmit(&discover_buf[..total_len]);
         }
+    }
+
+    unsafe {
+        dns::DNS_CACHE.init_defaults();
     }
 }
 
@@ -138,6 +143,9 @@ pub fn poll() {
                                 if udp.dst_port == dhcp::DHCP_CLIENT_PORT {
                                     dhcp::handle_dhcp_reply(udp.payload);
                                 } else {
+                                    if udp.src_port == dns::DNS_PORT {
+                                        dns::handle_dns_reply(udp.payload);
+                                    }
                                     socket::dispatch_incoming_packet(PROTO_UDP, ip_pkt.header.src_ip, udp.src_port, udp.dst_port, udp.payload);
                                 }
                             }

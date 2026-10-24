@@ -21,7 +21,7 @@ jobs:
       - name: Clone Aladdin Desktop
         run: |
           git clone https://github.com/GeovaneEstanislau/Aladdin.git ../Aladdin
-          git -C ../Aladdin checkout b5f0cd8
+          git -C ../Aladdin checkout e69988d
 
       - name: Install Rust Nightly Toolchain
         uses: dtolnay/rust-toolchain@nightly
@@ -42,6 +42,10 @@ jobs:
         run: |
           cargo test --manifest-path tools/jda-sim/Cargo.toml
           cargo run --manifest-path tools/jda-sim/Cargo.toml
+
+      - name: Run RFC 1035 DNS, Cache and JinnWall Verification Tests
+        run: |
+          cargo test --manifest-path tools/net-tests/Cargo.toml
 
       - name: Build Ring 3 User Application (ola-mundo)
         run: |

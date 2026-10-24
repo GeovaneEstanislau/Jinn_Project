@@ -1,0 +1,7 @@
+[package]
+name = "net-tests"
+version = "0.1.0"
+edition = "2021"
+description = "Automated RFC 1035 DNS, Cache and JinnWall SPI Integration Tests"
+
+[dependencies]

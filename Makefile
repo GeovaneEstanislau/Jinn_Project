@@ -87,6 +87,10 @@ test-jda:
 	@echo "[+] Executando testes unitários e de integração do JDA..."
 	$(CARGO) test --manifest-path tools/jda-sim/Cargo.toml
 
+test-net:
+	@echo "[+] Executando testes unitários e de integração de DNS e JinnWall..."
+	$(CARGO) test --manifest-path tools/net-tests/Cargo.toml
+
 clean:
 	@echo "[+] Limpando diretórios de build..."
 	$(CARGO) clean
