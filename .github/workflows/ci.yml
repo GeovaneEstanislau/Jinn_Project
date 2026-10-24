@@ -18,6 +18,11 @@ jobs:
         with:
           submodules: true
 
+      - name: Clone Aladdin Desktop
+        run: |
+          git clone https://github.com/GeovaneEstanislau/Aladdin.git ../Aladdin
+          git -C ../Aladdin checkout b5f0cd8
+
       - name: Install Rust Nightly Toolchain
         uses: dtolnay/rust-toolchain@nightly
         with:

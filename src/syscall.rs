@@ -115,6 +115,7 @@ pub extern "C" fn syscall_dispatch_framed(frame: *mut usize) -> usize {
         }
         3 => {
             // sys_yield: cede a CPU voluntariamente de forma imediata
+            scheduler::set_yielded();
             scheduler::get().preempt(frame as usize)
         }
         _ => {
@@ -837,6 +838,9 @@ fn sys_res_stat(target_pid: usize, stat_buf_ptr: *mut crate::resources::ProcessR
             max_fds: task.limits.max_fds as u32,
             max_windows: task.limits.max_windows as u32,
             max_sockets: task.limits.max_sockets as u32,
+            max_cpu_ticks: task.limits.max_cpu_ticks,
+            irq_preemptions: task.irq_preemptions,
+            voluntary_yields: task.voluntary_yields,
         };
 
         unsafe {

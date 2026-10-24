@@ -18,6 +18,8 @@ pub struct ResourceLimits {
     pub max_jda_buffers: usize,
     /// Quantidade máxima de sockets de rede ativos.
     pub max_sockets: usize,
+    /// Cota máxima de ticks de CPU (0 = ilimitado).
+    pub max_cpu_ticks: u64,
 }
 
 impl ResourceLimits {
@@ -29,6 +31,7 @@ impl ResourceLimits {
             max_windows: 4,       // Até 4 janelas por processo (sistema suporta 8)
             max_jda_buffers: 4,   // Até 4 buffers JDA Zero-Copy
             max_sockets: 4,       // Até 4 sockets de rede
+            max_cpu_ticks: 0,     // Padrão: ilimitado (ou atribuído especificamente)
         }
     }
 
@@ -40,6 +43,7 @@ impl ResourceLimits {
             max_windows: 8,
             max_jda_buffers: 16,
             max_sockets: 16,
+            max_cpu_ticks: 0,
         }
     }
 }
@@ -184,4 +188,7 @@ pub struct ProcessResourceStat {
     pub max_fds: u32,
     pub max_windows: u32,
     pub max_sockets: u32,
+    pub max_cpu_ticks: u64,
+    pub irq_preemptions: u64,
+    pub voluntary_yields: u64,
 }

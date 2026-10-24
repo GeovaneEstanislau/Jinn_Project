@@ -151,14 +151,58 @@ pub struct ResourceLimits {
     pub max_windows: usize,      // Padrão: 4 janelas do compositor
     pub max_jda_buffers: usize,  // Padrão: 4 buffers Zero-Copy JDA
     pub max_sockets: usize,      // Padrão: 4 sockets de rede
+    pub max_cpu_ticks: u64,      // Cota máxima de ticks de CPU (0 = ilimitado)
 }
 ```
 
-### Comportamento em Caso de Violação de Cota
+### Telemetria e Monitoramento de Recursos (`ProcessResourceStat`)
+A Syscall 25 (`sys_res_stat`) preenche a seguinte estrutura:
+
+```rust
+#[repr(C)]
+pub struct ProcessResourceStat {
+    pub pid: u64,
+    pub state: u32,
+    pub cpu_ticks: u64,
+    pub context_switches: u64,
+    pub memory_frames: usize,
+    pub peak_memory_frames: usize,
+    pub max_memory_frames: usize,
+    pub open_fds: usize,
+    pub max_fds: usize,
+    pub open_windows: usize,
+    pub max_windows: usize,
+    pub jda_buffers: usize,
+    pub max_jda_buffers: usize,
+    pub open_sockets: usize,
+    pub max_sockets: usize,
+    pub limit_violations: u64,
+    pub last_violation_code: i64,
+    pub max_cpu_ticks: u64,
+    pub irq_preemptions: u64,
+    pub voluntary_yields: u64,
+}
+```
+
+### 5.1. Preempção por Hardware vs Yields Voluntários
+- O timer PIT (IRQ0, vetor 32) opera a 100 Hz gerando interrupções a cada 10 ms.
+- A cada interrupção com o quantum esgotado (`quantum_remaining == 0`), o escalonador força a troca de contexto, incrementando `irq_preemptions`.
+- Quando um processo cede a CPU voluntariamente via `sys_yield()`, a flag de rendição voluntária é acionada e o escalonador incrementa `voluntary_yields`.
+- Processos em computação pura (*CPU-hog*) sem chamadas de sistema acumulam `irq_preemptions > 0` e estritamente `voluntary_yields == 0`.
+
+### 5.2. Aplicação Efetiva de Cotas de CPU
+- Quando `limits.max_cpu_ticks > 0` e o tempo de execução acumulado (`cpu_ticks`) atinge o limite da cota, o escalonador registra a violação com código `-EDQUOT` (-122) e encerra o processo via `exit_task(pid, -122)`.
+- Todos os recursos mantidos pelo processo (páginas de memória, janelas gráficas, descritores de arquivo/socket, buffers JDA) são automaticamente liberados pelo procedimento de encerramento do kernel.
+
+### 5.3. Comportamento em Caso de Violação de Cota
 - As funções `check_and_*` barram a operação antes de comprometer qualquer estrutura interna.
 - O contador `task.resources.limit_violations` é incrementado monotonicamente.
 - O código do último erro é armazenado em `task.resources.last_violation_code` para auditoria via `sys_res_stat`.
 - Nenhum pânico ocorre no kernel; o erro POSIX correspondente é devolvido imediatamente à aplicação.
+
+### 5.4. Metodologia de Validação Adversarial e Gráfica
+- **Concorrência e Ausência de Starvation:** Enquanto uma tarefa monopolizadora em Ring 3 executa em loop fechado de computação pura, tarefas concorrentes (como a Tarefa Periódica emitindo heartbeats e o teste de janelas) continuam progredindo através do chaveamento periódico forçado pelo PIT (100 Hz).
+- **Recuperação Gráfica pós-Saturação:** A criação e renderização visual do cliente Aladdin Desktop (`run_gui_demo`) após o encerramento do processo monopolizador atesta a integridade do compositor, liberação dos recursos associados e pronta resposta da interface gráfica após eventos de saturação de CPU.
 
 ---
 
@@ -179,3 +223,4 @@ pub struct ResourceLimits {
 | `EMFILE` | `-24` | Esgotamento de descritores de arquivo, sockets ou janelas do processo (`max_fds`, `max_windows`). |
 | `ENOSYS` | `-38` | Funcionalidade ou chamada de sistema não suportada nesta configuração. |
 | `ENOBUFS` | `-105` | Esgotamento de buffers compartilhados JDA (`max_jda_buffers`). |
+| `EDQUOT` | `-122` | Cota de recursos esgotada (ex: cota máxima de tempo de CPU `max_cpu_ticks` atingida). |

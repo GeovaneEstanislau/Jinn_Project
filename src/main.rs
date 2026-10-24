@@ -314,9 +314,13 @@ pub extern "C" fn _start() -> ! {
             let u2_pid = sched.add_user_task("worker[U3]", elf_data);
             if u2_pid > 0 {
                 ipc::register(u2_pid);
+                // Atribui cota de CPU de 25 ticks (250 ms) para a tarefa CPU-Hog
+                if let Some(Some(t)) = sched.tasks.get_mut(u2_pid) {
+                    t.limits.max_cpu_ticks = 25;
+                }
                 w.write_string("    Processo Ring 3 criado: PID ");
                 w.write_decimal(u2_pid);
-                w.write_line(" (Worker Computacional)");
+                w.write_line(" (Worker / CPU-Hog, Cota: 25 ticks)");
             }
 
             let u3_pid = sched.add_user_task("periodic[U3]", elf_data);

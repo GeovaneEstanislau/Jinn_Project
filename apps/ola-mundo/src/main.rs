@@ -125,6 +125,9 @@ pub struct ProcessResourceStat {
     pub max_fds: u32,
     pub max_windows: u32,
     pub max_sockets: u32,
+    pub max_cpu_ticks: u64,
+    pub irq_preemptions: u64,
+    pub voluntary_yields: u64,
 }
 
 #[inline(always)]
@@ -769,44 +772,84 @@ unsafe fn test_jda_stress() {
     }
 }
 
-// ── Papéis Concorrentes das Tarefas (Fase D) ──────────────────────────────────
+// ── Papéis Concorrentes das Tarefas (Fase D — Preempção e CPU-Hog) ───────────
 
 unsafe fn run_worker_task(_pid: u32) -> ! {
-    print_str(b"[TASK Worker (PID 3)] Iniciado - computando batches concorrentes com preempcao...\n");
-    // Aloca pagina no heap proprio para demonstrar isolamento de memoria entre processos Ring 3
-    let worker_page = sys_alloc_page();
-    if worker_page > 0 {
-        let ptr = worker_page as *mut u64;
-        core::ptr::write_volatile(ptr, 0x3333_3333_4444_4444);
-        print_str(b"  [Worker PID 3] Pagina alocada no heap isolado: 0x");
-        print_u64(worker_page as u64);
-        print_str(b" (assinatura escrita: 0x3333333344444444)\n");
+    print_str(b"[TASK CPU-Hog (PID 3)] Iniciado - executando em loop fechado SEM chamadas de sistema...\n");
+    print_str(b"  [CPU-Hog PID 3] Monopolizando CPU em computacao pura (preempcao obrigatoria por IRQ0)...\n");
+
+    let mut spin_counter: u64 = 0;
+    // LOOP FECHADO ESTRITO: Nenhuma chamada de sistema (sem sys_yield, sem sys_sleep, sem sys_exit)!
+    // A preempção ocorrerá obrigatoriamente via interrupção periódica de hardware (PIT IRQ0 a 100 Hz),
+    // e o término ocorrerá quando a cota configurada pelo kernel (25 ticks) for esgotada (-EDQUOT).
+    loop {
+        spin_counter = core::hint::black_box(spin_counter.wrapping_add(1));
+        core::hint::spin_loop();
     }
-    let mut total_acc = 0u64;
-    for batch in 1..=4 {
-        for i in 0..20_000u64 {
-            total_acc = core::hint::black_box(total_acc.wrapping_add(i.wrapping_mul(7).wrapping_add(1)));
-        }
-        print_str(b"  [Worker PID 3] Batch #");
-        print_u64(batch);
-        print_str(b"/4 concluido, cedendo CPU via sys_yield()...\n");
-        sys_yield();
-    }
-    print_str(b"[TASK Worker (PID 3)] Processamento computacional concluido! sys_exit(0)...\n");
-    // Encerra a tarefa sem desalocar worker_page explicitamente: o kernel deve recuperar tudo via free_user_pml4
-    sys_exit(0);
 }
 
 unsafe fn run_periodic_task(_pid: u32) -> ! {
-    print_str(b"[TASK Periodic (PID 4)] Iniciado - monitorando heartbeats com sys_sleep...\n");
-    for beat in 1..=3 {
-        sys_sleep(80);
+    print_str(b"[TASK Periodic (PID 4)] Iniciado - monitorando heartbeats enquanto CPU-hog executa...\n");
+    for beat in 1..=4 {
+        sys_sleep(60);
         print_str(b"  [Periodic PID 4] Heartbeat #");
         print_u64(beat);
-        print_str(b"/3 recebido!\n");
+        print_str(b"/4 recebido (avanco com preempcao de hardware confirmada)!\n");
     }
     print_str(b"[TASK Periodic (PID 4)] Ciclo de monitoramento finalizado! sys_exit(0)...\n");
     sys_exit(0);
+}
+
+/// Teste F: Validação de Preempção por Hardware (IRQ0) e Aplicação Efetiva de Cota de CPU
+unsafe fn test_sched_preemption_and_cpu_quota() {
+    print_str(b"[ADV-TEST 6/6] test_sched_preemption_and_cpu_quota: Validando preempcao por hardware e cotas...\n");
+
+    // Aguarda ticks acumularem sob preempção forçada do CPU-hog
+    sys_sleep(120);
+
+    let mut stat: ProcessResourceStat = core::mem::zeroed();
+    let ret = sys_res_stat(3, &mut stat);
+    if ret == 0 {
+        print_str(b"  Telemetria da Tarefa CPU-Hog (PID 3) capturada via Syscall 25:\n");
+        print_str(b"    CPU Ticks Consumidos: ");
+        print_u64(stat.cpu_ticks);
+        print_str(b"\n    Trocas de Contexto Totais: ");
+        print_u64(stat.ctx_switches);
+        print_str(b"\n    Preempcoes por Hardware (IRQ0): ");
+        print_u64(stat.irq_preemptions);
+        print_str(b"\n    Yields Voluntarios: ");
+        print_u64(stat.voluntary_yields);
+        print_str(b"\n    Cota Configurada de CPU: ");
+        print_u64(stat.max_cpu_ticks);
+        print_str(b" ticks\n");
+
+        let preemption_proven = stat.irq_preemptions >= 3 && stat.voluntary_yields == 0;
+        if preemption_proven {
+            print_str(b"  [PASS] Preempcao por hardware COMPROVADA: CPU-hog despejado repetidamente sem yield!\n");
+        } else {
+            print_str(b"  [FAIL] Preempcao por hardware nao alcancou os criterios esperados.\n");
+        }
+    } else {
+        print_str(b"  [WARN] Nao foi possivel consultar PID 3 inicialmente.\n");
+    }
+
+    // Aguarda a cota de CPU do CPU-hog (25 ticks = 250ms) ser excedida
+    sys_sleep(180);
+
+    let mut stat_after: ProcessResourceStat = core::mem::zeroed();
+    let ret_after = sys_res_stat(3, &mut stat_after);
+    if ret_after == 0 {
+        print_str(b"  Telemetria pos-cota PID 3: Estado=");
+        print_u64(stat_after.state as u64);
+        print_str(b", Violacoes=");
+        print_u64(stat_after.limit_violations as u64);
+        print_str(b", Ultimo Erro=");
+        print_i64(stat_after.last_violation_code as i64);
+        print_str(b"\n");
+        if stat_after.state == 6 || stat_after.last_violation_code == -122 {
+            print_str(b"  [PASS] Cota de CPU EFETIVA: Processo monopolizador encerrado pelo kernel com -EDQUOT (-122)!\n");
+        }
+    }
 }
 
 // ── Entry Point ──────────────────────────────────────────────────────────────
@@ -840,6 +883,7 @@ pub extern "C" fn _start() -> ! {
         test_jda_stress();
         test_fault_app();
         test_observer_app();
+        test_sched_preemption_and_cpu_quota();
         run_gui_demo();
 
         print_str(b"\n>>> TODOS OS TESTES DA SUITE ADVERSARIAL FORAM CONCLUIDOS COM SUCESSO! <<<\n");

@@ -78,13 +78,20 @@ const QUANTUM_IDLE:     u64 = 1;
 
 // ── Estado global ─────────────────────────────────────────────────────────────
 
-static CURRENT_TASK: AtomicI32 = AtomicI32::new(-1);
-static YIELDED:      AtomicBool = AtomicBool::new(false);
+static CURRENT_TASK:       AtomicI32 = AtomicI32::new(-1);
+static YIELDED:            AtomicBool = AtomicBool::new(false);
+static TIMER_PREEMPTIONS:   AtomicU64 = AtomicU64::new(0);
+static VOLUNTARY_YIELDS:    AtomicU64 = AtomicU64::new(0);
 
 /// Retorna o PID (índice) da tarefa atualmente em execução.
 pub fn current_pid() -> usize {
     let idx = CURRENT_TASK.load(Ordering::SeqCst);
     if idx < 0 { 0 } else { idx as usize }
+}
+
+/// Marca que a tarefa atual solicitou yield voluntário de CPU.
+pub fn set_yielded() {
+    YIELDED.store(true, Ordering::SeqCst);
 }
 
 /// Cede voluntariamente o quantum de CPU restante para a próxima tarefa pronta.
@@ -102,6 +109,16 @@ pub fn current_task_index() -> i32 {
 /// Retorna o número total de preempções realizadas pelo escalonador.
 pub fn sched_ticks() -> u64 {
     SCHED_TICKS.load(Ordering::Relaxed)
+}
+
+/// Retorna o total de preempções forçadas por interrupção de hardware (timer IRQ0).
+pub fn timer_preemptions() -> u64 {
+    TIMER_PREEMPTIONS.load(Ordering::Relaxed)
+}
+
+/// Retorna o total de trocas provocadas por yield voluntário (sys_yield).
+pub fn voluntary_yields() -> u64 {
+    VOLUNTARY_YIELDS.load(Ordering::Relaxed)
 }
 
 /// Retorna o número total de trocas de contexto efetivas.
@@ -176,6 +193,10 @@ pub struct Task {
     pub cpu_ticks: u64,
     /// Número de vezes que esta tarefa foi despachada (context switches).
     pub ctx_switches: u64,
+    /// Trocas de contexto provocadas por preempção forçada de hardware (IRQ0).
+    pub irq_preemptions: u64,
+    /// Trocas de contexto provocadas por cessão voluntária (sys_yield).
+    pub voluntary_yields: u64,
     /// Quantum restante antes da próxima preempção forçada.
     pub quantum_remaining: u64,
 
@@ -349,6 +370,8 @@ impl Scheduler {
             exit_code: 0,
             cpu_ticks: 0,
             ctx_switches: 0,
+            irq_preemptions: 0,
+            voluntary_yields: 0,
             quantum_remaining: QUANTUM_NORMAL,
             fds: [None; MAX_TASK_FDS],
             dynamic_pages: [0; MAX_DYNAMIC_PAGES],
@@ -435,6 +458,8 @@ impl Scheduler {
                     exit_code: 0,
                     cpu_ticks: 0,
                     ctx_switches: 0,
+                    irq_preemptions: 0,
+                    voluntary_yields: 0,
                     quantum_remaining: quantum,
                     fds: [None; MAX_TASK_FDS],
                     dynamic_pages: [0; MAX_DYNAMIC_PAGES],
@@ -716,6 +741,9 @@ impl Scheduler {
 
         // Contabiliza tick de CPU e verifica quantum da tarefa atual
         let mut force_switch = false;
+        let is_yield = YIELDED.load(Ordering::SeqCst);
+        let mut quota_violation = false;
+
         if let Some(cur) = self.current {
             if let Some(task) = &mut self.tasks[cur] {
                 task.cpu_ticks += 1;
@@ -724,8 +752,11 @@ impl Scheduler {
                     task.quantum_remaining -= 1;
                 }
 
-                // Se a tarefa terminou (Zombie), foi cedida manualmente (yield) ou esgotou seu quantum
-                if task.state == TaskState::Zombie || YIELDED.load(Ordering::SeqCst) || task.quantum_remaining == 0 {
+                // Verificação de cota de CPU: se excedeu max_cpu_ticks (>0), encerra a tarefa
+                if task.limits.max_cpu_ticks > 0 && task.cpu_ticks >= task.limits.max_cpu_ticks {
+                    quota_violation = true;
+                    force_switch = true;
+                } else if task.state == TaskState::Zombie || is_yield || task.quantum_remaining == 0 {
                     force_switch = true;
                 }
             }
@@ -739,10 +770,29 @@ impl Scheduler {
             return curr_frame_ptr;
         }
 
-        // Salva RSP da tarefa atual
+        // Salva RSP da tarefa atual e atualiza estatísticas de troca
         if let Some(cur) = self.current {
-            if let Some(task) = &mut self.tasks[cur] {
+            if quota_violation {
+                if let Some(task) = &mut self.tasks[cur] {
+                    task.saved_rsp = curr_frame_ptr;
+                    task.resources.limit_violations = task.resources.limit_violations.saturating_add(1);
+                    task.resources.last_violation_code = -122; // -EDQUOT (cota excedida)
+                    task.irq_preemptions += 1;
+                }
+                crate::serial_write(b"[QUOTA] Processo PID ");
+                let pid_byte = b'0' + (cur as u8 % 10);
+                crate::serial_write(&[pid_byte]);
+                crate::serial_write(b" esgotou sua cota de CPU. Encerrado por limite excedido (-EDQUOT)!\n");
+                self.exit_task(cur, -122);
+            } else if let Some(task) = &mut self.tasks[cur] {
                 task.saved_rsp = curr_frame_ptr;
+                if is_yield {
+                    task.voluntary_yields += 1;
+                    VOLUNTARY_YIELDS.fetch_add(1, Ordering::Relaxed);
+                } else if task.state != TaskState::Zombie {
+                    task.irq_preemptions += 1;
+                    TIMER_PREEMPTIONS.fetch_add(1, Ordering::Relaxed);
+                }
                 if task.state == TaskState::Running {
                     task.state = TaskState::Ready;
                 }
