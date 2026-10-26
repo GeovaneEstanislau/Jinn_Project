@@ -104,12 +104,27 @@ pub fn poll() {
             ETHERTYPE_IPV4 => {
                 if let Ok(ip_pkt) = Ipv4Packet::parse(frame.payload) {
                     let ticks = crate::timer::ticks();
-                    let src_port = if ip_pkt.payload.len() >= 4 {
-                        u16::from_be_bytes([ip_pkt.payload[0], ip_pkt.payload[1]])
-                    } else { 0 };
-                    let dst_port = if ip_pkt.payload.len() >= 4 {
-                        u16::from_be_bytes([ip_pkt.payload[2], ip_pkt.payload[3]])
-                    } else { 0 };
+                    let (src_port, dst_port) = match ip_pkt.header.protocol {
+                        PROTO_UDP => {
+                            if ip_pkt.payload.len() < 8 {
+                                continue; // Pacote UDP truncado
+                            }
+                            (
+                                u16::from_be_bytes([ip_pkt.payload[0], ip_pkt.payload[1]]),
+                                u16::from_be_bytes([ip_pkt.payload[2], ip_pkt.payload[3]]),
+                            )
+                        }
+                        PROTO_TCP => {
+                            if ip_pkt.payload.len() < 20 {
+                                continue; // Pacote TCP truncado
+                            }
+                            (
+                                u16::from_be_bytes([ip_pkt.payload[0], ip_pkt.payload[1]]),
+                                u16::from_be_bytes([ip_pkt.payload[2], ip_pkt.payload[3]]),
+                            )
+                        }
+                        _ => (0, 0),
+                    };
 
                     // ── Inspeciona pelo Firewall Stateful JinnWall ───────────
                     let verdict = unsafe {
@@ -151,10 +166,10 @@ pub fn poll() {
                             }
                         }
                         PROTO_TCP => {
-                            // Tráfego TCP entregue ao subsistema de sockets
-                            let tcp_hdr_len = if ip_pkt.payload.len() >= 13 { ((ip_pkt.payload[12] >> 4) as usize) * 4 } else { 20 };
-                            let tcp_payload = if ip_pkt.payload.len() >= tcp_hdr_len { &ip_pkt.payload[tcp_hdr_len..] } else { &[] };
-                            socket::dispatch_incoming_packet(PROTO_TCP, ip_pkt.header.src_ip, src_port, dst_port, tcp_payload);
+                            // Tráfego TCP entregue ao subsistema de sockets via parser estruturado
+                            if let Ok(tcp) = tcp::TcpPacket::parse(ip_pkt.payload) {
+                                socket::dispatch_incoming_packet(PROTO_TCP, ip_pkt.header.src_ip, tcp.src_port, tcp.dst_port, tcp.payload);
+                            }
                         }
                         _ => {}
                     }

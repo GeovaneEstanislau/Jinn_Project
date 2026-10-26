@@ -38,7 +38,8 @@ pub const EINVAL:   isize = -22;  // Invalid argument
 pub const EMFILE:   isize = -24;  // Too many open files
 pub const ENOSPC:   isize = -28;  // No space left on device
 pub const ENOSYS:   isize = -38;  // Function not implemented
-pub const ENOBUFS:  isize = -105; // No buffer space available
+pub const ENOBUFS:   isize = -105; // No buffer space available
+pub const EADDRINUSE: isize = -98;  // Address already in use
 
 pub const USER_SPACE_MIN: usize = 0x0000_0000_0001_0000; // 64 KiB NULL guard
 pub const USER_SPACE_MAX: usize = 0x0000_8000_0000_0000; // Limite canônico de usuário
@@ -913,9 +914,39 @@ fn sys_connect(fd: usize, addr_ptr: *const u8, addrlen: usize) -> isize {
     }
 }
 
-/// `sys_bind(sockfd, addr_ptr, addrlen)` — Associa socket a uma porta local.
-fn sys_bind(_sockfd: usize, _addr_ptr: *const u8, _addrlen: usize) -> isize {
-    0
+/// `sys_bind(fd, addr_ptr, addrlen)` — Associa socket a uma porta local.
+fn sys_bind(fd: usize, addr_ptr: *const u8, addrlen: usize) -> isize {
+    if fd < 3 || fd >= scheduler::MAX_TASK_FDS {
+        return EBADF;
+    }
+    let pid = scheduler::current_pid();
+    let sock_idx = {
+        let sched = scheduler::get();
+        if let Some(Some(task)) = sched.tasks.get(pid) {
+            match task.fds[fd] {
+                Some(scheduler::TaskDescriptor::Socket(idx)) => idx,
+                _ => return EBADF,
+            }
+        } else {
+            return EPERM;
+        }
+    };
+
+    let sock_addr_size = core::mem::size_of::<crate::net::socket::SockAddrIn>();
+    if addr_ptr.is_null() || addrlen < sock_addr_size {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(addr_ptr, sock_addr_size, false) {
+            return e;
+        }
+    }
+    let addr = unsafe { &*(addr_ptr as *const crate::net::socket::SockAddrIn) };
+    let local_port = u16::from_be(addr.sin_port);
+    match crate::net::socket::bind_socket(pid, sock_idx, local_port) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
 }
 
 /// `sys_listen(sockfd, backlog)` — Habilita escuta de conexões.

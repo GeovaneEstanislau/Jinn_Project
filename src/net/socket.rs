@@ -1,6 +1,6 @@
 //! Jinn OS — Subsistema de Sockets e ABI de Rede para Aplicações Ring 3
 
-use crate::syscall::{EBADF, EINVAL, EMFILE, EPERM};
+use crate::syscall::{EADDRINUSE, EBADF, EINVAL, EMFILE, EPERM};
 
 pub const AF_INET:     u32 = 2;
 pub const SOCK_STREAM: u32 = 1; // TCP
@@ -108,6 +108,36 @@ pub fn create_socket(pid: usize, domain: u32, sock_type: u32, _protocol: u32) ->
         task.resources.close_socket();
     }
     Err(EMFILE)
+}
+
+/// Associa o socket a uma porta local específica (bind).
+pub fn bind_socket(pid: usize, sockfd: usize, local_port: u16) -> Result<(), isize> {
+    if local_port == 0 {
+        return Err(EINVAL);
+    }
+    unsafe {
+        // Verifica se a porta já está em uso por outro socket
+        for (idx, slot) in SOCKET_TABLE.iter().enumerate() {
+            if idx != sockfd {
+                if let Some(s) = slot {
+                    if s.local_port == local_port && s.is_bound {
+                        return Err(EADDRINUSE);
+                    }
+                }
+            }
+        }
+
+        let sock = match SOCKET_TABLE.get_mut(sockfd).and_then(|s| s.as_mut()) {
+            Some(s) => s,
+            None => return Err(EBADF),
+        };
+        if sock.owner_pid != pid {
+            return Err(EPERM);
+        }
+        sock.local_port = local_port;
+        sock.is_bound = true;
+        Ok(())
+    }
 }
 
 /// Conecta o socket a um IP e porta remotos.
@@ -232,13 +262,18 @@ pub fn send_socket(pid: usize, sockfd: usize, data: &[u8]) -> Result<usize, isiz
     }
 }
 
-/// Despacha um payload recebido e aprovado pelo firewall JinnWall para o socket correspondente.
+/// Despacha um payload recebido e aprovado pelo firewall JinnWall exclusivamente para o socket correspondente à porta de destino.
 pub fn dispatch_incoming_packet(proto: u8, src_ip: [u8; 4], src_port: u16, dst_port: u16, payload: &[u8]) -> bool {
+    if dst_port == 0 {
+        return false;
+    }
     let sock_type = if proto == crate::net::ipv4::PROTO_TCP { SOCK_STREAM } else { SOCK_DGRAM };
     unsafe {
         for slot in SOCKET_TABLE.iter_mut() {
             if let Some(ref mut sock) = slot {
-                if sock.sock_type == sock_type && (sock.local_port == dst_port || sock.local_port == 0) {
+                // Roteamento exclusivo: deve coincidir o tipo de socket e a porta local explicitamente bound/conectada
+                if sock.sock_type == sock_type && sock.local_port != 0 && sock.local_port == dst_port {
+                    // Se o socket estiver conectado a um endpoint específico, valida IP e porta remotos
                     if !sock.is_connected || (sock.remote_ip == src_ip && (sock.remote_port == src_port || sock.remote_port == 0)) {
                         return sock.push_rx(payload);
                     }

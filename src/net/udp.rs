@@ -23,8 +23,12 @@ impl<'a> UdpPacket<'a> {
         let src_port = u16::from_be_bytes([bytes[0], bytes[1]]);
         let dst_port = u16::from_be_bytes([bytes[2], bytes[3]]);
         let len = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
-        let payload_len = if len >= 8 { len - 8 } else { 0 };
-        let end = 8 + payload_len.min(bytes.len() - 8);
+        if len < 8 {
+            return Err(()); // RFC 768: comprimento total de UDP deve ser pelo menos 8 bytes (cabeçalho)
+        }
+        let payload_len = len - 8;
+        let available = bytes.len() - 8;
+        let end = 8 + payload_len.min(available);
 
         Ok(Self {
             src_port,

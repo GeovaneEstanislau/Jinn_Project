@@ -106,8 +106,17 @@ impl JinnWall {
     ) -> FilterVerdict {
         self.packets_inspected.fetch_add(1, Ordering::Relaxed);
 
-        // 1. Defesa Anti-Spoofing: origem 0.0.0.0 ou 255.255.255.255 é descartada
-        if src_ip == [0, 0, 0, 0] || src_ip == [255, 255, 255, 255] {
+        // 1. Defesa Anti-Spoofing e Martian Addresses:
+        // - Origem 0.0.0.0 ou 255.255.255.255 (broadcast)
+        // - Origem 127.0.0.0/8 (Loopback martiano em interface física externa)
+        // - Origem Multicast ou Classe E (224.0.0.0 a 255.255.255.255)
+        // - Origem idêntica ao destino (LAND attack / reflexão)
+        if src_ip == [0, 0, 0, 0]
+            || src_ip == [255, 255, 255, 255]
+            || src_ip[0] == 127
+            || src_ip[0] >= 224
+            || src_ip == dst_ip
+        {
             self.packets_dropped.fetch_add(1, Ordering::Relaxed);
             return FilterVerdict::Drop;
         }
@@ -160,7 +169,7 @@ impl JinnWall {
         FilterVerdict::Drop
     }
 
-    /// Registra pacote de saída (OUTPUT) na tabela Conntrack
+    /// Registra pacote de saída (OUTPUT) na tabela Conntrack com suporte a evicção LRU e expiração
     pub fn track_out(
         &mut self,
         src_ip: [u8; 4],
@@ -170,7 +179,7 @@ impl JinnWall {
         dst_port: u16,
         current_tick: u64,
     ) {
-        // Atualiza ou insere na tabela Conntrack
+        // 1. Se fluxo já existe, atualiza last_seen_tick
         for entry_opt in self.table.iter_mut() {
             if let Some(entry) = entry_opt {
                 if entry.src_ip == src_ip && entry.dst_ip == dst_ip
@@ -182,6 +191,8 @@ impl JinnWall {
                 }
             }
         }
+
+        // 2. Procura primeiro slot livre
         for entry_opt in self.table.iter_mut() {
             if entry_opt.is_none() {
                 *entry_opt = Some(ConntrackEntry {
@@ -196,6 +207,45 @@ impl JinnWall {
                 return;
             }
         }
+
+        // 3. Tabela cheia: tenta expirar entradas antigas (> 6000 ticks)
+        for entry_opt in self.table.iter_mut() {
+            if let Some(entry) = entry_opt {
+                if current_tick.saturating_sub(entry.last_seen_tick) > 6000 {
+                    *entry_opt = Some(ConntrackEntry {
+                        src_ip,
+                        dst_ip,
+                        src_port,
+                        dst_port,
+                        protocol,
+                        state: ConnState::New,
+                        last_seen_tick: current_tick,
+                    });
+                    return;
+                }
+            }
+        }
+
+        // 4. Saturação sob alta carga: evicção LRU determinística da entrada mais antiga
+        let mut oldest_idx = 0;
+        let mut oldest_tick = u64::MAX;
+        for (i, entry_opt) in self.table.iter().enumerate() {
+            if let Some(entry) = entry_opt {
+                if entry.last_seen_tick < oldest_tick {
+                    oldest_tick = entry.last_seen_tick;
+                    oldest_idx = i;
+                }
+            }
+        }
+        self.table[oldest_idx] = Some(ConntrackEntry {
+            src_ip,
+            dst_ip,
+            src_port,
+            dst_port,
+            protocol,
+            state: ConnState::New,
+            last_seen_tick: current_tick,
+        });
     }
 
     /// Retorna a quantidade atual de fluxos ativos na tabela de conntrack
@@ -229,7 +279,7 @@ impl JinnWall {
 /// Retorna `(aprovados, total)`.
 pub fn run_jinnwall_selftests() -> (usize, usize) {
     let mut passed = 0;
-    let total = 8;
+    let total = 12;
 
     let mut jw = JinnWall {
         profile_atomic: AtomicU8::new(0),
@@ -282,14 +332,45 @@ pub fn run_jinnwall_selftests() -> (usize, usize) {
         passed += 1;
     }
 
-    // 7. Defesa Anti-Spoofing: origem 0.0.0.0 ou 255.255.255.255 é sempre DROPPED
+    // 7. Defesa Anti-Spoofing Básica: origem 0.0.0.0 ou 255.255.255.255 é sempre DROPPED
     let v_spoof1 = jw.filter_in([0, 0, 0, 0], [10, 0, 2, 15], crate::net::ipv4::PROTO_TCP, 1234, 80, 600);
     let v_spoof2 = jw.filter_in([255, 255, 255, 255], [10, 0, 2, 15], crate::net::ipv4::PROTO_TCP, 1234, 80, 600);
     if v_spoof1 == FilterVerdict::Drop && v_spoof2 == FilterVerdict::Drop {
         passed += 1;
     }
 
-    // 8. Contadores de telemetria refletem exatamente os pacotes processados
+    // 8. Defesa Anti-Spoofing Avançada: loopback 127.0.0.1 e multicast 224.0.0.1 na interface externa são DROPPED
+    let v_loopback = jw.filter_in([127, 0, 0, 1], [10, 0, 2, 15], crate::net::ipv4::PROTO_UDP, 53, 53535, 700);
+    let v_multicast = jw.filter_in([224, 0, 0, 1], [10, 0, 2, 15], crate::net::ipv4::PROTO_UDP, 53, 53535, 700);
+    if v_loopback == FilterVerdict::Drop && v_multicast == FilterVerdict::Drop {
+        passed += 1;
+    }
+
+    // 9. Defesa Anti-LAND Attack: origem idêntica ao destino é rejeitada
+    let v_land = jw.filter_in([10, 0, 2, 15], [10, 0, 2, 15], crate::net::ipv4::PROTO_TCP, 80, 80, 800);
+    if v_land == FilterVerdict::Drop {
+        passed += 1;
+    }
+
+    // 10. Conntrack Expiration: conexões com mais de 60s (6000 ticks) de inatividade expiram
+    let v_expired = jw.filter_in([93, 184, 216, 34], [10, 0, 2, 15], crate::net::ipv4::PROTO_UDP, 53, 53535, 500 + 6001);
+    if v_expired == FilterVerdict::Drop {
+        passed += 1;
+    }
+
+    // 11. Conntrack Saturation e Evicção LRU sem panic
+    for i in 0..MAX_CONNTRACK {
+        jw.track_out([10, 0, 2, 15], [192, 168, 1, (i + 1) as u8], crate::net::ipv4::PROTO_TCP, 30000 + (i as u16), 80, 1000 + (i as u64));
+    }
+    if jw.active_connections() == MAX_CONNTRACK {
+        // Insere a 65ª conexão (evicta a mais antiga com tick 1000)
+        jw.track_out([10, 0, 2, 15], [172, 16, 0, 1], crate::net::ipv4::PROTO_TCP, 45000, 443, 2000);
+        if jw.active_connections() == MAX_CONNTRACK {
+            passed += 1;
+        }
+    }
+
+    // 12. Contadores de telemetria refletem exatamente os pacotes processados
     if jw.inspected() > 0 && jw.accepted() > 0 && jw.drops() > 0 {
         if jw.inspected() == jw.accepted() + jw.drops() {
             passed += 1;
