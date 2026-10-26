@@ -1306,6 +1306,66 @@ fn cmd_selftest(w: &mut Writer) {
         w.write_line("FALHA");
     }
     w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string(" [*] Testes de Rede RFC 1035 e Cache DNS...\n");
+    let (dns_p, dns_t) = crate::net::dns::run_dns_selftests();
+    w.write_string("     Resultado DNS: ");
+    if dns_p == dns_t {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string("APROVADO (");
+        w.write_decimal(dns_p);
+        w.write_string("/");
+        w.write_decimal(dns_t);
+        w.write_line(")");
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string("FALHA (");
+        w.write_decimal(dns_p);
+        w.write_string("/");
+        w.write_decimal(dns_t);
+        w.write_line(")");
+    }
+    w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string(" [*] Testes de Politicas de Firewall JinnWall SPI...\n");
+    let (jw_p, jw_t) = crate::net::jinnwall::run_jinnwall_selftests();
+    w.write_string("     Resultado JinnWall: ");
+    if jw_p == jw_t {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string("APROVADO (");
+        w.write_decimal(jw_p);
+        w.write_string("/");
+        w.write_decimal(jw_t);
+        w.write_line(")");
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string("FALHA (");
+        w.write_decimal(jw_p);
+        w.write_string("/");
+        w.write_decimal(jw_t);
+        w.write_line(")");
+    }
+    w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string(" [*] Testes de Pilha TCP RFC 793 e Maquina de Estados...\n");
+    let (tcp_p, tcp_t) = crate::net::tcp::run_tcp_selftests();
+    w.write_string("     Resultado TCP: ");
+    if tcp_p == tcp_t {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string("APROVADO (");
+        w.write_decimal(tcp_p);
+        w.write_string("/");
+        w.write_decimal(tcp_t);
+        w.write_line(")");
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string("FALHA (");
+        w.write_decimal(tcp_p);
+        w.write_string("/");
+        w.write_decimal(tcp_t);
+        w.write_line(")");
+    }
+    w.set_color(Color::LightGray, Color::Black);
 }
 
 /// `reboot` — Reinicia via triple fault (técnica de debug em bare-metal).

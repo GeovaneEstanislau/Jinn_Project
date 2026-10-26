@@ -319,6 +319,26 @@ pub extern "C" fn _start() -> ! {
         w.set_color(Color::LightGray, Color::Black);
     }
 
+    w.write_string("[+] Testes RFC 793 e Protocolo TCP...");
+    let (tcp_passed, tcp_total) = net::tcp::run_tcp_selftests();
+    if tcp_passed == tcp_total {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string(" OK (");
+        w.write_decimal(tcp_passed);
+        w.write_string("/");
+        w.write_decimal(tcp_total);
+        w.write_line(" aprovados)");
+        w.set_color(Color::LightGray, Color::Black);
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string(" FALHA (");
+        w.write_decimal(tcp_passed);
+        w.write_string("/");
+        w.write_decimal(tcp_total);
+        w.write_line(")");
+        w.set_color(Color::LightGray, Color::Black);
+    }
+
     w.write_string("[+] Escalonador e Processos...");
     let sched = scheduler::get();
 

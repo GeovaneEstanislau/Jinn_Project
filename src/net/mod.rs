@@ -166,9 +166,9 @@ pub fn poll() {
                             }
                         }
                         PROTO_TCP => {
-                            // Tráfego TCP entregue ao subsistema de sockets via parser estruturado
+                            // Tráfego TCP entregue à máquina de estados RFC 793
                             if let Ok(tcp) = tcp::TcpPacket::parse(ip_pkt.payload) {
-                                socket::dispatch_incoming_packet(PROTO_TCP, ip_pkt.header.src_ip, tcp.src_port, tcp.dst_port, tcp.payload);
+                                tcp::handle_incoming_tcp_packet(ip_pkt.header.src_ip, ip_pkt.header.dst_ip, &tcp);
                             }
                         }
                         _ => {}

@@ -24,22 +24,34 @@
 ///   20 — window_create(title, len, dim) Create Aladdin desktop window
 ///   21 — window_update(id, buf, len)   Update Aladdin window client buffer
 ///   22 — window_close(id)              Close Aladdin desktop window
+///   25 — res_stat(pid, stat_ptr, len)  Query process resource limits & telemetry
+///   30 — socket(domain, type, proto)   Create network socket endpoint
+///   31 — connect(fd, addr, len)        Connect to remote network peer
+///   32 — bind(fd, addr, len)           Bind socket to local port
+///   33 — listen(fd, backlog)           Set TCP socket to passive listen
+///   34 — accept(fd, addr, len)         Accept incoming TCP connection
+///   35 — send(fd, buf, len, flags)     Send data over socket
+///   36 — recv(fd, buf, len, flags)     Receive data from socket
 
 use crate::ipc::{self, Message};
 use crate::memory;
 use crate::scheduler;
 
 // ── Error Codes ───────────────────────────────────────────────────────────────
-pub const EPERM:    isize = -1;   // Operation not permitted
-pub const EBADF:    isize = -9;   // Bad file descriptor
-pub const ENOMEM:   isize = -12;  // Out of memory
-pub const EFAULT:   isize = -14;  // Bad address
-pub const EINVAL:   isize = -22;  // Invalid argument
-pub const EMFILE:   isize = -24;  // Too many open files
-pub const ENOSPC:   isize = -28;  // No space left on device
-pub const ENOSYS:   isize = -38;  // Function not implemented
-pub const ENOBUFS:   isize = -105; // No buffer space available
-pub const EADDRINUSE: isize = -98;  // Address already in use
+pub const EPERM:        isize = -1;   // Operation not permitted
+pub const EBADF:        isize = -9;   // Bad file descriptor
+pub const EAGAIN:       isize = -11;  // Resource temporarily unavailable / Would block
+pub const ENOMEM:       isize = -12;  // Out of memory
+pub const EFAULT:       isize = -14;  // Bad address
+pub const EINVAL:       isize = -22;  // Invalid argument
+pub const EMFILE:       isize = -24;  // Too many open files
+pub const ENOSPC:       isize = -28;  // No space left on device
+pub const ENOSYS:       isize = -38;  // Function not implemented
+pub const EADDRINUSE:   isize = -98;  // Address already in use
+pub const ECONNRESET:   isize = -104; // Connection reset by peer
+pub const ENOBUFS:      isize = -105; // No buffer space available
+pub const ETIMEDOUT:    isize = -110; // Connection timed out
+pub const ECONNREFUSED: isize = -111; // Connection refused
 
 pub const USER_SPACE_MIN: usize = 0x0000_0000_0001_0000; // 64 KiB NULL guard
 pub const USER_SPACE_MAX: usize = 0x0000_8000_0000_0000; // Limite canônico de usuário
@@ -949,14 +961,106 @@ fn sys_bind(fd: usize, addr_ptr: *const u8, addrlen: usize) -> isize {
     }
 }
 
-/// `sys_listen(sockfd, backlog)` — Habilita escuta de conexões.
-fn sys_listen(_sockfd: usize, _backlog: usize) -> isize {
-    0
+/// `sys_listen(sockfd, backlog)` — Habilita escuta de conexões passivas (TCP).
+fn sys_listen(fd: usize, backlog: usize) -> isize {
+    if fd < 3 || fd >= scheduler::MAX_TASK_FDS {
+        return EBADF;
+    }
+    let pid = scheduler::current_pid();
+    let sock_idx = {
+        let sched = scheduler::get();
+        if let Some(Some(task)) = sched.tasks.get(pid) {
+            match task.fds[fd] {
+                Some(scheduler::TaskDescriptor::Socket(idx)) => idx,
+                _ => return EBADF,
+            }
+        } else {
+            return EPERM;
+        }
+    };
+
+    match crate::net::socket::listen_socket(pid, sock_idx, backlog) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
 }
 
-/// `sys_accept(sockfd, addr_ptr, addrlen)` — Aceita conexão de entrada.
-fn sys_accept(_sockfd: usize, _addr_ptr: *mut u8, _addrlen: usize) -> isize {
-    0
+/// `sys_accept(sockfd, addr_ptr, addrlen)` — Aceita conexão de entrada TCP estabelecida.
+fn sys_accept(fd: usize, addr_ptr: *mut u8, addrlen: usize) -> isize {
+    if fd < 3 || fd >= scheduler::MAX_TASK_FDS {
+        return EBADF;
+    }
+    let pid = scheduler::current_pid();
+    let listening_sock_idx = {
+        let sched = scheduler::get();
+        if let Some(Some(task)) = sched.tasks.get(pid) {
+            match task.fds[fd] {
+                Some(scheduler::TaskDescriptor::Socket(idx)) => idx,
+                _ => return EBADF,
+            }
+        } else {
+            return EPERM;
+        }
+    };
+
+    let sock_addr_size = core::mem::size_of::<crate::net::socket::SockAddrIn>();
+    if !addr_ptr.is_null() {
+        if addrlen < sock_addr_size {
+            return EINVAL;
+        }
+        if is_current_task_user() {
+            if let Err(e) = validate_user_buffer(addr_ptr as *const u8, sock_addr_size, true) {
+                return e;
+            }
+        }
+    }
+
+    let sched = scheduler::get();
+    let task = match sched.tasks.get_mut(pid).and_then(|t| t.as_mut()) {
+        Some(t) => t,
+        None => return EPERM,
+    };
+
+    // Encontra um FD livre para o socket filho aceito
+    let mut free_fd = None;
+    for cand in 3..scheduler::MAX_TASK_FDS {
+        if task.fds[cand].is_none() {
+            free_fd = Some(cand);
+            break;
+        }
+    }
+    let new_fd = match free_fd {
+        Some(f) => f,
+        None => return EMFILE,
+    };
+
+    if let Err(e) = task.resources.check_and_open_socket(&task.limits) {
+        return e;
+    }
+
+    let child_sock_idx = match crate::net::socket::accept_socket(pid, listening_sock_idx) {
+        Ok(idx) => idx,
+        Err(e) => {
+            task.resources.close_socket();
+            return e;
+        }
+    };
+
+    // Preenche informações do cliente conectado se o ponteiro foi fornecido
+    if !addr_ptr.is_null() && addrlen >= sock_addr_size {
+        if let Some((remote_ip, remote_port)) = crate::net::socket::get_socket_peer(child_sock_idx) {
+            let peer_addr = addr_ptr as *mut crate::net::socket::SockAddrIn;
+            unsafe {
+                (*peer_addr).sin_family = crate::net::socket::AF_INET as u16;
+                (*peer_addr).sin_port = remote_port.to_be();
+                (*peer_addr).sin_addr = remote_ip;
+                (*peer_addr).sin_zero = [0u8; 8];
+            }
+        }
+    }
+
+    task.fds[new_fd] = Some(scheduler::TaskDescriptor::Socket(child_sock_idx));
+    new_fd as isize
 }
 
 /// `sys_send(fd, buf_ptr, len, flags)` — Envia dados pelo socket usando descritor unificado.
