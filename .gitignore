@@ -40,3 +40,5 @@ iso_root/boot/*.bin
 iso_root/EFI/
 /boot/*.elf
 *.pcap
+__pycache__/
+*.pyc

@@ -88,6 +88,7 @@ impl Socket {
 }
 
 pub static mut SOCKET_TABLE: [Option<Socket>; MAX_SOCKETS] = [None; MAX_SOCKETS];
+pub static mut NEXT_EPHEMERAL_PORT: u16 = 40000;
 
 /// Cria um novo socket associado ao processo `pid`.
 pub fn create_socket(pid: usize, domain: u32, sock_type: u32, _protocol: u32) -> Result<usize, isize> {
@@ -165,7 +166,9 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
         sock.remote_ip = remote_ip;
         sock.remote_port = remote_port;
         if sock.local_port == 0 {
-            sock.local_port = 40000 + (sockfd as u16 * 100);
+            let port = NEXT_EPHEMERAL_PORT;
+            NEXT_EPHEMERAL_PORT = if NEXT_EPHEMERAL_PORT >= 60000 { 40000 } else { NEXT_EPHEMERAL_PORT + 1 };
+            sock.local_port = port;
             sock.is_bound = true;
         }
         (sock.sock_type, sock.local_port)

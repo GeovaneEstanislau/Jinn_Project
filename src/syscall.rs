@@ -35,6 +35,7 @@
 ///   34 — accept(fd, addr, len)         Accept incoming TCP connection
 ///   35 — send(fd, buf, len, flags)     Send data over socket
 ///   36 — recv(fd, buf, len, flags)     Receive data from socket
+///   37 — jinnwall_ctrl(cmd, arg0, arg1) Firewall JinnWall control & telemetry
 
 use crate::ipc::{self, Message};
 use crate::memory;
@@ -80,6 +81,17 @@ pub struct FileStat {
     pub atime: u64,         // Timestamp de acesso
     pub mtime: u64,         // Timestamp de modificação
     pub ctime: u64,         // Timestamp de criação
+}
+
+// ── JinnWall Firewall Telemetry (jinnwall_ctrl) ──────────────────────────────
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JinnWallStats {
+    pub inspected: u64,      // Total de pacotes avaliados
+    pub accepted: u64,       // Total de pacotes aceitos
+    pub dropped: u64,        // Total de pacotes descartados
+    pub active_conns: u32,   // Conexões ativas no conntrack
+    pub profile: u32,        // 0 = PublicSecure, 1 = Development
 }
 
 pub const USER_SPACE_MIN: usize = 0x0000_0000_0001_0000; // 64 KiB NULL guard
@@ -160,6 +172,13 @@ pub extern "C" fn syscall_dispatch_framed(frame: *mut usize) -> usize {
             scheduler::set_yielded();
             scheduler::get().preempt(frame as usize)
         }
+        11 => {
+            // sys_sleep: coloca a tarefa em dormência e cede a CPU de forma previsível
+            let ret = sys_sleep(arg0);
+            unsafe { *frame.add(14) = ret as usize; }
+            scheduler::set_yielded();
+            scheduler::get().preempt(frame as usize)
+        }
         _ => {
             let ret = syscall_dispatch(nr, arg0, arg1, arg2);
             unsafe { *frame.add(14) = ret as usize; } // atualiza o RAX salvo com o código de retorno
@@ -216,6 +235,7 @@ pub extern "C" fn syscall_dispatch(
         34 => sys_accept(arg0, arg1 as *mut u8, arg2),
         35 => sys_send(arg0, arg1 as *const u8, arg2, 0),
         36 => sys_recv(arg0, arg1 as *mut u8, arg2, 0),
+        37 => sys_jinnwall_ctrl(arg0, arg1, arg2),
         _  => ENOSYS,
     }
 }
@@ -449,6 +469,8 @@ fn sys_close(fd: usize) -> isize {
 const _: () = {
     assert!(core::mem::size_of::<FileStat>() == 56);
     assert!(core::mem::align_of::<FileStat>() == 8);
+    assert!(core::mem::size_of::<JinnWallStats>() == 32);
+    assert!(core::mem::align_of::<JinnWallStats>() == 8);
 };
 
 /// Converte metadados internos do VFS (`vfs::Stat`) para a estrutura normativa `FileStat`.
@@ -914,7 +936,6 @@ fn sys_sleep(ms: usize) -> isize {
     let wake_tick = crate::timer::ticks().saturating_add(ticks);
     let pid = scheduler::current_pid();
     scheduler::get().sleep_task(pid, wake_tick);
-    sys_yield();
     0
 }
 
@@ -1468,6 +1489,65 @@ fn sys_recv(fd: usize, buf_ptr: *mut u8, len: usize, _flags: usize) -> isize {
         Err(e) => e,
     }
 }
+
+/// `sys_jinnwall_ctrl(cmd, arg0, arg1)` — Controle e telemetria do firewall JinnWall SPI.
+/// cmd = 0: Consulta perfil ativo (0 = PublicSecure, 1 = Development)
+/// cmd = 1: Define perfil ativo (arg0: 0 = PublicSecure, 1 = Development)
+/// cmd = 2: Coleta estatísticas do firewall (arg0: *mut JinnWallStats)
+fn sys_jinnwall_ctrl(cmd: usize, arg0: usize, _arg1: usize) -> isize {
+    match cmd {
+        0 => {
+            let prof = unsafe { crate::net::jinnwall::JINNWALL.profile() };
+            match prof {
+                crate::net::jinnwall::FirewallProfile::PublicSecure => 0,
+                crate::net::jinnwall::FirewallProfile::Development => 1,
+            }
+        }
+        1 => {
+            let prof = match arg0 {
+                0 => crate::net::jinnwall::FirewallProfile::PublicSecure,
+                1 => crate::net::jinnwall::FirewallProfile::Development,
+                _ => return EINVAL,
+            };
+            unsafe {
+                crate::net::jinnwall::JINNWALL.set_profile(prof);
+            }
+            0
+        }
+        2 => {
+            let ptr = arg0 as *mut JinnWallStats;
+            if ptr.is_null() {
+                return EINVAL;
+            }
+            if is_current_task_user() {
+                if let Err(e) = validate_user_buffer(ptr as *const u8, core::mem::size_of::<JinnWallStats>(), true) {
+                    return e;
+                }
+            }
+            let (inspected, accepted, dropped, active_conns, profile) = unsafe {
+                let jw = &crate::net::jinnwall::JINNWALL;
+                let p = match jw.profile() {
+                    crate::net::jinnwall::FirewallProfile::PublicSecure => 0u32,
+                    crate::net::jinnwall::FirewallProfile::Development => 1u32,
+                };
+                (jw.inspected(), jw.accepted(), jw.drops(), jw.active_connections() as u32, p)
+            };
+            let stats = JinnWallStats {
+                inspected,
+                accepted,
+                dropped,
+                active_conns,
+                profile,
+            };
+            unsafe {
+                core::ptr::write_unaligned(ptr, stats);
+            }
+            0
+        }
+        _ => EINVAL,
+    }
+}
+
 
 // ── Kernel-internal invoke ────────────────────────────────────────────────────
 

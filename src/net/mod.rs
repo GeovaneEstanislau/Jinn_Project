@@ -55,8 +55,23 @@ pub fn init() {
     }
 }
 
+static NET_POLL_LOCK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// Processa pacotes de rede recebidos da placa física.
 pub fn poll() {
+    // Garante exclusão mútua em SMP para evitar corrupção de anéis VirtIO e condições de corrida de sockets
+    if NET_POLL_LOCK.compare_exchange(false, true, core::sync::atomic::Ordering::Acquire, core::sync::atomic::Ordering::Relaxed).is_err() {
+        return;
+    }
+
+    struct NetPollGuard;
+    impl Drop for NetPollGuard {
+        fn drop(&mut self) {
+            NET_POLL_LOCK.store(false, core::sync::atomic::Ordering::Release);
+        }
+    }
+    let _guard = NetPollGuard;
+
     let dev = match crate::drivers::net::virtio::get_device() {
         Some(d) => d,
         None => return,

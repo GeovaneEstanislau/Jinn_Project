@@ -98,6 +98,7 @@ A tabela a seguir reflete com fidelidade técnica o estado real do código em `s
 | **34** | `sys_accept` | **Implementada** | `rdi: sockfd (u64)`, `rsi: *mut SockAddrIn`, `rdx: addrlen (usize)` | `i64` (novo FD unificado 3..7) | `-EBADF` (-9), `-EFAULT` (-14), `-EINVAL` (-22), `-EAGAIN` (-11), `-EMFILE` (-24) | Tabela unificada de descritores, cota `max_sockets`, conexão TCP filha | `src/syscall.rs`, `src/net/socket.rs` |
 | **35** | `sys_send` | **Implementada** | `rdi: sockfd (u64)`, `rsi: *const u8 (buf)`, `rdx: len (usize)` | `usize` (bytes transmitidos) | `-EBADF` (-9), `-EFAULT` (-14), `-EINVAL` (-22) | Placa VirtIO-Net, firewall JinnWall (conntrack de saída) | `src/syscall.rs:214`, `test_adv_real_network_dns` |
 | **36** | `sys_recv` | **Implementada** | `rdi: sockfd (u64)`, `rsi: *mut u8 (buf)`, `rdx: len (usize)` | `usize` (bytes recebidos ou 0 se fila vazia) | `-EBADF` (-9), `-EFAULT` (-14), `-EINVAL` (-22) | Fila circular RX do socket | `src/syscall.rs:260`, `test_adv_real_network_dns` |
+| **37** | `sys_jinnwall_ctrl` | **Implementada** | `rdi: cmd (usize)`, `rsi: arg0 (usize)`, `rdx: arg1 (usize)` | `i64` (perfil ou 0 sucesso) | `-EINVAL` (-22), `-EFAULT` (-14) | Controle e telemetria do firewall stateful JinnWall SPI | `src/syscall.rs`, `test_tcp_network_interoperability` |
 
 ---
 
@@ -219,7 +220,22 @@ pub struct FileStat {
 1. **Unseekable Streams:** Tentativas de reposicionamento em fluxos de console (`fd < 3`) ou em sockets de rede retornam estritamente `-ESPIPE` (-29).
 2. **Prevenção contra Overflow:** Cálculos aritméticos utilizam `checked_add`. Saturação além de `i64::MAX` ou underflow abaixo de zero retornam `-EINVAL` (-22).
 3. **Invariância de Posição:** Caso qualquer validação falhe (offset negativo, overflow, whence inválido), o cursor de leitura/escrita do descritor permanece **estritamente inalterado**.
-4. **Descritores Inválidos:** Descritores fechados ou fora do intervalo da tabela retornam `-EBADF` (-9).
+#### Telemetria e Controle do Firewall (`JinnWallStats` - Syscall 37)
+A Syscall 37 (`sys_jinnwall_ctrl`) permite gerenciar e auditar o firewall stateful SPI a partir de Ring 3:
+- `cmd = 0`: Consulta perfil ativo (`0` = `PublicSecure`, `1` = `Development`).
+- `cmd = 1`: Ajusta perfil ativo (`arg0`: `0` ou `1`). Retorna `0` ou `-EINVAL`.
+- `cmd = 2`: Preenche a estrutura normativa `JinnWallStats` (32 bytes, alinhamento natural a 8 bytes, sem padding implícito):
+
+```rust
+#[repr(C)]
+pub struct JinnWallStats {
+    pub inspected: u64,      // [Offset 0,  8B] Total de pacotes IP avaliados pelo firewall
+    pub accepted: u64,       // [Offset 8,  8B] Total de pacotes autorizados e despachados para L4
+    pub dropped: u64,        // [Offset 16, 8B] Total de pacotes descartados por regras/política
+    pub active_conns: u32,   // [Offset 24, 4B] Fluxos bidirecionais ativos na tabela Conntrack
+    pub profile: u32,        // [Offset 28, 4B] Perfil ativo (0 = PublicSecure, 1 = Development)
+}
+```
 
 ---
 

@@ -132,6 +132,11 @@ pub extern "C" fn exception_dispatch(vector: u64, error_code: u64, frame: *mut u
         crate::serial_write(b"\n");
     };
 
+    let mut cr2: u64 = 0;
+    if vector == 14 {
+        unsafe { core::arch::asm!("mov {}, cr2", out(reg) cr2, options(nomem, nostack)); }
+        print_hex_ser(b"  Fault CR2:", cr2);
+    }
     print_hex_ser(b"  Fault RIP:", rip as u64);
     print_hex_ser(b"  Fault CS :", cs as u64);
     print_hex_ser(b"  Err Code :", error_code);
@@ -144,7 +149,7 @@ pub extern "C" fn exception_dispatch(vector: u64, error_code: u64, frame: *mut u
     crate::serial_write_byte(b'0' + (cur_pid as u8 % 10));
     crate::serial_write(b"\n");
 
-    if fault_rsp != 0 {
+    if is_user && fault_rsp >= 0x1000 {
         let ptr = fault_rsp as *const u64;
         print_hex_ser(b"  [RSP+0] target RIP   :", unsafe { *ptr });
         print_hex_ser(b"  [RSP+8] target CS    :", unsafe { *ptr.add(1) });

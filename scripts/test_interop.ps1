@@ -50,7 +50,7 @@ Remove-Item (Join-Path $projectRoot "host_peer_stderr.log") -Force -ErrorAction 
 # 2. Inicia o Host Peer TCP Independente (Python / Windows TCP/IP) em segundo plano
 Write-Host "[1/4] Iniciando Host Peer TCP independente na porta 9999..."
 $peerProcess = Start-Process -FilePath "py" `
-    -ArgumentList @("-u", $peerScript, "--mode", "server", "--connections", "2", "--timeout", "$TimeoutSec") `
+    -ArgumentList @("-u", $peerScript, "--mode", "both", "--connections", "4", "--timeout", "$TimeoutSec") `
     -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $projectRoot "host_peer_stdout.log") `
     -RedirectStandardError (Join-Path $projectRoot "host_peer_stderr.log")
 
@@ -141,4 +141,11 @@ if (Test-Path $serialLog) {
     $serialItem = Get-Item $serialLog
     $sLen = $serialItem.Length
     Write-Host "Log serial do kernel: $($serialItem.FullName) ($sLen bytes)"
+}
+
+# 7. Executa analise forense detalhada dos pacotes PCAP
+$analyzerScript = Join-Path $projectRoot "tools\interop-peer\analyze_pcap.py"
+if ((Test-Path $pcapPath) -and (Test-Path $analyzerScript)) {
+    Write-Host ""
+    & py $analyzerScript $pcapPath
 }

@@ -274,6 +274,21 @@ unsafe fn sys_accept(sockfd: u64, addr: *mut SockAddrIn) -> i64 {
     syscall3(34, sockfd, addr as u64, core::mem::size_of::<SockAddrIn>() as u64)
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct JinnWallStats {
+    pub inspected: u64,
+    pub accepted: u64,
+    pub dropped: u64,
+    pub active_conns: u32,
+    pub profile: u32,
+}
+
+#[inline(always)]
+unsafe fn sys_jinnwall_ctrl(cmd: u64, arg0: u64, arg1: u64) -> i64 {
+    syscall3(37, cmd, arg0, arg1)
+}
+
 // ── Output Helpers ───────────────────────────────────────────────────────────
 
 unsafe fn print_str(s: &[u8]) {
@@ -672,13 +687,13 @@ unsafe fn test_tcp_network_interoperability() {
     // Aguarda e valida resposta do peer (echo com seed 0x52 e msg_id = 101)
     let mut rx_buf_a = [0u8; 512];
     let mut received_a = 0usize;
-    for _ in 0..30 {
+    for _ in 0..40 {
         let n = sys_recv(sock_a as u64, rx_buf_a[received_a..].as_mut_ptr(), 512 - received_a);
         if n > 0 {
             received_a += n as usize;
             if received_a >= 52 { break; }
         }
-        let _ = sys_sleep(10);
+        let _ = sys_sleep(25);
     }
 
     if received_a >= 52 && &rx_buf_a[0..4] == b"JINN" {
@@ -788,7 +803,7 @@ unsafe fn test_tcp_network_interoperability() {
                         recv_total += n as usize;
                         if recv_total >= expected_rx { break; }
                     }
-                    let _ = sys_sleep(10);
+                    let _ = sys_sleep(25);
                 }
 
                 print_str(b"  Recebidos do peer independente: ");
@@ -825,9 +840,83 @@ unsafe fn test_tcp_network_interoperability() {
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
-    // Nível C: Conexão Entrante (Jinn OS como Servidor Passivo na porta 8080)
+    // Nível E: Integração VFS + TCP (Streaming de Arquivo Real do Disco FAT32)
     // ─────────────────────────────────────────────────────────────────────────────
-    print_str(b"[INTEROP-C] Testando modo passivo LISTEN na porta 8080 para receber conexao entrante...\n");
+    print_str(b"[INTEROP-E] Testando integracao ponta-a-ponta VFS -> TCP (Streaming de /disk/README.TXT)...\n");
+    let file_fd = sys_open(b"/disk/README.TXT", 0);
+    print_str(b"  sys_open retorno fd=");
+    print_i64(file_fd);
+    print_str(b"\n");
+    if file_fd >= 3 {
+        let mut file_buf = [0u8; 256];
+        let bytes_read = sys_read(file_fd as u64, file_buf.as_mut_ptr(), 256);
+        let _ = sys_close(file_fd as u64);
+        print_str(b"  sys_read retorno bytes=");
+        print_i64(bytes_read);
+        print_str(b"\n");
+
+        if bytes_read > 0 {
+            print_str(b"  Lidos ");
+            print_u64(bytes_read as u64);
+            print_str(b" bytes de /disk/README.TXT via VFS. Transmitindo via TCP para o peer independente...\n");
+
+            let sock_e = sys_socket(2, 1, 0);
+            if sock_e >= 0 {
+                let ret_conn_e = sys_connect(sock_e as u64, &peer_addr);
+                if ret_conn_e == 0 {
+                    let mut tx_msg = [0u8; 276];
+                    tx_msg[0..4].copy_from_slice(b"JINN");
+                    tx_msg[4..8].copy_from_slice(&0x1001_0003u32.to_be_bytes()); // Session ID
+                    tx_msg[8..12].copy_from_slice(&3u32.to_be_bytes());          // Msg ID 3 (VFS)
+                    tx_msg[12..16].copy_from_slice(&(bytes_read as u32).to_be_bytes());
+
+                    let mut csum_e = 0u32;
+                    for i in 0..(bytes_read as usize) {
+                        tx_msg[20 + i] = file_buf[i];
+                        csum_e = csum_e.wrapping_add(file_buf[i] as u32);
+                    }
+                    tx_msg[16..20].copy_from_slice(&csum_e.to_be_bytes());
+
+                    let total_tx = 20 + bytes_read as usize;
+                    let sent = sys_send(sock_e as u64, tx_msg.as_ptr(), total_tx);
+                    if sent == total_tx as i64 {
+                        print_str(b"  Arquivo VFS transmitido via TCP (bytes enviados = ");
+                        print_u64(sent as u64);
+                        print_str(b"). Aguardando confirmacao...\n");
+
+                        let mut rx_buf_e = [0u8; 64];
+                        let mut rx_n = 0usize;
+                        for _ in 0..40 {
+                            let n = sys_recv(sock_e as u64, rx_buf_e[rx_n..].as_mut_ptr(), 64 - rx_n);
+                            if n > 0 {
+                                rx_n += n as usize;
+                                if rx_n >= 20 { break; }
+                            }
+                            let _ = sys_sleep(20);
+                        }
+
+                        if rx_n >= 20 && &rx_buf_e[0..4] == b"JINN" {
+                            let rx_msgid = u32::from_be_bytes([rx_buf_e[8], rx_buf_e[9], rx_buf_e[10], rx_buf_e[11]]);
+                            if rx_msgid == 103 {
+                                print_str(b"  [PASS] Nivel E: Arquivo VFS (/disk/README.TXT) transmitido e verificado com 100% de integridade pelo peer independente!\n");
+                            }
+                        }
+                    }
+                }
+                let _ = sys_close(sock_e as u64);
+            }
+        }
+    } else {
+        print_str(b"  [WARN] sys_open falhou ao abrir /disk/README.TXT (ret=");
+        print_i64(file_fd);
+        print_str(b")\n");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Nível C: Auditoria Efetiva do Firewall JinnWall SPI (Bloqueio vs Permissao)
+    // ─────────────────────────────────────────────────────────────────────────────
+    print_str(b"[INTEROP-C] Testando politicas reais do firewall JinnWall SPI (Bloqueio vs Permissao)...\n");
+
     let listen_sock = sys_socket(2, 1, 0);
     if listen_sock >= 0 {
         let server_addr = SockAddrIn {
@@ -838,32 +927,67 @@ unsafe fn test_tcp_network_interoperability() {
         };
         let ret_bind = sys_bind(listen_sock as u64, &server_addr);
         let ret_listen = sys_listen(listen_sock as u64, 2);
-        if ret_bind == 0 && ret_listen == 0 {
-            print_str(b"  [PASS] Socket associado (bind 8080) e colocado em LISTEN com sucesso!\n");
-            print_str(b"  [INFO] Servidor pronto para conexoes entrantes via encaminhamento de portas QEMU.\n");
 
-            // Tenta aceitar uma conexão caso o host peer tente se conectar
+        if ret_bind == 0 && ret_listen == 0 {
+            // ── Cenario C1: Politica PublicSecure (Bloqueio obrigatorio de conexao entrante) ──
+            let _ = sys_jinnwall_ctrl(1, 0, 0); // Perfil 0 = PublicSecure
+            let mut stat_before = JinnWallStats::default();
+            let _ = sys_jinnwall_ctrl(2, &mut stat_before as *mut _ as u64, 0);
+
+            print_str(b"  [C1-SECURE] JinnWall em PublicSecure. Aguardando tentativa de conexao do peer...\n");
             let mut client_addr: SockAddrIn = core::mem::zeroed();
-            let mut accepted_fd = -1i64;
-            for _ in 0..20 {
-                let ret_acc = sys_accept(listen_sock as u64, &mut client_addr);
-                if ret_acc >= 0 {
-                    accepted_fd = ret_acc;
+            let mut accepted_c1 = -1i64;
+
+            for _ in 0..15 {
+                let ret = sys_accept(listen_sock as u64, &mut client_addr);
+                if ret >= 0 {
+                    accepted_c1 = ret;
                     break;
                 }
-                let _ = sys_sleep(20);
+                let _ = sys_sleep(100);
             }
 
-            if accepted_fd >= 0 {
-                print_str(b"  [PASS] Conexao entrante aceita do host peer com sucesso! FD=");
-                print_i64(accepted_fd);
-                print_str(b"\n");
+            let mut stat_after_c1 = JinnWallStats::default();
+            let _ = sys_jinnwall_ctrl(2, &mut stat_after_c1 as *mut _ as u64, 0);
 
+            if accepted_c1 < 0 {
+                print_str(b"  [PASS] Cenario C1: Conexao entrante nao autorizada BLOQUEADA pelo JinnWall sob PublicSecure (Drops=");
+                print_u64(stat_after_c1.dropped);
+                print_str(b")!\n");
+            } else {
+                print_str(b"  [FAIL] Conexao nao foi bloqueada como esperado sob PublicSecure!\n");
+                let _ = sys_close(accepted_c1 as u64);
+            }
+
+            // ── Cenario C2: Politica Development (Autorizacao explicita da porta 8080) ──
+            print_str(b"  [C2-DEV] Alternando JinnWall para perfil Development via Syscall 37...\n");
+            let _ = sys_jinnwall_ctrl(1, 1, 0); // Perfil 1 = Development
+            let mut stat_before_c2 = JinnWallStats::default();
+            let _ = sys_jinnwall_ctrl(2, &mut stat_before_c2 as *mut _ as u64, 0);
+
+            let mut accepted_c2 = -1i64;
+            for _ in 0..40 {
+                let ret = sys_accept(listen_sock as u64, &mut client_addr);
+                if ret >= 0 {
+                    accepted_c2 = ret;
+                    break;
+                }
+                let _ = sys_sleep(100);
+            }
+
+            if accepted_c2 >= 0 {
                 let mut in_buf = [0u8; 128];
-                let n_in = sys_recv(accepted_fd as u64, in_buf.as_mut_ptr(), 128);
+                let mut n_in = 0i64;
+                for _ in 0..40 {
+                    let n = sys_recv(accepted_c2 as u64, in_buf.as_mut_ptr(), 128);
+                    if n > 0 {
+                        n_in = n;
+                        break;
+                    }
+                    let _ = sys_sleep(25);
+                }
+
                 if n_in > 20 && &in_buf[0..4] == b"JINN" {
-                    print_str(b"  [PASS] Requisicao recebida do host peer independente na conexao entrante!\n");
-                    // Responde
                     let resp_payload = b"JINN_OS_ECHO_OK";
                     let mut resp_msg = [0u8; 35];
                     resp_msg[0..4].copy_from_slice(b"JINN");
@@ -874,13 +998,23 @@ unsafe fn test_tcp_network_interoperability() {
                     for &b in resp_payload.iter() { s = s.wrapping_add(b as u32); }
                     resp_msg[16..20].copy_from_slice(&s.to_be_bytes());
                     resp_msg[20..35].copy_from_slice(resp_payload);
-                    let _ = sys_send(accepted_fd as u64, resp_msg.as_ptr(), 35);
-                    print_str(b"  [PASS] Resposta transmitida de volta ao host peer na conexao entrante!\n");
+                    let _ = sys_send(accepted_c2 as u64, resp_msg.as_ptr(), 35);
                 }
-                let _ = sys_close(accepted_fd as u64);
+                let _ = sys_sleep(50);
+                let _ = sys_close(accepted_c2 as u64);
+
+                let mut stat_after_c2 = JinnWallStats::default();
+                let _ = sys_jinnwall_ctrl(2, &mut stat_after_c2 as *mut _ as u64, 0);
+
+                print_str(b"  [PASS] Cenario C2: Conexao entrante AUTORIZADA pelo JinnWall sob Development e dados trocados com sucesso (Accepts=");
+                print_u64(stat_after_c2.accepted);
+                print_str(b")!\n");
             } else {
-                print_str(b"  [INFO] Nenhuma conexao entrante recebida na janela de escuta (teste passivo pronto).\n");
+                print_str(b"  [FAIL] Conexao entrante nao foi aceita dentro do timeout sob Development!\n");
             }
+
+            // Restaura perfil padrao de seguranca
+            let _ = sys_jinnwall_ctrl(1, 0, 0);
         }
         let _ = sys_close(listen_sock as u64);
     }

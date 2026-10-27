@@ -341,7 +341,12 @@ pub fn handle_incoming_tcp_packet(src_ip: [u8; 4], _dst_ip: [u8; 4], tcp: &TcpPa
                     && sock.local_port == tcp.dst_port
                     && sock.remote_ip == src_ip
                     && sock.remote_port == tcp.src_port
-                    && (sock.is_connected || sock.tcb.state == TcpState::SynReceived)
+                    && (sock.is_connected
+                        || sock.tcb.state == TcpState::Established
+                        || sock.tcb.state == TcpState::SynReceived
+                        || sock.tcb.state == TcpState::FinWait1
+                        || sock.tcb.state == TcpState::FinWait2
+                        || sock.tcb.state == TcpState::CloseWait)
                 {
                     process_connected_tcp_event(sock, src_ip, tcp);
                     return;
@@ -380,8 +385,14 @@ pub fn handle_incoming_tcp_packet(src_ip: [u8; 4], _dst_ip: [u8; 4], tcp: &TcpPa
 
     // Se nenhum socket escuta nesta porta e o pacote não possui flag RST, envia RST de recusa (RFC 793)
     if (tcp.flags & TCP_FLAG_RST) == 0 {
-        let rst_ack = tcp.seq_num.wrapping_add(1);
-        send_tcp_packet(tcp.dst_port, src_ip, tcp.src_port, 0, rst_ack, TCP_FLAG_RST | TCP_FLAG_ACK, 0, &[]);
+        if (tcp.flags & TCP_FLAG_ACK) != 0 {
+            // RFC 793: se segmento de entrada possui ACK, seq é o ack recebido e não envia ACK flag
+            send_tcp_packet(tcp.dst_port, src_ip, tcp.src_port, tcp.ack_num, 0, TCP_FLAG_RST, 0, &[]);
+        } else {
+            let advance = if (tcp.flags & TCP_FLAG_SYN) != 0 { 1 } else { tcp.payload.len() as u32 };
+            let rst_ack = tcp.seq_num.wrapping_add(advance);
+            send_tcp_packet(tcp.dst_port, src_ip, tcp.src_port, 0, rst_ack, TCP_FLAG_RST | TCP_FLAG_ACK, 0, &[]);
+        }
     }
 }
 
