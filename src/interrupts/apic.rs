@@ -80,8 +80,62 @@ pub fn init_timer(vector: u8, _freq_hz: u32) {
     }
 }
 
+const APIC_ICR_LOW: u32 = 0x300;
+const APIC_ICR_HIGH: u32 = 0x310;
+
 pub fn send_eoi() {
     unsafe {
-        write_apic(APIC_EOI, 0);
+        if APIC_BASE_VADDR != 0 {
+            write_apic(APIC_EOI, 0);
+        }
     }
 }
+
+/// Retorna o Local APIC ID do núcleo que está executando a chamada.
+pub fn lapic_id() -> u32 {
+    unsafe {
+        if APIC_BASE_VADDR != 0 {
+            (read_apic(APIC_ID) >> 24) & 0xFF
+        } else {
+            0
+        }
+    }
+}
+
+/// Inicializa o subsistema Local APIC para um núcleo secundário (AP).
+pub fn init_ap() {
+    unsafe {
+        let mut apic_base = rdmsr(IA32_APIC_BASE_MSR);
+        apic_base |= APIC_GLOBAL_ENABLE;
+        wrmsr(IA32_APIC_BASE_MSR, apic_base);
+
+        let phys_base = apic_base & APIC_BASE_MASK;
+        if APIC_BASE_VADDR == 0 {
+            APIC_BASE_VADDR = phys_base + hhdm_offset();
+        }
+
+        // Spurious interrupt vector 255 com APIC habilitado (bit 8)
+        write_apic(APIC_SPURIOUS, 0x100 | 255);
+    }
+}
+
+/// Envia um Inter-Processor Interrupt (IPI) direcionado a um APIC ID específico.
+pub fn send_ipi(dest_lapic_id: u32, vector: u8) {
+    unsafe {
+        if APIC_BASE_VADDR == 0 { return; }
+        // Escreve o destino nos bits 24..31 do ICR High
+        write_apic(APIC_ICR_HIGH, (dest_lapic_id & 0xFF) << 24);
+        // Escreve o vetor e modo Fixed (0) no ICR Low (dispara o IPI)
+        write_apic(APIC_ICR_LOW, vector as u32);
+    }
+}
+
+/// Envia um IPI para todos os outros núcleos (Broadcast All Excluding Self).
+pub fn send_all_ipi(vector: u8) {
+    unsafe {
+        if APIC_BASE_VADDR == 0 { return; }
+        // Shorthand: bits 18..19 = 11b (All Excluding Self)
+        write_apic(APIC_ICR_LOW, (vector as u32) | (3 << 18));
+    }
+}
+

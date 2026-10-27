@@ -79,8 +79,9 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         "kill" => cmd_kill(w, args),
         "spawn" => cmd_spawn(w, args),
 
-        // ── Escalonador ───────────────────────────────────────────────────────
+        // ── Escalonador & SMP ─────────────────────────────────────────────────
         "sched" => cmd_sched(w),
+        "smp" | "cpus" | "cores" => cmd_smp(w),
         "uptime" => cmd_uptime(w),
 
         // ── Interface Gráfica ─────────────────────────────────────────────────
@@ -553,6 +554,69 @@ fn cmd_sched(w: &mut Writer) {
     w.set_color(Color::DarkGray, Color::Black);
     w.write_line("  [Ring 0: dados lidos diretamente do kernel]");
     w.set_color(Color::LightGray, Color::Black);
+}
+
+/// `smp` — Topologia e telemetria de multiprocessamento simetrico (SMP).
+fn cmd_smp(w: &mut Writer) {
+    w.set_color(Color::LightCyan, Color::Black);
+    w.write_line("=== Jinn OS — Multiprocessamento Simetrico (SMP) ===");
+    w.set_color(Color::LightGray, Color::Black);
+
+    let online = crate::smp::online_cpus();
+    let detected = crate::limine::smp_cpu_count();
+    let bsp_lapic = crate::limine::smp_bsp_lapic_id();
+
+    w.write_string("  Nucleos Detectados : ");
+    w.write_decimal(detected);
+    w.write_string(" | Ativos: ");
+    w.write_decimal(online);
+    w.write_string(" | BSP LAPIC: ");
+    w.write_decimal(bsp_lapic as usize);
+    w.write_line("");
+    w.write_line("---------------------------------------------------------------");
+    w.write_line(" CPU | Papel | Estado | LAPIC | PID Atual | Ticks      | CtxSw ");
+    w.write_line("-----+-------+--------+-------+-----------+------------+-------");
+
+    for i in 0..online {
+        if let Some(core) = crate::smp::get_cpu(i) {
+            w.write_string("  ");
+            w.write_decimal(core.cpu_id);
+            w.write_string("  | ");
+            if core.is_bsp {
+                w.set_color(Color::LightGreen, Color::Black);
+                w.write_string("BSP  ");
+            } else {
+                w.set_color(Color::LightCyan, Color::Black);
+                w.write_string("AP   ");
+            }
+            w.set_color(Color::LightGray, Color::Black);
+            w.write_string(" | ");
+            if core.is_online {
+                w.set_color(Color::LightGreen, Color::Black);
+                w.write_string("Online ");
+            } else {
+                w.set_color(Color::LightRed, Color::Black);
+                w.write_string("Off    ");
+            }
+            w.set_color(Color::LightGray, Color::Black);
+            w.write_string("|   ");
+            w.write_decimal(core.lapic_id as usize);
+            w.write_string("   | ");
+            if let Some(pid) = core.current_pid {
+                w.write_string("PID ");
+                w.write_decimal(pid);
+                if pid < 10 { w.write_string("  "); } else { w.write_string(" "); }
+            } else {
+                w.write_string("Idle  ");
+            }
+            w.write_string("  | ");
+            w.write_decimal(core.ticks as usize);
+            w.write_string("    | ");
+            w.write_decimal(core.ctx_switches as usize);
+            w.write_line("");
+        }
+    }
+    w.write_line("---------------------------------------------------------------");
 }
 
 /// `uptime` — Ticks de timer desde o boot.

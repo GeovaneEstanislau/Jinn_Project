@@ -1,7 +1,8 @@
 # run.ps1 - Gera a ISO com Limine e inicia o QEMU
 param(
     [switch]$NoRun,
-    [string]$IsoPath = "jinn.iso"
+    [string]$IsoPath = "jinn.iso",
+    [int]$Smp = 4
 )
 
 $ErrorActionPreference = 'Stop'
@@ -309,6 +310,7 @@ if (-not $NoRun) {
         "-boot", "order=d",
         "-cdrom", $isoPath,
         "-m", "512M",
+        "-smp", "$Smp",
         "-netdev", "user,id=net0",
         "-device", "virtio-net-pci,netdev=net0",
         "-serial", "stdio"

@@ -27,31 +27,16 @@ use crate::timer;
 pub extern "C" fn irq_dispatch(vector: u64, _frame: *mut usize) -> usize {
     match vector {
         32 => {
-            // IRQ0 — PIT timer via legacy PIC
-            timer::tick();
-            pic::send_eoi(0);
-            
-            // --- DEBUG INDICATOR ---
-            unsafe {
-                if let Some(fb) = crate::limine::framebuffer() {
-                    let width = fb.width as usize;
-                    let pitch = fb.pitch as usize;
-                    let ticks = timer::ticks();
-                    let color = if (ticks % 100) < 50 { 0x0000FF00 } else { 0x00000000 };
-                    for y in 0..8 {
-                        for x in 0..8 {
-                            let pixel_offset = y * pitch + (width - 20 + x) * 4;
-                            core::ptr::write_volatile(
-                                fb.address.add(pixel_offset) as *mut u32,
-                                color,
-                            );
-                        }
-                    }
-                }
+            let cpu_id = crate::smp::current_cpu_id();
+            if cpu_id == 0 {
+                // IRQ0 — PIT timer via legacy PIC no BSP
+                timer::tick();
+                pic::send_eoi(0);
             }
-            // -----------------------
+            // Envia EOI para o Local APIC em todos os núcleos
+            apic::send_eoi();
             
-            crate::scheduler::get().preempt(_frame as usize)
+            crate::scheduler::get().preempt_core(cpu_id, _frame as usize)
         }
         33 => {
             // IRQ1 — PS/2 Keyboard (EOI sent inside the handler)

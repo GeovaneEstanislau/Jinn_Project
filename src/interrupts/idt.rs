@@ -116,3 +116,16 @@ pub fn init() {
         core::arch::asm!("lidt [{}]", in(reg) &idt_desc, options(readonly, nostack, preserves_flags));
     }
 }
+
+/// Carrega a tabela IDT na CPU atual (utilizado por APs secundários).
+pub fn load() {
+    unsafe {
+        let idt_ptr = core::ptr::addr_of!(IDT);
+        let idt_desc = IdtDescriptor {
+            limit: (core::mem::size_of::<[IdtEntry; 256]>() - 1) as u16,
+            base:  idt_ptr as u64,
+        };
+        core::arch::asm!("lidt [{}]", in(reg) &idt_desc, options(readonly, nostack, preserves_flags));
+    }
+}
+

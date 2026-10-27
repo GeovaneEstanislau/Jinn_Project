@@ -62,6 +62,7 @@ $qemuArgs = @(
     "-boot", "order=d",
     "-cdrom", $isoPath,
     "-m", "512M",
+    "-smp", "4",
     "-netdev", "user,id=net0,hostfwd=tcp:127.0.0.1:8088-:8080",
     "-device", "virtio-net-pci,netdev=net0",
     "-object", "filter-dump,id=f0,netdev=net0,file=$pcapPath",

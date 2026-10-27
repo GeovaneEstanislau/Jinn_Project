@@ -13,7 +13,7 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
 * **Fase 2 (Concluída ✅)**: Primitivas 2D, Driver de Mouse PS/2, Renderização de Cursor, Double Buffering, Compositor de Janelas e Terminal Interativo ([Issue #32](https://github.com/GeovaneEstanislau/Jinn_Project/issues/32)).
 * **Fase 3 (Em Andamento 🚧)**: Driver de Disco (IDE/ATA PIO Mode), MBR, Sistema de Arquivos (Ext2/FAT32) e montagem VFS ([Issue #30](https://github.com/GeovaneEstanislau/Jinn_Project/issues/30)).
 * **Fase 4 (Concluída ✅)**: Melhorias de DX, scripts de build multiplataforma (Makefile/PS1) e CI no GitHub Actions ([Issue #31](https://github.com/GeovaneEstanislau/Jinn_Project/issues/31) e [Issue #33](https://github.com/GeovaneEstanislau/Jinn_Project/issues/33)).
-* **Fase 5 (Futuro 📋)**: Suporte a SMP (Multiprocessamento), Driver de Rede (e1000/VirtIO) e Stack TCP/IP em Ring 3 ([Issue #34](https://github.com/GeovaneEstanislau/Jinn_Project/issues/34) e [Issue #35](https://github.com/GeovaneEstanislau/Jinn_Project/issues/35)).
+* **Fase 5 (Em Andamento 🚧)**: Suporte a SMP (Multiprocessamento Simétrico Concluído ✅), Driver de Rede VirtIO-Net e Stack TCP/IP RFC 793 ([Issue #34](https://github.com/GeovaneEstanislau/Jinn_Project/issues/34) e [Issue #35](https://github.com/GeovaneEstanislau/Jinn_Project/issues/35)).
 
 ---
 
@@ -124,20 +124,27 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
 
 ---
 
-## 🌐 Fase 5: Expansão de Hardware, Rede & SMP (Futuro 📋)
+## 🌐 Fase 5: Expansão de Hardware, Rede & SMP (Em Andamento 🚧)
 
 > 📌 **Discussão e Colaboração:** Participe nas issues:
 > - [Issue #34: Suporte a SMP: Inicialização de núcleos secundários (APs)](https://github.com/GeovaneEstanislau/Jinn_Project/issues/34)
 > - [Issue #35: Implementar Pilha de Rede TCP/IP no Espaço de Usuário](https://github.com/GeovaneEstanislau/Jinn_Project/issues/35)
 
-- [ ] **Suporte a SMP (Multiprocessamento Simétrico)**:
-  - Detecção de núcleos via tabelas ACPI (MADT).
-  - Envio de IPIs (INIT/SIPI) pelo Local APIC para inicialização dos APs.
-  - Escalonamento preemptivo distribuído entre múltiplos núcleos com spinlocks finos.
-- [ ] **Driver de Placa de Rede**:
-  - Driver para Intel 8254x (e1000) ou VirtIO-Net.
-- [ ] **Pilha de Rede em Userspace (Ring 3)**:
-  - Implementação de Ethernet, ARP, IPv4, ICMP (ping) e sockets UDP/TCP.
+- [x] **Suporte a SMP (Multiprocessamento Simétrico — Issue #34 ✅)**:
+  - Detecção de núcleos em 64-bit Long Mode via Limine SMP Request (`src/limine.rs`).
+  - Isolamento rigoroso de GDT e TSS por CPU (`PER_CPU_GDT` e `PER_CPU_TSS`), prevenindo falhas de TSS Busy Bit (#GP) no carregamento via `ltr`.
+  - Inicialização segura de processadores secundários (APs) com pilhas dedicadas (32 KiB) e sincronização atômica (`src/smp.rs`).
+  - Mapeamento atômico $O(1)$ de Local APIC ID para `cpu_id` lógico (`LAPIC_TO_CPUID`).
+  - Escalonador preemptivo SMP concorrente protegido por spinlock global (`SCHED_LOCK`).
+  - Preservação da invariância de PIDs (0..4) da suíte de testes com alocação de idle tasks dos APs nos slots altos (`MAX_TASKS - cpu_id`).
+  - Comando interativo no shell: `smp` (aliases `cpus`, `cores`) com telemetria detalhada por núcleo.
+- [x] **Driver de Placa de Rede & Pilha TCP/IP RFC 793**:
+  - Driver VirtIO-Net (PCI) com anéis virtuais (256 vring) e suporte a E1000.
+  - Pilha completa com Ethernet, ARP, IPv4, ICMP (ping), UDP, DNS RFC 1035 e TCP RFC 793 (janela deslizante, retransmissão, buffer OOO).
+  - Firewall stateful JinnWall com rastreamento de conexões (conntrack).
+  - Comandos interativos no shell: `net`, `ping`, `dns`, `tcp`, `firewall`.
+- [ ] **Pilha de Rede em Userspace (Ring 3 — Issue #35)**:
+  - Exportação da pilha de rede e sockets para processos de usuário via IPC/JDA zero-copy.
 - [ ] **Biblioteca Padrão C / Rust (`libjinn`)**:
   - Runtime leve em Ring 3 para facilitar a escrita de novos utilitários e softwares nativos.
 

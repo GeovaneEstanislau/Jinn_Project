@@ -140,56 +140,68 @@ pub const TSS_SEL:         u16 = 5 << 3;           // 0x28
 
 // ── Tabela GDT ────────────────────────────────────────────────────────────────
 
-/// Layout da GDT completa do Jinn OS.
-/// O campo `tss` é preenchido em tempo de execução em `init()`.
+pub const MAX_CPUS: usize = 8;
+
+/// Layout da GDT completa do Jinn OS por CPU.
+/// O campo `tss` é preenchido em tempo de execução para cada núcleo.
+#[derive(Clone, Copy)]
 #[repr(C, align(16))]
-struct Gdt {
-    null:        GdtEntry,
-    kernel_code: GdtEntry,
-    kernel_data: GdtEntry,
-    user_data:   GdtEntry,
-    user_code:   GdtEntry,
-    tss:         TssDescriptor,
+pub struct Gdt {
+    pub null:        GdtEntry,
+    pub kernel_code: GdtEntry,
+    pub kernel_data: GdtEntry,
+    pub user_data:   GdtEntry,
+    pub user_code:   GdtEntry,
+    pub tss:         TssDescriptor,
 }
 
-// ── Instâncias estáticas ──────────────────────────────────────────────────────
+impl Gdt {
+    pub const fn new() -> Self {
+        Self {
+            null:        GdtEntry::null(),
+            // Kernel Code: L=1 (Long Mode 64-bit), P=1, DPL=0, S=1, Type=0xA (Exec+Read)
+            kernel_code: GdtEntry::new(0, 0, 0b1001_1010, 0b0010),
+            // Kernel Data: P=1, DPL=0, S=1, Type=0x2 (Read/Write)
+            kernel_data: GdtEntry::new(0, 0, 0b1001_0010, 0b0000),
+            // User Data:  P=1, DPL=3, S=1, Type=0x2 (Read/Write)
+            user_data:   GdtEntry::new(0, 0, 0b1111_0010, 0b0000),
+            // User Code:  L=1, P=1, DPL=3, S=1, Type=0xA (Exec+Read)
+            user_code:   GdtEntry::new(0, 0, 0b1111_1010, 0b0010),
+            // TSS: preenchido em init_cpu()
+            tss: TssDescriptor {
+                low:  GdtEntry::null(),
+                high: 0,
+            },
+        }
+    }
+}
 
-/// TSS global, preenchido em `init()` com a pilha do kernel.
+// ── Instâncias estáticas Per-CPU ──────────────────────────────────────────────
+
+pub static mut PER_CPU_GDT: [Gdt; MAX_CPUS] = [Gdt::new(); MAX_CPUS];
+pub static mut PER_CPU_TSS: [TaskStateSegment; MAX_CPUS] = [TaskStateSegment::new(); MAX_CPUS];
+
+/// TSS legado/compatibilidade do BSP.
 pub static mut TSS: TaskStateSegment = TaskStateSegment::new();
-
-static mut GLOBAL_GDT: Gdt = Gdt {
-    null:        GdtEntry::null(),
-    // Kernel Code: L=1 (Long Mode 64-bit), P=1, DPL=0, S=1, Type=0xA (Exec+Read)
-    kernel_code: GdtEntry::new(0, 0, 0b1001_1010, 0b0010),
-    // Kernel Data: P=1, DPL=0, S=1, Type=0x2 (Read/Write)
-    kernel_data: GdtEntry::new(0, 0, 0b1001_0010, 0b0000),
-    // User Data:  P=1, DPL=3, S=1, Type=0x2 (Read/Write)
-    user_data:   GdtEntry::new(0, 0, 0b1111_0010, 0b0000),
-    // User Code:  L=1, P=1, DPL=3, S=1, Type=0xA (Exec+Read)
-    user_code:   GdtEntry::new(0, 0, 0b1111_1010, 0b0010),
-    // TSS: preenchido em init()
-    tss: TssDescriptor {
-        low:  GdtEntry::null(),
-        high: 0,
-    },
-};
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
 
-/// Instala a GDT e o TSS no processador.
-///
-/// Deve ser chamado uma vez, logo no início do boot, antes da IDT.
-pub fn init() {
+/// Instala a GDT e o TSS dedicados para o núcleo `cpu_id`.
+pub fn init_cpu(cpu_id: usize) {
+    if cpu_id >= MAX_CPUS { return; }
     unsafe {
-        // 1. Preenche o descritor do TSS com o endereço real do nosso TSS estático.
-        //    O Rust 2024 proíbe referências compartilhadas a `static mut`; usamos
-        //    ponteiros brutos para evitar UB ao configurar o TSS.
-        GLOBAL_GDT.tss = TssDescriptor::from_tss(&raw const TSS);
+        // 1. Configura o TSS isolado deste núcleo.
+        let tss_ptr = core::ptr::addr_of_mut!(PER_CPU_TSS[cpu_id]);
+        *tss_ptr = TaskStateSegment::new();
 
-        // 2. Carrega a GDT via instrução LGDT.
+        // 2. Preenche o descritor de 16 bytes do TSS na GDT específica deste núcleo.
+        let gdt_ptr = core::ptr::addr_of_mut!(PER_CPU_GDT[cpu_id]);
+        (*gdt_ptr).tss = TssDescriptor::from_tss(tss_ptr);
+
+        // 3. Carrega a GDT deste núcleo via LGDT.
         let gdt_desc = GdtDescriptor {
             limit: (core::mem::size_of::<Gdt>() - 1) as u16,
-            base:  core::ptr::addr_of!(GLOBAL_GDT) as u64,
+            base:  gdt_ptr as u64,
         };
         core::arch::asm!(
             "lgdt [{}]",
@@ -197,7 +209,7 @@ pub fn init() {
             options(readonly, nostack, preserves_flags)
         );
 
-        // 3. Recarrega DS, ES, FS, GS, SS com o seletor de dados do kernel.
+        // 4. Recarrega os seletores de dados.
         core::arch::asm!(
             "mov ds, {0:x}",
             "mov es, {0:x}",
@@ -208,17 +220,15 @@ pub fn init() {
             options(nostack, preserves_flags)
         );
 
-        // 4. Recarrega CS via far return (gdt_flush_cs faz a mágica).
-        //    Empurramos o seletor na pilha antes de chamar; a função
-        //    consome o seletor e faz um far return com o CS correto.
+        // 5. Recarrega CS via far return.
         core::arch::asm!(
-            "push {0:r}",       // empurra o seletor CS como 2º argumento
+            "push {0:r}",
             "call gdt_flush_cs",
             in(reg) KERNEL_CODE_SEL as u64,
             options(nostack)
         );
 
-        // 5. Carrega o TSS no registrador de tarefa (LTR).
+        // 6. Carrega o TSS deste núcleo (LTR).
         core::arch::asm!(
             "ltr ax",
             in("ax") TSS_SEL,
@@ -227,15 +237,26 @@ pub fn init() {
     }
 }
 
-/// Atualiza RSP0 no TSS para a pilha do kernel da tarefa atual.
-///
-/// O escalonador deve chamar esta função a cada context switch para uma tarefa
-/// de usuário (Ring 3), garantindo que interrupções de hardware e syscalls
-/// encontrem a pilha de kernel correta.
-pub fn set_kernel_stack(stack_top: u64) {
-    // SAFETY: TSS é o único gerenciador de pilhas por nível de privilégio.
-    // Escrevemos via ponteiro bruto para evitar UB com `static mut`.
-    unsafe {
-        core::ptr::write_volatile(&raw mut TSS.rsp0, stack_top);
+/// Instala a GDT e TSS no processador primário (BSP = CPU 0).
+pub fn init() {
+    init_cpu(0);
+}
+
+/// Atualiza RSP0 no TSS do núcleo especificado para a pilha do kernel da tarefa atual.
+pub fn set_kernel_stack_for_cpu(cpu_id: usize, stack_top: u64) {
+    if cpu_id < MAX_CPUS {
+        unsafe {
+            core::ptr::write_volatile(&raw mut PER_CPU_TSS[cpu_id].rsp0, stack_top);
+            if cpu_id == 0 {
+                core::ptr::write_volatile(&raw mut TSS.rsp0, stack_top);
+            }
+        }
     }
 }
+
+/// Atualiza RSP0 no TSS para a pilha de kernel da tarefa do núcleo atual.
+pub fn set_kernel_stack(stack_top: u64) {
+    let cpu_id = crate::smp::current_cpu_id();
+    set_kernel_stack_for_cpu(cpu_id, stack_top);
+}
+

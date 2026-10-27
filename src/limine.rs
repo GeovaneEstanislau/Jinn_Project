@@ -306,6 +306,46 @@ pub static LIMINE_MODULE_REQUEST: LimineModuleRequest = LimineModuleRequest {
 };
 
 
+// ── SMP (Symmetric Multiprocessing) Request ─────────────────────────────────
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct LimineSmpInfo {
+    pub processor_id: u32,
+    pub lapic_id: u32,
+    pub reserved: u64,
+    pub goto_address: unsafe extern "C" fn(*const LimineSmpInfo) -> !,
+    pub extra_argument: u64,
+}
+
+#[repr(C)]
+pub struct LimineSmpResponse {
+    pub revision: u64,
+    pub flags: u32,
+    pub bsp_lapic_id: u32,
+    pub cpu_count: u64,
+    pub cpus: *const *mut LimineSmpInfo,
+}
+
+#[repr(C)]
+pub struct LimineSmpRequest {
+    pub id: [u64; 4],
+    pub revision: u64,
+    pub response: *const LimineSmpResponse,
+    pub flags: u64,
+}
+
+unsafe impl Sync for LimineSmpRequest {}
+
+#[used]
+#[link_section = ".limine_requests"]
+pub static LIMINE_SMP_REQUEST: LimineSmpRequest = LimineSmpRequest {
+    id: [COMMON_MAGIC_0, COMMON_MAGIC_1, 0x95a67b819a1b857e, 0xa0b61b723b6a73e0],
+    revision: 0,
+    response: core::ptr::null(),
+    flags: 0,
+};
+
+
 // ── Safe Query Functions ────────────────────────────────────────────────────
 // All response pointer reads use read_volatile so the compiler cannot
 // constant-fold them to null() even with opt-level=3 + lto=true.
@@ -494,4 +534,51 @@ unsafe fn cstr_to_str(ptr: *const u8) -> &'static str {
     let slice = core::slice::from_raw_parts(ptr, len);
     core::str::from_utf8_unchecked(slice)
 }
+
+/// Retorna a resposta SMP do Limine se suportada pelo hardware/bootloader.
+pub fn smp_response() -> Option<&'static LimineSmpResponse> {
+    unsafe {
+        let resp = core::ptr::read_volatile(&LIMINE_SMP_REQUEST.response);
+        if resp.is_null() {
+            None
+        } else {
+            Some(&*resp)
+        }
+    }
+}
+
+/// Retorna o número total de núcleos de CPU detectados (pelo menos 1).
+pub fn smp_cpu_count() -> usize {
+    smp_response().map(|r| r.cpu_count as usize).unwrap_or(1)
+}
+
+/// Retorna o ID Local APIC do Bootstrap Processor (BSP).
+pub fn smp_bsp_lapic_id() -> u32 {
+    smp_response().map(|r| r.bsp_lapic_id).unwrap_or(0)
+}
+
+/// Retorna o ponteiro para o descritor LimineSmpInfo do núcleo de índice `index`.
+pub fn smp_get_cpu(index: usize) -> Option<*mut LimineSmpInfo> {
+    unsafe {
+        let resp = core::ptr::read_volatile(&LIMINE_SMP_REQUEST.response);
+        if resp.is_null() {
+            return None;
+        }
+        let count = (*resp).cpu_count as usize;
+        if index >= count {
+            return None;
+        }
+        let cpus = (*resp).cpus;
+        if cpus.is_null() {
+            return None;
+        }
+        let cpu_ptr = *cpus.add(index);
+        if cpu_ptr.is_null() {
+            None
+        } else {
+            Some(cpu_ptr)
+        }
+    }
+}
+
 

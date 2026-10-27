@@ -20,7 +20,10 @@
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use crate::vga::Writer;
 use crate::gdt;
-use crate::memory::paging;
+use crate::memory::{paging, SpinLock};
+
+/// Trava global para acesso concorrente thread-safe / SMP ao escalonador.
+pub static SCHED_LOCK: SpinLock<()> = SpinLock::new(());
 
 /// Contador global de ticks do escalonador (incrementado a cada preempção).
 static SCHED_TICKS: AtomicU64 = AtomicU64::new(0);
@@ -31,7 +34,7 @@ static CONTEXT_SWITCHES: AtomicU64 = AtomicU64::new(0);
 // ── Constantes ────────────────────────────────────────────────────────────────
 
 /// Número máximo de tarefas simultâneas no sistema.
-pub const MAX_TASKS: usize = 16;
+pub const MAX_TASKS: usize = 32;
 
 /// Número máximo de descritores de arquivos e sockets por tarefa.
 pub const MAX_TASK_FDS: usize = 8;
@@ -87,11 +90,17 @@ static YIELDED:            AtomicBool = AtomicBool::new(false);
 static TIMER_PREEMPTIONS:   AtomicU64 = AtomicU64::new(0);
 static VOLUNTARY_YIELDS:    AtomicU64 = AtomicU64::new(0);
 
-/// Retorna o PID (índice) da tarefa atualmente em execução.
+/// Retorna o PID (índice) da tarefa atualmente em execução no núcleo chamador.
 pub fn current_pid() -> usize {
-    let idx = CURRENT_TASK.load(Ordering::SeqCst);
-    if idx < 0 { 0 } else { idx as usize }
+    let cpu_id = crate::smp::current_cpu_id();
+    if let Some(pid) = crate::smp::get_current_pid(cpu_id) {
+        pid
+    } else {
+        let idx = CURRENT_TASK.load(Ordering::SeqCst);
+        if idx < 0 { 0 } else { idx as usize }
+    }
 }
+
 
 /// Marca que a tarefa atual solicitou yield voluntário de CPU.
 pub fn set_yielded() {
@@ -221,6 +230,10 @@ pub struct Task {
     pub resources: crate::resources::ProcessResources,
     /// Limites configuráveis de consumo para esta tarefa.
     pub limits: crate::resources::ResourceLimits,
+
+    // ── Rastreamento SMP ──────────────────────────────────────────────────
+    /// Núcleo de CPU em que a tarefa está alocada ou executando no momento.
+    pub running_on_cpu: Option<usize>,
 }
 
 // ── Estrutura do escalonador ──────────────────────────────────────────────────
@@ -233,6 +246,8 @@ pub struct Scheduler {
     pub tasks: [Option<Task>; MAX_TASKS],
     next_id: usize,
     current: Option<usize>,
+    pub core_current: [Option<usize>; crate::gdt::MAX_CPUS],
+    pub core_idle: [usize; crate::gdt::MAX_CPUS],
 }
 
 // ── Instância global ──────────────────────────────────────────────────────────
@@ -253,12 +268,16 @@ pub fn get() -> &'static mut Scheduler {
 impl Scheduler {
     pub const fn new() -> Self {
         const NONE_TASK: Option<Task> = None;
+        const NONE_CORE: Option<usize> = None;
         Scheduler {
             tasks:   [NONE_TASK; MAX_TASKS],
             next_id: 0,
             current: None,
+            core_current: [NONE_CORE; crate::gdt::MAX_CPUS],
+            core_idle: [0; crate::gdt::MAX_CPUS],
         }
     }
+
 
     // ── Criação de tarefas ────────────────────────────────────────────────────
 
@@ -382,6 +401,7 @@ impl Scheduler {
             cleanup_done: false,
             resources: res,
             limits,
+            running_on_cpu: None,
         });
         self.next_id = id + 1;
         id
@@ -398,12 +418,104 @@ impl Scheduler {
         self.add_task_inner(name, entry, ring, priority)
     }
 
-    /// Cria a tarefa Idle dedicada (Ring 0, prioridade Idle).
+    /// Cria a tarefa Idle dedicada para um núcleo específico (Ring 0, prioridade Idle).
+    pub fn add_idle_task_for_cpu(&mut self, cpu_id: usize) -> usize {
+        let name = match cpu_id {
+            0 => "idle[K-0]",
+            1 => "idle[K-1]",
+            2 => "idle[K-2]",
+            3 => "idle[K-3]",
+            4 => "idle[K-4]",
+            5 => "idle[K-5]",
+            6 => "idle[K-6]",
+            7 => "idle[K-7]",
+            _ => "idle[K]",
+        };
+        let id = self.add_task_inner(name, idle_task_entry, Ring::Kernel, TaskPriority::Idle);
+        if cpu_id < crate::gdt::MAX_CPUS {
+            self.core_idle[cpu_id] = id;
+        }
+        id
+    }
+
+    /// Cria a tarefa Idle dedicada do BSP (Ring 0, prioridade Idle).
     ///
     /// Só executa quando nenhuma outra tarefa está pronta.
     /// Economiza energia executando `hlt` em loop.
     pub fn add_idle_task(&mut self) -> usize {
-        self.add_task_inner("idle[K]", idle_task_entry, Ring::Kernel, TaskPriority::Idle)
+        self.add_idle_task_for_cpu(0)
+    }
+
+    /// Cria uma tarefa Idle dedicada para um núcleo AP secundário, alocando
+    /// em slots altos (MAX_TASKS - cpu_id) para não colidir com os PIDs principais 0..4.
+    pub fn add_ap_idle_task(&mut self, cpu_id: usize) -> usize {
+        let name = match cpu_id {
+            1 => "idle[K-1]",
+            2 => "idle[K-2]",
+            3 => "idle[K-3]",
+            4 => "idle[K-4]",
+            5 => "idle[K-5]",
+            6 => "idle[K-6]",
+            7 => "idle[K-7]",
+            _ => "idle[K]",
+        };
+        let slot = MAX_TASKS - cpu_id;
+        let pml4_phys = paging::current_cr3();
+
+        let kstack_base = unsafe { KSTACKS[slot].as_ptr() as usize };
+        let kstack_top  = (kstack_base + KSTACK_SIZE) & !15;
+
+        let cs = crate::gdt::KERNEL_CODE_SEL as u64;
+        let ss = crate::gdt::KERNEL_DATA_SEL as u64;
+        
+        let mut sp = kstack_top;
+        let rflags: u64 = 0x202;
+
+        sp -= 8; unsafe { (sp as *mut u64).write_volatile(ss); }
+        let abi_rsp = kstack_top - 8; sp -= 8; unsafe { (sp as *mut u64).write_volatile(abi_rsp as u64); }
+        sp -= 8; unsafe { (sp as *mut u64).write_volatile(rflags); }
+        sp -= 8; unsafe { (sp as *mut u64).write_volatile(cs); }
+        sp -= 8; unsafe { (sp as *mut u64).write_volatile(idle_task_entry as u64); }
+
+        sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+        sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+
+        for _ in 0..15 {
+            sp -= 8;
+            unsafe { (sp as *mut u64).write_volatile(0); }
+        }
+
+        let res = crate::resources::ProcessResources::new();
+        let limits = crate::resources::ResourceLimits::kernel_default();
+
+        let _guard = SCHED_LOCK.lock();
+        self.tasks[slot] = Some(Task {
+            id: slot,
+            name,
+            state: TaskState::Ready,
+            priority: TaskPriority::Idle,
+            ring: Ring::Kernel,
+            saved_rsp: sp,
+            kstack_top,
+            pml4_phys,
+            exit_code: 0,
+            cpu_ticks: 0,
+            ctx_switches: 0,
+            irq_preemptions: 0,
+            voluntary_yields: 0,
+            quantum_remaining: QUANTUM_IDLE,
+            fds: [None; MAX_TASK_FDS],
+            dynamic_pages: [0; MAX_DYNAMIC_PAGES],
+            cleanup_done: false,
+            resources: res,
+            limits,
+            running_on_cpu: None,
+        });
+
+        if cpu_id < crate::gdt::MAX_CPUS {
+            self.core_idle[cpu_id] = slot;
+        }
+        slot
     }
 
     fn add_task_inner(
@@ -413,6 +525,7 @@ impl Scheduler {
         ring:     Ring,
         priority: TaskPriority,
     ) -> usize {
+        let _guard = SCHED_LOCK.lock();
         let mut id = self.next_id;
         while id < MAX_TASKS {
             if self.tasks[id].is_none() {
@@ -471,12 +584,14 @@ impl Scheduler {
                     cleanup_done: false,
                     resources: res,
                     limits,
+                    running_on_cpu: None,
                 });
                 self.next_id = id + 1;
                 return id;
             }
             id += 1;
         }
+
         0
     }
 
@@ -515,10 +630,13 @@ impl Scheduler {
     // ── Gerenciamento de ciclo de vida ────────────────────────────────────────
 
     /// Marca uma tarefa como Zombie (aguardando coleta). Chamado por `sys_exit`.
-    ///
-    /// Se a tarefa era Ring 3, libera seu PML4 e todas as páginas de usuário.
-    /// Também desbloqueia qualquer tarefa que esteja esperando via `waitpid`.
     pub fn exit_task(&mut self, pid: usize, code: i32) {
+        let _guard = SCHED_LOCK.lock();
+        self.exit_task_locked(pid, code);
+    }
+
+    /// Versão interna de exit_task para ser chamada com SCHED_LOCK já adquirido.
+    pub fn exit_task_locked(&mut self, pid: usize, code: i32) {
         if let Some(Some(task)) = self.tasks.get_mut(pid) {
             // Evita execução duplicada e double-free no PML4 se a tarefa já estiver finalizada
             if task.cleanup_done || task.state == TaskState::Zombie || task.state == TaskState::Completed {
@@ -527,6 +645,7 @@ impl Scheduler {
             task.cleanup_done = true;
             task.state        = TaskState::Zombie;
             task.exit_code    = code;
+            task.running_on_cpu = None;
 
             // Fecha todos os descritores unificados (VFS ou Sockets)
             for fd_opt in task.fds.iter_mut() {
@@ -582,26 +701,32 @@ impl Scheduler {
 
     /// Bloqueia uma tarefa (esperando I/O ou IPC).
     pub fn block_task(&mut self, pid: usize) {
+        let _guard = SCHED_LOCK.lock();
         if let Some(Some(task)) = self.tasks.get_mut(pid) {
             if task.state == TaskState::Running || task.state == TaskState::Ready {
                 task.state = TaskState::Blocked;
+                task.running_on_cpu = None;
             }
         }
     }
 
     /// Desbloqueia uma tarefa previamente bloqueada.
     pub fn unblock_task(&mut self, pid: usize) {
+        let _guard = SCHED_LOCK.lock();
         if let Some(Some(task)) = self.tasks.get_mut(pid) {
             if task.state == TaskState::Blocked {
                 task.state = TaskState::Ready;
+                task.running_on_cpu = None;
             }
         }
     }
 
     /// Coloca uma tarefa em estado Sleeping até o tick especificado.
     pub fn sleep_task(&mut self, pid: usize, wake_tick: u64) {
+        let _guard = SCHED_LOCK.lock();
         if let Some(Some(task)) = self.tasks.get_mut(pid) {
             task.state = TaskState::Sleeping(wake_tick);
+            task.running_on_cpu = None;
         }
     }
 
@@ -610,6 +735,7 @@ impl Scheduler {
     /// Se o alvo já é Zombie, retorna imediatamente sem bloquear.
     /// Caso contrário, coloca a tarefa corrente em `WaitingOn(target_pid)`.
     pub fn wait_on(&mut self, waiter_pid: usize, target_pid: usize) -> bool {
+        let _guard = SCHED_LOCK.lock();
         // Verifica se o alvo já terminou
         if self.zombie_of(target_pid) {
             return true;
@@ -626,6 +752,7 @@ impl Scheduler {
         // Bloqueia a tarefa que espera
         if let Some(Some(task)) = self.tasks.get_mut(waiter_pid) {
             task.state = TaskState::WaitingOn(target_pid);
+            task.running_on_cpu = None;
         }
         false
     }
@@ -648,6 +775,7 @@ impl Scheduler {
         receiver_pid: usize,
         sender_rsp: usize,
     ) -> Option<usize> {
+        let _guard = SCHED_LOCK.lock();
         // Salva o estado do emissor
         if let Some(Some(sender)) = self.tasks.get_mut(sender_pid) {
             sender.saved_rsp = sender_rsp;
@@ -721,37 +849,38 @@ impl Scheduler {
         None
     }
 
-    /// Chamado pelo handler do APIC Timer (vetor 32) para fazer preempção.
-    ///
-    /// Salva o RSP atual da tarefa em execução, seleciona a próxima tarefa e
-    /// retorna o RSP salvo dela. O stub em `stubs.s` usa o valor retornado
-    /// para restaurar os registradores via `iretq`.
-    ///
-    /// Também atualiza o TSS.RSP0 e o CR3 (PML4) para a próxima tarefa.
-    pub fn preempt(&mut self, curr_frame_ptr: usize) -> usize {
-        // Incrementa contador de preempções
-        SCHED_TICKS.fetch_add(1, Ordering::Relaxed);
+    /// Chamado pelo handler do APIC Timer (vetor 32) para fazer preempção no núcleo especificado.
+    pub fn preempt_core(&mut self, cpu_id: usize, curr_frame_ptr: usize) -> usize {
+        let _guard = SCHED_LOCK.lock();
 
-        // Acorda tarefas cujo tempo de sleep expirou (custo zero de CPU durante o repouso)
-        let current_ticks = crate::timer::ticks();
-        for slot in self.tasks.iter_mut() {
-            if let Some(task) = slot {
-                if let TaskState::Sleeping(wake_tick) = task.state {
-                    if current_ticks >= wake_tick {
-                        task.state = TaskState::Ready;
+        // Incrementa contadores de preempção global e por núcleo
+        SCHED_TICKS.fetch_add(1, Ordering::Relaxed);
+        crate::smp::record_tick(cpu_id);
+
+        // Acorda tarefas cujo tempo de sleep expirou (apenas o BSP precisa fazer essa varredura)
+        if cpu_id == 0 {
+            let current_ticks = crate::timer::ticks();
+            for slot in self.tasks.iter_mut() {
+                if let Some(task) = slot {
+                    if let TaskState::Sleeping(wake_tick) = task.state {
+                        if current_ticks >= wake_tick {
+                            task.state = TaskState::Ready;
+                            task.running_on_cpu = None;
+                        }
                     }
                 }
             }
         }
 
-        // Contabiliza tick de CPU e verifica quantum da tarefa atual
+        // Localiza a tarefa atual que executava neste núcleo
+        let cur_id_opt = self.core_current[cpu_id].or(if cpu_id == 0 { self.current } else { None });
         let mut force_switch = false;
         let is_yield = YIELDED.load(Ordering::SeqCst);
         let mut quota_violation = false;
 
-        if let Some(cur) = self.current {
+        if let Some(cur) = cur_id_opt {
             if let Some(task) = &mut self.tasks[cur] {
-                task.cpu_ticks += 1;
+                task.cpu_ticks = task.cpu_ticks.saturating_add(1);
 
                 if task.quantum_remaining > 0 {
                     task.quantum_remaining -= 1;
@@ -766,29 +895,28 @@ impl Scheduler {
                 }
             }
         } else {
-            // Sem tarefa atual — forçar seleção
             force_switch = true;
         }
 
         if !force_switch {
-            // Quantum ainda não expirou e não houve yield — continua na tarefa
             return curr_frame_ptr;
         }
 
         // Salva RSP da tarefa atual e atualiza estatísticas de troca
-        if let Some(cur) = self.current {
+        if let Some(cur) = cur_id_opt {
             if quota_violation {
                 if let Some(task) = &mut self.tasks[cur] {
                     task.saved_rsp = curr_frame_ptr;
                     task.resources.limit_violations = task.resources.limit_violations.saturating_add(1);
                     task.resources.last_violation_code = -122; // -EDQUOT (cota excedida)
                     task.irq_preemptions += 1;
+                    task.running_on_cpu = None;
                 }
                 crate::serial_write(b"[QUOTA] Processo PID ");
                 let pid_byte = b'0' + (cur as u8 % 10);
                 crate::serial_write(&[pid_byte]);
                 crate::serial_write(b" esgotou sua cota de CPU. Encerrado por limite excedido (-EDQUOT)!\n");
-                self.exit_task(cur, -122);
+                self.exit_task_locked(cur, -122);
             } else if let Some(task) = &mut self.tasks[cur] {
                 task.saved_rsp = curr_frame_ptr;
                 if is_yield {
@@ -800,27 +928,45 @@ impl Scheduler {
                 }
                 if task.state == TaskState::Running {
                     task.state = TaskState::Ready;
+                    task.running_on_cpu = None;
                 }
             }
         }
 
-        YIELDED.store(false, Ordering::SeqCst);
+        if is_yield {
+            YIELDED.store(false, Ordering::SeqCst);
+        }
 
-        // Escalonamento por prioridade (Round-Robin dentro de cada nível)
+        // Escalonamento por prioridade (Round-Robin dentro de cada nível, SMP-aware)
+        let core_idle_id = if cpu_id < crate::gdt::MAX_CPUS { self.core_idle[cpu_id] } else { 0 };
+
         for priority in [TaskPriority::RealTime, TaskPriority::Normal, TaskPriority::Idle] {
-            let start = self.current.unwrap_or(usize::MAX);
+            let start = cur_id_opt.unwrap_or(usize::MAX);
             for delta in 1..=MAX_TASKS {
                 let idx = if start == usize::MAX {
                     delta - 1
                 } else {
                     (start + delta) % MAX_TASKS
                 };
+
                 if let Some(task) = &mut self.tasks[idx] {
-                    if task.state == TaskState::Ready && task.priority == priority {
-                        self.current = Some(idx);
-                        task.state   = TaskState::Running;
+                    // Tarefa Idle deve pertencer ao núcleo correto
+                    if priority == TaskPriority::Idle && task.id != core_idle_id {
+                        continue;
+                    }
+
+                    if task.state == TaskState::Ready && task.priority == priority && task.running_on_cpu.is_none() {
+                        self.core_current[cpu_id] = Some(idx);
+                        if cpu_id == 0 {
+                            self.current = Some(idx);
+                            CURRENT_TASK.store(idx as i32, Ordering::SeqCst);
+                        }
+                        crate::smp::set_current_pid(cpu_id, Some(idx));
+                        crate::smp::record_ctx_switch(cpu_id);
+
+                        task.state = TaskState::Running;
+                        task.running_on_cpu = Some(cpu_id);
                         task.ctx_switches += 1;
-                        CURRENT_TASK.store(idx as i32, Ordering::SeqCst);
                         CONTEXT_SWITCHES.fetch_add(1, Ordering::Relaxed);
 
                         // Recarrega o quantum para o novo ciclo
@@ -830,9 +976,9 @@ impl Scheduler {
                             TaskPriority::Idle     => QUANTUM_IDLE,
                         };
 
-                        // 1. Atualiza TSS.RSP0 para a pilha de kernel desta tarefa
+                        // 1. Atualiza TSS.RSP0 para a pilha de kernel desta tarefa no núcleo
                         if task.ring == Ring::User {
-                            gdt::set_kernel_stack(task.kstack_top as u64);
+                            crate::gdt::set_kernel_stack_for_cpu(cpu_id, task.kstack_top as u64);
                         }
 
                         // 2. Troca o espaço de endereçamento virtual se for diferente
@@ -841,44 +987,38 @@ impl Scheduler {
                             unsafe { paging::load_cr3(task.pml4_phys); }
                         }
 
-                        crate::serial_write(b"[SCHED] Switch to PID ");
-                        crate::serial_write_byte(b'0' + (idx as u8 % 10));
-                        crate::serial_write(b" rsp=0x");
-                        for i in (0..16).rev() {
-                            let n = ((task.saved_rsp >> (i * 4)) & 0xF) as u8;
-                            let ch = if n < 10 { b'0' + n } else { b'a' + (n - 10) };
-                            crate::serial_write_byte(ch);
-                        }
-                        crate::serial_write(b"\n");
-
                         return task.saved_rsp;
                     }
                 }
             }
         }
 
-        // Se a tarefa atual terminou (Zombie), ela JAMAIS pode continuar executando!
-        // Despacha a tarefa Idle (PID 0) como fallback absoluto
-        if let Some(cur) = self.current {
-            if let Some(task) = &self.tasks[cur] {
-                if task.state == TaskState::Zombie {
-                    if let Some(idle) = &mut self.tasks[0] {
-                        idle.state = TaskState::Running;
-                        self.current = Some(0);
-                        CURRENT_TASK.store(0, Ordering::SeqCst);
-                        let current_cr3 = paging::current_cr3();
-                        if current_cr3 != idle.pml4_phys {
-                            unsafe { paging::load_cr3(idle.pml4_phys); }
-                        }
-                        return idle.saved_rsp;
-                    }
-                }
+        // Fallback absoluto para o Idle task do núcleo
+        if let Some(idle) = &mut self.tasks[core_idle_id] {
+            idle.state = TaskState::Running;
+            idle.running_on_cpu = Some(cpu_id);
+            self.core_current[cpu_id] = Some(core_idle_id);
+            if cpu_id == 0 {
+                self.current = Some(core_idle_id);
+                CURRENT_TASK.store(core_idle_id as i32, Ordering::SeqCst);
             }
+            crate::smp::set_current_pid(cpu_id, Some(core_idle_id));
+            let current_cr3 = paging::current_cr3();
+            if current_cr3 != idle.pml4_phys {
+                unsafe { paging::load_cr3(idle.pml4_phys); }
+            }
+            return idle.saved_rsp;
         }
 
-        // Nenhuma outra tarefa pronta — continua a atual
         curr_frame_ptr
     }
+
+    /// Preempção na CPU atual (chama preempt_core com o ID do núcleo chamador).
+    pub fn preempt(&mut self, curr_frame_ptr: usize) -> usize {
+        let cpu_id = crate::smp::current_cpu_id();
+        self.preempt_core(cpu_id, curr_frame_ptr)
+    }
+
 
     // ── Coleta de Zombies ─────────────────────────────────────────────────────
 
@@ -894,6 +1034,7 @@ impl Scheduler {
     /// Coleta uma tarefa `Zombie`: lê seu exit code, libera o slot e retorna
     /// `Some(exit_code)`. Retorna `None` se o PID não existir ou não for Zombie.
     pub fn collect_zombie(&mut self, pid: usize) -> Option<i32> {
+        let _guard = SCHED_LOCK.lock();
         let slot = self.tasks.get_mut(pid)?;
         let task  = slot.as_ref()?;
         if task.state != TaskState::Zombie {

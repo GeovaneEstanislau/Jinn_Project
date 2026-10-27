@@ -24,6 +24,7 @@ pub mod pit;
 pub mod resources;
 pub mod scheduler;
 pub mod shell;
+pub mod smp;
 pub mod syscall;
 pub mod syscall_user;
 pub mod timer;
@@ -47,7 +48,10 @@ pub fn serial_write_byte(byte: u8) {
     }
 }
 
+static SERIAL_LOCK: crate::memory::SpinLock<()> = crate::memory::SpinLock::new(());
+
 pub fn serial_write(message: &[u8]) {
+    let _guard = SERIAL_LOCK.lock();
     for &byte in message {
         serial_write_byte(byte);
     }
@@ -353,11 +357,31 @@ pub extern "C" fn _start() -> ! {
         w.set_color(Color::LightGray, Color::Black);
     }
 
+    w.write_string("[+] Multiprocessamento Simetrico (SMP)...");
+    let online_cpus = smp::init();
+    if online_cpus > 1 {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string(" OK (");
+        w.write_decimal(online_cpus);
+        w.write_line(" nucleos ativos)");
+    } else {
+        w.set_color(Color::Yellow, Color::Black);
+        w.write_line(" 1 nucleo ativo (Uniprocessador)");
+    }
+    w.set_color(Color::LightGray, Color::Black);
+
     w.write_string("[+] Escalonador e Processos...");
     let sched = scheduler::get();
 
-    // Tarefa Idle (Ring 0, prioridade Idle) — roda quando ninguém mais quer CPU
+    // Tarefa Idle dedicada para o BSP (PID 0)
     let _idle_pid = sched.add_idle_task();
+    sched.core_idle[0] = 0;
+
+    // Tarefas Idle dedicadas para os núcleos AP secundários (alocadas nos slots 31, 30, 29...)
+    for c in 1..online_cpus {
+        let ap_idle = sched.add_ap_idle_task(c);
+        sched.core_idle[c] = ap_idle;
+    }
 
     // O Shell (Ring 0) como task normal do escalonador
     let _shell_pid = sched.add_task("shell[K]", shell::task_entry);
