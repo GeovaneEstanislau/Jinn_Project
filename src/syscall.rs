@@ -173,6 +173,10 @@ pub extern "C" fn syscall_dispatch(
         21 => sys_window_update(arg0, arg1 as *const u32, arg2),
         22 => sys_window_close(arg0),
         25 => sys_res_stat(arg0, arg1 as *mut crate::resources::ProcessResourceStat, arg2),
+        26 => sys_jda_shm_share(arg0, arg1, arg2 != 0),
+        27 => sys_jda_ring_submit(arg0 as *const crate::jda::ring::JdaSqe, arg1),
+        28 => sys_jda_ring_poll(arg0 as *mut crate::jda::ring::JdaCqe, arg1),
+        29 => sys_jda_shm_get_vaddr(arg0),
         30 => sys_socket(arg0 as u32, arg1 as u32, arg2 as u32),
         31 => sys_connect(arg0, arg1 as *const u8, arg2),
         32 => sys_bind(arg0, arg1 as *const u8, arg2),
@@ -740,6 +744,82 @@ fn sys_jda_submit(job_type: usize, handle: usize, len: usize) -> isize {
     crate::jda::telemetry::record_operation_completed(100);
 
     res
+}
+
+/// `sys_jda_shm_share(handle, target_pid, make_owner_ro)` — Compartilha um buffer físico com outro processo.
+/// Mapeia a página no PML4 de `target_pid` com privilégio USER_RO. Se `make_owner_ro` for true,
+/// rebaixa também a página do proprietário para somente-leitura (USER_RO) para garantir imutabilidade.
+/// Retorna o endereço virtual no processo alvo (>= 0), ou código de erro negativo.
+fn sys_jda_shm_share(handle: usize, target_pid: usize, make_owner_ro: bool) -> isize {
+    let pid = scheduler::current_pid();
+    let mut pool = crate::jda::shmem::SHARED_BUFFER_POOL.lock();
+    match pool.share(pid, handle, target_pid, make_owner_ro) {
+        Ok(vaddr) => vaddr as isize,
+        Err(_) => EPERM,
+    }
+}
+
+/// `sys_jda_shm_get_vaddr(handle)` — Obtém o endereço virtual do buffer mapeado no PML4 do processo.
+/// Permite acesso direto de leitura/escrita com zero-copy a partir do espaço de usuário Ring 3.
+fn sys_jda_shm_get_vaddr(handle: usize) -> isize {
+    let pid = scheduler::current_pid();
+    let pool = crate::jda::shmem::SHARED_BUFFER_POOL.lock();
+    match pool.get_user_vaddr(pid, handle) {
+        Some(vaddr) => vaddr as isize,
+        None => EPERM,
+    }
+}
+
+/// `sys_jda_ring_submit(sqe_ptr, count)` — Submete um lote de operações (SQEs) ao anel assíncrono io_uring do JDA.
+/// Despacha I/O de disco e computação de forma assíncrona desacoplada da CPU sequencial.
+fn sys_jda_ring_submit(sqe_ptr: *const crate::jda::ring::JdaSqe, count: usize) -> isize {
+    let pid = scheduler::current_pid();
+    if count == 0 || count > crate::jda::ring::JDA_RING_SIZE {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(sqe_ptr as *const u8, count * core::mem::size_of::<crate::jda::ring::JdaSqe>(), false) {
+            return e;
+        }
+    }
+    let slice = unsafe { core::slice::from_raw_parts(sqe_ptr, count) };
+    let mut ring = crate::jda::ring::JDA_RING.lock();
+    let mut submitted = 0;
+    for &sqe in slice {
+        if ring.submit(sqe).is_ok() {
+            submitted += 1;
+        } else {
+            break;
+        }
+    }
+    // Despacha operações pendentes no anel
+    ring.dispatch_pending(pid);
+    submitted as isize
+}
+
+/// `sys_jda_ring_poll(cqe_ptr, max_count)` — Coleta entradas concluídas (CQEs) do anel assíncrono do JDA.
+/// Retorna o número de conclusões lidas com sucesso (>= 0), ou código de erro negativo.
+fn sys_jda_ring_poll(cqe_ptr: *mut crate::jda::ring::JdaCqe, max_count: usize) -> isize {
+    if max_count == 0 || max_count > crate::jda::ring::JDA_RING_SIZE {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(cqe_ptr as *const u8, max_count * core::mem::size_of::<crate::jda::ring::JdaCqe>(), true) {
+            return e;
+        }
+    }
+    let slice = unsafe { core::slice::from_raw_parts_mut(cqe_ptr, max_count) };
+    let mut ring = crate::jda::ring::JDA_RING.lock();
+    let mut polled = 0;
+    for cqe in slice.iter_mut() {
+        if let Some(c) = ring.poll_completion() {
+            *cqe = c;
+            polled += 1;
+        } else {
+            break;
+        }
+    }
+    polled as isize
 }
 
 // ── Aladdin Graphics Syscalls ─────────────────────────────────────────────────

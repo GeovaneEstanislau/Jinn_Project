@@ -349,3 +349,37 @@ pub unsafe fn sys_window_update(win_id: usize, buffer: &[u32]) -> i64 {
 pub unsafe fn sys_window_close(win_id: usize) -> i64 {
     syscall3(22, win_id as u64, 0, 0)
 }
+
+// ── Syscall 26 — jda_shm_share ───────────────────────────────────────────────
+
+/// Compartilha um buffer físico com outro processo `target_pid` em modo USER_RO.
+/// Se `make_owner_ro` for true, rebaixa também a página do processo chamador para USER_RO.
+#[inline(always)]
+pub unsafe fn sys_jda_shm_share(handle: u64, target_pid: usize, make_owner_ro: bool) -> i64 {
+    syscall3(26, handle, target_pid as u64, if make_owner_ro { 1 } else { 0 })
+}
+
+// ── Syscall 27 — jda_ring_submit ─────────────────────────────────────────────
+
+/// Submete um lote de operações (SQEs) ao anel assíncrono io_uring do JDA.
+#[inline(always)]
+pub unsafe fn sys_jda_ring_submit(sqe_ptr: *const crate::jda::ring::JdaSqe, count: usize) -> i64 {
+    syscall3(27, sqe_ptr as u64, count as u64, 0)
+}
+
+// ── Syscall 28 — jda_ring_poll ───────────────────────────────────────────────
+
+/// Coleta conclusões (CQEs) concluídas do anel assíncrono do JDA.
+#[inline(always)]
+pub unsafe fn sys_jda_ring_poll(cqe_ptr: *mut crate::jda::ring::JdaCqe, max_count: usize) -> i64 {
+    syscall3(28, cqe_ptr as u64, max_count as u64, 0)
+}
+
+// ── Syscall 29 — jda_shm_get_vaddr ───────────────────────────────────────────
+
+/// Obtém o endereço virtual do buffer mapeado no PML4 do processo de usuário.
+#[inline(always)]
+pub unsafe fn sys_jda_shm_get_vaddr(handle: u64) -> i64 {
+    syscall3(29, handle, 0, 0)
+}
+

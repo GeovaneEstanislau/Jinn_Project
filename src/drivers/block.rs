@@ -508,6 +508,26 @@ pub fn cached_write_sector(lba: u64, buf: &[u8; DEFAULT_SECTOR_SIZE]) -> Result<
     }
 }
 
+/// Lê múltiplos setores contíguos do disco primário utilizando a camada de cache
+pub fn read_into_buffer(start_block: u64, count: usize, buf: &mut [u8]) -> Result<(), &'static str> {
+    let mut dev_opt = PRIMARY_CACHED_DEV.lock();
+    if let Some(ref mut cdev) = *dev_opt {
+        cdev.read_blocks(start_block, count, buf)
+    } else {
+        Err("Dispositivo de blocos primario nao inicializado")
+    }
+}
+
+/// Escreve múltiplos setores contíguos no disco primário utilizando a camada de cache
+pub fn write_from_buffer(start_block: u64, count: usize, buf: &[u8]) -> Result<(), &'static str> {
+    let mut dev_opt = PRIMARY_CACHED_DEV.lock();
+    if let Some(ref mut cdev) = *dev_opt {
+        cdev.write_blocks(start_block, count, buf)
+    } else {
+        Err("Dispositivo de blocos primario nao inicializado")
+    }
+}
+
 /// Executa a sincronização (FLUSH) de todos os blocos marcados como dirty na memória para o disco
 pub fn flush_primary_cache() -> Result<usize, &'static str> {
     let mut dev_opt = PRIMARY_CACHED_DEV.lock();

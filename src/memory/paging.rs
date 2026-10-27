@@ -18,6 +18,7 @@ pub const NO_EXEC:    u64 = 1 << 63;
 pub const KERNEL_RW:  u64 = PRESENT | WRITABLE;
 pub const KERNEL_RO:  u64 = PRESENT | NO_EXEC;
 pub const USER_RW:    u64 = PRESENT | WRITABLE | USER;
+pub const USER_RO:    u64 = PRESENT | USER | NO_EXEC;
 
 const PAGE_MASK: u64 = 0x000F_FFFF_FFFF_F000;
 #[allow(dead_code)]
@@ -157,6 +158,36 @@ pub unsafe fn unmap_page(pml4: *mut PageTable, virt: u64) {
 
     (*pt).entries[pt_idx(virt)].clear();
     core::arch::asm!("invlpg [{0}]", in(reg) virt, options(nostack));
+}
+
+/// Altera as flags de uma página virtual já mapeada (ex: rebaixa de USER_RW para USER_RO).
+/// Retorna true se a alteração foi aplicada com sucesso.
+///
+/// # Safety
+/// * `pml4` deve ser uma tabela PML4 válida.
+pub unsafe fn set_page_flags(pml4: *mut PageTable, virt: u64, flags: u64) -> bool {
+    let pml4_e = (*pml4).entries[pml4_idx(virt)];
+    if !pml4_e.is_present() { return false; }
+    let pdpt = phys_to_virt(pml4_e.phys_addr()) as *mut PageTable;
+
+    let pdpt_e = (*pdpt).entries[pdpt_idx(virt)];
+    if !pdpt_e.is_present() { return false; }
+    let pd = phys_to_virt(pdpt_e.phys_addr()) as *mut PageTable;
+
+    let pd_e = (*pd).entries[pd_idx(virt)];
+    if !pd_e.is_present() { return false; }
+    if pd_e.flags() & HUGE_PAGE != 0 {
+        return false;
+    }
+
+    let pt = phys_to_virt(pd_e.phys_addr()) as *mut PageTable;
+    let pt_entry = &mut (*pt).entries[pt_idx(virt)];
+    if !pt_entry.is_present() { return false; }
+
+    let phys = pt_entry.phys_addr();
+    *pt_entry = PageEntry::new(phys, flags | PRESENT);
+    core::arch::asm!("invlpg [{0}]", in(reg) virt, options(nostack));
+    true
 }
 
 /// Lookup the physical address and flags of a mapped virtual page.

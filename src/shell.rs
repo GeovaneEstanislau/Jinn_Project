@@ -2496,6 +2496,117 @@ where
                 }
             }
         }
+        "jda" => {
+            output("=== Jinn Dataflow Architecture (JDA) ===", 0x0038_BDF8);
+            if crate::jda::is_active() {
+                output("Estado: ATIVO (Submarino Dataflow Ligado)", 0x0022_C55E);
+            } else {
+                output("Estado: INATIVO (Fallback Classico)", 0x00EF_4444);
+            }
+
+            // Estatísticas dos Anéis io_uring
+            let ring = crate::jda::ring::JDA_RING.lock();
+            let mut buf_ring = [0u8; 64];
+            let mut l = 0;
+            let msg = b"IoRing: Submetidos=";
+            buf_ring[..msg.len()].copy_from_slice(msg);
+            l += msg.len();
+            let mut n_buf = [0u8; 16];
+            let nl = aladdin::compositor::format_num(ring.stats.total_submitted as usize, &mut n_buf);
+            buf_ring[l..l + nl].copy_from_slice(&n_buf[..nl]);
+            l += nl;
+            let msg2 = b", Concluidos=";
+            buf_ring[l..l + msg2.len()].copy_from_slice(msg2);
+            l += msg2.len();
+            let nl2 = aladdin::compositor::format_num(ring.stats.total_completed as usize, &mut n_buf);
+            buf_ring[l..l + nl2].copy_from_slice(&n_buf[..nl2]);
+            l += nl2;
+            let msg3 = b", Erros=";
+            buf_ring[l..l + msg3.len()].copy_from_slice(msg3);
+            l += msg3.len();
+            let nl3 = aladdin::compositor::format_num(ring.stats.total_errors as usize, &mut n_buf);
+            buf_ring[l..l + nl3].copy_from_slice(&n_buf[..nl3]);
+            l += nl3;
+            if let Ok(s) = core::str::from_utf8(&buf_ring[..l]) {
+                output(s, 0x00A8_55F7);
+            }
+
+            // Buffers físicos Zero-Copy ativos
+            let pool = crate::jda::shmem::SHARED_BUFFER_POOL.lock();
+            let mut active_bufs = 0;
+            for b in pool.buffers.iter() {
+                if b.is_allocated {
+                    active_bufs += 1;
+                }
+            }
+            let mut buf_shm = [0u8; 48];
+            let mut ls = 0;
+            let m_shm = b"Buffers Zero-Copy Ativos: ";
+            buf_shm[..m_shm.len()].copy_from_slice(m_shm);
+            ls += m_shm.len();
+            let n_shm = aladdin::compositor::format_num(active_bufs, &mut n_buf);
+            buf_shm[ls..ls + n_shm].copy_from_slice(&n_buf[..n_shm]);
+            ls += n_shm;
+            let m_max = b" / 32";
+            buf_shm[ls..ls + m_max.len()].copy_from_slice(m_max);
+            ls += m_max.len();
+            if let Ok(s) = core::str::from_utf8(&buf_shm[..ls]) {
+                output(s, 0x00F5_9E0B);
+            }
+        }
+        "jdabench" => {
+            output("Executando benchmark JDA Fase 3 (io_uring & Zero-Copy)...", 0x0038_BDF8);
+            let mut pool = crate::jda::shmem::SHARED_BUFFER_POOL.lock();
+            if let Ok(handle) = pool.allocate(0, false) {
+                drop(pool);
+                let start_tsc = crate::jda::telemetry::read_tsc();
+                let mut ring = crate::jda::ring::JDA_RING.lock();
+                for i in 0..16 {
+                    let sqe = crate::jda::ring::JdaSqe {
+                        opcode: if i % 2 == 0 { crate::jda::ring::OP_COMPUTE_SUM } else { crate::jda::ring::OP_COMPUTE_FLETCHER32 },
+                        flags: crate::jda::ring::JDA_SQE_ZERO_COPY,
+                        priority: 1,
+                        _reserved: 0,
+                        handle: handle as u32,
+                        offset: 0,
+                        len: 512,
+                        user_data: i as u64,
+                    };
+                    let _ = ring.submit(sqe);
+                }
+                let processed = ring.dispatch_pending(0);
+                let end_tsc = crate::jda::telemetry::read_tsc();
+                let elapsed = end_tsc.saturating_sub(start_tsc);
+                drop(ring);
+
+                let mut pool = crate::jda::shmem::SHARED_BUFFER_POOL.lock();
+                let _ = pool.release(0, handle);
+
+                let mut res_buf = [0u8; 64];
+                let mut rl = 0;
+                let r_msg = b"Benchmark Concluido: ";
+                res_buf[..r_msg.len()].copy_from_slice(r_msg);
+                rl += r_msg.len();
+                let mut nb = [0u8; 16];
+                let n1 = aladdin::compositor::format_num(processed, &mut nb);
+                res_buf[rl..rl + n1].copy_from_slice(&nb[..n1]);
+                rl += n1;
+                let r_msg2 = b" ops em ";
+                res_buf[rl..rl + r_msg2.len()].copy_from_slice(r_msg2);
+                rl += r_msg2.len();
+                let n2 = aladdin::compositor::format_num((elapsed / 16) as usize, &mut nb);
+                res_buf[rl..rl + n2].copy_from_slice(&nb[..n2]);
+                rl += n2;
+                let r_msg3 = b" ciclos/op";
+                res_buf[rl..rl + r_msg3.len()].copy_from_slice(r_msg3);
+                rl += r_msg3.len();
+                if let Ok(s) = core::str::from_utf8(&res_buf[..rl]) {
+                    output(s, 0x0022_C55E);
+                }
+            } else {
+                output("Falha ao alocar buffer JDA para benchmark", 0x00EF_4444);
+            }
+        }
         "reboot" => {
             unsafe {
                 let null_idt: [u8; 10] = [0u8; 10];

@@ -80,6 +80,58 @@ unsafe fn sys_jda_submit(job_type: u64, handle: u64, len: u64) -> i64 {
     syscall3(14, job_type, handle, len)
 }
 
+// ── Estruturas e Helpers do JDA Fase 3 (io_uring & Zero-Copy) ─────────────────
+pub const OP_NOP:                u8 = 0;
+pub const OP_READ_BLOCK:         u8 = 1;
+pub const OP_WRITE_BLOCK:        u8 = 2;
+pub const OP_COMPUTE_FLETCHER32: u8 = 3;
+pub const OP_COMPUTE_SUM:        u8 = 4;
+pub const OP_COMPUTE_XOR:        u8 = 5;
+pub const OP_BARRIER:            u8 = 6;
+
+pub const JDA_SQE_ZERO_COPY:     u8 = 1 << 1;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct JdaSqe {
+    pub opcode: u8,
+    pub flags: u8,
+    pub priority: u8,
+    pub _reserved: u8,
+    pub handle: u32,
+    pub offset: u64,
+    pub len: u32,
+    pub user_data: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct JdaCqe {
+    pub user_data: u64,
+    pub res: i32,
+    pub flags: u32,
+}
+
+#[inline(always)]
+unsafe fn sys_jda_shm_share(handle: u64, target_pid: usize, make_owner_ro: bool) -> i64 {
+    syscall3(26, handle, target_pid as u64, if make_owner_ro { 1 } else { 0 })
+}
+
+#[inline(always)]
+unsafe fn sys_jda_ring_submit(sqe_ptr: *const JdaSqe, count: usize) -> i64 {
+    syscall3(27, sqe_ptr as u64, count as u64, 0)
+}
+
+#[inline(always)]
+unsafe fn sys_jda_ring_poll(cqe_ptr: *mut JdaCqe, max_count: usize) -> i64 {
+    syscall3(28, cqe_ptr as u64, max_count as u64, 0)
+}
+
+#[inline(always)]
+unsafe fn sys_jda_shm_get_vaddr(handle: u64) -> i64 {
+    syscall3(29, handle, 0, 0)
+}
+
 #[inline(always)]
 unsafe fn sys_open(path: &[u8], flags: u32) -> i64 {
     syscall3(15, path.as_ptr() as u64, path.len() as u64, flags as u64)
@@ -1093,6 +1145,157 @@ unsafe fn test_jda_stress() {
     }
 }
 
+/// Teste do JDA Fase 3: Validação Completa de Anéis Assíncronos (io_uring) e Zero-Copy Page Remapping
+unsafe fn test_jda_phase3_ioring_and_zerocopy() {
+    print_str(b"[JDA-PHASE3] test_jda_phase3_ioring_and_zerocopy: Testando io_uring e Zero-Copy...\n");
+
+    // 1. Aloca buffer JDA para transferência Zero-Copy
+    let handle = sys_jda_shm_alloc(false);
+    if handle < 0 {
+        print_str(b"  [FAIL] Falha ao alocar buffer JDA para teste da Fase 3\n");
+        return;
+    }
+
+    // 2. Obtém endereço virtual do buffer mapeado no PML4 do processo de usuário
+    let vaddr = sys_jda_shm_get_vaddr(handle as u64);
+    print_str(b"  Buffer Zero-Copy mapeado em Ring 3 no endereco virtual: 0x");
+    print_u64(vaddr as u64);
+    print_str(b"\n");
+
+    let mut direct_write_ok = false;
+    if vaddr > 0 {
+        let ptr = vaddr as *mut u8;
+        // Escreve diretamente no buffer via ponteiro virtual de usuário (SEM NENHUMA SYSCALL DE CÓPIA)
+        for i in 0..128 {
+            *ptr.add(i) = 0x2A; // 42 em decimal
+        }
+        // Lê de volta para certificar acesso
+        let mut sum_direct = 0u32;
+        for i in 0..128 {
+            sum_direct += *ptr.add(i) as u32;
+        }
+        direct_write_ok = sum_direct == (128 * 42);
+        print_str(b"  Acesso direto de escrita e leitura na memoria fisica (Zero-Copy): ");
+        if direct_write_ok {
+            print_str(b"OK (soma direta = 5376)\n");
+        } else {
+            print_str(b"FALHA\n");
+        }
+    }
+
+    // 3. Submissão assíncrona em lote ao IoRing (sys_jda_ring_submit)
+    let sqes = [
+        JdaSqe {
+            opcode: OP_COMPUTE_SUM,
+            flags: JDA_SQE_ZERO_COPY,
+            priority: 1,
+            _reserved: 0,
+            handle: handle as u32,
+            offset: 0,
+            len: 128,
+            user_data: 0x1111,
+        },
+        JdaSqe {
+            opcode: OP_COMPUTE_FLETCHER32,
+            flags: JDA_SQE_ZERO_COPY,
+            priority: 1,
+            _reserved: 0,
+            handle: handle as u32,
+            offset: 0,
+            len: 128,
+            user_data: 0x2222,
+        },
+        JdaSqe {
+            opcode: OP_NOP,
+            flags: 0,
+            priority: 0,
+            _reserved: 0,
+            handle: 0,
+            offset: 0,
+            len: 0,
+            user_data: 0x3333,
+        },
+    ];
+
+    let sub_ret = sys_jda_ring_submit(sqes.as_ptr(), sqes.len());
+    print_str(b"  sys_jda_ring_submit(3 SQEs) -> ");
+    print_i64(sub_ret);
+    print_str(b" submetidos\n");
+    let submit_ok = sub_ret == 3;
+
+    // 4. Coleta assíncrona de conclusões (sys_jda_ring_poll)
+    let mut cqes: [JdaCqe; 4] = [JdaCqe::default(); 4];
+    let poll_ret = sys_jda_ring_poll(cqes.as_mut_ptr(), cqes.len());
+    print_str(b"  sys_jda_ring_poll(max 4) -> ");
+    print_i64(poll_ret);
+    print_str(b" conclusoes colhidas\n");
+
+    let mut poll_ok = false;
+    if poll_ret == 3 {
+        let c0 = cqes[0];
+        let c1 = cqes[1];
+        let c2 = cqes[2];
+        print_str(b"    CQE[0]: user_data=0x");
+        print_u64(c0.user_data);
+        print_str(b", res=");
+        print_i64(c0.res as i64);
+        print_str(b" (esperado 5376)\n");
+
+        print_str(b"    CQE[1]: user_data=0x");
+        print_u64(c1.user_data);
+        print_str(b", res=");
+        print_i64(c1.res as i64);
+        print_str(b" (Fletcher32 checksum)\n");
+
+        print_str(b"    CQE[2]: user_data=0x");
+        print_u64(c2.user_data);
+        print_str(b", res=");
+        print_i64(c2.res as i64);
+        print_str(b" (NOP sucesso)\n");
+
+        poll_ok = c0.user_data == 0x1111 && c0.res == 5376 && c1.user_data == 0x2222 && c2.user_data == 0x3333 && c2.res == 0;
+    }
+
+    // 5. Compartilhamento Zero-Copy com PID 4 e imposição de imutabilidade (USER_RO)
+    let share_ret = sys_jda_shm_share(handle as u64, 4, true);
+    print_str(b"  sys_jda_shm_share(handle, PID 4, make_owner_ro=true) -> ");
+    print_i64(share_ret);
+    print_str(b"\n");
+    let share_ok = share_ret > 0;
+
+    // 6. Tenta executar mutação no anel assíncrono agora que o buffer é somente leitura -> deve falhar com -EPERM (-1)
+    let sqe_xor = JdaSqe {
+        opcode: OP_COMPUTE_XOR,
+        flags: 0,
+        priority: 1,
+        _reserved: 0,
+        handle: handle as u32,
+        offset: 0,
+        len: 128,
+        user_data: 0x4444,
+    };
+    let _ = sys_jda_ring_submit(&sqe_xor as *const JdaSqe, 1);
+    let mut cqe_xor = [JdaCqe::default(); 1];
+    let _ = sys_jda_ring_poll(cqe_xor.as_mut_ptr(), 1);
+    let ro_protected = cqe_xor[0].res == EPERM as i32;
+    print_str(b"  Garantia de Imutabilidade (rejeicao de escrita em buffer compartilhado RO): ");
+    if ro_protected {
+        print_str(b"OK (-EPERM retornado pelo anel)\n");
+    } else {
+        print_str(b"FALHA\n");
+    }
+
+    // 7. Liberação do buffer
+    let rel_ret = sys_jda_shm_release(handle as u64);
+    let rel_ok = rel_ret == 0;
+
+    if direct_write_ok && submit_ok && poll_ok && share_ok && ro_protected && rel_ok {
+        print_str(b"  [PASS] test_jda_phase3_ioring_and_zerocopy: io_uring e Zero-Copy validados com 100% de sucesso!\n");
+    } else {
+        print_str(b"  [FAIL] test_jda_phase3_ioring_and_zerocopy falhou em um dos criterios.\n");
+    }
+}
+
 // ── Papéis Concorrentes das Tarefas (Fase D — Preempção e CPU-Hog) ───────────
 
 unsafe fn run_worker_task(_pid: u32) -> ! {
@@ -1199,6 +1402,7 @@ pub extern "C" fn _start() -> ! {
         test_adv_unified_descriptors();
         test_adv_real_network_dns();
         test_tcp_network_interoperability();
+        test_jda_phase3_ioring_and_zerocopy();
         test_memory_pressure();
         test_fd_stress();
         test_window_stress();

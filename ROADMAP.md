@@ -157,10 +157,15 @@ Investigação experimental para eliminar movimentação desnecessária de dados
   - Motor de Telemetria (`src/jda/telemetry.rs`): contadores de ciclos TSC (`rdtsc`), bytes poupados e latência.
   - Políticas Substituíveis (`src/jda/policy.rs`): política FIFO de referência e política adaptativa orientada à localidade.
   - Comandos interativos no shell do kernel: `jda` e `jdabench`.
-- [ ] **Fase 2 — Protótipo de Referência e Cargas Sintéticas**:
-  - Suite de benchmark sintético comparando classes de trabalho (computação pura, acessos sequenciais/aleatórios e dependências).
-- [ ] **Fase 3 — Integração Inicial e Anéis Assíncronos no Microkernel**:
-  - Anéis de submissão e conclusão lock-free no padrão *io_uring* para desacoplar I/O de disco da execução de CPU.
+- [x] **Fase 2 — Protótipo de Referência e Cargas Sintéticas**:
+  - Simulador em espaço de usuário (`tools/jda-sim`) com suite de 10 cargas sintéticas representativas.
+  - Telemetria de percentis p50/p95/p99, desvio padrão e contabilidade de bytes poupados.
+- [x] **Fase 3 — Integração no Microkernel & Anéis Assíncronos (io_uring)**:
+  - Anéis de submissão (SQ) e conclusão (CQ) lock-free (`src/jda/ring.rs`) para I/O de disco e computação in-kernel.
+  - Compartilhamento real de páginas físicas (`PhysicalPageBuffer`) entre Ring 3 e kernel com remapeamento no PML4 (`USER_JDA_BASE` a `0x30000000`).
+  - Imposição estrita de imutabilidade (`USER_RO`) em compartilhamento multi-processo e rejeição de escritas não autorizadas.
+  - Novas syscalls: `sys_jda_shm_share`, `sys_jda_ring_submit`, `sys_jda_ring_poll`, `sys_jda_shm_get_vaddr`.
+  - Autotestes no boot do kernel (`run_jda_selftests`), suíte de validação em Ring 3 (`apps/ola-mundo`) e comandos interativos `jda` e `jdabench`.
 
 ---
 

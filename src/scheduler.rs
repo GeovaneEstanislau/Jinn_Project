@@ -43,6 +43,10 @@ pub const MAX_DYNAMIC_PAGES: usize = 32;
 pub const USER_HEAP_BASE: u64 = 0x0000_1000_0000;
 pub const USER_HEAP_MAX:  u64 = 0x0000_2000_0000;
 
+/// Faixa de endereçamento virtual reservada para buffers compartilhados do JDA (Zero-Copy Paging).
+pub const USER_JDA_BASE: u64 = 0x0000_3000_0000;
+pub const USER_JDA_MAX:  u64 = 0x0000_4000_0000;
+
 /// Descritor de arquivo aberto por uma tarefa no VFS.
 #[derive(Debug, Clone, Copy)]
 pub struct TaskFileDescriptor {

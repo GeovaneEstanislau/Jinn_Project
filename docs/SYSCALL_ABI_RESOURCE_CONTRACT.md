@@ -87,10 +87,10 @@ A tabela a seguir reflete com fidelidade técnica o estado real do código em `s
 | **23** | Reservada | **Indefinida** | Reservado | `-ENOSYS` (-38) | `-ENOSYS` (-38) | N/A | `src/syscall.rs:694` |
 | **24** | Reservada | **Indefinida** | Reservado | `-ENOSYS` (-38) | `-ENOSYS` (-38) | N/A | `src/syscall.rs:694` |
 | **25** | `sys_res_stat` | **Implementada** | `rdi: target_pid (usize)`, `rsi: *mut ProcessResourceStat`, `rdx: size (usize)` | `0` (sucesso) | `-ESRCH` (-3), `-EFAULT` (-14), `-EINVAL` (-22) | Telemetria de recursos da tarefa | `src/syscall.rs:633`, `test_observer_app` |
-| **26** | Reservada | **Indefinida** | Reservado | `-ENOSYS` (-38) | `-ENOSYS` (-38) | N/A | `src/syscall.rs:694` |
-| **27** | Reservada | **Indefinida** | Reservado | `-ENOSYS` (-38) | `-ENOSYS` (-38) | N/A | `src/syscall.rs:694` |
-| **28** | Reservada | **Indefinida** | Reservado | `-ENOSYS` (-38) | `-ENOSYS` (-38) | N/A | `src/syscall.rs:694` |
-| **29** | Reservada | **Indefinida** | Reservado | `-ENOSYS` (-38) | `-ENOSYS` (-38) | N/A | `src/syscall.rs:694` |
+| **26** | `sys_jda_shm_share` | **Implementada** | `rdi: handle (u64)`, `rsi: target_pid (usize)`, `rdx: make_owner_ro (u64)` | `i64` (endereço virtual no alvo) | `-EPERM` (-1), `-EINVAL` (-22) | Compartilhamento Zero-Copy, remapeamento PML4, ref_count | `src/syscall.rs`, `test_jda_phase3_ioring_and_zerocopy` |
+| **27** | `sys_jda_ring_submit` | **Implementada** | `rdi: *const JdaSqe`, `rsi: count (usize)` | `usize` (operações submetidas) | `-EINVAL` (-22), `-EFAULT` (-14) | Fila de submissão JDA io_uring (SQ) | `src/syscall.rs`, `src/jda/ring.rs` |
+| **28** | `sys_jda_ring_poll` | **Implementada** | `rdi: *mut JdaCqe`, `rsi: max_count (usize)` | `usize` (conclusões colhidas) | `-EINVAL` (-22), `-EFAULT` (-14) | Fila de conclusão JDA io_uring (CQ) | `src/syscall.rs`, `src/jda/ring.rs` |
+| **29** | `sys_jda_shm_get_vaddr` | **Implementada** | `rdi: handle (u64)` | `i64` (endereço virtual `0x30000000+`) | `-EPERM` (-1) | Mapeamento virtual direto no PML4 da tarefa | `src/syscall.rs`, `test_jda_phase3_ioring_and_zerocopy` |
 | **30** | `sys_socket` | **Implementada** | `rdi: domain (i32)`, `rsi: type (i32)`, `rdx: protocol (i32)` | `i64` (FD unificado no intervalo 3..7) | `-EINVAL` (-22), `-EMFILE` (-24) | Tabela unificada de descritores, `SOCKET_TABLE`, cota `max_sockets` | `src/syscall.rs:658`, `test_adv_unified_descriptors` |
 | **31** | `sys_connect` | **Implementada** | `rdi: sockfd (u64)`, `rsi: *const SockAddrIn`, `rdx: size (usize)` | `0` (sucesso) | `-EBADF` (-9), `-EFAULT` (-14), `-EINVAL` (-22) | Estado do socket, resolução ARP | `src/syscall.rs:674`, `test_adv_unified_descriptors` |
 | **32** | `sys_bind` | **Stub** | `rdi: sockfd (u64)`, `rsi: *const SockAddrIn`, `rdx: size (usize)` | `0` (sucesso fingido - sem operação) | Nenhum (não valida parâmetros) | Nenhum (stub sem efeito de rede) | `src/syscall.rs:689` |

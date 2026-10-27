@@ -217,10 +217,24 @@ pub extern "C" fn _start() -> ! {
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
 
-    w.write_string("[+] JDA Engine (Dataflow Architecture)...");
+    w.write_string("[+] JDA Engine & IoRing (Dataflow Architecture)...");
     if jda::init().is_ok() {
-        w.set_color(Color::LightGreen, Color::Black);
-        w.write_line(" OK");
+        let (passed, total) = jda::run_jda_selftests();
+        if passed == total {
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_string(" OK (");
+            w.write_decimal(passed);
+            w.write_string("/");
+            w.write_decimal(total);
+            w.write_line(" aprovados)");
+        } else {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_string(" FALHA (");
+            w.write_decimal(passed);
+            w.write_string("/");
+            w.write_decimal(total);
+            w.write_line(")");
+        }
     } else {
         w.set_color(Color::Yellow, Color::Black);
         w.write_line(" WARN (Desativado)");
