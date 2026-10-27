@@ -446,6 +446,17 @@ fn sys_close(fd: usize) -> isize {
     }
 }
 
+const _: () = {
+    assert!(core::mem::size_of::<FileStat>() == 56);
+    assert!(core::mem::align_of::<FileStat>() == 8);
+};
+
+/// Converte metadados internos do VFS (`vfs::Stat`) para a estrutura normativa `FileStat`.
+///
+/// # Semântica de Timestamps:
+/// `atime`, `mtime` e `ctime` registram **ticks monotônicos do PIT (100 Hz = 10 ms por tick)**
+/// contados a partir da inicialização do microkernel. Não representam segundos de calendário Unix Epoch
+/// devido à ausência de driver de RTC na arquitetura atual.
 fn map_vfs_stat_to_filestat(stat: &crate::vfs::Stat) -> FileStat {
     let (node_type, mode) = match stat.node_type {
         crate::vfs::NodeType::File => (0u32, 0o100644u32),
@@ -469,7 +480,7 @@ fn map_vfs_stat_to_filestat(stat: &crate::vfs::Stat) -> FileStat {
 
 /// `stat(path_ptr, path_len, stat_ptr)` — Consulta metadados de arquivo ou diretório pelo caminho.
 fn sys_stat(path_ptr: *const u8, path_len: usize, stat_ptr: *mut FileStat) -> isize {
-    if path_ptr.is_null() || stat_ptr.is_null() || path_len == 0 || path_len > 128 {
+    if path_ptr.is_null() || stat_ptr.is_null() || path_len == 0 || path_len > crate::vfs::MAX_PATH_LEN {
         return EINVAL;
     }
     if is_current_task_user() {
@@ -480,14 +491,18 @@ fn sys_stat(path_ptr: *const u8, path_len: usize, stat_ptr: *mut FileStat) -> is
             return e;
         }
     }
-    let mut path_buf = [0u8; 128];
+    let mut path_buf = [0u8; crate::vfs::MAX_PATH_LEN];
     unsafe {
         core::ptr::copy_nonoverlapping(path_ptr, path_buf.as_mut_ptr(), path_len);
     }
-    let path_str = match core::str::from_utf8(&path_buf[..path_len]) {
+    let raw_str = match core::str::from_utf8(&path_buf[..path_len]) {
         Ok(s) => s,
         Err(_) => return EINVAL,
     };
+    let path_str = raw_str.trim_end_matches('\0');
+    if path_str.is_empty() || !path_str.starts_with('/') {
+        return ENOENT;
+    }
 
     match crate::vfs::stat(path_str) {
         Ok(vfs_stat) => {
@@ -501,20 +516,44 @@ fn sys_stat(path_ptr: *const u8, path_len: usize, stat_ptr: *mut FileStat) -> is
             crate::vfs::VfsError::NotFound => ENOENT,
             crate::vfs::VfsError::PermissionDenied => EPERM,
             crate::vfs::VfsError::InvalidPath => EINVAL,
+            crate::vfs::VfsError::NotADirectory => ENOENT,
             _ => ENOENT,
         },
     }
 }
 
-/// `fstat(fd, stat_ptr)` — Consulta metadados de descritor aberto (arquivo ou socket).
+/// `fstat(fd, stat_ptr)` — Consulta metadados de descritor aberto (arquivo, dispositivo ou socket).
 fn sys_fstat(fd: usize, stat_ptr: *mut FileStat) -> isize {
-    if fd < 3 || fd >= scheduler::MAX_TASK_FDS || stat_ptr.is_null() {
-        return if stat_ptr.is_null() { EINVAL } else { EBADF };
+    if stat_ptr.is_null() {
+        return EINVAL;
+    }
+    if fd >= scheduler::MAX_TASK_FDS {
+        return EBADF;
     }
     if is_current_task_user() {
         if let Err(e) = validate_user_buffer(stat_ptr as *const u8, core::mem::size_of::<FileStat>(), true) {
             return e;
         }
+    }
+
+    // Suporte aos descritores padrão do sistema (0 = stdin, 1 = stdout, 2 = stderr)
+    // Tratados como dispositivos de caractere (S_IFCHR)
+    if fd < 3 {
+        let fstat = FileStat {
+            size: 0,
+            inode: fd as u64,
+            node_type: 2, // CharDevice
+            mode: 0o020666,
+            blksize: 512,
+            blocks: 0,
+            atime: crate::timer::ticks(),
+            mtime: crate::timer::ticks(),
+            ctime: crate::timer::ticks(),
+        };
+        unsafe {
+            core::ptr::write_unaligned(stat_ptr, fstat);
+        }
+        return 0;
     }
 
     let pid = scheduler::current_pid();
@@ -531,10 +570,11 @@ fn sys_fstat(fd: usize, stat_ptr: *mut FileStat) -> isize {
 
     match desc {
         scheduler::TaskDescriptor::File(entry) => {
-            let path_str = match core::str::from_utf8(&entry.path[..entry.path_len]) {
+            let raw_str = match core::str::from_utf8(&entry.path[..entry.path_len]) {
                 Ok(s) => s,
                 Err(_) => return EBADF,
             };
+            let path_str = raw_str.trim_end_matches('\0');
             match crate::vfs::stat(path_str) {
                 Ok(vfs_stat) => {
                     let fstat = map_vfs_stat_to_filestat(&vfs_stat);
@@ -550,7 +590,7 @@ fn sys_fstat(fd: usize, stat_ptr: *mut FileStat) -> isize {
             let fstat = FileStat {
                 size: 0,
                 inode: *sock_idx as u64,
-                node_type: 5,
+                node_type: 5, // Socket
                 mode: 0o140666,
                 blksize: 512,
                 blocks: 0,
@@ -568,7 +608,11 @@ fn sys_fstat(fd: usize, stat_ptr: *mut FileStat) -> isize {
 
 /// `lseek(fd, offset, whence)` — Reposiciona o deslocamento de leitura/escrita do descritor de arquivo.
 fn sys_lseek(fd: usize, offset: i64, whence: usize) -> isize {
-    if fd < 3 || fd >= scheduler::MAX_TASK_FDS {
+    // Console streams (0 = stdin, 1 = stdout, 2 = stderr) são dispositivos de caractere não posicionáveis
+    if fd < 3 {
+        return ESPIPE;
+    }
+    if fd >= scheduler::MAX_TASK_FDS {
         return EBADF;
     }
 
@@ -592,18 +636,26 @@ fn sys_lseek(fd: usize, offset: i64, whence: usize) -> isize {
     let new_offset: i64 = match whence {
         SEEK_SET => offset,
         SEEK_CUR => {
-            match (entry.offset as i64).checked_add(offset) {
+            let curr = match i64::try_from(entry.offset) {
+                Ok(c) => c,
+                Err(_) => return EINVAL,
+            };
+            match curr.checked_add(offset) {
                 Some(val) => val,
                 None => return EINVAL,
             }
         }
         SEEK_END => {
-            let path_str = match core::str::from_utf8(&entry.path[..entry.path_len]) {
+            let raw_str = match core::str::from_utf8(&entry.path[..entry.path_len]) {
                 Ok(s) => s,
                 Err(_) => return EBADF,
             };
+            let path_str = raw_str.trim_end_matches('\0');
             let file_size = match crate::vfs::stat(path_str) {
-                Ok(s) => s.size as i64,
+                Ok(s) => match i64::try_from(s.size) {
+                    Ok(sz) => sz,
+                    Err(_) => return EINVAL,
+                },
                 Err(_) => return ENOENT,
             };
             match file_size.checked_add(offset) {

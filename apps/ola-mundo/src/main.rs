@@ -161,13 +161,23 @@ pub struct FileStat {
 }
 
 #[inline(always)]
+unsafe fn sys_stat_raw(path_ptr: u64, path_len: u64, stat_ptr: u64) -> i64 {
+    syscall3(17, path_ptr, path_len, stat_ptr)
+}
+
+#[inline(always)]
+unsafe fn sys_fstat_raw(fd: u64, stat_ptr: u64) -> i64 {
+    syscall3(18, fd, stat_ptr, 0)
+}
+
+#[inline(always)]
 unsafe fn sys_stat(path: &[u8], stat: &mut FileStat) -> i64 {
-    syscall3(17, path.as_ptr() as u64, path.len() as u64, stat as *mut _ as u64)
+    sys_stat_raw(path.as_ptr() as u64, path.len() as u64, stat as *mut _ as u64)
 }
 
 #[inline(always)]
 unsafe fn sys_fstat(fd: u64, stat: &mut FileStat) -> i64 {
-    syscall3(18, fd, stat as *mut _ as u64, 0)
+    sys_fstat_raw(fd, stat as *mut _ as u64)
 }
 
 #[inline(always)]
@@ -1410,29 +1420,98 @@ unsafe fn test_sched_preemption_and_cpu_quota() {
 }
 
 unsafe fn test_adv_vfs_stat_and_lseek() {
-    print_str(b"\n--- Teste 14: Syscalls VFS 17 (stat), 18 (fstat) e 19 (lseek) ---\n");
+    print_str(b"\n--- Teste 14: Auditoria Rigorosa de VFS (Syscalls 17, 18 e 19) ---\n");
 
-    let mut stat = FileStat::default();
-    let ret = sys_stat(b"/disk/README.TXT", &mut stat);
-    if ret != 0 || stat.size == 0 || stat.node_type != 0 {
-        print_str(b"  [FAIL] sys_stat falhou ao consultar /disk/README.TXT!\n");
+    // 1. Auditoria do Contrato Binario (Layout, Tamanho, Alinhamento e Offsets de FileStat)
+    let dummy = FileStat::default();
+    let base = &dummy as *const _ as usize;
+    if core::mem::size_of::<FileStat>() != 56 || core::mem::align_of::<FileStat>() != 8 {
+        print_str(b"  [FAIL] Layout de FileStat violou contrato de ABI (size != 56 ou align != 8)!\n");
         return;
     }
-    print_str(b"  sys_stat(/disk/README.TXT): Size=");
-    print_u64(stat.size);
-    print_str(b", NodeType=");
-    print_u64(stat.node_type as u64);
-    print_str(b", Mode=0o");
-    print_u64(stat.mode as u64);
-    print_str(b", Blocks=");
-    print_u64(stat.blocks as u64);
-    print_str(b"\n");
+    let off_size = &dummy.size as *const _ as usize - base;
+    let off_inode = &dummy.inode as *const _ as usize - base;
+    let off_node_type = &dummy.node_type as *const _ as usize - base;
+    let off_mode = &dummy.mode as *const _ as usize - base;
+    let off_blksize = &dummy.blksize as *const _ as usize - base;
+    let off_blocks = &dummy.blocks as *const _ as usize - base;
+    let off_atime = &dummy.atime as *const _ as usize - base;
+    let off_mtime = &dummy.mtime as *const _ as usize - base;
+    let off_ctime = &dummy.ctime as *const _ as usize - base;
 
-    // Consulta de diretorio
-    let mut stat_dir = FileStat::default();
-    let ret_dir = sys_stat(b"/disk", &mut stat_dir);
-    if ret_dir != 0 || stat_dir.node_type != 1 {
-        print_str(b"  [FAIL] sys_stat(/disk) falhou ao identificar diretorio!\n");
+    if off_size != 0 || off_inode != 8 || off_node_type != 16 || off_mode != 20
+        || off_blksize != 24 || off_blocks != 28 || off_atime != 32 || off_mtime != 40 || off_ctime != 48
+    {
+        print_str(b"  [FAIL] Offsets dos campos de FileStat violam o contrato binario!\n");
+        return;
+    }
+    print_str(b"  [PASS] Contrato Binario de FileStat verificado: size=56, align=8, offsets=[0,8,16,20,24,28,32,40,48]\n");
+
+    // 2. Auditoria de Seguranca de Memoria (Ponteiros Invalidos e Kernel-Space)
+    let mut stat = FileStat::default();
+    if sys_stat_raw(0, 10, &mut stat as *mut _ as u64) != -22 {
+        print_str(b"  [FAIL] sys_stat com path NULL nao retornou -EINVAL!\n");
+        return;
+    }
+    if sys_stat_raw(b"/disk/README.TXT".as_ptr() as u64, b"/disk/README.TXT".len() as u64, 0) != -22 {
+        print_str(b"  [FAIL] sys_stat com stat_ptr NULL nao retornou -EINVAL!\n");
+        return;
+    }
+    if sys_stat_raw(0xFFFF_8000_0000_0000, 10, &mut stat as *mut _ as u64) != -14 {
+        print_str(b"  [FAIL] sys_stat com path no kernel-space nao retornou -EFAULT!\n");
+        return;
+    }
+    if sys_stat_raw(b"/disk/README.TXT".as_ptr() as u64, b"/disk/README.TXT".len() as u64, 0xFFFF_8000_0000_0000) != -14 {
+        print_str(b"  [FAIL] sys_stat com stat_ptr no kernel-space nao retornou -EFAULT!\n");
+        return;
+    }
+    if sys_fstat_raw(3, 0) != -22 {
+        print_str(b"  [FAIL] sys_fstat com stat_ptr NULL nao retornou -EINVAL!\n");
+        return;
+    }
+    if sys_fstat_raw(3, 0xFFFF_8000_0000_0000) != -14 {
+        print_str(b"  [FAIL] sys_fstat com stat_ptr no kernel-space nao retornou -EFAULT!\n");
+        return;
+    }
+
+    // 3. Teste de Fronteira de Pagina (Page Boundary Straddle)
+    let page_vaddr = sys_alloc_page();
+    if page_vaddr > 0 {
+        let vaddr = page_vaddr as usize;
+        // Posiciona stat_ptr a 24 bytes do final da pagina (56 bytes straddle a fronteira para pagina nao mapeada)
+        let straddle_ptr = (vaddr + 4096 - 24) as u64;
+        let ret_straddle = sys_stat_raw(b"/disk/README.TXT".as_ptr() as u64, b"/disk/README.TXT".len() as u64, straddle_ptr);
+        if ret_straddle != -14 {
+            print_str(b"  [FAIL] sys_stat transpondo limite de pagina nao mapeada nao retornou -EFAULT!\n");
+            let _ = sys_free_page(page_vaddr as u64);
+            return;
+        }
+        let _ = sys_free_page(page_vaddr as u64);
+    }
+
+    // 4. Strings com e sem terminador NUL e limites de caminho
+    let ret_without_nul = sys_stat(b"/disk/README.TXT", &mut stat);
+    if ret_without_nul != 0 || stat.size == 0 || stat.node_type != 0 {
+        print_str(b"  [FAIL] sys_stat sem terminador NUL falhou!\n");
+        return;
+    }
+    let mut stat_nul = FileStat::default();
+    let ret_with_nul = sys_stat(b"/disk/README.TXT\0", &mut stat_nul);
+    if ret_with_nul != 0 || stat_nul.size != stat.size {
+        print_str(b"  [FAIL] sys_stat com terminador NUL divergiu!\n");
+        return;
+    }
+
+    // Caminho excessivamente longo (> 256 bytes)
+    let long_path = [b'/'; 257];
+    if sys_stat(&long_path, &mut stat) != -22 {
+        print_str(b"  [FAIL] sys_stat com path > 256 bytes nao retornou -EINVAL!\n");
+        return;
+    }
+
+    // Caminho relativo sem barra inicial -> -ENOENT (-2)
+    if sys_stat(b"disk/README.TXT", &mut stat) != -2 {
+        print_str(b"  [FAIL] sys_stat com caminho relativo nao retornou -ENOENT!\n");
         return;
     }
 
@@ -1444,7 +1523,36 @@ unsafe fn test_adv_vfs_stat_and_lseek() {
         return;
     }
 
-    // Abertura para teste de fstat e lseek
+    // 5. Suporte aos Descritores Padrao (0=stdin, 1=stdout, 2=stderr)
+    let mut std_stat = FileStat::default();
+    if sys_fstat(0, &mut std_stat) != 0 || std_stat.node_type != 2 || std_stat.mode != 0o020666 {
+        print_str(b"  [FAIL] sys_fstat(0 stdin) nao identificou dispositivo de caractere!\n");
+        return;
+    }
+    if sys_fstat(1, &mut std_stat) != 0 || std_stat.node_type != 2 || std_stat.mode != 0o020666 {
+        print_str(b"  [FAIL] sys_fstat(1 stdout) nao identificou dispositivo de caractere!\n");
+        return;
+    }
+    if sys_lseek(0, 0, SEEK_SET) != -29 {
+        print_str(b"  [FAIL] sys_lseek em stdin nao retornou -ESPIPE (-29)!\n");
+        return;
+    }
+    if sys_lseek(1, 0, SEEK_SET) != -29 {
+        print_str(b"  [FAIL] sys_lseek em stdout nao retornou -ESPIPE (-29)!\n");
+        return;
+    }
+
+    // Descritor fora dos limites da tabela (ex: fd 99)
+    if sys_fstat(99, &mut std_stat) != -9 {
+        print_str(b"  [FAIL] sys_fstat com fd fora dos limites nao retornou -EBADF!\n");
+        return;
+    }
+    if sys_lseek(99, 0, SEEK_SET) != -9 {
+        print_str(b"  [FAIL] sys_lseek com fd fora dos limites nao retornou -EBADF!\n");
+        return;
+    }
+
+    // 6. Abertura de Arquivo e Consistencia fstat vs stat
     let fd = sys_open(b"/disk/README.TXT", 0);
     if fd < 3 {
         print_str(b"  [FAIL] sys_open falhou ao abrir /disk/README.TXT!\n");
@@ -1454,13 +1562,13 @@ unsafe fn test_adv_vfs_stat_and_lseek() {
 
     let mut fstat = FileStat::default();
     let ret_fstat = sys_fstat(fd, &mut fstat);
-    if ret_fstat != 0 || fstat.size != stat.size || fstat.node_type != 0 {
+    if ret_fstat != 0 || fstat.size != stat.size || fstat.node_type != 0 || fstat.mode != stat.mode {
         print_str(b"  [FAIL] sys_fstat divergiu de sys_stat!\n");
         let _ = sys_close(fd);
         return;
     }
 
-    // Leitura sequencial inicial (4 bytes)
+    // 7. Auditoria de lseek: Reposicionamento, Rewind e Integridade de Dados
     let mut buf1 = [0u8; 4];
     let n1 = sys_read(fd, buf1.as_mut_ptr(), 4);
     if n1 != 4 {
@@ -1469,14 +1577,13 @@ unsafe fn test_adv_vfs_stat_and_lseek() {
         return;
     }
 
-    // SEEK_SET para 0 (rewind)
+    // Rewind com SEEK_SET 0
     let seek_ret = sys_lseek(fd, 0, SEEK_SET);
     if seek_ret != 0 {
         print_str(b"  [FAIL] sys_lseek SEEK_SET 0 falhou!\n");
         let _ = sys_close(fd);
         return;
     }
-
     let mut buf2 = [0u8; 4];
     let n2 = sys_read(fd, buf2.as_mut_ptr(), 4);
     if n2 != 4 || buf1 != buf2 {
@@ -1492,7 +1599,6 @@ unsafe fn test_adv_vfs_stat_and_lseek() {
         let _ = sys_close(fd);
         return;
     }
-
     let mut buf3 = [0u8; 2];
     let n3 = sys_read(fd, buf3.as_mut_ptr(), 2);
     if n3 != 2 || buf3[0] != buf1[2] || buf3[1] != buf1[3] {
@@ -1517,15 +1623,51 @@ unsafe fn test_adv_vfs_stat_and_lseek() {
         return;
     }
 
-    // SEEK_SET negativo deve retornar -EINVAL (-22)
-    let seek_ret = sys_lseek(fd, -1, SEEK_SET);
-    if seek_ret != -22 {
+    // 8. Prevencao de Overflows e Underflows Aritmeticos em lseek
+    // Overflow em SEEK_CUR com i64::MAX
+    if sys_lseek(fd, 0x7FFF_FFFF_FFFF_FFFF, SEEK_CUR) != -22 {
+        print_str(b"  [FAIL] Overflow em SEEK_CUR nao retornou -EINVAL!\n");
+        let _ = sys_close(fd);
+        return;
+    }
+    // Underflow extremo em SEEK_CUR com i64::MIN
+    if sys_lseek(fd, -0x7FFF_FFFF_FFFF_FFFF - 1, SEEK_CUR) != -22 {
+        print_str(b"  [FAIL] Underflow extremo em SEEK_CUR nao retornou -EINVAL!\n");
+        let _ = sys_close(fd);
+        return;
+    }
+    // Overflow em SEEK_END com i64::MAX
+    if sys_lseek(fd, 0x7FFF_FFFF_FFFF_FFFF, SEEK_END) != -22 {
+        print_str(b"  [FAIL] Overflow em SEEK_END nao retornou -EINVAL!\n");
+        let _ = sys_close(fd);
+        return;
+    }
+    // Offset negativo a partir de SEEK_SET
+    if sys_lseek(fd, -1, SEEK_SET) != -22 {
         print_str(b"  [FAIL] sys_lseek offset negativo nao retornou -EINVAL!\n");
         let _ = sys_close(fd);
         return;
     }
+    // Whence invalido (ex: 3)
+    if sys_lseek(fd, 0, 3) != -22 {
+        print_str(b"  [FAIL] sys_lseek com whence invalido nao retornou -EINVAL!\n");
+        let _ = sys_close(fd);
+        return;
+    }
 
-    // Fecha descritor e valida protecoes contra FD fechado (-EBADF = -9)
+    // 9. Invariancia de Posicao apos Erros (Recuperacao e Repeticao)
+    // Volta para offset 0 e testa que apos uma falha de seek, o offset NAO e alterado
+    let _ = sys_lseek(fd, 0, SEEK_SET);
+    let _ = sys_lseek(fd, -50, SEEK_SET); // Deve falhar com -EINVAL sem alterar offset
+    let mut buf_recovery = [0u8; 4];
+    let n_rec = sys_read(fd, buf_recovery.as_mut_ptr(), 4);
+    if n_rec != 4 || buf_recovery != buf1 {
+        print_str(b"  [FAIL] Offset foi corrompido apos tentativa invalida de lseek!\n");
+        let _ = sys_close(fd);
+        return;
+    }
+
+    // 10. Protecoes apos sys_close (-EBADF = -9)
     let _ = sys_close(fd);
     if sys_lseek(fd, 0, SEEK_SET) != -9 {
         print_str(b"  [FAIL] sys_lseek em FD fechado nao retornou -EBADF!\n");
@@ -1536,13 +1678,13 @@ unsafe fn test_adv_vfs_stat_and_lseek() {
         return;
     }
 
-    // Validacao de fstat em Socket e rejeicao de lseek (-ESPIPE = -29)
+    // 11. Sockets de Rede (fstat como S_IFSOCK e lseek retornando -ESPIPE)
     let sockfd = sys_socket(2, 1, 6);
     if sockfd >= 3 {
         let mut sock_stat = FileStat::default();
         let ret_sock_stat = sys_fstat(sockfd as u64, &mut sock_stat);
-        if ret_sock_stat != 0 || sock_stat.node_type != 5 {
-            print_str(b"  [FAIL] sys_fstat em socket nao identificou tipo S_IFSOCK (5)!\n");
+        if ret_sock_stat != 0 || sock_stat.node_type != 5 || sock_stat.mode != 0o140666 {
+            print_str(b"  [FAIL] sys_fstat em socket nao identificou tipo S_IFSOCK (5) e modo 0o140666!\n");
             let _ = sys_close(sockfd as u64);
             return;
         }
@@ -1556,7 +1698,7 @@ unsafe fn test_adv_vfs_stat_and_lseek() {
         let _ = sys_close(sockfd as u64);
     }
 
-    print_str(b"  [PASS] test_adv_vfs_stat_and_lseek: Syscalls 17 (stat), 18 (fstat) e 19 (lseek) validadas com integridade total!\n");
+    print_str(b"  [PASS] test_adv_vfs_stat_and_lseek: Auditoria de Seguranca, Layout e Syscalls 17, 18, 19 APROVADA com 100% de sucesso!\n");
 }
 
 // ── Entry Point ──────────────────────────────────────────────────────────────

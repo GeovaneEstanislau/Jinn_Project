@@ -185,27 +185,41 @@ pub struct ProcessResourceStat {
 ```
 
 ### Metadados de Arquivo e Diretório (`FileStat`)
-As Syscalls 17 (`sys_stat`) e 18 (`sys_fstat`) preenchem a estrutura normativa `FileStat` (56 bytes, alinhamento natural a 8 bytes):
+As Syscalls 17 (`sys_stat`) e 18 (`sys_fstat`) preenchem a estrutura normativa `FileStat` (56 bytes, alinhamento natural a 8 bytes, sem padding implícito):
 
 ```rust
 #[repr(C)]
 pub struct FileStat {
-    pub size: u64,          // Tamanho do arquivo em bytes
-    pub inode: u64,         // Identificador único (ou inode do VFS)
-    pub node_type: u32,     // 0 = File, 1 = Directory, 2 = CharDevice, 3 = BlockDevice, 4 = Symlink, 5 = Socket
-    pub mode: u32,          // Modo POSIX (ex: 0o100644 para arquivo, 0o040755 para diretório, 0o140666 para socket)
-    pub blksize: u32,       // Tamanho de bloco ideal para I/O (512 bytes)
-    pub blocks: u32,        // Blocos alocados de 512B: (size + 511) / 512
-    pub atime: u64,         // Timestamp de acesso (ticks PIT)
-    pub mtime: u64,         // Timestamp de modificação (ticks PIT)
-    pub ctime: u64,         // Timestamp de criação (ticks PIT)
+    pub size: u64,          // [Offset 0,  8B] Tamanho do arquivo em bytes
+    pub inode: u64,         // [Offset 8,  8B] Identificador único (ou inode do VFS / FD de stdio / ID de socket)
+    pub node_type: u32,     // [Offset 16, 4B] 0 = File, 1 = Directory, 2 = CharDevice, 3 = BlockDevice, 4 = Symlink, 5 = Socket
+    pub mode: u32,          // [Offset 20, 4B] Modo POSIX (ex: 0o100644 arquivo, 0o040755 diretório, 0o020666 chardev, 0o140666 socket)
+    pub blksize: u32,       // [Offset 24, 4B] Tamanho de bloco ideal para I/O (512 bytes)
+    pub blocks: u32,        // [Offset 28, 4B] Blocos alocados de 512B: (size + 511) / 512
+    pub atime: u64,         // [Offset 32, 8B] Timestamp de acesso (ticks monotônicos do PIT @ 100 Hz desde o boot)
+    pub mtime: u64,         // [Offset 40, 8B] Timestamp de modificação (ticks monotônicos do PIT @ 100 Hz desde o boot)
+    pub ctime: u64,         // [Offset 48, 8B] Timestamp de criação (ticks monotônicos do PIT @ 100 Hz desde o boot)
 }
 ```
 
-#### Flags de Reposicionamento (`sys_lseek` - Syscall 19)
-- `SEEK_SET` (`0`): O deslocamento é ajustado diretamente para `offset`. (`offset >= 0`).
-- `SEEK_CUR` (`1`): O deslocamento é somado ao offset atual do descritor (`current_offset + offset >= 0`).
-- `SEEK_END` (`2`): O deslocamento é somado ao tamanho total do arquivo (`file_size + offset >= 0`).
+> [!NOTE]
+> **Semântica dos Timestamps:** Os campos `atime`, `mtime` e `ctime` registram **ticks monotônicos do PIT (100 Hz = 10 ms por tick)** contados desde a inicialização do microkernel. Não representam segundos de calendário POSIX (Unix Epoch) devido à ausência deliberada de driver de RTC na arquitetura microkernel atual.
+
+> [!NOTE]
+> **Descritores Especiais em `fstat`:**
+> - `stdin` (FD 0), `stdout` (FD 1) e `stderr` (FD 2) são identificados como dispositivos de caractere (`node_type = 2`, `mode = 0o020666`, `inode = fd`).
+> - Sockets de rede (FD >= 3 associados a TCP/UDP) são identificados como sockets (`node_type = 5`, `mode = 0o140666`, `inode = sock_id`).
+
+#### Flags e Regras de Reposicionamento (`sys_lseek` - Syscall 19)
+- `SEEK_SET` (`0`): O deslocamento é ajustado diretamente para `offset`. Requer `offset >= 0`.
+- `SEEK_CUR` (`1`): O deslocamento é somado ao offset atual do descritor (`current_offset + offset`). Requer que a soma não exceda os limites de representação de `i64` nem resulte em valor negativo.
+- `SEEK_END` (`2`): O deslocamento é somado ao tamanho total do arquivo (`file_size + offset`). Requer que a soma não cause overflow aritmético nem resulte em valor negativo.
+
+**Regras de Segurança e Invariância em `sys_lseek`:**
+1. **Unseekable Streams:** Tentativas de reposicionamento em fluxos de console (`fd < 3`) ou em sockets de rede retornam estritamente `-ESPIPE` (-29).
+2. **Prevenção contra Overflow:** Cálculos aritméticos utilizam `checked_add`. Saturação além de `i64::MAX` ou underflow abaixo de zero retornam `-EINVAL` (-22).
+3. **Invariância de Posição:** Caso qualquer validação falhe (offset negativo, overflow, whence inválido), o cursor de leitura/escrita do descritor permanece **estritamente inalterado**.
+4. **Descritores Inválidos:** Descritores fechados ou fora do intervalo da tabela retornam `-EBADF` (-9).
 
 ---
 
