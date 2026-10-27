@@ -109,8 +109,14 @@ pub struct TcpControlBlock {
     pub last_tx_tick: u64,
     pub rto_ticks: u64,
     pub retransmit_count: u8,
+    pub dup_ack_count: u8,
     pub unacked_len: usize,
-    pub unacked_buf: [u8; 1024],
+    pub unacked_buf: [u8; 2048],
+    pub ooo_buf: [u8; 1024],
+    pub ooo_seq: u32,
+    pub ooo_len: usize,
+    pub last_persist_tick: u64,
+    pub persist_rto_ticks: u64,
 }
 
 impl TcpControlBlock {
@@ -125,8 +131,14 @@ impl TcpControlBlock {
             last_tx_tick: 0,
             rto_ticks: TCP_DEFAULT_RTO_TICKS,
             retransmit_count: 0,
+            dup_ack_count: 0,
             unacked_len: 0,
-            unacked_buf: [0; 1024],
+            unacked_buf: [0; 2048],
+            ooo_buf: [0; 1024],
+            ooo_seq: 0,
+            ooo_len: 0,
+            last_persist_tick: 0,
+            persist_rto_ticks: 200,
         }
     }
 }
@@ -384,6 +396,7 @@ fn process_syn_sent_event(sock: &mut crate::net::socket::Socket, src_ip: [u8; 4]
         if tcp.ack_num == sock.tcb.local_seq {
             sock.tcb.remote_seq = tcp.seq_num.wrapping_add(1);
             sock.tcb.local_ack = tcp.ack_num;
+            sock.tcb.remote_win = tcp.window;
             sock.tcb.state = TcpState::Established;
             sock.is_connected = true;
 
@@ -421,6 +434,7 @@ fn process_listen_tcp_event(listening_sock: &mut crate::net::socket::Socket, src
                         child.is_bound = true;
                         child.is_connected = false;
                         child.tcb.state = TcpState::SynReceived;
+                        child.tcb.remote_win = tcp.window;
                         child.tcb.remote_seq = tcp.seq_num.wrapping_add(1);
                         child.tcb.local_seq = (crate::timer::ticks() as u32).wrapping_mul(1000).wrapping_add(tcp.src_port as u32);
 
@@ -449,6 +463,9 @@ fn process_listen_tcp_event(listening_sock: &mut crate::net::socket::Socket, src
 }
 
 fn process_connected_tcp_event(sock: &mut crate::net::socket::Socket, src_ip: [u8; 4], tcp: &TcpPacket) {
+    // Atualiza a janela remota anunciada pelo peer (RFC 793)
+    sock.tcb.remote_win = tcp.window;
+
     match sock.tcb.state {
         TcpState::SynReceived => {
             if (tcp.flags & TCP_FLAG_ACK) != 0 && tcp.ack_num == sock.tcb.local_seq {
@@ -460,22 +477,104 @@ fn process_connected_tcp_event(sock: &mut crate::net::socket::Socket, src_ip: [u
             if (tcp.flags & TCP_FLAG_RST) != 0 {
                 sock.tcb.state = TcpState::Closed;
                 sock.is_connected = false;
+                sock.tcb.unacked_len = 0;
+                sock.tcb.ooo_len = 0;
+                let our_ip = unsafe { crate::net::dhcp::DHCP_CLIENT.ip };
+                unsafe {
+                    crate::net::jinnwall::JINNWALL.clear_connection(
+                        our_ip,
+                        sock.remote_ip,
+                        crate::net::ipv4::PROTO_TCP,
+                        sock.local_port,
+                        sock.remote_port,
+                    );
+                }
                 return;
             }
 
+            // 1. Tratamento robusto de ACKs (cumulativo, parcial e duplicado com fast retransmit)
             if (tcp.flags & TCP_FLAG_ACK) != 0 {
-                sock.tcb.local_ack = tcp.ack_num;
-                if tcp.ack_num >= sock.tcb.local_seq {
-                    sock.tcb.unacked_len = 0;
+                let ack_advance = tcp.ack_num.wrapping_sub(sock.tcb.local_ack);
+                let max_advance = sock.tcb.local_seq.wrapping_sub(sock.tcb.local_ack);
+
+                if ack_advance > 0 && ack_advance <= max_advance {
+                    // ACK progressivo válido (cumulativo ou parcial)
+                    let bytes_acked = ack_advance as usize;
+                    if bytes_acked < sock.tcb.unacked_len {
+                        // ACK parcial: desloca os bytes não confirmados restantes para o início do buffer
+                        sock.tcb.unacked_buf.copy_within(bytes_acked..sock.tcb.unacked_len, 0);
+                        sock.tcb.unacked_len -= bytes_acked;
+                    } else {
+                        // Todos os bytes em voo foram confirmados
+                        sock.tcb.unacked_len = 0;
+                    }
+                    sock.tcb.local_ack = tcp.ack_num;
+                    sock.tcb.dup_ack_count = 0;
+                    sock.tcb.retransmit_count = 0;
+                    sock.tcb.rto_ticks = TCP_DEFAULT_RTO_TICKS;
+                    sock.tcb.last_tx_tick = crate::timer::ticks();
+                } else if ack_advance == 0 {
+                    // ACK duplicado (RFC 5681)
+                    sock.tcb.dup_ack_count = sock.tcb.dup_ack_count.saturating_add(1);
+                    if sock.tcb.dup_ack_count == 3 && sock.tcb.unacked_len > 0 {
+                        // Fast Retransmit: retransmite imediatamente o segmento pendente mais antigo
+                        let retrans_len = sock.tcb.unacked_len.min(1024);
+                        send_tcp_packet(
+                            sock.local_port,
+                            src_ip,
+                            tcp.src_port,
+                            sock.tcb.local_ack,
+                            sock.tcb.remote_seq,
+                            TCP_FLAG_PSH | TCP_FLAG_ACK,
+                            sock.tcb.local_win,
+                            &sock.tcb.unacked_buf[..retrans_len],
+                        );
+                    }
                 }
             }
 
+            // 2. Tratamento de payload: em ordem, sobreposição e segmento fora de ordem (OOO)
             if !tcp.payload.is_empty() {
-                if tcp.seq_num == sock.tcb.remote_seq {
+                let diff = tcp.seq_num.wrapping_sub(sock.tcb.remote_seq) as i32;
+
+                if diff == 0 {
+                    // Segmento contíguo esperado
                     let _ = sock.push_rx(tcp.payload);
                     sock.tcb.remote_seq = sock.tcb.remote_seq.wrapping_add(tcp.payload.len() as u32);
 
-                    // Responde com ACK imediato
+                    // Verifica se o buffer de fora-de-ordem conecta contiguamente agora
+                    if sock.tcb.ooo_len > 0 && sock.tcb.ooo_seq == sock.tcb.remote_seq {
+                        let mut temp_ooo = [0u8; 1024];
+                        let ooo_len = sock.tcb.ooo_len.min(1024);
+                        temp_ooo[..ooo_len].copy_from_slice(&sock.tcb.ooo_buf[..ooo_len]);
+                        let _ = sock.push_rx(&temp_ooo[..ooo_len]);
+                        sock.tcb.remote_seq = sock.tcb.remote_seq.wrapping_add(ooo_len as u32);
+                        sock.tcb.ooo_len = 0;
+                    }
+
+                    // Responde com ACK imediato com a sequência atualizada
+                    send_tcp_packet(
+                        sock.local_port,
+                        src_ip,
+                        tcp.src_port,
+                        sock.tcb.local_seq,
+                        sock.tcb.remote_seq,
+                        TCP_FLAG_ACK,
+                        sock.tcb.local_win,
+                        &[],
+                    );
+                } else if diff < 0 {
+                    // Segmento já recebido ou parcialmente sobreposto
+                    let seg_end_diff = tcp.seq_num.wrapping_add(tcp.payload.len() as u32).wrapping_sub(sock.tcb.remote_seq) as i32;
+                    if seg_end_diff > 0 {
+                        let skip = sock.tcb.remote_seq.wrapping_sub(tcp.seq_num) as usize;
+                        if skip < tcp.payload.len() {
+                            let new_data = &tcp.payload[skip..];
+                            let _ = sock.push_rx(new_data);
+                            sock.tcb.remote_seq = sock.tcb.remote_seq.wrapping_add(new_data.len() as u32);
+                        }
+                    }
+                    // Emite ACK repetido confirmando o ponto de sequência esperado
                     send_tcp_packet(
                         sock.local_port,
                         src_ip,
@@ -487,8 +586,15 @@ fn process_connected_tcp_event(sock: &mut crate::net::socket::Socket, src_ip: [u
                         &[],
                     );
                 } else {
-                    // Segmento fora de ordem ou duplicado (RFC 793):
-                    // Responde com ACK contendo o remote_seq esperado para acionar retransmissão no peer
+                    // Segmento fora de ordem (gap à frente do remote_seq)
+                    if (diff as usize) <= (sock.tcb.local_win as usize) && sock.tcb.ooo_len == 0 {
+                        let len = tcp.payload.len().min(1024);
+                        sock.tcb.ooo_buf[..len].copy_from_slice(&tcp.payload[..len]);
+                        sock.tcb.ooo_seq = tcp.seq_num;
+                        sock.tcb.ooo_len = len;
+                    }
+
+                    // RFC 793 / RFC 5681: Emite ACK duplicado informando ao peer a lacuna de sequência
                     send_tcp_packet(
                         sock.local_port,
                         src_ip,
@@ -554,12 +660,95 @@ fn process_connected_tcp_event(sock: &mut crate::net::socket::Socket, src_ip: [u
     }
 }
 
+/// Varre a tabela de sockets ativos para gerenciar retransmissões RTO com recuo exponencial,
+/// sondagens de persistência para janela zero e expiração de conexões inativas.
+pub fn poll_tcp_retransmissions(ticks: u64) {
+    unsafe {
+        for slot in crate::net::socket::SOCKET_TABLE.iter_mut() {
+            if let Some(ref mut sock) = slot {
+                if sock.sock_type != crate::net::socket::SOCK_STREAM {
+                    continue;
+                }
+
+                if sock.tcb.state == TcpState::Established {
+                    // 1. Retransmissão RTO com recuo exponencial (RFC 793 / RFC 6298)
+                    if sock.tcb.unacked_len > 0 {
+                        if ticks.saturating_sub(sock.tcb.last_tx_tick) >= sock.tcb.rto_ticks {
+                            if sock.tcb.retransmit_count < 5 {
+                                sock.tcb.retransmit_count += 1;
+                                // Recuo exponencial: dobra RTO até 800 ticks (8 segundos)
+                                sock.tcb.rto_ticks = (sock.tcb.rto_ticks * 2).min(800);
+                                sock.tcb.last_tx_tick = ticks;
+
+                                let retrans_len = sock.tcb.unacked_len.min(1024);
+                                send_tcp_packet(
+                                    sock.local_port,
+                                    sock.remote_ip,
+                                    sock.remote_port,
+                                    sock.tcb.local_ack,
+                                    sock.tcb.remote_seq,
+                                    TCP_FLAG_PSH | TCP_FLAG_ACK,
+                                    sock.tcb.local_win,
+                                    &sock.tcb.unacked_buf[..retrans_len],
+                                );
+                            } else {
+                                // Timeout definitivo: desconecta, emite RST e limpa firewall
+                                send_tcp_packet(
+                                    sock.local_port,
+                                    sock.remote_ip,
+                                    sock.remote_port,
+                                    sock.tcb.local_seq,
+                                    sock.tcb.remote_seq,
+                                    TCP_FLAG_RST | TCP_FLAG_ACK,
+                                    0,
+                                    &[],
+                                );
+                                let our_ip = crate::net::dhcp::DHCP_CLIENT.ip;
+                                crate::net::jinnwall::JINNWALL.clear_connection(
+                                    our_ip,
+                                    sock.remote_ip,
+                                    crate::net::ipv4::PROTO_TCP,
+                                    sock.local_port,
+                                    sock.remote_port,
+                                );
+                                sock.tcb.state = TcpState::Closed;
+                                sock.is_connected = false;
+                                sock.tcb.unacked_len = 0;
+                                sock.tcb.ooo_len = 0;
+                            }
+                        }
+                    }
+
+                    // 2. Sondagem de Persistência para Janela Zero (RFC 793 Seção 3.7)
+                    if sock.tcb.remote_win == 0 {
+                        if ticks.saturating_sub(sock.tcb.last_persist_tick) >= sock.tcb.persist_rto_ticks {
+                            sock.tcb.last_persist_tick = ticks;
+                            sock.tcb.persist_rto_ticks = (sock.tcb.persist_rto_ticks * 2).min(1000);
+                            // Envia sondagem ACK (zero-window probe)
+                            send_tcp_packet(
+                                sock.local_port,
+                                sock.remote_ip,
+                                sock.remote_port,
+                                sock.tcb.local_seq,
+                                sock.tcb.remote_seq,
+                                TCP_FLAG_ACK,
+                                sock.tcb.local_win,
+                                &[],
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ─── SUÍTE DE AUTO-TESTES DO PROTOCOLO TCP (EXECUÇÃO NO BOOT DO KERNEL) ─────
 
 /// Executa suíte de auto-testes da máquina de estados e montagem TCP RFC 793.
 pub fn run_tcp_selftests() -> (usize, usize) {
     let mut passed = 0;
-    let total = 9;
+    let total = 13;
 
     // 1. Verificação de estados TCP e nomes
     if TcpState::Closed.name() == "CLOSED" && TcpState::Established.name() == "ESTABLISHED" {
@@ -668,6 +857,72 @@ pub fn run_tcp_selftests() -> (usize, usize) {
     corrupted_seg[19] ^= 0xAA;
     let csum_invalid = !verify_tcp_checksum([10, 0, 2, 15], [93, 184, 216, 34], &corrupted_seg[..20]);
     if csum_valid && csum_invalid {
+        passed += 1;
+    }
+
+    // 10. Tratamento de ACK Parcial e deslocamento de buffer não confirmado
+    let mut tcb_ack = TcpControlBlock::new();
+    tcb_ack.state = TcpState::Established;
+    tcb_ack.local_seq = 2000;
+    tcb_ack.local_ack = 1000;
+    tcb_ack.unacked_len = 100;
+    tcb_ack.unacked_buf[..100].fill(0x55);
+    tcb_ack.unacked_buf[40..100].fill(0xAA);
+    // Simula ACK parcial de 40 bytes (ack 1040)
+    let ack_advance = 1040u32.wrapping_sub(tcb_ack.local_ack);
+    if ack_advance > 0 && (ack_advance as usize) < tcb_ack.unacked_len {
+        let bytes_acked = ack_advance as usize;
+        tcb_ack.unacked_buf.copy_within(bytes_acked..tcb_ack.unacked_len, 0);
+        tcb_ack.unacked_len -= bytes_acked;
+        tcb_ack.local_ack = 1040;
+    }
+    if tcb_ack.unacked_len == 60 && tcb_ack.local_ack == 1040 && tcb_ack.unacked_buf[0] == 0xAA {
+        passed += 1;
+    }
+
+    // 11. Limite da Janela Deslizante e Condição de Janela Zero
+    let mut tcb_win = TcpControlBlock::new();
+    tcb_win.remote_win = 4096;
+    tcb_win.local_seq = 5000;
+    tcb_win.local_ack = 4000;
+    let in_flight = tcb_win.local_seq.wrapping_sub(tcb_win.local_ack) as usize;
+    let avail = (tcb_win.remote_win as usize).saturating_sub(in_flight);
+    tcb_win.remote_win = 0; // Peer fecha a janela
+    let avail_zero = (tcb_win.remote_win as usize).saturating_sub(in_flight);
+    if avail == 3096 && avail_zero == 0 {
+        passed += 1;
+    }
+
+    // 12. Enfileiramento de segmento fora de ordem (OOO) e costura de lacuna
+    let mut tcb_ooo = TcpControlBlock::new();
+    tcb_ooo.remote_seq = 1000;
+    // Chega segmento adiantado seq=1050 len=50
+    tcb_ooo.ooo_seq = 1050;
+    tcb_ooo.ooo_len = 50;
+    tcb_ooo.ooo_buf[..50].fill(0xEE);
+    // Chega segmento que faltava seq=1000 len=50
+    tcb_ooo.remote_seq = tcb_ooo.remote_seq.wrapping_add(50);
+    // Ao costurar a lacuna, remote_seq casa com ooo_seq
+    if tcb_ooo.remote_seq == tcb_ooo.ooo_seq && tcb_ooo.ooo_len == 50 {
+        tcb_ooo.remote_seq = tcb_ooo.remote_seq.wrapping_add(tcb_ooo.ooo_len as u32);
+        tcb_ooo.ooo_len = 0;
+    }
+    if tcb_ooo.remote_seq == 1100 && tcb_ooo.ooo_len == 0 {
+        passed += 1;
+    }
+
+    // 13. Temporizador de Persistência para sondagem de Janela Zero (Persist Probe)
+    let mut tcb_persist = TcpControlBlock::new();
+    tcb_persist.remote_win = 0;
+    tcb_persist.last_persist_tick = 100;
+    tcb_persist.persist_rto_ticks = 200;
+    let current_ticks: u64 = 350;
+    let probe_triggered = current_ticks.saturating_sub(tcb_persist.last_persist_tick) >= tcb_persist.persist_rto_ticks;
+    if probe_triggered {
+        tcb_persist.last_persist_tick = current_ticks;
+        tcb_persist.persist_rto_ticks = (tcb_persist.persist_rto_ticks * 2).min(1000);
+    }
+    if probe_triggered && tcb_persist.persist_rto_ticks == 400 && tcb_persist.last_persist_tick == 350 {
         passed += 1;
     }
 

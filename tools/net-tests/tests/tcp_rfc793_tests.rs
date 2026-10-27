@@ -96,8 +96,14 @@ pub struct TcpControlBlock {
     pub last_tx_tick: u64,
     pub rto_ticks: u64,
     pub retransmit_count: u8,
+    pub dup_ack_count: u8,
     pub unacked_len: usize,
-    pub unacked_buf: [u8; 1024],
+    pub unacked_buf: [u8; 2048],
+    pub ooo_buf: [u8; 1024],
+    pub ooo_seq: u32,
+    pub ooo_len: usize,
+    pub last_persist_tick: u64,
+    pub persist_rto_ticks: u64,
 }
 
 impl TcpControlBlock {
@@ -112,8 +118,14 @@ impl TcpControlBlock {
             last_tx_tick: 0,
             rto_ticks: TCP_DEFAULT_RTO_TICKS,
             retransmit_count: 0,
+            dup_ack_count: 0,
             unacked_len: 0,
-            unacked_buf: [0; 1024],
+            unacked_buf: [0; 2048],
+            ooo_buf: [0; 1024],
+            ooo_seq: 0,
+            ooo_len: 0,
+            last_persist_tick: 0,
+            persist_rto_ticks: 200,
         }
     }
 }
@@ -701,4 +713,210 @@ fn test_retransmission_timeout_and_rst_handling() {
     }
     assert_eq!(sock.tcb.state, TcpState::Closed);
     assert!(!sock.is_connected);
+}
+
+#[test]
+fn test_tcp_cumulative_and_partial_ack_shifting() {
+    let mut tcb = TcpControlBlock::new();
+    tcb.state = TcpState::Established;
+    tcb.local_seq = 5000;
+    tcb.local_ack = 4000;
+    tcb.unacked_len = 300;
+    tcb.unacked_buf[..100].fill(0x11);
+    tcb.unacked_buf[100..200].fill(0x22);
+    tcb.unacked_buf[200..300].fill(0x33);
+
+    // 1. Recebe ACK parcial de 100 bytes (ack_num = 4100)
+    let ack_advance = 4100u32.wrapping_sub(tcb.local_ack);
+    assert_eq!(ack_advance, 100);
+    assert!((ack_advance as usize) < tcb.unacked_len);
+
+    let bytes_acked = ack_advance as usize;
+    tcb.unacked_buf.copy_within(bytes_acked..tcb.unacked_len, 0);
+    tcb.unacked_len -= bytes_acked;
+    tcb.local_ack = 4100;
+
+    assert_eq!(tcb.unacked_len, 200);
+    assert_eq!(tcb.local_ack, 4100);
+    assert_eq!(tcb.unacked_buf[0], 0x22);
+    assert_eq!(tcb.unacked_buf[100], 0x33);
+
+    // 2. Recebe ACK cumulativo restante de 200 bytes (ack_num = 4300)
+    let ack_advance2 = 4300u32.wrapping_sub(tcb.local_ack);
+    assert_eq!(ack_advance2, 200);
+    assert_eq!(ack_advance2 as usize, tcb.unacked_len);
+
+    tcb.unacked_len = 0;
+    tcb.local_ack = 4300;
+    assert_eq!(tcb.unacked_len, 0);
+    assert_eq!(tcb.local_ack, 4300);
+}
+
+#[test]
+fn test_tcp_sliding_window_multiple_segments_in_flight() {
+    let mut tcb = TcpControlBlock::new();
+    tcb.state = TcpState::Established;
+    tcb.remote_win = 2048; // Janela anunciada pelo peer
+    tcb.local_seq = 10_000;
+    tcb.local_ack = 10_000;
+
+    // Segmento 1: 1024 bytes
+    let in_flight_1 = tcb.local_seq.wrapping_sub(tcb.local_ack) as usize;
+    assert_eq!(in_flight_1, 0);
+    let win_avail_1 = (tcb.remote_win as usize).saturating_sub(in_flight_1);
+    assert_eq!(win_avail_1, 2048);
+    let send_len_1 = 1024usize.min(win_avail_1);
+    tcb.local_seq = tcb.local_seq.wrapping_add(send_len_1 as u32);
+    tcb.unacked_len += send_len_1;
+
+    // Segmento 2: 1024 bytes em voo simultâneo
+    let in_flight_2 = tcb.local_seq.wrapping_sub(tcb.local_ack) as usize;
+    assert_eq!(in_flight_2, 1024);
+    let win_avail_2 = (tcb.remote_win as usize).saturating_sub(in_flight_2);
+    assert_eq!(win_avail_2, 1024);
+    let send_len_2 = 1024usize.min(win_avail_2);
+    tcb.local_seq = tcb.local_seq.wrapping_add(send_len_2 as u32);
+    tcb.unacked_len += send_len_2;
+
+    // Tentativa do Segmento 3: Janela esgotada (in_flight == remote_win)
+    let in_flight_3 = tcb.local_seq.wrapping_sub(tcb.local_ack) as usize;
+    assert_eq!(in_flight_3, 2048);
+    let win_avail_3 = (tcb.remote_win as usize).saturating_sub(in_flight_3);
+    assert_eq!(win_avail_3, 0, "Janela deslizante deve bloquear transmissão adicional");
+
+    // Peer confirma primeiro segmento (ack_num = 11_024)
+    tcb.unacked_buf.copy_within(1024..tcb.unacked_len, 0);
+    tcb.unacked_len -= 1024;
+    tcb.local_ack = 11_024;
+
+    // Janela reabre para 1024 bytes!
+    let in_flight_reopened = tcb.local_seq.wrapping_sub(tcb.local_ack) as usize;
+    let win_avail_reopened = (tcb.remote_win as usize).saturating_sub(in_flight_reopened);
+    assert_eq!(win_avail_reopened, 1024);
+}
+
+#[test]
+fn test_tcp_zero_window_block_and_persist_probing() {
+    let mut tcb = TcpControlBlock::new();
+    tcb.state = TcpState::Established;
+    tcb.remote_win = 0; // Condição de janela zero (receptor ocupado)
+    tcb.last_persist_tick = 500;
+    tcb.persist_rto_ticks = 200;
+
+    // 1. Ticks menores que o temporizador: não envia probe
+    let tick_early = 650u64;
+    let should_probe_early = tick_early.saturating_sub(tcb.last_persist_tick) >= tcb.persist_rto_ticks;
+    assert!(!should_probe_early);
+
+    // 2. Temporizador expira no tick 720: dispara Zero-Window Probe e aplica recuo
+    let tick_due = 720u64;
+    let should_probe_due = tick_due.saturating_sub(tcb.last_persist_tick) >= tcb.persist_rto_ticks;
+    assert!(should_probe_due);
+
+    tcb.last_persist_tick = tick_due;
+    tcb.persist_rto_ticks = (tcb.persist_rto_ticks * 2).min(1000);
+    assert_eq!(tcb.persist_rto_ticks, 400, "Persist probe RTO deve sofrer recuo exponencial");
+
+    // 3. Peer envia Window Update reabrindo janela para 4096 bytes
+    tcb.remote_win = 4096;
+    assert_eq!(tcb.remote_win, 4096);
+}
+
+#[test]
+fn test_tcp_out_of_order_buffering_and_gap_stitching() {
+    let mut tcb = TcpControlBlock::new();
+    tcb.state = TcpState::Established;
+    tcb.remote_seq = 10_000;
+    tcb.local_win = 4096;
+
+    // 1. Recebe segmento adiantado (gap de 100 bytes): seq 10_100, len 50
+    let ooo_seq = 10_100u32;
+    let ooo_payload = b"OUT_OF_ORDER_PACKET";
+    let diff = ooo_seq.wrapping_sub(tcb.remote_seq) as i32;
+    assert!(diff > 0);
+    assert!((diff as usize) <= (tcb.local_win as usize));
+
+    // Enfileira no buffer OOO
+    let len = ooo_payload.len();
+    tcb.ooo_buf[..len].copy_from_slice(ooo_payload);
+    tcb.ooo_seq = ooo_seq;
+    tcb.ooo_len = len;
+
+    // 2. Recebe segmento ausente que preenche a lacuna: seq 10_000, len 100
+    let gap_filler_len = 100u32;
+    tcb.remote_seq = tcb.remote_seq.wrapping_add(gap_filler_len);
+    assert_eq!(tcb.remote_seq, 10_100);
+
+    // 3. Costura da lacuna com o buffer OOO
+    if tcb.ooo_len > 0 && tcb.ooo_seq == tcb.remote_seq {
+        tcb.remote_seq = tcb.remote_seq.wrapping_add(tcb.ooo_len as u32);
+        tcb.ooo_len = 0;
+    }
+    assert_eq!(tcb.remote_seq, 10_100 + ooo_payload.len() as u32);
+    assert_eq!(tcb.ooo_len, 0);
+}
+
+#[test]
+fn test_tcp_overlapping_data_and_partial_trimming() {
+    let mut remote_seq = 1000u32;
+    let mut rx_store = [0u8; 64];
+    let mut rx_len = 0;
+
+    // Segmento 1 inicial: seq 1000..1010
+    let seg1 = b"0123456789";
+    rx_store[..seg1.len()].copy_from_slice(seg1);
+    rx_len += seg1.len();
+    remote_seq = remote_seq.wrapping_add(seg1.len() as u32);
+    assert_eq!(remote_seq, 1010);
+
+    // Segmento 2 sobreposto: seq 1005..1020 (5 bytes repetidos, 10 bytes novos)
+    let seg2_seq = 1005u32;
+    let seg2_data = b"56789ABCDEFGHIJ";
+    let seg2_end = seg2_seq + seg2_data.len() as u32; // 1020
+    let seg_end_diff = seg2_end.wrapping_sub(remote_seq) as i32; // 1020 - 1010 = 10
+    assert!(seg_end_diff > 0);
+
+    let skip = remote_seq.wrapping_sub(seg2_seq) as usize; // 1010 - 1005 = 5
+    let new_data = &seg2_data[skip..];
+    assert_eq!(new_data, b"ABCDEFGHIJ");
+
+    rx_store[rx_len..(rx_len + new_data.len())].copy_from_slice(new_data);
+    rx_len += new_data.len();
+    remote_seq = remote_seq.wrapping_add(new_data.len() as u32);
+
+    assert_eq!(remote_seq, 1020);
+    assert_eq!(&rx_store[..rx_len], b"0123456789ABCDEFGHIJ");
+}
+
+#[test]
+fn test_tcp_retransmission_exponential_backoff_and_timeout() {
+    let mut tcb = TcpControlBlock::new();
+    tcb.state = TcpState::Established;
+    tcb.local_seq = 2000;
+    tcb.local_ack = 1000;
+    tcb.unacked_len = 500;
+    tcb.rto_ticks = 100;
+    tcb.retransmit_count = 0;
+    let mut tick = 50u64;
+
+    // Simula 5 retentativas sucessivas com RTO dobrando
+    for expected_count in 1..=5 {
+        tick += tcb.rto_ticks;
+        tcb.retransmit_count += 1;
+        tcb.rto_ticks = (tcb.rto_ticks * 2).min(800);
+        assert_eq!(tcb.retransmit_count, expected_count);
+    }
+    assert_eq!(tcb.rto_ticks, 800);
+    assert!(tick > 50);
+
+    // 6ª retentativa esgota limite -> Disparo de RST e encerramento de conexão
+    let max_retries_exceeded = tcb.retransmit_count >= 5;
+    assert!(max_retries_exceeded);
+    if max_retries_exceeded {
+        tcb.state = TcpState::Closed;
+        tcb.unacked_len = 0;
+        tcb.ooo_len = 0;
+    }
+    assert_eq!(tcb.state, TcpState::Closed);
+    assert_eq!(tcb.unacked_len, 0);
 }

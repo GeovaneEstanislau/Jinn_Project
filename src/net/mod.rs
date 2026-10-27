@@ -180,4 +180,8 @@ pub fn poll() {
             _ => {}
         }
     }
+
+    // Gerencia temporizadores de retransmissão e persistência TCP em background
+    let ticks = crate::timer::ticks();
+    tcp::poll_tcp_retransmissions(ticks);
 }

@@ -421,7 +421,25 @@ pub fn send_socket(pid: usize, sockfd: usize, data: &[u8]) -> Result<usize, isiz
             if sock.tcb.state != crate::net::tcp::TcpState::Established {
                 return Err(ECONNRESET);
             }
-            let payload_len = data.len().min(1024);
+
+            // Controle de fluxo por Janela Deslizante (RFC 793)
+            let in_flight = sock.tcb.local_seq.wrapping_sub(sock.tcb.local_ack) as usize;
+            let win_avail = (sock.tcb.remote_win as usize).saturating_sub(in_flight);
+            if win_avail == 0 {
+                return Err(EAGAIN); // Janela anunciada pelo peer esgotada
+            }
+
+            let buf_avail = 2048usize.saturating_sub(sock.tcb.unacked_len);
+            if buf_avail == 0 {
+                return Err(ENOBUFS); // Buffer de retransmissão esgotado
+            }
+
+            let send_cap = win_avail.min(buf_avail).min(1024);
+            let payload_len = data.len().min(send_cap);
+            if payload_len == 0 {
+                return Err(EAGAIN);
+            }
+
             let sent = crate::net::tcp::send_tcp_packet(
                 local_port,
                 remote_ip,
@@ -433,10 +451,11 @@ pub fn send_socket(pid: usize, sockfd: usize, data: &[u8]) -> Result<usize, isiz
                 &data[..payload_len],
             );
             if sent {
+                let start_idx = sock.tcb.unacked_len;
+                sock.tcb.unacked_buf[start_idx..(start_idx + payload_len)].copy_from_slice(&data[..payload_len]);
+                sock.tcb.unacked_len += payload_len;
                 sock.tcb.local_seq = sock.tcb.local_seq.wrapping_add(payload_len as u32);
                 sock.tcb.last_tx_tick = crate::timer::ticks();
-                sock.tcb.unacked_len = payload_len;
-                sock.tcb.unacked_buf[..payload_len].copy_from_slice(&data[..payload_len]);
                 return Ok(payload_len);
             } else {
                 return Err(ENOBUFS);
