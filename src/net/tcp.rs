@@ -159,7 +159,56 @@ pub fn calculate_tcp_checksum(src_ip: [u8; 4], dst_ip: [u8; 4], tcp_bytes: &[u8]
         sum = (sum & 0xFFFF) + (sum >> 16);
     }
 
-    !(sum as u16)
+    let csum = !(sum as u16);
+    if csum == 0 {
+        0xFFFF
+    } else {
+        csum
+    }
+}
+
+/// Verifica se o checksum de um segmento TCP recebido é válido perante o pseudo-cabeçalho IPv4 (RFC 793).
+pub fn verify_tcp_checksum(src_ip: [u8; 4], dst_ip: [u8; 4], tcp_bytes: &[u8]) -> bool {
+    if tcp_bytes.len() < 20 {
+        return false;
+    }
+    let rx_csum = u16::from_be_bytes([tcp_bytes[16], tcp_bytes[17]]);
+    if rx_csum == 0 {
+        return true; // Bypass para hardware checksum offloading
+    }
+
+    let mut sum = 0u32;
+    // Pseudo-Header IPv4
+    sum = sum.wrapping_add(u16::from_be_bytes([src_ip[0], src_ip[1]]) as u32);
+    sum = sum.wrapping_add(u16::from_be_bytes([src_ip[2], src_ip[3]]) as u32);
+    sum = sum.wrapping_add(u16::from_be_bytes([dst_ip[0], dst_ip[1]]) as u32);
+    sum = sum.wrapping_add(u16::from_be_bytes([dst_ip[2], dst_ip[3]]) as u32);
+    sum = sum.wrapping_add(PROTO_TCP as u32);
+    sum = sum.wrapping_add(tcp_bytes.len() as u32);
+
+    // Segmento TCP (trata o campo de checksum como 0)
+    let mut i = 0;
+    while i + 1 < tcp_bytes.len() {
+        if i == 16 {
+            i += 2;
+            continue;
+        }
+        let word = u16::from_be_bytes([tcp_bytes[i], tcp_bytes[i + 1]]) as u32;
+        sum = sum.wrapping_add(word);
+        i += 2;
+    }
+    if i < tcp_bytes.len() {
+        let word = u16::from_be_bytes([tcp_bytes[i], 0]) as u32;
+        sum = sum.wrapping_add(word);
+    }
+
+    while (sum >> 16) != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+
+    let calculated = !(sum as u16);
+    let expected = if calculated == 0 { 0xFFFF } else { calculated };
+    expected == rx_csum
 }
 
 /// Monta um segmento TCP completo no buffer de destino com cabeçalho de 20 bytes e checksum com pseudo-cabeçalho.
@@ -437,6 +486,19 @@ fn process_connected_tcp_event(sock: &mut crate::net::socket::Socket, src_ip: [u
                         sock.tcb.local_win,
                         &[],
                     );
+                } else {
+                    // Segmento fora de ordem ou duplicado (RFC 793):
+                    // Responde com ACK contendo o remote_seq esperado para acionar retransmissão no peer
+                    send_tcp_packet(
+                        sock.local_port,
+                        src_ip,
+                        tcp.src_port,
+                        sock.tcb.local_seq,
+                        sock.tcb.remote_seq,
+                        TCP_FLAG_ACK,
+                        sock.tcb.local_win,
+                        &[],
+                    );
                 }
             }
 
@@ -495,10 +557,9 @@ fn process_connected_tcp_event(sock: &mut crate::net::socket::Socket, src_ip: [u
 // ─── SUÍTE DE AUTO-TESTES DO PROTOCOLO TCP (EXECUÇÃO NO BOOT DO KERNEL) ─────
 
 /// Executa suíte de auto-testes da máquina de estados e montagem TCP RFC 793.
-/// Retorna `(aprovados, total)`.
 pub fn run_tcp_selftests() -> (usize, usize) {
     let mut passed = 0;
-    let total = 8;
+    let total = 9;
 
     // 1. Verificação de estados TCP e nomes
     if TcpState::Closed.name() == "CLOSED" && TcpState::Established.name() == "ESTABLISHED" {
@@ -598,6 +659,15 @@ pub fn run_tcp_selftests() -> (usize, usize) {
     let bad_trunc = [0u8; 18];
     let bad_doff = [0, 80, 0, 80, 0, 0, 0, 1, 0, 0, 0, 1, 0x40, 0x02, 0x10, 0x00, 0, 0, 0, 0];
     if TcpPacket::parse(&bad_trunc).is_err() && TcpPacket::parse(&bad_doff).is_err() {
+        passed += 1;
+    }
+
+    // 9. Verificação de Checksum e rejeição de corrupção (RFC 793)
+    let csum_valid = verify_tcp_checksum([10, 0, 2, 15], [93, 184, 216, 34], &seg_buf[..20]);
+    let mut corrupted_seg = seg_buf;
+    corrupted_seg[19] ^= 0xAA;
+    let csum_invalid = !verify_tcp_checksum([10, 0, 2, 15], [93, 184, 216, 34], &corrupted_seg[..20]);
+    if csum_valid && csum_invalid {
         passed += 1;
     }
 

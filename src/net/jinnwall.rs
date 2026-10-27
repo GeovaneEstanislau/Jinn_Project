@@ -248,6 +248,28 @@ impl JinnWall {
         });
     }
 
+    /// Remove explicitamente um fluxo da tabela de conntrack (chamado ao fechar conexões TCP)
+    pub fn clear_connection(
+        &mut self,
+        src_ip: [u8; 4],
+        dst_ip: [u8; 4],
+        protocol: u8,
+        src_port: u16,
+        dst_port: u16,
+    ) {
+        for entry_opt in self.table.iter_mut() {
+            if let Some(entry) = entry_opt {
+                if entry.src_ip == src_ip && entry.dst_ip == dst_ip
+                    && entry.src_port == src_port && entry.dst_port == dst_port
+                    && entry.protocol == protocol
+                {
+                    *entry_opt = None;
+                    return;
+                }
+            }
+        }
+    }
+
     /// Retorna a quantidade atual de fluxos ativos na tabela de conntrack
     pub fn active_connections(&self) -> usize {
         let mut count = 0;
@@ -279,7 +301,7 @@ impl JinnWall {
 /// Retorna `(aprovados, total)`.
 pub fn run_jinnwall_selftests() -> (usize, usize) {
     let mut passed = 0;
-    let total = 12;
+    let total = 13;
 
     let mut jw = JinnWall {
         profile_atomic: AtomicU8::new(0),
@@ -375,6 +397,13 @@ pub fn run_jinnwall_selftests() -> (usize, usize) {
         if jw.inspected() == jw.accepted() + jw.drops() {
             passed += 1;
         }
+    }
+
+    // 13. Limpeza explícita de conexão de conntrack ao encerrar fluxo (teardown)
+    let conns_before = jw.active_connections();
+    jw.clear_connection([10, 0, 2, 15], [172, 16, 0, 1], crate::net::ipv4::PROTO_TCP, 45000, 443);
+    if jw.active_connections() == conns_before.saturating_sub(1) {
+        passed += 1;
     }
 
     (passed, total)

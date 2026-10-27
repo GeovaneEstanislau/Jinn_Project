@@ -166,9 +166,11 @@ pub fn poll() {
                             }
                         }
                         PROTO_TCP => {
-                            // Tráfego TCP entregue à máquina de estados RFC 793
-                            if let Ok(tcp) = tcp::TcpPacket::parse(ip_pkt.payload) {
-                                tcp::handle_incoming_tcp_packet(ip_pkt.header.src_ip, ip_pkt.header.dst_ip, &tcp);
+                            // Valida checksum com pseudo-cabeçalho IPv4 antes de entregar à máquina de estados RFC 793
+                            if tcp::verify_tcp_checksum(ip_pkt.header.src_ip, ip_pkt.header.dst_ip, ip_pkt.payload) {
+                                if let Ok(tcp) = tcp::TcpPacket::parse(ip_pkt.payload) {
+                                    tcp::handle_incoming_tcp_packet(ip_pkt.header.src_ip, ip_pkt.header.dst_ip, &tcp);
+                                }
                             }
                         }
                         _ => {}

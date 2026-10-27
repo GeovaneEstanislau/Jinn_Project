@@ -344,6 +344,16 @@ pub fn close_socket(pid: usize, sockfd: usize) -> Result<(), isize> {
             sock.tcb.state = crate::net::tcp::TcpState::FinWait1;
         }
 
+        // Limpa estado no firewall JinnWall SPI
+        let our_ip = crate::net::dhcp::DHCP_CLIENT.ip;
+        crate::net::jinnwall::JINNWALL.clear_connection(
+            our_ip,
+            sock.remote_ip,
+            crate::net::ipv4::PROTO_TCP,
+            sock.local_port,
+            sock.remote_port,
+        );
+
         SOCKET_TABLE[sockfd] = None;
     }
     if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(pid) {
@@ -353,11 +363,32 @@ pub fn close_socket(pid: usize, sockfd: usize) -> Result<(), isize> {
 }
 
 /// Fecha todos os sockets pertencentes ao processo `pid` (chamado no `exit_task`).
+/// Notifica endpoints remotos conectados com RST para evitar conexões zumbis.
 pub fn close_all_for_pid(pid: usize) {
     unsafe {
+        let our_ip = crate::net::dhcp::DHCP_CLIENT.ip;
         for slot in SOCKET_TABLE.iter_mut() {
             if let Some(sock) = slot {
                 if sock.owner_pid == pid {
+                    if sock.sock_type == SOCK_STREAM && (sock.is_connected || sock.tcb.state == crate::net::tcp::TcpState::Established) {
+                        crate::net::tcp::send_tcp_packet(
+                            sock.local_port,
+                            sock.remote_ip,
+                            sock.remote_port,
+                            sock.tcb.local_seq,
+                            sock.tcb.remote_seq,
+                            crate::net::tcp::TCP_FLAG_RST | crate::net::tcp::TCP_FLAG_ACK,
+                            0,
+                            &[],
+                        );
+                        crate::net::jinnwall::JINNWALL.clear_connection(
+                            our_ip,
+                            sock.remote_ip,
+                            crate::net::ipv4::PROTO_TCP,
+                            sock.local_port,
+                            sock.remote_port,
+                        );
+                    }
                     *slot = None;
                 }
             }
