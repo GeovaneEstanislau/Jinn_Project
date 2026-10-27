@@ -26,7 +26,8 @@ const VIRTIO_STATUS_FAILED:      u8 = 128;
 const VRING_DESC_F_NEXT:  u16 = 1;
 const VRING_DESC_F_WRITE: u16 = 2;
 
-pub const QUEUE_SIZE: usize = 8;
+pub const QUEUE_SIZE: usize = 256;
+pub const NUM_BUFFERS: usize = 32;
 pub const BUFFER_SIZE: usize = 1536; // MTU 1500 + cabeçalhos
 
 #[repr(C, align(16))]
@@ -123,8 +124,8 @@ pub struct VirtioNetDevice {
     // Buffers DMA físicos
     rx_queue_phys: u64,
     tx_queue_phys: u64,
-    rx_buffers_phys: [u64; QUEUE_SIZE],
-    tx_buffers_phys: [u64; QUEUE_SIZE],
+    rx_buffers_phys: [u64; NUM_BUFFERS],
+    tx_buffers_phys: [u64; NUM_BUFFERS],
 }
 
 static mut VIRTIO_NET: Option<VirtioNetDevice> = None;
@@ -143,7 +144,7 @@ impl VirtioNetDevice {
             return Err(());
         }
 
-        let desc_idx = (self.tx_avail_idx as usize) % QUEUE_SIZE;
+        let desc_idx = (self.tx_avail_idx as usize) % NUM_BUFFERS;
         let buf_phys = self.tx_buffers_phys[desc_idx];
         let buf_virt = crate::memory::paging::phys_to_virt(buf_phys) as *mut u8;
 
@@ -158,7 +159,7 @@ impl VirtioNetDevice {
 
         let tx_virt = crate::memory::paging::phys_to_virt(self.tx_queue_phys);
         let desc_table = tx_virt as *mut VRingDesc;
-        let avail_ring = (tx_virt + (16 * QUEUE_SIZE as u64)) as *mut VRingAvail;
+        let avail_ring = (tx_virt + 4096) as *mut VRingAvail;
 
         unsafe {
             // Atualiza descritor
@@ -190,7 +191,7 @@ impl VirtioNetDevice {
         }
 
         let rx_virt = crate::memory::paging::phys_to_virt(self.rx_queue_phys);
-        let used_offset = 4096; // Usado alinhado a 4096 bytes
+        let used_offset = 8192; // Usado alinhado a 4096 bytes após avail ring
         let used_ring = (rx_virt + used_offset) as *const VRingUsed;
 
         unsafe {
@@ -201,7 +202,7 @@ impl VirtioNetDevice {
             }
 
             let elem = &used.ring[(self.rx_last_used_idx as usize) % QUEUE_SIZE];
-            let desc_idx = (elem.id as usize) % QUEUE_SIZE;
+            let desc_idx = (elem.id as usize) % NUM_BUFFERS;
             let packet_len = elem.len as usize;
             let safe_pkt_len = packet_len.min(BUFFER_SIZE);
 
@@ -215,12 +216,13 @@ impl VirtioNetDevice {
             }
 
             // Recicla o descritor de volta para o Available ring
-            let avail_ring = (rx_virt + (16 * QUEUE_SIZE as u64)) as *mut VRingAvail;
+            let avail_ring = (rx_virt + 4096) as *mut VRingAvail;
             let avail = &mut *avail_ring;
             avail.ring[(self.rx_avail_idx as usize) % QUEUE_SIZE] = desc_idx as u16;
             self.rx_avail_idx = self.rx_avail_idx.wrapping_add(1);
             avail.idx = self.rx_avail_idx;
             core::arch::asm!("sfence", options(nostack, preserves_flags));
+            outw(self.io_base + VIRTIO_PCI_QUEUE_NOTIFY, 0);
 
             self.rx_last_used_idx = self.rx_last_used_idx.wrapping_add(1);
             Some(copied)
@@ -248,8 +250,8 @@ pub fn init() -> bool {
                     tx_last_used_idx: 0,
                     rx_queue_phys: 0,
                     tx_queue_phys: 0,
-                    rx_buffers_phys: [0; QUEUE_SIZE],
-                    tx_buffers_phys: [0; QUEUE_SIZE],
+                    rx_buffers_phys: [0; NUM_BUFFERS],
+                    tx_buffers_phys: [0; NUM_BUFFERS],
                 });
             }
             return false;
@@ -271,24 +273,24 @@ pub fn init() -> bool {
         }
 
         // 4. Configuração das VirtQueues
-        // Aloca frames para filas RX e TX
-        let rx_phys = crate::memory::alloc_frame().expect("VirtIO: sem frame para RX queue");
+        // Aloca 4 frames contíguos (16 KiB, order 2) para cada fila (RX e TX), atendendo à especificação VirtIO 256 descriptors
+        let rx_phys = crate::memory::alloc_frames(2).expect("VirtIO: sem frame para RX queue");
         let rx_virt = crate::memory::paging::phys_to_virt(rx_phys);
-        core::ptr::write_bytes(rx_virt as *mut u8, 0, 4096);
+        core::ptr::write_bytes(rx_virt as *mut u8, 0, 16384);
 
         outw(io_base + VIRTIO_PCI_QUEUE_SEL, 0); // Fila 0 = RX
         outl(io_base + VIRTIO_PCI_QUEUE_PFN, (rx_phys >> 12) as u32);
 
-        let tx_phys = crate::memory::alloc_frame().expect("VirtIO: sem frame para TX queue");
+        let tx_phys = crate::memory::alloc_frames(2).expect("VirtIO: sem frame para TX queue");
         let tx_virt = crate::memory::paging::phys_to_virt(tx_phys);
-        core::ptr::write_bytes(tx_virt as *mut u8, 0, 4096);
+        core::ptr::write_bytes(tx_virt as *mut u8, 0, 16384);
 
         outw(io_base + VIRTIO_PCI_QUEUE_SEL, 1); // Fila 1 = TX
         outl(io_base + VIRTIO_PCI_QUEUE_PFN, (tx_phys >> 12) as u32);
 
-        let mut rx_buffers_phys = [0u64; QUEUE_SIZE];
-        let mut tx_buffers_phys = [0u64; QUEUE_SIZE];
-        for i in 0..QUEUE_SIZE {
+        let mut rx_buffers_phys = [0u64; NUM_BUFFERS];
+        let mut tx_buffers_phys = [0u64; NUM_BUFFERS];
+        for i in 0..NUM_BUFFERS {
             let rf = crate::memory::alloc_frame().expect("VirtIO: sem frame para RX buf");
             rx_buffers_phys[i] = rf;
             let tf = crate::memory::alloc_frame().expect("VirtIO: sem frame para TX buf");
@@ -311,9 +313,9 @@ pub fn init() -> bool {
 
         // Popula descritores de recepção (RX)
         let rx_desc = rx_virt as *mut VRingDesc;
-        let rx_avail = (rx_virt + (16 * QUEUE_SIZE as u64)) as *mut VRingAvail;
+        let rx_avail = (rx_virt + 4096) as *mut VRingAvail;
 
-        for i in 0..QUEUE_SIZE {
+        for i in 0..NUM_BUFFERS {
             let desc = &mut *rx_desc.add(i);
             desc.addr = dev.rx_buffers_phys[i];
             desc.len = BUFFER_SIZE as u32;
@@ -322,8 +324,8 @@ pub fn init() -> bool {
 
             (*rx_avail).ring[i] = i as u16;
         }
-        (*rx_avail).idx = QUEUE_SIZE as u16;
-        dev.rx_avail_idx = QUEUE_SIZE as u16;
+        (*rx_avail).idx = NUM_BUFFERS as u16;
+        dev.rx_avail_idx = NUM_BUFFERS as u16;
 
         // 5. Conclui handshake com DRIVER_OK
         outb(io_base + VIRTIO_PCI_STATUS, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK);

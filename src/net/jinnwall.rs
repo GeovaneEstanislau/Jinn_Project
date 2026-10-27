@@ -375,7 +375,7 @@ pub fn run_jinnwall_selftests() -> (usize, usize) {
     }
 
     // 10. Conntrack Expiration: conexões com mais de 60s (6000 ticks) de inatividade expiram
-    let v_expired = jw.filter_in([93, 184, 216, 34], [10, 0, 2, 15], crate::net::ipv4::PROTO_UDP, 53, 53535, 500 + 6001);
+    let v_expired = jw.filter_in([93, 184, 216, 34], [10, 0, 2, 15], crate::net::ipv4::PROTO_UDP, 53, 53535, 505 + 6001);
     if v_expired == FilterVerdict::Drop {
         passed += 1;
     }

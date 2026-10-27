@@ -79,38 +79,54 @@ impl BuddyAllocator {
     }
 
     pub fn alloc(&mut self, order: usize) -> Option<u64> {
-        if order != 0 || self.free_frames == 0 {
+        let count = 1usize << order;
+        if self.free_frames < count {
             return None;
         }
 
-        for frame in 0..self.frame_limit {
-            if self.get_bit(&self.usable, frame) && !self.get_bit(&self.allocated, frame) {
-                Self::set_bit(&mut self.allocated, frame, true);
-                self.free_frames -= 1;
-                self.used_frames += 1;
+        let mut frame = 0;
+        while frame + count <= self.frame_limit {
+            if frame % count != 0 {
+                frame += count - (frame % count);
+                continue;
+            }
+            let mut all_free = true;
+            for i in 0..count {
+                if !self.get_bit(&self.usable, frame + i) || self.get_bit(&self.allocated, frame + i) {
+                    all_free = false;
+                    break;
+                }
+            }
+            if all_free {
+                for i in 0..count {
+                    Self::set_bit(&mut self.allocated, frame + i, true);
+                }
+                self.free_frames -= count;
+                self.used_frames += count;
                 return Some((frame * PAGE_SIZE) as u64);
             }
+            frame += count;
         }
 
         None
     }
 
     pub fn free(&mut self, paddr: u64, order: usize) {
-        if order != 0 || paddr % PAGE_SIZE as u64 != 0 {
+        let count = 1usize << order;
+        let align = (PAGE_SIZE * count) as u64;
+        if paddr % align != 0 {
             return;
         }
 
-        let frame = (paddr / PAGE_SIZE as u64) as usize;
-        if frame >= self.frame_limit
-            || !self.get_bit(&self.usable, frame)
-            || !self.get_bit(&self.allocated, frame)
-        {
-            return;
+        let start_frame = (paddr / PAGE_SIZE as u64) as usize;
+        for i in 0..count {
+            let frame = start_frame + i;
+            if frame < self.frame_limit && self.get_bit(&self.usable, frame) && self.get_bit(&self.allocated, frame) {
+                Self::set_bit(&mut self.allocated, frame, false);
+                self.free_frames += 1;
+                self.used_frames -= 1;
+            }
         }
-
-        Self::set_bit(&mut self.allocated, frame, false);
-        self.free_frames += 1;
-        self.used_frames -= 1;
     }
 
     fn get_bit(&self, bitmap: &[u64; BITMAP_WORDS], frame: usize) -> bool {

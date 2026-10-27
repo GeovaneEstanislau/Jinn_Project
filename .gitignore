@@ -39,3 +39,4 @@ iso_root/boot/*.sys
 iso_root/boot/*.bin
 iso_root/EFI/
 /boot/*.elf
+*.pcap

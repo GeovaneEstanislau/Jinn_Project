@@ -104,6 +104,9 @@ pub fn poll() {
             ETHERTYPE_IPV4 => {
                 if let Ok(ip_pkt) = Ipv4Packet::parse(frame.payload) {
                     let ticks = crate::timer::ticks();
+                    unsafe {
+                        arp::ARP_CACHE.insert(ip_pkt.header.src_ip, frame.src_mac, ticks);
+                    }
                     let (src_port, dst_port) = match ip_pkt.header.protocol {
                         PROTO_UDP => {
                             if ip_pkt.payload.len() < 8 {

@@ -60,8 +60,8 @@ pub enum TaskDescriptor {
     Socket(usize), // índice na SOCKET_TABLE global
 }
 
-/// Tamanho da pilha de kernel de cada tarefa (8 KiB — ring 0).
-pub const KSTACK_SIZE: usize = 8192;
+/// Tamanho da pilha de kernel de cada tarefa (32 KiB — ring 0).
+pub const KSTACK_SIZE: usize = 32768;
 
 /// Tamanho da pilha de usuário de cada tarefa (256 KiB — ring 3).
 pub const USTACK_SIZE: usize = 262144;
@@ -417,15 +417,16 @@ impl Scheduler {
                 let kstack_base = unsafe { KSTACKS[id].as_ptr() as usize };
                 let kstack_top  = (kstack_base + KSTACK_SIZE) & !15;
 
-                let (cs, ss) = read_cs_ss();
+                let cs = crate::gdt::KERNEL_CODE_SEL as u64;
+                let ss = crate::gdt::KERNEL_DATA_SEL as u64;
                 
                 let mut sp = kstack_top;
                 let rflags: u64 = 0x202;
 
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(ss as u64); }
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(ss); }
                 let abi_rsp = kstack_top - 8; sp -= 8; unsafe { (sp as *mut u64).write_volatile(abi_rsp as u64); }
                 sp -= 8; unsafe { (sp as *mut u64).write_volatile(rflags); }
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(cs as u64); }
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(cs); }
                 sp -= 8; unsafe { (sp as *mut u64).write_volatile(entry as u64);}
 
                 // Dummy vector and error code
@@ -835,6 +836,16 @@ impl Scheduler {
                         if current_cr3 != task.pml4_phys {
                             unsafe { paging::load_cr3(task.pml4_phys); }
                         }
+
+                        crate::serial_write(b"[SCHED] Switch to PID ");
+                        crate::serial_write_byte(b'0' + (idx as u8 % 10));
+                        crate::serial_write(b" rsp=0x");
+                        for i in (0..16).rev() {
+                            let n = ((task.saved_rsp >> (i * 4)) & 0xF) as u8;
+                            let ch = if n < 10 { b'0' + n } else { b'a' + (n - 10) };
+                            crate::serial_write_byte(ch);
+                        }
+                        crate::serial_write(b"\n");
 
                         return task.saved_rsp;
                     }

@@ -205,8 +205,16 @@ pub fn alloc_frame() -> Option<u64> {
     FRAME_ALLOCATOR.lock().alloc(0)
 }
 
+pub fn alloc_frames(order: usize) -> Option<u64> {
+    FRAME_ALLOCATOR.lock().alloc(order)
+}
+
 pub fn free_frame(paddr: u64) {
     FRAME_ALLOCATOR.lock().free(paddr, 0)
+}
+
+pub fn free_frames_order(paddr: u64, order: usize) {
+    FRAME_ALLOCATOR.lock().free(paddr, order)
 }
 
 pub fn total_frames() -> usize {

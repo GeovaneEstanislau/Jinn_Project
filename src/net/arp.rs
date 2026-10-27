@@ -116,3 +116,46 @@ pub fn build_arp_reply(
     }
     sz
 }
+
+pub fn build_arp_request(
+    buffer: &mut [u8],
+    our_mac: [u8; 6],
+    our_ip: [u8; 4],
+    target_ip: [u8; 4],
+) -> usize {
+    let p = ArpPacket {
+        htype: 1u16.to_be(),
+        ptype: 0x0800u16.to_be(),
+        hlen: 6,
+        plen: 4,
+        opcode: ARP_OP_REQUEST.to_be(),
+        sender_mac: our_mac,
+        sender_ip: our_ip,
+        target_mac: [0, 0, 0, 0, 0, 0],
+        target_ip,
+    };
+    let sz = core::mem::size_of::<ArpPacket>();
+    unsafe {
+        core::ptr::copy_nonoverlapping(&p as *const ArpPacket as *const u8, buffer.as_mut_ptr(), sz);
+    }
+    sz
+}
+
+pub fn send_arp_request(target_ip: [u8; 4]) -> bool {
+    let dev = match crate::drivers::net::virtio::get_device() {
+        Some(d) => d,
+        None => return false,
+    };
+    let our_mac = dev.mac_address();
+    let our_ip = unsafe { crate::net::dhcp::DHCP_CLIENT.ip };
+
+    let mut frame = [0u8; 64];
+    crate::net::ethernet::EthernetFrame::write_header(
+        &mut frame[0..14],
+        crate::net::ethernet::BROADCAST_MAC,
+        our_mac,
+        crate::net::ethernet::ETHERTYPE_ARP,
+    );
+    let arp_len = build_arp_request(&mut frame[14..], our_mac, our_ip, target_ip);
+    dev.transmit(&frame[..(14 + arp_len)]).is_ok()
+}

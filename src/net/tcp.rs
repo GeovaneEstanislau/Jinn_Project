@@ -111,8 +111,8 @@ pub struct TcpControlBlock {
     pub retransmit_count: u8,
     pub dup_ack_count: u8,
     pub unacked_len: usize,
-    pub unacked_buf: [u8; 2048],
-    pub ooo_buf: [u8; 1024],
+    pub unacked_buf: [u8; 4096],
+    pub ooo_buf: [u8; 1536],
     pub ooo_seq: u32,
     pub ooo_len: usize,
     pub last_persist_tick: u64,
@@ -133,8 +133,8 @@ impl TcpControlBlock {
             retransmit_count: 0,
             dup_ack_count: 0,
             unacked_len: 0,
-            unacked_buf: [0; 2048],
-            ooo_buf: [0; 1024],
+            unacked_buf: [0; 4096],
+            ooo_buf: [0; 1536],
             ooo_seq: 0,
             ooo_len: 0,
             last_persist_tick: 0,
@@ -544,8 +544,8 @@ fn process_connected_tcp_event(sock: &mut crate::net::socket::Socket, src_ip: [u
 
                     // Verifica se o buffer de fora-de-ordem conecta contiguamente agora
                     if sock.tcb.ooo_len > 0 && sock.tcb.ooo_seq == sock.tcb.remote_seq {
-                        let mut temp_ooo = [0u8; 1024];
-                        let ooo_len = sock.tcb.ooo_len.min(1024);
+                        let mut temp_ooo = [0u8; 1536];
+                        let ooo_len = sock.tcb.ooo_len.min(1536);
                         temp_ooo[..ooo_len].copy_from_slice(&sock.tcb.ooo_buf[..ooo_len]);
                         let _ = sock.push_rx(&temp_ooo[..ooo_len]);
                         sock.tcb.remote_seq = sock.tcb.remote_seq.wrapping_add(ooo_len as u32);
@@ -588,7 +588,7 @@ fn process_connected_tcp_event(sock: &mut crate::net::socket::Socket, src_ip: [u
                 } else {
                     // Segmento fora de ordem (gap à frente do remote_seq)
                     if (diff as usize) <= (sock.tcb.local_win as usize) && sock.tcb.ooo_len == 0 {
-                        let len = tcp.payload.len().min(1024);
+                        let len = tcp.payload.len().min(1536);
                         sock.tcb.ooo_buf[..len].copy_from_slice(&tcp.payload[..len]);
                         sock.tcb.ooo_seq = tcp.seq_num;
                         sock.tcb.ooo_len = len;
@@ -852,10 +852,10 @@ pub fn run_tcp_selftests() -> (usize, usize) {
     }
 
     // 9. Verificação de Checksum e rejeição de corrupção (RFC 793)
-    let csum_valid = verify_tcp_checksum([10, 0, 2, 15], [93, 184, 216, 34], &seg_buf[..20]);
+    let csum_valid = verify_tcp_checksum([10, 0, 2, 15], [93, 184, 216, 34], &seg_buf[..written_pay]);
     let mut corrupted_seg = seg_buf;
     corrupted_seg[19] ^= 0xAA;
-    let csum_invalid = !verify_tcp_checksum([10, 0, 2, 15], [93, 184, 216, 34], &corrupted_seg[..20]);
+    let csum_invalid = !verify_tcp_checksum([10, 0, 2, 15], [93, 184, 216, 34], &corrupted_seg[..written_pay]);
     if csum_valid && csum_invalid {
         passed += 1;
     }

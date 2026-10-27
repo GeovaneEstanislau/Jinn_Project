@@ -130,8 +130,43 @@ pub extern "C" fn exception_dispatch(vector: u64, error_code: u64, frame: *mut u
 
     // Se a falha ocorreu em Ring 0 (código do kernel), pânico irrecuperável:
     crate::serial_write(b"\n[!] KERNEL PANIC: CPU EXCEPTION in Ring 0! Vector: ");
-    let vec_byte = b'0' + (vector as u8);
-    crate::serial_write(&[vec_byte, b'\n']);
+    let mut vec_buf = [b'0'; 4];
+    vec_buf[0] = b'0' + ((vector / 10) % 10) as u8;
+    vec_buf[1] = b'0' + (vector % 10) as u8;
+    vec_buf[2] = b'\n';
+    crate::serial_write(&vec_buf[..3]);
+
+    let print_hex_ser = |label: &[u8], val: u64| {
+        crate::serial_write(label);
+        crate::serial_write(b" 0x");
+        for i in (0..16).rev() {
+            let n = ((val >> (i * 4)) & 0xF) as u8;
+            let ch = if n < 10 { b'0' + n } else { b'a' + (n - 10) };
+            crate::serial_write_byte(ch);
+        }
+        crate::serial_write(b"\n");
+    };
+
+    print_hex_ser(b"  Fault RIP:", rip as u64);
+    print_hex_ser(b"  Fault CS :", cs as u64);
+    print_hex_ser(b"  Err Code :", error_code);
+    let fault_rsp = unsafe { *frame.add(20) };
+    let fault_ss  = unsafe { *frame.add(21) };
+    print_hex_ser(b"  Fault RSP:", fault_rsp as u64);
+    print_hex_ser(b"  Fault SS :", fault_ss as u64);
+    crate::serial_write(b"  PID      : ");
+    let cur_pid = crate::scheduler::current_pid();
+    crate::serial_write_byte(b'0' + (cur_pid as u8 % 10));
+    crate::serial_write(b"\n");
+
+    if fault_rsp != 0 {
+        let ptr = fault_rsp as *const u64;
+        print_hex_ser(b"  [RSP+0] target RIP   :", unsafe { *ptr });
+        print_hex_ser(b"  [RSP+8] target CS    :", unsafe { *ptr.add(1) });
+        print_hex_ser(b"  [RSP+16] target RFL  :", unsafe { *ptr.add(2) });
+        print_hex_ser(b"  [RSP+24] target RSP  :", unsafe { *ptr.add(3) });
+        print_hex_ser(b"  [RSP+32] target SS   :", unsafe { *ptr.add(4) });
+    }
 
     let mut writer = crate::vga::Writer::new();
     writer.set_color(crate::vga::Color::LightRed, crate::vga::Color::Black);

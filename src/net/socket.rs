@@ -7,7 +7,7 @@ pub const SOCK_STREAM: u32 = 1; // TCP
 pub const SOCK_DGRAM:  u32 = 2; // UDP
 
 pub const MAX_SOCKETS: usize = 16;
-pub const SOCK_RX_BUF_SIZE: usize = 1024;
+pub const SOCK_RX_BUF_SIZE: usize = 1536;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -190,6 +190,13 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
         }
     }
 
+    // Envia requisicao ARP caso o IP remoto ainda nao esteja na tabela ARP
+    unsafe {
+        if crate::net::arp::ARP_CACHE.lookup(remote_ip).is_none() {
+            let _ = crate::net::arp::send_arp_request(remote_ip);
+        }
+    }
+
     let syn_seq = unsafe { SOCKET_TABLE[sockfd].as_ref().unwrap().tcb.local_seq };
     crate::net::tcp::send_tcp_packet(
         local_port,
@@ -285,6 +292,7 @@ pub fn listen_socket(pid: usize, sockfd: usize, backlog: usize) -> Result<(), is
 
 /// Aceita uma conexão TCP estabelecida a partir da fila de conexões pendentes (accept).
 pub fn accept_socket(pid: usize, sockfd: usize) -> Result<usize, isize> {
+    crate::net::poll();
     unsafe {
         let _ = match SOCKET_TABLE.get(sockfd).and_then(|s| s.as_ref()) {
             Some(s) => {
@@ -429,7 +437,7 @@ pub fn send_socket(pid: usize, sockfd: usize, data: &[u8]) -> Result<usize, isiz
                 return Err(EAGAIN); // Janela anunciada pelo peer esgotada
             }
 
-            let buf_avail = 2048usize.saturating_sub(sock.tcb.unacked_len);
+            let buf_avail = 4096usize.saturating_sub(sock.tcb.unacked_len);
             if buf_avail == 0 {
                 return Err(ENOBUFS); // Buffer de retransmissão esgotado
             }
@@ -526,6 +534,7 @@ pub fn dispatch_incoming_packet(proto: u8, src_ip: [u8; 4], src_port: u16, dst_p
 
 /// Recebe dados do buffer do socket para o espaço de usuário.
 pub fn recv_socket(pid: usize, sockfd: usize, dest: &mut [u8]) -> Result<usize, isize> {
+    crate::net::poll();
     unsafe {
         let sock = match SOCKET_TABLE.get_mut(sockfd).and_then(|s| s.as_mut()) {
             Some(s) => s,
