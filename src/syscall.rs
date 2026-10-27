@@ -21,6 +21,9 @@
 ///   9  — spawn(fn_ptr, name_ptr)  Spawn a new kernel task
 ///   15 — open(path, len, flags)   Open file and return per-task FD (3..=7)
 ///   16 — close(fd)                Close file descriptor
+///   17 — stat(path, len, stat_ptr) Query file or directory metadata
+///   18 — fstat(fd, stat_ptr)      Query open file or socket descriptor metadata
+///   19 — lseek(fd, offset, whence) Reposition file read/write offset
 ///   20 — window_create(title, len, dim) Create Aladdin desktop window
 ///   21 — window_update(id, buf, len)   Update Aladdin window client buffer
 ///   22 — window_close(id)              Close Aladdin desktop window
@@ -39,19 +42,45 @@ use crate::scheduler;
 
 // ── Error Codes ───────────────────────────────────────────────────────────────
 pub const EPERM:        isize = -1;   // Operation not permitted
+pub const ENOENT:       isize = -2;   // No such file or directory
+pub const ESRCH:        isize = -3;   // No such process
 pub const EBADF:        isize = -9;   // Bad file descriptor
+pub const ECHILD:       isize = -10;  // No child processes
 pub const EAGAIN:       isize = -11;  // Resource temporarily unavailable / Would block
 pub const ENOMEM:       isize = -12;  // Out of memory
 pub const EFAULT:       isize = -14;  // Bad address
+pub const EBUSY:        isize = -16;  // Device or resource busy
 pub const EINVAL:       isize = -22;  // Invalid argument
 pub const EMFILE:       isize = -24;  // Too many open files
 pub const ENOSPC:       isize = -28;  // No space left on device
+pub const ESPIPE:       isize = -29;  // Illegal seek
 pub const ENOSYS:       isize = -38;  // Function not implemented
 pub const EADDRINUSE:   isize = -98;  // Address already in use
 pub const ECONNRESET:   isize = -104; // Connection reset by peer
 pub const ENOBUFS:      isize = -105; // No buffer space available
 pub const ETIMEDOUT:    isize = -110; // Connection timed out
 pub const ECONNREFUSED: isize = -111; // Connection refused
+pub const EDQUOT:       isize = -122; // Quota exceeded
+
+// ── Whence Flags (lseek) ─────────────────────────────────────────────────────
+pub const SEEK_SET: usize = 0;
+pub const SEEK_CUR: usize = 1;
+pub const SEEK_END: usize = 2;
+
+// ── VFS File Metadata (stat/fstat) ───────────────────────────────────────────
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileStat {
+    pub size: u64,          // Tamanho do arquivo em bytes
+    pub inode: u64,         // Número do inode ou identificador único
+    pub node_type: u32,     // 0 = File, 1 = Directory, 2 = CharDevice, 3 = BlockDevice, 4 = Symlink, 5 = Socket
+    pub mode: u32,          // Modo POSIX (ex: 0o100644, 0o040755)
+    pub blksize: u32,       // Tamanho de bloco ideal (512)
+    pub blocks: u32,        // Blocos de 512B alocados
+    pub atime: u64,         // Timestamp de acesso
+    pub mtime: u64,         // Timestamp de modificação
+    pub ctime: u64,         // Timestamp de criação
+}
 
 pub const USER_SPACE_MIN: usize = 0x0000_0000_0001_0000; // 64 KiB NULL guard
 pub const USER_SPACE_MAX: usize = 0x0000_8000_0000_0000; // Limite canônico de usuário
@@ -169,6 +198,9 @@ pub extern "C" fn syscall_dispatch(
         14 => sys_jda_submit(arg0, arg1, arg2),
         15 => sys_open(arg0 as *const u8, arg1, arg2 as u32),
         16 => sys_close(arg0),
+        17 => sys_stat(arg0 as *const u8, arg1, arg2 as *mut FileStat),
+        18 => sys_fstat(arg0, arg1 as *mut FileStat),
+        19 => sys_lseek(arg0, arg1 as i64, arg2),
         20 => sys_window_create(arg0 as *const u8, arg1, arg2),
         21 => sys_window_update(arg0, arg1 as *const u32, arg2),
         22 => sys_window_close(arg0),
@@ -412,6 +444,182 @@ fn sys_close(fd: usize) -> isize {
     } else {
         EBADF
     }
+}
+
+fn map_vfs_stat_to_filestat(stat: &crate::vfs::Stat) -> FileStat {
+    let (node_type, mode) = match stat.node_type {
+        crate::vfs::NodeType::File => (0u32, 0o100644u32),
+        crate::vfs::NodeType::Directory => (1u32, 0o040755u32),
+        crate::vfs::NodeType::CharDevice => (2u32, 0o020666u32),
+        crate::vfs::NodeType::BlockDevice => (3u32, 0o060660u32),
+        crate::vfs::NodeType::Symlink => (4u32, 0o120777u32),
+    };
+    FileStat {
+        size: stat.size,
+        inode: stat.inode,
+        node_type,
+        mode,
+        blksize: 512,
+        blocks: ((stat.size.saturating_add(511)) / 512) as u32,
+        atime: crate::timer::ticks(),
+        mtime: crate::timer::ticks(),
+        ctime: crate::timer::ticks(),
+    }
+}
+
+/// `stat(path_ptr, path_len, stat_ptr)` — Consulta metadados de arquivo ou diretório pelo caminho.
+fn sys_stat(path_ptr: *const u8, path_len: usize, stat_ptr: *mut FileStat) -> isize {
+    if path_ptr.is_null() || stat_ptr.is_null() || path_len == 0 || path_len > 128 {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(path_ptr, path_len, false) {
+            return e;
+        }
+        if let Err(e) = validate_user_buffer(stat_ptr as *const u8, core::mem::size_of::<FileStat>(), true) {
+            return e;
+        }
+    }
+    let mut path_buf = [0u8; 128];
+    unsafe {
+        core::ptr::copy_nonoverlapping(path_ptr, path_buf.as_mut_ptr(), path_len);
+    }
+    let path_str = match core::str::from_utf8(&path_buf[..path_len]) {
+        Ok(s) => s,
+        Err(_) => return EINVAL,
+    };
+
+    match crate::vfs::stat(path_str) {
+        Ok(vfs_stat) => {
+            let fstat = map_vfs_stat_to_filestat(&vfs_stat);
+            unsafe {
+                core::ptr::write_unaligned(stat_ptr, fstat);
+            }
+            0
+        }
+        Err(e) => match e {
+            crate::vfs::VfsError::NotFound => ENOENT,
+            crate::vfs::VfsError::PermissionDenied => EPERM,
+            crate::vfs::VfsError::InvalidPath => EINVAL,
+            _ => ENOENT,
+        },
+    }
+}
+
+/// `fstat(fd, stat_ptr)` — Consulta metadados de descritor aberto (arquivo ou socket).
+fn sys_fstat(fd: usize, stat_ptr: *mut FileStat) -> isize {
+    if fd < 3 || fd >= scheduler::MAX_TASK_FDS || stat_ptr.is_null() {
+        return if stat_ptr.is_null() { EINVAL } else { EBADF };
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(stat_ptr as *const u8, core::mem::size_of::<FileStat>(), true) {
+            return e;
+        }
+    }
+
+    let pid = scheduler::current_pid();
+    let sched = scheduler::get();
+    let task = match sched.tasks.get(pid).and_then(|t| t.as_ref()) {
+        Some(t) => t,
+        None => return EPERM,
+    };
+
+    let desc = match task.fds[fd] {
+        Some(ref d) => d,
+        None => return EBADF,
+    };
+
+    match desc {
+        scheduler::TaskDescriptor::File(entry) => {
+            let path_str = match core::str::from_utf8(&entry.path[..entry.path_len]) {
+                Ok(s) => s,
+                Err(_) => return EBADF,
+            };
+            match crate::vfs::stat(path_str) {
+                Ok(vfs_stat) => {
+                    let fstat = map_vfs_stat_to_filestat(&vfs_stat);
+                    unsafe {
+                        core::ptr::write_unaligned(stat_ptr, fstat);
+                    }
+                    0
+                }
+                Err(_) => ENOENT,
+            }
+        }
+        scheduler::TaskDescriptor::Socket(sock_idx) => {
+            let fstat = FileStat {
+                size: 0,
+                inode: *sock_idx as u64,
+                node_type: 5,
+                mode: 0o140666,
+                blksize: 512,
+                blocks: 0,
+                atime: crate::timer::ticks(),
+                mtime: crate::timer::ticks(),
+                ctime: crate::timer::ticks(),
+            };
+            unsafe {
+                core::ptr::write_unaligned(stat_ptr, fstat);
+            }
+            0
+        }
+    }
+}
+
+/// `lseek(fd, offset, whence)` — Reposiciona o deslocamento de leitura/escrita do descritor de arquivo.
+fn sys_lseek(fd: usize, offset: i64, whence: usize) -> isize {
+    if fd < 3 || fd >= scheduler::MAX_TASK_FDS {
+        return EBADF;
+    }
+
+    let pid = scheduler::current_pid();
+    let sched = scheduler::get();
+    let task = match sched.tasks.get_mut(pid).and_then(|t| t.as_mut()) {
+        Some(t) => t,
+        None => return EPERM,
+    };
+
+    let desc = match task.fds[fd].as_mut() {
+        Some(d) => d,
+        None => return EBADF,
+    };
+
+    let entry = match desc {
+        scheduler::TaskDescriptor::File(ref mut e) => e,
+        scheduler::TaskDescriptor::Socket(_) => return ESPIPE,
+    };
+
+    let new_offset: i64 = match whence {
+        SEEK_SET => offset,
+        SEEK_CUR => {
+            match (entry.offset as i64).checked_add(offset) {
+                Some(val) => val,
+                None => return EINVAL,
+            }
+        }
+        SEEK_END => {
+            let path_str = match core::str::from_utf8(&entry.path[..entry.path_len]) {
+                Ok(s) => s,
+                Err(_) => return EBADF,
+            };
+            let file_size = match crate::vfs::stat(path_str) {
+                Ok(s) => s.size as i64,
+                Err(_) => return ENOENT,
+            };
+            match file_size.checked_add(offset) {
+                Some(val) => val,
+                None => return EINVAL,
+            }
+        }
+        _ => return EINVAL,
+    };
+
+    if new_offset < 0 {
+        return EINVAL;
+    }
+
+    entry.offset = new_offset as u64;
+    new_offset as isize
 }
 
 /// `yield()` — Voluntarily give up the CPU.

@@ -142,6 +142,39 @@ unsafe fn sys_close(fd: u64) -> i64 {
     syscall3(16, fd, 0, 0)
 }
 
+pub const SEEK_SET: u64 = 0;
+pub const SEEK_CUR: u64 = 1;
+pub const SEEK_END: u64 = 2;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FileStat {
+    pub size: u64,
+    pub inode: u64,
+    pub node_type: u32,
+    pub mode: u32,
+    pub blksize: u32,
+    pub blocks: u32,
+    pub atime: u64,
+    pub mtime: u64,
+    pub ctime: u64,
+}
+
+#[inline(always)]
+unsafe fn sys_stat(path: &[u8], stat: &mut FileStat) -> i64 {
+    syscall3(17, path.as_ptr() as u64, path.len() as u64, stat as *mut _ as u64)
+}
+
+#[inline(always)]
+unsafe fn sys_fstat(fd: u64, stat: &mut FileStat) -> i64 {
+    syscall3(18, fd, stat as *mut _ as u64, 0)
+}
+
+#[inline(always)]
+unsafe fn sys_lseek(fd: u64, offset: i64, whence: u64) -> i64 {
+    syscall3(19, fd, offset as u64, whence)
+}
+
 #[inline(always)]
 unsafe fn sys_window_create(title: &[u8], width: usize, height: usize) -> i64 {
     let packed = (((width & 0xFFFF) as u64) << 16) | ((height & 0xFFFF) as u64);
@@ -1376,6 +1409,156 @@ unsafe fn test_sched_preemption_and_cpu_quota() {
     }
 }
 
+unsafe fn test_adv_vfs_stat_and_lseek() {
+    print_str(b"\n--- Teste 14: Syscalls VFS 17 (stat), 18 (fstat) e 19 (lseek) ---\n");
+
+    let mut stat = FileStat::default();
+    let ret = sys_stat(b"/disk/README.TXT", &mut stat);
+    if ret != 0 || stat.size == 0 || stat.node_type != 0 {
+        print_str(b"  [FAIL] sys_stat falhou ao consultar /disk/README.TXT!\n");
+        return;
+    }
+    print_str(b"  sys_stat(/disk/README.TXT): Size=");
+    print_u64(stat.size);
+    print_str(b", NodeType=");
+    print_u64(stat.node_type as u64);
+    print_str(b", Mode=0o");
+    print_u64(stat.mode as u64);
+    print_str(b", Blocks=");
+    print_u64(stat.blocks as u64);
+    print_str(b"\n");
+
+    // Consulta de diretorio
+    let mut stat_dir = FileStat::default();
+    let ret_dir = sys_stat(b"/disk", &mut stat_dir);
+    if ret_dir != 0 || stat_dir.node_type != 1 {
+        print_str(b"  [FAIL] sys_stat(/disk) falhou ao identificar diretorio!\n");
+        return;
+    }
+
+    // Consulta de caminho inexistente (-ENOENT = -2)
+    let mut stat_err = FileStat::default();
+    let ret_err = sys_stat(b"/disk/INEXISTENTE.TXT", &mut stat_err);
+    if ret_err != -2 {
+        print_str(b"  [FAIL] sys_stat com arquivo inexistente nao retornou -ENOENT!\n");
+        return;
+    }
+
+    // Abertura para teste de fstat e lseek
+    let fd = sys_open(b"/disk/README.TXT", 0);
+    if fd < 3 {
+        print_str(b"  [FAIL] sys_open falhou ao abrir /disk/README.TXT!\n");
+        return;
+    }
+    let fd = fd as u64;
+
+    let mut fstat = FileStat::default();
+    let ret_fstat = sys_fstat(fd, &mut fstat);
+    if ret_fstat != 0 || fstat.size != stat.size || fstat.node_type != 0 {
+        print_str(b"  [FAIL] sys_fstat divergiu de sys_stat!\n");
+        let _ = sys_close(fd);
+        return;
+    }
+
+    // Leitura sequencial inicial (4 bytes)
+    let mut buf1 = [0u8; 4];
+    let n1 = sys_read(fd, buf1.as_mut_ptr(), 4);
+    if n1 != 4 {
+        print_str(b"  [FAIL] sys_read nao leu 4 bytes iniciais!\n");
+        let _ = sys_close(fd);
+        return;
+    }
+
+    // SEEK_SET para 0 (rewind)
+    let seek_ret = sys_lseek(fd, 0, SEEK_SET);
+    if seek_ret != 0 {
+        print_str(b"  [FAIL] sys_lseek SEEK_SET 0 falhou!\n");
+        let _ = sys_close(fd);
+        return;
+    }
+
+    let mut buf2 = [0u8; 4];
+    let n2 = sys_read(fd, buf2.as_mut_ptr(), 4);
+    if n2 != 4 || buf1 != buf2 {
+        print_str(b"  [FAIL] Dados lidos apos SEEK_SET divergiram dos iniciais!\n");
+        let _ = sys_close(fd);
+        return;
+    }
+
+    // SEEK_SET para offset 2
+    let seek_ret = sys_lseek(fd, 2, SEEK_SET);
+    if seek_ret != 2 {
+        print_str(b"  [FAIL] sys_lseek SEEK_SET 2 falhou!\n");
+        let _ = sys_close(fd);
+        return;
+    }
+
+    let mut buf3 = [0u8; 2];
+    let n3 = sys_read(fd, buf3.as_mut_ptr(), 2);
+    if n3 != 2 || buf3[0] != buf1[2] || buf3[1] != buf1[3] {
+        print_str(b"  [FAIL] Dados lidos no offset 2 divergiram!\n");
+        let _ = sys_close(fd);
+        return;
+    }
+
+    // SEEK_CUR para recuar 2 bytes (offset atual e 4, voltando para 2)
+    let seek_ret = sys_lseek(fd, -2, SEEK_CUR);
+    if seek_ret != 2 {
+        print_str(b"  [FAIL] sys_lseek SEEK_CUR -2 falhou!\n");
+        let _ = sys_close(fd);
+        return;
+    }
+
+    // SEEK_END para o final do arquivo
+    let seek_ret = sys_lseek(fd, 0, SEEK_END);
+    if seek_ret != stat.size as i64 {
+        print_str(b"  [FAIL] sys_lseek SEEK_END 0 nao retornou tamanho exato do arquivo!\n");
+        let _ = sys_close(fd);
+        return;
+    }
+
+    // SEEK_SET negativo deve retornar -EINVAL (-22)
+    let seek_ret = sys_lseek(fd, -1, SEEK_SET);
+    if seek_ret != -22 {
+        print_str(b"  [FAIL] sys_lseek offset negativo nao retornou -EINVAL!\n");
+        let _ = sys_close(fd);
+        return;
+    }
+
+    // Fecha descritor e valida protecoes contra FD fechado (-EBADF = -9)
+    let _ = sys_close(fd);
+    if sys_lseek(fd, 0, SEEK_SET) != -9 {
+        print_str(b"  [FAIL] sys_lseek em FD fechado nao retornou -EBADF!\n");
+        return;
+    }
+    if sys_fstat(fd, &mut fstat) != -9 {
+        print_str(b"  [FAIL] sys_fstat em FD fechado nao retornou -EBADF!\n");
+        return;
+    }
+
+    // Validacao de fstat em Socket e rejeicao de lseek (-ESPIPE = -29)
+    let sockfd = sys_socket(2, 1, 6);
+    if sockfd >= 3 {
+        let mut sock_stat = FileStat::default();
+        let ret_sock_stat = sys_fstat(sockfd as u64, &mut sock_stat);
+        if ret_sock_stat != 0 || sock_stat.node_type != 5 {
+            print_str(b"  [FAIL] sys_fstat em socket nao identificou tipo S_IFSOCK (5)!\n");
+            let _ = sys_close(sockfd as u64);
+            return;
+        }
+
+        let ret_sock_seek = sys_lseek(sockfd as u64, 0, SEEK_SET);
+        if ret_sock_seek != -29 {
+            print_str(b"  [FAIL] sys_lseek em socket nao retornou -ESPIPE (-29)!\n");
+            let _ = sys_close(sockfd as u64);
+            return;
+        }
+        let _ = sys_close(sockfd as u64);
+    }
+
+    print_str(b"  [PASS] test_adv_vfs_stat_and_lseek: Syscalls 17 (stat), 18 (fstat) e 19 (lseek) validadas com integridade total!\n");
+}
+
 // ── Entry Point ──────────────────────────────────────────────────────────────
 
 #[no_mangle]
@@ -1409,6 +1592,7 @@ pub extern "C" fn _start() -> ! {
         test_jda_stress();
         test_fault_app();
         test_observer_app();
+        test_adv_vfs_stat_and_lseek();
         test_sched_preemption_and_cpu_quota();
         run_gui_demo();
 

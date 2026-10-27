@@ -78,24 +78,24 @@ A tabela a seguir reflete com fidelidade técnica o estado real do código em `s
 | **14** | `sys_jda_submit` | **Implementada** | `rdi: job_type (u64)`, `rsi: handle (u64)`, `rdx: len (usize)` | `i64` (resultado computado) | `-EPERM` (-1), `-EINVAL` (-22) | Motor de processamento JDA (jobs 1, 2, 3) | `src/syscall.rs:479`, `test_jda_stress` |
 | **15** | `sys_open` | **Implementada** | `rdi: *const u8 (path)`, `rsi: len (usize)`, `rdx: flags (u32)` | `i64` (FD unificado no intervalo 3..7) | `-ENOENT` (-2), `-EFAULT` (-14), `-EINVAL` (-22), `-EMFILE` (-24) | Tabela unificada de descritores, VFS (FAT32/Ext2/ramfs) | `src/syscall.rs:499`, `test_fd_stress` |
 | **16** | `sys_close` | **Implementada** | `rdi: fd (u64)` | `0` (sucesso) | `-EBADF` (-9) | Tabela unificada de descritores, arquivos VFS, sockets de rede | `src/syscall.rs:529`, `test_adv_unified_descriptors` |
-| **17** | `sys_stat` | **Indefinida** | Reservado | `-ENOSYS` (-38) | `-ENOSYS` (-38) | N/A | `src/syscall.rs:694` |
-| **18** | `sys_fstat` | **Indefinida** | Reservado | `-ENOSYS` (-38) | `-ENOSYS` (-38) | N/A | `src/syscall.rs:694` |
-| **19** | `sys_lseek` | **Indefinida** | Reservado | `-ENOSYS` (-38) | `-ENOSYS` (-38) | N/A | `src/syscall.rs:694` |
+| **17** | `sys_stat` | **Implementada** | `rdi: *const u8 (path)`, `rsi: len (usize)`, `rdx: *mut FileStat` | `0` (sucesso) | `-ENOENT` (-2), `-EFAULT` (-14), `-EINVAL` (-22), `-EPERM` (-1) | VFS (FAT32/Ext2/ramfs), validação de buffer | `src/syscall.rs`, `apps/ola-mundo` |
+| **18** | `sys_fstat` | **Implementada** | `rdi: fd (u64)`, `rsi: *mut FileStat` | `0` (sucesso) | `-EBADF` (-9), `-EFAULT` (-14), `-EINVAL` (-22), `-EPERM` (-1) | Descritor unificado (Arquivo VFS ou Socket), validação de buffer | `src/syscall.rs`, `apps/ola-mundo` |
+| **19** | `sys_lseek` | **Implementada** | `rdi: fd (u64)`, `rsi: offset (i64)`, `rdx: whence (u64)` | `i64` (novo deslocamento `>= 0`) | `-EBADF` (-9), `-EINVAL` (-22), `-ESPIPE` (-29), `-ENOENT` (-2) | Offset interno do arquivo no VFS (`fd_entry.offset`) | `src/syscall.rs`, `apps/ola-mundo` |
 | **20** | `sys_window_create` | **Implementada** | `rdi: *const u8 (title)`, `rsi: len (usize)`, `rdx: packed_dims (u64)` | `i64` (win_id no compositor Aladdin) | `-EINVAL` (-22), `-EFAULT` (-14), `-EMFILE` (-24), `-ENOSYS` (-38) | Janelas do compositor Aladdin, cota `max_windows` | `src/syscall.rs:548`, `test_window_stress` |
 | **21** | `sys_window_update` | **Implementada** | `rdi: win_id (usize)`, `rsi: *const u32 (buf)`, `rdx: len_bytes (usize)` | `0` (sucesso) | `-EBADF` (-9), `-EPERM` (-1), `-EINVAL` (-22), `-EFAULT` (-14) | Buffer cliente do compositor, invalidação visual | `src/syscall.rs:581`, `test_client_window_protocol` |
 | **22** | `sys_window_close` | **Implementada** | `rdi: win_id (usize)` | `0` (sucesso) | `-EBADF` (-9), `-EPERM` (-1) | Janelas do compositor, desalocação de buffers | `src/syscall.rs:616`, `test_window_stress` |
-| **23** | Reservada | **Indefinida** | Reservado | `-ENOSYS` (-38) | `-ENOSYS` (-38) | N/A | `src/syscall.rs:694` |
-| **24** | Reservada | **Indefinida** | Reservado | `-ENOSYS` (-38) | `-ENOSYS` (-38) | N/A | `src/syscall.rs:694` |
-| **25** | `sys_res_stat` | **Implementada** | `rdi: target_pid (usize)`, `rsi: *mut ProcessResourceStat`, `rdx: size (usize)` | `0` (sucesso) | `-ESRCH` (-3), `-EFAULT` (-14), `-EINVAL` (-22) | Telemetria de recursos da tarefa | `src/syscall.rs:633`, `test_observer_app` |
+| **23** | Reservada | **Indefinida** | Reservado | `-ENOSYS` (-38) | `-ENOSYS` (-38) | N/A | `src/syscall.rs` |
+| **24** | Reservada | **Indefinida** | Reservado | `-ENOSYS` (-38) | `-ENOSYS` (-38) | N/A | `src/syscall.rs` |
+| **25** | `sys_res_stat` | **Implementada** | `rdi: target_pid (usize)`, `rsi: *mut ProcessResourceStat`, `rdx: size (usize)` | `0` (sucesso) | `-ESRCH` (-3), `-EFAULT` (-14), `-EINVAL` (-22) | Telemetria de recursos da tarefa | `src/syscall.rs`, `test_observer_app` |
 | **26** | `sys_jda_shm_share` | **Implementada** | `rdi: handle (u64)`, `rsi: target_pid (usize)`, `rdx: make_owner_ro (u64)` | `i64` (endereço virtual no alvo) | `-EPERM` (-1), `-EINVAL` (-22) | Compartilhamento Zero-Copy, remapeamento PML4, ref_count | `src/syscall.rs`, `test_jda_phase3_ioring_and_zerocopy` |
 | **27** | `sys_jda_ring_submit` | **Implementada** | `rdi: *const JdaSqe`, `rsi: count (usize)` | `usize` (operações submetidas) | `-EINVAL` (-22), `-EFAULT` (-14) | Fila de submissão JDA io_uring (SQ) | `src/syscall.rs`, `src/jda/ring.rs` |
 | **28** | `sys_jda_ring_poll` | **Implementada** | `rdi: *mut JdaCqe`, `rsi: max_count (usize)` | `usize` (conclusões colhidas) | `-EINVAL` (-22), `-EFAULT` (-14) | Fila de conclusão JDA io_uring (CQ) | `src/syscall.rs`, `src/jda/ring.rs` |
 | **29** | `sys_jda_shm_get_vaddr` | **Implementada** | `rdi: handle (u64)` | `i64` (endereço virtual `0x30000000+`) | `-EPERM` (-1) | Mapeamento virtual direto no PML4 da tarefa | `src/syscall.rs`, `test_jda_phase3_ioring_and_zerocopy` |
-| **30** | `sys_socket` | **Implementada** | `rdi: domain (i32)`, `rsi: type (i32)`, `rdx: protocol (i32)` | `i64` (FD unificado no intervalo 3..7) | `-EINVAL` (-22), `-EMFILE` (-24) | Tabela unificada de descritores, `SOCKET_TABLE`, cota `max_sockets` | `src/syscall.rs:658`, `test_adv_unified_descriptors` |
-| **31** | `sys_connect` | **Implementada** | `rdi: sockfd (u64)`, `rsi: *const SockAddrIn`, `rdx: size (usize)` | `0` (sucesso) | `-EBADF` (-9), `-EFAULT` (-14), `-EINVAL` (-22) | Estado do socket, resolução ARP | `src/syscall.rs:674`, `test_adv_unified_descriptors` |
-| **32** | `sys_bind` | **Stub** | `rdi: sockfd (u64)`, `rsi: *const SockAddrIn`, `rdx: size (usize)` | `0` (sucesso fingido - sem operação) | Nenhum (não valida parâmetros) | Nenhum (stub sem efeito de rede) | `src/syscall.rs:689` |
-| **33** | `sys_listen` | **Stub** | `rdi: sockfd (u64)`, `rsi: backlog (i32)` | `0` (sucesso fingido - sem operação) | Nenhum (não valida parâmetros) | Nenhum (stub sem fila de escuta) | `src/syscall.rs:690` |
-| **34** | `sys_accept` | **Stub** | `rdi: sockfd (u64)`, `rsi: *mut SockAddrIn`, `rdx: *mut usize` | `0` (sucesso fingido - sem operação) | Nenhum (não valida parâmetros) | Nenhum (stub sem aceitação de conexão) | `src/syscall.rs:691` |
+| **30** | `sys_socket` | **Implementada** | `rdi: domain (i32)`, `rsi: type (i32)`, `rdx: protocol (i32)` | `i64` (FD unificado no intervalo 3..7) | `-EINVAL` (-22), `-EMFILE` (-24) | Tabela unificada de descritores, `SOCKET_TABLE`, cota `max_sockets` | `src/syscall.rs`, `test_adv_unified_descriptors` |
+| **31** | `sys_connect` | **Implementada** | `rdi: sockfd (u64)`, `rsi: *const SockAddrIn`, `rdx: size (usize)` | `0` (sucesso) | `-EBADF` (-9), `-EFAULT` (-14), `-EINVAL` (-22) | Estado do socket, resolução ARP | `src/syscall.rs`, `test_adv_unified_descriptors` |
+| **32** | `sys_bind` | **Implementada** | `rdi: sockfd (u64)`, `rsi: *const SockAddrIn`, `rdx: size (usize)` | `0` (sucesso) | `-EBADF` (-9), `-EFAULT` (-14), `-EINVAL` (-22), `-EADDRINUSE` (-98) | Socket de rede, porta local vinculada | `src/syscall.rs`, `src/net/socket.rs` |
+| **33** | `sys_listen` | **Implementada** | `rdi: sockfd (u64)`, `rsi: backlog (usize)` | `0` (sucesso) | `-EBADF` (-9), `-EINVAL` (-22), `-EPERM` (-1) | Estado TCP (LISTEN), fila de conexões pendentes | `src/syscall.rs`, `src/net/socket.rs` |
+| **34** | `sys_accept` | **Implementada** | `rdi: sockfd (u64)`, `rsi: *mut SockAddrIn`, `rdx: addrlen (usize)` | `i64` (novo FD unificado 3..7) | `-EBADF` (-9), `-EFAULT` (-14), `-EINVAL` (-22), `-EAGAIN` (-11), `-EMFILE` (-24) | Tabela unificada de descritores, cota `max_sockets`, conexão TCP filha | `src/syscall.rs`, `src/net/socket.rs` |
 | **35** | `sys_send` | **Implementada** | `rdi: sockfd (u64)`, `rsi: *const u8 (buf)`, `rdx: len (usize)` | `usize` (bytes transmitidos) | `-EBADF` (-9), `-EFAULT` (-14), `-EINVAL` (-22) | Placa VirtIO-Net, firewall JinnWall (conntrack de saída) | `src/syscall.rs:214`, `test_adv_real_network_dns` |
 | **36** | `sys_recv` | **Implementada** | `rdi: sockfd (u64)`, `rsi: *mut u8 (buf)`, `rdx: len (usize)` | `usize` (bytes recebidos ou 0 se fila vazia) | `-EBADF` (-9), `-EFAULT` (-14), `-EINVAL` (-22) | Fila circular RX do socket | `src/syscall.rs:260`, `test_adv_real_network_dns` |
 
@@ -184,6 +184,31 @@ pub struct ProcessResourceStat {
 }
 ```
 
+### Metadados de Arquivo e Diretório (`FileStat`)
+As Syscalls 17 (`sys_stat`) e 18 (`sys_fstat`) preenchem a estrutura normativa `FileStat` (56 bytes, alinhamento natural a 8 bytes):
+
+```rust
+#[repr(C)]
+pub struct FileStat {
+    pub size: u64,          // Tamanho do arquivo em bytes
+    pub inode: u64,         // Identificador único (ou inode do VFS)
+    pub node_type: u32,     // 0 = File, 1 = Directory, 2 = CharDevice, 3 = BlockDevice, 4 = Symlink, 5 = Socket
+    pub mode: u32,          // Modo POSIX (ex: 0o100644 para arquivo, 0o040755 para diretório, 0o140666 para socket)
+    pub blksize: u32,       // Tamanho de bloco ideal para I/O (512 bytes)
+    pub blocks: u32,        // Blocos alocados de 512B: (size + 511) / 512
+    pub atime: u64,         // Timestamp de acesso (ticks PIT)
+    pub mtime: u64,         // Timestamp de modificação (ticks PIT)
+    pub ctime: u64,         // Timestamp de criação (ticks PIT)
+}
+```
+
+#### Flags de Reposicionamento (`sys_lseek` - Syscall 19)
+- `SEEK_SET` (`0`): O deslocamento é ajustado diretamente para `offset`. (`offset >= 0`).
+- `SEEK_CUR` (`1`): O deslocamento é somado ao offset atual do descritor (`current_offset + offset >= 0`).
+- `SEEK_END` (`2`): O deslocamento é somado ao tamanho total do arquivo (`file_size + offset >= 0`).
+
+---
+
 ### 5.1. Preempção por Hardware vs Yields Voluntários
 - O timer PIT (IRQ0, vetor 32) opera a 100 Hz gerando interrupções a cada 10 ms.
 - A cada interrupção com o quantum esgotado (`quantum_remaining == 0`), o escalonador força a troca de contexto, incrementando `irq_preemptions`.
@@ -221,6 +246,11 @@ pub struct ProcessResourceStat {
 | `EBUSY` | `-16` | Fila IPC de destino cheia. |
 | `EINVAL` | `-22` | Argumento inválido (parâmetro nulo, alinhamento incorreto ou flags incompatíveis). |
 | `EMFILE` | `-24` | Esgotamento de descritores de arquivo, sockets ou janelas do processo (`max_fds`, `max_windows`). |
+| `ESPIPE` | `-29` | Deslocamento inválido em pipe ou socket (`sys_lseek` em descritor não suportado). |
 | `ENOSYS` | `-38` | Funcionalidade ou chamada de sistema não suportada nesta configuração. |
+| `EADDRINUSE` | `-98` | Endereço ou porta local já em uso por outro socket. |
+| `ECONNRESET` | `-104` | Conexão reinicializada abruptamente pelo par remoto (RST). |
 | `ENOBUFS` | `-105` | Esgotamento de buffers compartilhados JDA (`max_jda_buffers`). |
+| `ETIMEDOUT` | `-110` | Tempo limite de conexão ou transmissão de rede esgotado. |
+| `ECONNREFUSED` | `-111` | Conexão recusada ativamente pelo par de rede. |
 | `EDQUOT` | `-122` | Cota de recursos esgotada (ex: cota máxima de tempo de CPU `max_cpu_ticks` atingida). |
