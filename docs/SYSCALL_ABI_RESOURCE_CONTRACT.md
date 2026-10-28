@@ -243,6 +243,63 @@ pub struct FileStat {
 1. **Unseekable Streams:** Tentativas de reposicionamento em fluxos de console (`fd < 3`) ou em sockets de rede retornam estritamente `-ESPIPE` (-29).
 2. **Prevenção contra Overflow:** Cálculos aritméticos utilizam `checked_add`. Saturação além de `i64::MAX` ou underflow abaixo de zero retornam `-EINVAL` (-22).
 3. **Invariância de Posição:** Caso qualquer validação falhe (offset negativo, overflow, whence inválido), o cursor de leitura/escrita do descritor permanece **estritamente inalterado**.
+
+#### Contrato de Janelas Gráficas e Fila de Eventos do Compositor (`sys_window_create`, `sys_window_update`, `sys_window_close`, `sys_window_poll_event`)
+
+As syscalls gráficas integram processos em Ring 3 ao **Aladdin Desktop Compositor**:
+
+- **`sys_window_create(title_ptr, title_len, packed_dims)` (Syscall 20):** Cria uma janela do cliente Aladdin com largura e altura empacotadas em `packed_dims = ((width as u64) << 16) | (height as u64)`. Retorna o identificador de janela `win_id >= 0` ou `-EMFILE` (-24) caso atinja a cota `max_windows`.
+- **`sys_window_update(win_id, buffer_ptr, buffer_len_bytes)` (Syscall 21):** Copia o buffer de pixels ARGB32 de Ring 3 para o framebuffer da janela do compositor. Valida o intervalo completo de páginas do buffer via `validate_user_buffer` e marca a região danificada para recomposição imediata.
+- **`sys_window_close(win_id)` (Syscall 22):** Encerra a janela, remove-a do compositor, esvazia sua fila de eventos e decrementa a cota `task.resources.open_windows`. Retorna `0` em caso de sucesso ou `-EBADF` (-9) se a janela não existir.
+- **`sys_window_poll_event(win_id, event_ptr, flags)` (Syscall 24):** Consulta o próximo evento pendente na fila FIFO da janela.
+
+##### Estrutura Binária `ClientWindowEvent` (32 bytes, alinhamento natural a 8 bytes):
+
+```rust
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct ClientWindowEvent {
+    pub event_type: u32,     // [Offset 0,  4B] Tipo de evento (EVENT_* de 0 a 7)
+    pub win_id: u32,         // [Offset 4,  4B] ID da janela de destino
+    pub x: i32,              // [Offset 8,  4B] Coordenada X relativa à área cliente
+    pub y: i32,              // [Offset 12, 4B] Coordenada Y relativa à área cliente
+    pub button_or_key: u32,  // [Offset 16, 4B] Código do botão do mouse ou caractere ASCII da tecla
+    pub modifiers: u32,      // [Offset 20, 4B] Modificadores (Shift, Ctrl, Alt)
+    pub timestamp: u64,      // [Offset 24, 8B] Timestamp monotônico em ticks do PIT (100 Hz)
+}
+```
+
+##### Tipos de Eventos e Realidade de Hardware:
+
+| Constante | Valor | Descrição Semântica | Origem e Despacho no Aladdin | Estado do Hardware |
+| :--- | :---: | :--- | :--- | :--- |
+| `EVENT_NONE` | 0 | Ausência de eventos | Retornado quando a fila está vazia | Implementado e testado |
+| `EVENT_MOUSE_DOWN` | 1 | Botão do mouse pressionado | Despachado ao clicar na área cliente com coordenadas `(x, y)` | Implementado e testado (PS/2) |
+| `EVENT_MOUSE_UP` | 2 | Botão do mouse liberado | Despachado ao soltar o botão esquerdo sobre a janela | Implementado e testado (PS/2) |
+| `EVENT_MOUSE_MOVE` | 3 | Movimento do cursor | Movimento do mouse sobre a área cliente | Suportado na ABI |
+| `EVENT_KEY_DOWN` | 4 | Tecla pressionada | Encaminhado à janela cliente com foco ativo (`button_or_key = ch as u32`) | Implementado e testado (PS/2) |
+| `EVENT_KEY_UP` | 5 | Tecla liberada | Notificação de liberação de tecla | Suportado na ABI; o driver PS/2 atual não gera break-codes |
+| `EVENT_SCROLL` | 6 | Roda de rolagem | Rolagem de conteúdo | Suportado na ABI; mouse PS/2 padrão de 3 bytes não possui wheel packet |
+| `EVENT_WINDOW_CLOSE` | 7 | Pedido de fechamento | Notificação de clique no botão `[X]` da barra de título | Implementado e testado com proteção contra descarte |
+
+##### Ciclo de Vida e Política de Fila:
+1. **Fila FIFO Delimitada (16 slots por janela):** Cada janela cliente possui uma fila circular independente de eventos (`ClientEventQueue`).
+2. **Proteção de `EVENT_WINDOW_CLOSE` contra Overflow:** Caso a fila esteja cheia devido ao fluxo intenso de eventos de mouse ou teclado, a política de inserção descarta o evento mais antigo que **não seja** `EVENT_WINDOW_CLOSE` (`drop_oldest_non_close`). O evento de fechamento nunca é descartado silenciosamente.
+3. **Ciclo de Fechamento em Dois Estágios:**
+   - No primeiro clique em `[X]`, a janela é marcada com `close_requested = true`, oculta visualmente (`is_open = false`) e um `EVENT_WINDOW_CLOSE` é inserido na fila para o processo cliente fazer a limpeza graciosa chamando `sys_window_close`.
+   - Se o usuário clicar novamente em `[X]` ou se o processo proprietário for encerrado, o compositor destrói a janela de forma forçada e recupera os recursos.
+4. **Isolamento de Processos e Recuperação:**
+   - Apenas o PID proprietário pode consultar eventos de sua janela (`poll_client_event(owner_pid, win_id)` retorna `-EPERM` para outro PID).
+   - Ao terminar o processo (`sys_exit` ou morte por sinal/cota), o kernel executa `close_windows_for_pid(pid)`, destruindo todas as janelas do processo e liberando totalmente a memória e as cotas.
+5. **Semântica de Retorno da Syscall 24:**
+   - Retorno `1`: Evento copiado com sucesso para o ponteiro `event_ptr`.
+   - Retorno `0`: Fila vazia, sem eventos pendentes no momento da consulta.
+   - Retorno `-EINVAL` (-22): `event_ptr` nulo.
+   - Retorno `-EFAULT` (-14): `event_ptr` fora do espaço de usuário, não mapeado ou cruzando limites de página não mapeada/somente leitura.
+   - Retorno `-EBADF` (-9): `win_id` inexistente ou janela já destruída.
+   - Retorno `-EPERM` (-1): Processo chamador não é o proprietário da janela.
+   - Retorno `-ENOSYS` (-38): Sessão gráfica do compositor não ativa.
+
 #### Telemetria e Controle do Firewall (`JinnWallStats` - Syscall 37)
 A Syscall 37 (`sys_jinnwall_ctrl`) permite gerenciar e auditar o firewall stateful SPI a partir de Ring 3:
 - `cmd = 0`: Consulta perfil ativo (`0` = `PublicSecure`, `1` = `Development`).

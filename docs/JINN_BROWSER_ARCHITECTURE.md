@@ -1,4 +1,4 @@
-# Jinn Browser Engine — Arquitetura e Especificação da Versão 0.1.0
+# Jinn Browser Engine — Arquitetura e Especificação da Versão 0.2.1
 
 ## 1. Visão Geral e Objetivos
 
@@ -165,42 +165,55 @@ O motor do Jinn Browser v0.1.0 foi desenvolvido de forma puramente proprietária
 
 ---
 
-## 8. Estado da Integração Nativa no Jinn OS
+## 8. Estado da Integração Nativa no Jinn OS (Versão 0.2.1)
 
-### 8.1 Capacidades Existentes no Jinn OS
-- **Syscalls de Janela do Aladdin Desktop**:
-  - `sys_window_create(width, height, title)` (Syscall 20): Cria uma janela gráfica do cliente Aladdin e retorna um identificador de janela.
-  - `sys_window_update(window_id, buffer)` (Syscall 21): Copia um buffer ARGB32 de pixels (`&[u32]`) da aplicação em Ring 3 para o framebuffer da janela gerenciada pelo compositor Aladdin.
-  - `sys_window_close(window_id)` (Syscall 22): Encerra a janela.
-- **Sistema de Arquivos VFS**: O sistema de arquivos FAT32 montado em `/disk` permite leitura de arquivos HTML, CSS e imagens via syscalls padrão de abertura e leitura de arquivos em Ring 3.
+### 8.1 Separação Arquitetural: Motor Host vs. Binário Bare-Metal Ring 3
+É fundamental distinguir os dois componentes do ecossistema do navegador:
+1. **Motor de Renderização (`browser/`)**:
+   - Desenvolvido em Rust com biblioteca padrão (`std`), projetado para compilação multiplataforma e suíte determinística com 42 testes unitários e de integração (HTML, CSS, DOM, Layout em blocos, Decodificação de imagem Netpbm, PaintCommands, viewport scrolling e hit-testing).
+   - Executa no host via `cargo run --manifest-path browser/Cargo.toml` gerando rasterização em memória e canvas ASCII.
+2. **Aplicação Gráfica Nativa de Demonstração (`apps/ola-mundo`)**:
+   - Binário ELF `#![no_std]` executado diretamente pelo microkernel Jinn OS em Ring 3 sem biblioteca C ou runtime dinâmico.
+   - Demonstra a integração visual completa com o compositor Aladdin Desktop via Syscalls 20 (`sys_window_create`), 21 (`sys_window_update`), 22 (`sys_window_close`) e 24 (`sys_window_poll_event`), validando viewport inicial (0px), rolagem intermediária (35px) e rolagem inferior (70px).
 
-### 8.2 Bloqueios Técnicos para Execução Nativa Completa
-1. **Ausência de Syscall de Eventos de Entrada em Ring 3 (Bloqueador Crítico)**:
-   - O compositor Aladdin Desktop do Jinn OS recebe interrupções do mouse (`IRQ 12`) e do teclado (`IRQ 1`), mas não possui fila de eventos IPC ou syscall de entrega (`sys_poll_event` ou `sys_recv_event`) para repassar coordenadas de cliques de mouse ou toques de teclado às janelas de clientes em Ring 3.
-   - Portanto, a exibição de pixels estáticos é possível, mas a interatividade de links e rolagem nativa fica bloqueada até a implementação dessa syscall no kernel/Aladdin.
-2. **Ausência de Rasterizador de Fontes Vetoriais em Ring 3**:
-   - O kernel possui apenas uma fonte bitmap 8x8 interna (`src/font.rs`). Ring 3 não possui rasterizador TrueType/FreeType.
-   - O `jbe-render` mitigou essa lacuna incorporando seu próprio rasterizador bitmap 8x8 no backend, permitindo desenhar texto de forma autônoma no buffer de pixels transferível via `sys_window_update`.
+### 8.2 Capacidades Validadas no Aladdin Desktop e Syscall 24
+- **Syscall 24 (`sys_window_poll_event`)**:
+  - Contrato binário rigorosamente validado (`ClientWindowEvent`: 32 bytes, alinhamento a 8 bytes).
+  - Validação completa de ponteiros de usuário através de `validate_user_buffer`, cobrindo limites canônicos (`USER_SPACE_MIN..USER_SPACE_MAX`), páginas intermediárias e rejeição segura de ponteiros que cruzam limites de páginas não mapeadas (`-EFAULT`).
+  - Isolamento por PID: uma tarefa só pode colher eventos de janelas cujo `owner_pid` coincida com seu próprio PID.
+- **Ciclo de Vida de Fechamento (`EVENT_WINDOW_CLOSE`)**:
+  - O clique no botão `[X]` da barra de título do Aladdin dispara o ciclo em dois estágios: assinala `close_requested = true`, oculta a janela (`is_open = false`) e enfileira `EVENT_WINDOW_CLOSE` com proteção prioritária contra descarte.
+  - A aplicação cliente colhe o evento via Syscall 24 e invoca `sys_window_close(win_id)`, liberando a memória e a cota do processo.
+  - Caso o cliente não responda ou em caso de segundo clique no botão de fechamento, o compositor destrói forçosamente a janela.
+  - No encerramento do processo (`sys_exit`), `close_windows_for_pid(pid)` garante que nenhuma janela ou fila órfã permaneça em memória.
+- **Proteção Anti-Overflow na Fila de Eventos**:
+  - Fila circular de 16 slots por janela (`ClientEventQueue`).
+  - Ao atingir capacidade máxima por saturação de eventos de entrada (mouse/teclado), a fila descarta o evento mais antigo que **não seja** `EVENT_WINDOW_CLOSE` (`drop_oldest_non_close`), garantindo que o sinal de fechamento da aplicação nunca seja perdido.
+
+### 8.3 Realidade de Hardware e Limitações Conhecidas
+1. **Despacho de Teclado**: O driver PS/2 atual do Jinn OS converte scancodes diretamente para caracteres ASCII imprimíveis na fila de entrada, despachando `EVENT_KEY_DOWN` para a janela em foco. Eventos de soltura (`EVENT_KEY_UP`) não são gerados pelo driver de hardware atual.
+2. **Rolagem do Mouse**: O driver de mouse opera com pacotes PS/2 padrão de 3 bytes (sem extensão de 4 bytes do protocolo wheel IntelliMouse). Portanto, `EVENT_SCROLL` via hardware físico não é emitido pelo driver de mouse; a rolagem é controlada por teclado ou pela interação direta com a barra de rolagem (scrollbar) desenhada na interface cliente.
 
 ---
 
-## 9. Matriz de Funcionalidades (Versão 0.1.0)
+## 9. Matriz de Funcionalidades (Versão 0.2.1)
 
 | Funcionalidade | Estado | Notas |
 | :--- | :--- | :--- |
-| **Workspace e Tipos Básicos (`jbe-core`)** | `Implementado e testado` | Tipos geométricos, limites configuráveis e erros tipados. |
-| **Parser de URLs e Resolução (`jbe-url`)** | `Implementado e testado` | Parser de `file:`, `http:`, `about:`, normalização e anti-traversal. |
-| **Parser HTML Máquina de Estados (`jbe-html`)** | `Implementado e testado` | Parsing de elementos, void tags, atributos, entidades e auto-recuperação. |
-| **Árvore e Arena DOM (`jbe-dom`)** | `Implementado e testado` | Armazenamento de nós em arena, percurso e aplicação de limites de nós e profundidade. |
-| **Cascata e Estilos CSS (`jbe-css`)** | `Implementado e testado` | Seletores simples, especificidade, cascata, herança e folha UA dark. |
-| **Layout de Fluxo de Blocos (`jbe-layout`)** | `Implementado e testado` | Modelo de caixas (margin, border, padding), empilhamento vertical e quebra de linhas. |
-| **Gerador de Paint Commands (`jbe-render`)** | `Implementado e testado` | Geração de `FillRect`, `DrawBorder`, `DrawText`, `RegisterClickRegion`. |
-| **Backend de Teste & Rasterizador (`jbe-render`)** | `Implementado e testado` | Framebuffer ARGB32 determinístico, fonte bitmap 8x8 e canvas ASCII. |
-| **Decodificador de Imagens Bounded (`jbe-image`)** | `Implementado e testado` | Formatos Netpbm PPM (P3/P6) com validação estrita de dimensões e memória. |
-| **Carregador de Recursos Local (`jbe-net`)** | `Implementado e testado` | Carregamento via filesystem com sandbox de diretório raiz. |
-| **Aplicação de Referência CLI (`jinn-browser`)** | `Implementado e testado` | Histórico (`back`, `forward`, `reload`), simulação de clique e render ASCII. |
-| **Execução Nativa em Ring 3 (Aladdin Desktop)** | `Implementado e testado` | Renderização cliente via `sys_window_update` e captura de eventos via `sys_window_poll_event` (Syscall 24). |
-| **Rolagem Vertical e Offset de Cliques** | `Implementado e testado` | Suporte a `scroll_y`, `repaint`, clipping e ajuste geométrico em `jbe-render` e `BrowserSession`. |
+| **Workspace e Tipos Básicos (`jbe-core`)** | `Implementado e testado` | 4 testes unitários OK. Tipos geométricos, limites configuráveis e erros tipados. |
+| **Parser de URLs e Resolução (`jbe-url`)** | `Implementado e testado` | 6 testes unitários OK. Parser de `file:`, `http:`, `about:`, normalização e anti-traversal. |
+| **Parser HTML Máquina de Estados (`jbe-html`)** | `Implementado e testado` | 6 testes unitários OK. Parsing de elementos, void tags, atributos, entidades e auto-recuperação. |
+| **Árvore e Arena DOM (`jbe-dom`)** | `Implementado e testado` | 4 testes unitários OK. Armazenamento de nós em arena, percurso e limites de nós/profundidade. |
+| **Cascata e Estilos CSS (`jbe-css`)** | `Implementado e testado` | 4 testes unitários OK. Seletores simples, especificidade, cascata, herança e folha UA dark. |
+| **Layout de Fluxo de Blocos (`jbe-layout`)** | `Implementado e testado` | 2 testes unitários OK. Modelo de caixas (margin, border, padding), empilhamento vertical e quebra de linhas. |
+| **Gerador de Paint Commands (`jbe-render`)** | `Implementado e testado` | 2 testes unitários OK. Geração de `FillRect`, `DrawBorder`, `DrawText`, `RegisterClickRegion`. |
+| **Decodificador de Imagens Bounded (`jbe-image`)** | `Implementado e testado` | 3 testes unitários OK. Formatos Netpbm PPM (P3/P6) com validação de dimensões e memória. |
+| **Carregador de Recursos Local (`jbe-net`)** | `Implementado e testado` | 2 testes unitários OK. Carregamento via filesystem com sandbox de diretório raiz. |
+| **Aplicação de Referência CLI (`jinn-browser`)** | `Implementado e testado` | 9 testes de integração OK. Histórico (`back`, `forward`, `reload`), simulação de clique e render ASCII. |
+| **Syscall 24 e Fila de Eventos (`ClientWindowEvent`)** | `Implementado e testado` | Testes unitários no Aladdin (23/23 OK) e validação adversarial no QEMU (`test_adv_window_events`). |
+| **Ciclo de Vida de `EVENT_WINDOW_CLOSE` e Overflow** | `Implementado e testado` | Dois estágios de fechamento, preservação prioritária na fila circular contra descarte. |
+| **Despacho de Entrada no Aladdin** | `Implementado e testado` | `EVENT_MOUSE_DOWN`, `EVENT_MOUSE_UP` e `EVENT_KEY_DOWN` encaminhados à janela com foco. |
+| **Rolagem e Superfície Gráfica em Ring 3** | `Implementado e testado` | Validação nativa no QEMU via `apps/ola-mundo` com 3 quadros sucessivos de rolagem e fechamento. |
 | **Transporte HTTP em Rede Real** | `Planejado` | Abstração pronta em `jbe-net`; depende de integração com sockets TCP Ring 3. |
 | **Suporte a HTTPS / TLS** | `Não implementado` | Rejeição ativa de esquemas `https:` até implementação de validação X.509. |
 | **JavaScript / DOM Dinâmico** | `Não implementado` | Deliberadamente fora do escopo para assegurar sandbox e determinismo. |
@@ -209,15 +222,15 @@ O motor do Jinn Browser v0.1.0 foi desenvolvido de forma puramente proprietária
 
 ## 10. Roadmap Técnico
 
-- **v0.2.0 (Integração Aladdin Interativa & Rolagem)** — **CONCLUÍDO**:
-  - Implementação da Syscall 24 (`sys_window_poll_event`) no kernel Jinn OS e no compositor Aladdin.
-  - Fila FIFO ring buffer de 16 slots por janela com suporte a `EVENT_MOUSE_DOWN`, `EVENT_KEY_DOWN`, `EVENT_WINDOW_CLOSE`, `EVENT_SCROLL`.
-  - Suporte a rolagem vertical de documentos na viewport (`scroll_y`, `max_scroll_y`, `repaint` e clamping automático).
-  - Ajuste de coordenadas de regiões clicáveis (`RegisterClickRegion`) sob efeito de scroll.
-  - Demonstração nativa interativa em espaço de usuário (Ring 3) em `apps/ola-mundo` com layout estilizado e navegação visual.
+- **v0.2.1 (Auditoria de Integração, Ciclo de Vida de Eventos e Validação Nativa)** — **CONCLUÍDO ✅**:
+  - Auditoria e correção da perda de eventos em `EVENT_WINDOW_CLOSE` no Aladdin Compositor.
+  - Implementação de proteção anti-overflow (`drop_oldest_non_close`) na fila circular `ClientEventQueue`.
+  - Mapeamento e despacho efetivo de cliques de mouse (`EVENT_MOUSE_DOWN`, `EVENT_MOUSE_UP`) e teclas (`EVENT_KEY_DOWN`) para a janela ativa.
+  - Validação estrita da Syscall 24 contra ataques de ponteiro nulo, kernel space, endereços não mapeados e buffers cruzando fronteiras de página.
+  - Execução e comprovação no QEMU com suíte adversarial completa e demonstração visual de rolagem em Ring 3.
 - **v0.3.0 (Recursos e Imagens Expandidas)**:
   - Decodificação de BMP e PNG básico (usando decodificador próprio limitado).
   - Suporte a formulários estáticos simples (`<input>`, `<button>`).
 - **v0.4.0 (Rede HTTP Básica)**:
-  - Conexão do `jbe-net` aos sockets TCP validados do Jinn OS (sys_socket, sys_connect, sys_send, sys_recv).
+  - Conexão do `jbe-net` aos sockets TCP validados do Jinn OS (`sys_socket`, `sys_connect`, `sys_send`, `sys_recv`).
   - Parser de respostas HTTP/1.1 estáticas (status 200, 301, 404).

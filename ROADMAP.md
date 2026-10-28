@@ -176,7 +176,7 @@ Investigação experimental para eliminar movimentação desnecessária de dados
 
 ---
 
-## 🌐 Linha de Produto: Jinn Browser Engine (v0.1.0 e v0.2.0 Concluídas ✅)
+## 🌐 Linha de Produto: Jinn Browser Engine (v0.1.0, v0.2.0 e v0.2.1 Concluídas ✅)
 
 Motor de navegação estático nativo ("in-house") e desacoplado, escrito em Rust sem dependências externas, projetado para o ecossistema Jinn OS e Aladdin Desktop Compositor.
 
@@ -190,6 +190,11 @@ Motor de navegação estático nativo ("in-house") e desacoplado, escrito em Rus
   - Captura e despacho assíncrono de eventos de entrada (`EVENT_MOUSE_DOWN`, `EVENT_KEY_DOWN`, `EVENT_WINDOW_CLOSE`, `EVENT_SCROLL`).
   - Rolagem vertical determinística na viewport (`scroll_y`, `max_scroll_y`, `repaint`) e ajuste de coordenadas em regiões de clique.
   - Demonstração nativa interativa em espaço de usuário Ring 3 (`apps/ola-mundo`) renderizando interface completa com barra de navegação, cards e scrollbar responsiva.
+- [x] **v0.2.1 — Auditoria de Integração, Ciclo de Vida de Eventos e Validação Nativa**:
+  - Auditoria completa do ciclo de vida de `EVENT_WINDOW_CLOSE`: correção de destruição prematura da fila, introdução do ciclo de fechamento em dois estágios (`close_requested`), e descarte priorizado anti-overflow protegendo eventos críticos de fechamento contra saturação de eventos de entrada.
+  - Despacho real de entrada no compositor Aladdin: mapeamento de cliques na área cliente (`EVENT_MOUSE_DOWN`, `EVENT_MOUSE_UP`) com coordenadas relativas e teclas (`EVENT_KEY_DOWN`) para a janela ativa.
+  - Endurecimento adversarial da Syscall 24 (`sys_window_poll_event`): layout binário `ClientWindowEvent` auditado (`size = 32`, `align = 8`), validação de memória canônica e rejeição segura de buffers cruzando fronteiras de páginas não mapeadas (`-EFAULT`).
+  - Validação nativa comprovada no QEMU com suíte adversarial completa e demonstração de rolagem de viewport (0px, 35px, 70px) e encerramento sem corrupção.
 
 ---
 

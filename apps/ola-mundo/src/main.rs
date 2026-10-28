@@ -1108,15 +1108,17 @@ unsafe fn test_tcp_network_interoperability() {
 /// Teste E: Pressão e Limites de Memória (Quota max_frames, -ENOMEM e Restauração)
 unsafe fn test_memory_pressure() {
     print_str(b"[ADV-TEST 5/5] test_memory_pressure: Alocando paginas ate max_frames...\n");
-    let mut pages = [0u64; 32];
+    let mut pages = [0u64; 35];
     let mut count = 0usize;
     let mut hit_limit = false;
 
-    for i in 0..32 {
+    for i in 0..35 {
         let ret = sys_alloc_page();
         if ret > 0 {
-            pages[count] = ret as u64;
-            count += 1;
+            if count < pages.len() {
+                pages[count] = ret as u64;
+                count += 1;
+            }
         } else if ret == ENOMEM {
             hit_limit = true;
             print_str(b"  Alocacao #");
@@ -1234,6 +1236,13 @@ unsafe fn test_window_stress() {
 unsafe fn test_adv_window_events() {
     print_str(b"\n--- Teste Adversarial: Syscall 24 (sys_window_poll_event) e Fila de Eventos ---\n");
 
+    // 0. Validação de Contrato Binário e Alinhamento da ABI
+    if core::mem::size_of::<ClientWindowEvent>() != 32 || core::mem::align_of::<ClientWindowEvent>() != 8 {
+        print_str(b"  [FAIL] ClientWindowEvent ABI incorreta! Size != 32 ou Align != 8\n");
+        return;
+    }
+    print_str(b"  [PASS] ClientWindowEvent layout validado: size=32 bytes, align=8 bytes.\n");
+
     // 1. Verificação de Integridade de Ponteiros de Usuário
     let ret_null = sys_window_poll_event(0, core::ptr::null_mut());
     if ret_null != EINVAL {
@@ -1252,6 +1261,34 @@ unsafe fn test_adv_window_events() {
         return;
     }
     print_str(b"  [PASS] sys_window_poll_event rejeitou ponteiro no espaco de kernel com -EFAULT (-14).\n");
+
+    let ret_unmapped = sys_window_poll_event(0, 0x0000_1000_0000_0000 as *mut ClientWindowEvent);
+    if ret_unmapped != EFAULT {
+        print_str(b"  [FAIL] sys_window_poll_event com ponteiro nao mapeado nao retornou -EFAULT (-14)! Ret: ");
+        print_i64(ret_unmapped);
+        print_str(b"\n");
+        return;
+    }
+    print_str(b"  [PASS] sys_window_poll_event rejeitou endereco nao mapeado com -EFAULT (-14).\n");
+
+    // Verificação de buffer cruzando fronteira entre página mapeada e não mapeada
+    let page_vaddr = sys_alloc_page();
+    if page_vaddr > 0 {
+        let straddle_ptr = (page_vaddr as usize + 4096 - 16) as *mut ClientWindowEvent;
+        let ret_straddle = sys_window_poll_event(0, straddle_ptr);
+        let _ = sys_free_page(page_vaddr as u64);
+        if ret_straddle != EFAULT {
+            print_str(b"  [FAIL] sys_window_poll_event com struct cruzando pagina nao mapeada nao retornou -EFAULT (-14)! Ret: ");
+            print_i64(ret_straddle);
+            print_str(b"\n");
+            return;
+        }
+        print_str(b"  [PASS] sys_window_poll_event rejeitou struct cruzando fronteira de pagina nao mapeada com -EFAULT (-14).\n");
+    } else {
+        print_str(b"  [WARN] sys_alloc_page retornou erro no teste de fronteira: ");
+        print_i64(page_vaddr);
+        print_str(b"\n");
+    }
 
     // 2. Janela Inexistente
     let mut ev: ClientWindowEvent = core::mem::zeroed();
@@ -1492,8 +1529,8 @@ unsafe fn render_browser_frame(buf: &mut [u32], scroll_y: usize) {
 }
 
 unsafe fn run_gui_demo() {
-    print_str(b"\n[GUI] Iniciando demonstracao do Jinn Browser v0.2.0 no Aladdin Desktop...\n");
-    let win_id = sys_window_create(b"Jinn Browser v0.2.0", WIN_W, WIN_H);
+    print_str(b"\n[GUI] Iniciando demonstracao do Jinn Browser v0.2.1 no Aladdin Desktop...\n");
+    let win_id = sys_window_create(b"Jinn Browser v0.2.1", WIN_W, WIN_H);
     if win_id >= 0 {
         let win_id = win_id as usize;
         let buf_raw_mut = core::ptr::addr_of_mut!(WIN_BUF) as *mut u32;
@@ -1526,7 +1563,7 @@ unsafe fn run_gui_demo() {
 
         print_str(b"[GUI] Fechando janela do Jinn Browser...\n");
         let _ = sys_window_close(win_id);
-        print_str(b"[GUI] [PASS] Demonstracao visual e rolagem do Jinn Browser 0.2.0 concluidas com exito!\n");
+        print_str(b"[GUI] [PASS] Demonstracao visual e rolagem do Jinn Browser 0.2.1 concluidas com exito!\n");
     } else {
         print_str(b"[GUI] [FAIL] sys_window_create falhou para Jinn Browser demo!\n");
     }
