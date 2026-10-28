@@ -6,7 +6,7 @@ use jbe_dom::DomTree;
 use jbe_html::parse_html;
 use jbe_layout::{build_and_layout_tree, LayoutBox};
 use jbe_net::ResourceLoader;
-use jbe_render::{generate_paint_commands, RenderBackend, TestBackend};
+use jbe_render::{generate_paint_commands_with_scroll, RenderBackend, TestBackend};
 use jbe_url::Url;
 
 /// Browser navigation session state.
@@ -20,6 +20,7 @@ pub struct BrowserSession {
     pub current_layout: Option<LayoutBox>,
     pub viewport_width: u32,
     pub viewport_height: u32,
+    pub scroll_y: f32,
 }
 
 impl BrowserSession {
@@ -34,6 +35,7 @@ impl BrowserSession {
             current_layout: None,
             viewport_width,
             viewport_height,
+            scroll_y: 0.0,
         }
     }
 
@@ -96,20 +98,49 @@ impl BrowserSession {
         let layout_tree = build_and_layout_tree(&dom, &computed_styles, self.viewport_width as f32)
             .ok_or_else(|| EngineError::Internal("Failed to build layout tree".into()))?;
 
-        // 6. Paint Commands
-        let paint_commands = generate_paint_commands(&layout_tree, &dom);
-
-        // 7. Backend Execution
-        self.backend.begin_frame(self.viewport_width, self.viewport_height);
-        for cmd in &paint_commands {
-            self.backend.execute_command(cmd);
-        }
-        self.backend.end_frame();
-
+        self.scroll_y = 0.0;
         self.current_dom = Some(dom);
         self.current_layout = Some(layout_tree);
 
+        // 6. Paint Commands & Backend Execution
+        self.repaint();
+
         Ok(())
+    }
+
+    /// Returns total scrollable content height of current document.
+    pub fn content_height(&self) -> f32 {
+        self.current_layout.as_ref().map(|l| l.content_height()).unwrap_or(0.0)
+    }
+
+    /// Returns max possible scroll_y given viewport height.
+    pub fn max_scroll_y(&self) -> f32 {
+        (self.content_height() - self.viewport_height as f32).max(0.0)
+    }
+
+    /// Scrolls vertically by delta_y pixels, clamping between 0 and max_scroll_y.
+    pub fn scroll(&mut self, delta_y: f32) -> bool {
+        let old = self.scroll_y;
+        let max = self.max_scroll_y();
+        self.scroll_y = (self.scroll_y + delta_y).clamp(0.0, max);
+        if (self.scroll_y - old).abs() > 0.001 {
+            self.repaint();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Repaints the current document using the active scroll_y offset.
+    pub fn repaint(&mut self) {
+        if let (Some(layout), Some(dom)) = (&self.current_layout, &self.current_dom) {
+            let paint_commands = generate_paint_commands_with_scroll(layout, dom, 0.0, self.scroll_y);
+            self.backend.begin_frame(self.viewport_width, self.viewport_height);
+            for cmd in &paint_commands {
+                self.backend.execute_command(cmd);
+            }
+            self.backend.end_frame();
+        }
     }
 
     /// Returns current URL if any.

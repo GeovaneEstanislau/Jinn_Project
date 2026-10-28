@@ -109,11 +109,16 @@ def main():
         f.write(bpb)
 
         # 3. FSInfo (LBA 2049)
+        elf_clusters_needed = max(1, (len(elf_bytes) + cluster_size - 1) // cluster_size)
+        index_clus = 4 + elf_clusters_needed
+        about_clus = index_clus + 1
+        next_free_clus = about_clus + 1
+
         fsinfo = bytearray(512)
         struct.pack_into("<I", fsinfo, 0, 0x41615252)
         struct.pack_into("<I", fsinfo, 484, 0x61417272)
         struct.pack_into("<I", fsinfo, 488, 0xFFFFFFFF)
-        struct.pack_into("<I", fsinfo, 492, 5)
+        struct.pack_into("<I", fsinfo, 492, next_free_clus)
         fsinfo[510] = 0x55
         fsinfo[511] = 0xAA
 
@@ -127,11 +132,13 @@ def main():
         struct.pack_into("<I", fat_table, 8, 0x0FFFFFFF)  # Clus 2 (Root)
         struct.pack_into("<I", fat_table, 12, 0x0FFFFFFF) # Clus 3 (README)
 
-        elf_clusters_needed = max(1, (len(elf_bytes) + cluster_size - 1) // cluster_size)
         for i in range(elf_clusters_needed):
             curr_c = 4 + i
             val = 0x0FFFFFFF if i == elf_clusters_needed - 1 else curr_c + 1
             struct.pack_into("<I", fat_table, curr_c * 4, val)
+
+        struct.pack_into("<I", fat_table, index_clus * 4, 0x0FFFFFFF)
+        struct.pack_into("<I", fat_table, about_clus * 4, 0x0FFFFFFF)
 
         fat1_offset = part_offset + 32 * sector_size
         fat2_offset = part_offset + (32 + sectors_per_fat) * sector_size
@@ -154,9 +161,24 @@ def main():
             struct.pack_into("<H", root_dir, off + 26, clus_lo)
             struct.pack_into("<I", root_dir, off + 28, size)
 
+        index_html = (
+            b"<!DOCTYPE html>\n<html>\n<head><title>Jinn OS Portal</title></head>\n"
+            b"<body>\n  <h1>Jinn Browser 0.2.0</h1>\n"
+            b"  <p>Bem-vindo ao Jinn Browser rodando nativamente sobre o microkernel Jinn OS e Aladdin Desktop Compositor.</p>\n"
+            b"  <p><a href=\"about.htm\">Sobre o Sistema</a></p>\n</body>\n</html>"
+        )
+        about_html = (
+            b"<!DOCTYPE html>\n<html>\n<head><title>Sobre o Jinn</title></head>\n"
+            b"<body>\n  <h1>Sobre o Jinn OS</h1>\n"
+            b"  <p>Microkernel x86_64 com isolamento Ring 3, IPC sincrono e assincrono e composicao visual acelerada pelo Aladdin.</p>\n"
+            b"  <p><a href=\"index.htm\">Voltar ao Inicio</a></p>\n</body>\n</html>"
+        )
+
         add_entry(0, "JINN DISK  ", 0x08, 0, 0)
         add_entry(1, "README  TXT", 0x20, 3, len(readme_text))
         add_entry(2, "OLA     ELF", 0x20, 4, len(elf_bytes))
+        add_entry(3, "INDEX   HTM", 0x20, index_clus, len(index_html))
+        add_entry(4, "ABOUT   HTM", 0x20, about_clus, len(about_html))
 
         f.seek(data_start_offset)
         f.write(root_dir)
@@ -169,9 +191,17 @@ def main():
         f.seek(data_start_offset + (4 - 2) * cluster_size)
         f.write(elf_bytes)
 
+        # Cluster index_clus: INDEX.HTM
+        f.seek(data_start_offset + (index_clus - 2) * cluster_size)
+        f.write(index_html)
+
+        # Cluster about_clus: ABOUT.HTM
+        f.seek(data_start_offset + (about_clus - 2) * cluster_size)
+        f.write(about_html)
+
     print(f"Disco virtual criado com sucesso em: {disk_path}")
     print(f"  - Particao FAT32: LBA 2048 (31 MiB)")
-    print(f"  - Arquivos: README.TXT ({len(readme_text)} bytes), OLA.ELF ({len(elf_bytes)} bytes)")
+    print(f"  - Arquivos: README.TXT ({len(readme_text)} bytes), OLA.ELF ({len(elf_bytes)} bytes), INDEX.HTM ({len(index_html)} bytes), ABOUT.HTM ({len(about_html)} bytes)")
 
 if __name__ == "__main__":
     main()

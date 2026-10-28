@@ -163,11 +163,15 @@ Write-BytesAt $part1ByteOffset $bpb
 Write-BytesAt ($part1ByteOffset + 6 * $sectorSize) $bpb
 
 # FSInfo Sector (Setor 1 da partição FAT32)
+$indexClus = 4 + $elfClustersNeeded
+$aboutClus = $indexClus + 1
+$nextFreeClus = $aboutClus + 1
+
 $fsinfo = [byte[]]::new(512)
 [System.BitConverter]::GetBytes([uint32]0x41615252).CopyTo($fsinfo, 0)   # LeadSig "RRaA"
 [System.BitConverter]::GetBytes([uint32]0x61417272).CopyTo($fsinfo, 484) # StrucSig "rrAa"
 [System.BitConverter]::GetBytes([uint32]::MaxValue).CopyTo($fsinfo, 488) # FreeCount desconhecido
-[System.BitConverter]::GetBytes([uint32]5).CopyTo($fsinfo, 492)          # Next free cluster = 5
+[System.BitConverter]::GetBytes([uint32]$nextFreeClus).CopyTo($fsinfo, 492) # Next free cluster
 $fsinfo[510] = 0x55; $fsinfo[511] = 0xAA
 Write-BytesAt ($part1ByteOffset + 1 * $sectorSize) $fsinfo
 
@@ -191,6 +195,8 @@ for ($i = 0; $i -lt $elfClustersNeeded; $i++) {
         Set-FatEntry $currentClus ([uint32]($currentClus + 1))
     }
 }
+Set-FatEntry $indexClus 0x0FFFFFFF
+Set-FatEntry $aboutClus 0x0FFFFFFF
 
 $fat1Offset = $part1ByteOffset + [long]32 * $sectorSize
 $fat2Offset = $part1ByteOffset + [long](32 + $sectorsPerFat) * $sectorSize
@@ -215,13 +221,44 @@ function Add-DirEntry([int]$index, [string]$name11, [byte]$attr, [uint32]$firstC
     [System.BitConverter]::GetBytes($size).CopyTo($rootDir, $offset + 28)
 }
 
+# Documentos HTML de teste para o Jinn Browser v0.2.0
+$indexHtmlText = @"
+<!DOCTYPE html>
+<html>
+<head><title>Jinn OS Portal</title></head>
+<body>
+  <h1>Jinn Browser 0.2.0</h1>
+  <p>Bem-vindo ao Jinn Browser rodando nativamente sobre o microkernel Jinn OS e Aladdin Desktop Compositor.</p>
+  <p><a href="about.htm">Sobre o Sistema</a></p>
+</body>
+</html>
+"@
+$indexHtmlBytes = [System.Text.Encoding]::ASCII.GetBytes($indexHtmlText)
+
+$aboutHtmlText = @"
+<!DOCTYPE html>
+<html>
+<head><title>Sobre o Jinn</title></head>
+<body>
+  <h1>Sobre o Jinn OS</h1>
+  <p>Microkernel x86_64 com isolamento Ring 3, IPC sincrono e assincrono e composicao visual acelerada pelo Aladdin.</p>
+  <p><a href="index.htm">Voltar ao Inicio</a></p>
+</body>
+</html>
+"@
+$aboutHtmlBytes = [System.Text.Encoding]::ASCII.GetBytes($aboutHtmlText)
+
 Add-DirEntry 0 "JINN DISK  " 0x08 0 0
 Add-DirEntry 1 "README  TXT" 0x20 3 ($readmeBytes.Length)
 Add-DirEntry 2 "OLA     ELF" 0x20 4 ($elfBytes.Length)
+Add-DirEntry 3 "INDEX   HTM" 0x20 $indexClus ($indexHtmlBytes.Length)
+Add-DirEntry 4 "ABOUT   HTM" 0x20 $aboutClus ($aboutHtmlBytes.Length)
 
 Write-BytesAt $dataStartByteOffset1 $rootDir
 Write-BytesAt ($dataStartByteOffset1 + [long](3 - 2) * $clusterBytes) $readmeBytes
 Write-BytesAt ($dataStartByteOffset1 + [long](4 - 2) * $clusterBytes) $elfBytes
+Write-BytesAt ($dataStartByteOffset1 + [long]($indexClus - 2) * $clusterBytes) $indexHtmlBytes
+Write-BytesAt ($dataStartByteOffset1 + [long]($aboutClus - 2) * $clusterBytes) $aboutHtmlBytes
 
 # ======================================================================
 # 3. FORMATAÇÃO DA PARTIÇÃO 2: Ext2 (/ext2)

@@ -202,3 +202,108 @@ fn test_navigation_history_back_forward_reload() {
     assert!(session.reload().is_ok());
     assert_eq!(session.current_url().unwrap().path, "/page2.html");
 }
+
+#[test]
+fn test_viewport_scrolling_and_clamping() {
+    let mut loader = MockLoader::new();
+    let long_html = r#"
+        <html>
+            <head>
+                <style>
+                    body { background-color: #12121a; padding: 10px; }
+                    .card { height: 200px; margin-bottom: 20px; background-color: #1f1f2e; }
+                </style>
+            </head>
+            <body>
+                <div class="card">Card 1</div>
+                <div class="card">Card 2</div>
+                <div class="card">Card 3</div>
+                <div class="card">Card 4</div>
+            </body>
+        </html>
+    "#;
+    loader.insert("file:///long.html", long_html.as_bytes().to_vec(), "text/html");
+
+    // Viewport height is 300px, content will be > 800px
+    let mut session = BrowserSession::new(400, 300, Box::new(loader));
+    session.navigate("file:///long.html").unwrap();
+
+    let content_h = session.content_height();
+    assert!(content_h > 800.0, "Content height should exceed 800px, got {}", content_h);
+    let max_scroll = session.max_scroll_y();
+    assert_eq!(max_scroll, content_h - 300.0);
+
+    // Initial scroll is 0.0
+    assert_eq!(session.scroll_y, 0.0);
+
+    // Scroll down by 50px
+    assert!(session.scroll(50.0));
+    assert_eq!(session.scroll_y, 50.0);
+
+    // Scroll up by 20px
+    assert!(session.scroll(-20.0));
+    assert_eq!(session.scroll_y, 30.0);
+
+    // Negative scroll clamps at 0.0
+    session.scroll(-100.0);
+    assert_eq!(session.scroll_y, 0.0);
+
+    // Excessive scroll clamps at max_scroll_y
+    session.scroll(9999.0);
+    assert_eq!(session.scroll_y, max_scroll);
+}
+
+#[test]
+fn test_link_click_interaction_after_scrolling() {
+    let mut loader = MockLoader::new();
+    let doc1 = r#"
+        <html>
+            <head>
+                <style>
+                    body { padding: 0px; margin: 0px; }
+                    .spacer { height: 800px; background-color: #101010; }
+                    .linkbox { height: 50px; background-color: #202020; }
+                </style>
+            </head>
+            <body>
+                <div class="spacer">Spacer 800px</div>
+                <div class="linkbox">
+                    <a href="page_target.html">Click Scrolled Target</a>
+                </div>
+            </body>
+        </html>
+    "#;
+    let doc2 = r#"
+        <html>
+            <body>
+                <h1>Target Page Loaded Successfully</h1>
+            </body>
+        </html>
+    "#;
+
+    loader.insert("file:///doc1.html", doc1.as_bytes().to_vec(), "text/html");
+    loader.insert("file:///page_target.html", doc2.as_bytes().to_vec(), "text/html");
+
+    // Viewport height: 300px
+    let mut session = BrowserSession::new(400, 300, Box::new(loader));
+    session.navigate("file:///doc1.html").unwrap();
+
+    // Link is initially at Y >= 800px, which is outside the 300px viewport
+    let hit_before = session.click_at(Point::new(20.0, 50.0)).unwrap();
+    assert_eq!(hit_before, None);
+
+    // Scroll down by 550px so linkbox (at Y=800) is now visible at client Y = 800 - 550 = 250px
+    session.scroll(550.0);
+    assert_eq!(session.scroll_y, 550.0);
+
+    // Now click lands on the scrolled link region (Y=250..300)!
+    let hit_after = session.click_at(Point::new(20.0, 260.0)).unwrap();
+    assert_eq!(hit_after, Some("page_target.html".to_string()));
+
+    // Verify navigation occurred to doc2
+    assert_eq!(session.current_url().unwrap().path, "/page_target.html");
+    let dom = session.current_dom.as_ref().unwrap();
+    let h1_id = dom.find_first_by_tag("h1").unwrap();
+    assert_eq!(dom.text_content(h1_id), "Target Page Loaded Successfully");
+}
+

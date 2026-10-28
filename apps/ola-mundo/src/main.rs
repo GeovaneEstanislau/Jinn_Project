@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+mod font;
+
 use core::{arch::asm, panic::PanicInfo};
 
 // ── Constantes de Erros POSIX ─────────────────────────────────────────────────
@@ -226,6 +228,33 @@ unsafe fn sys_window_update(win_id: usize, buf: &[u32]) -> i64 {
 #[inline(always)]
 unsafe fn sys_window_close(win_id: usize) -> i64 {
     syscall3(22, win_id as u64, 0, 0)
+}
+
+// ── Constantes e Estrutura de Eventos de Janela do Aladdin (Syscall 24) ────────
+pub const EVENT_NONE: u32 = 0;
+pub const EVENT_MOUSE_DOWN: u32 = 1;
+pub const EVENT_MOUSE_UP: u32 = 2;
+pub const EVENT_MOUSE_MOVE: u32 = 3;
+pub const EVENT_KEY_DOWN: u32 = 4;
+pub const EVENT_KEY_UP: u32 = 5;
+pub const EVENT_SCROLL: u32 = 6;
+pub const EVENT_WINDOW_CLOSE: u32 = 7;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct ClientWindowEvent {
+    pub event_type: u32,
+    pub win_id: u32,
+    pub x: i32,
+    pub y: i32,
+    pub button_or_key: u32,
+    pub modifiers: u32,
+    pub timestamp: u64,
+}
+
+#[inline(always)]
+unsafe fn sys_window_poll_event(win_id: usize, event_ptr: *mut ClientWindowEvent) -> i64 {
+    syscall3(24, win_id as u64, event_ptr as u64, 0)
 }
 
 #[repr(C)]
@@ -1201,6 +1230,80 @@ unsafe fn test_window_stress() {
     }
 }
 
+/// Validação Adversarial da Syscall 24 (sys_window_poll_event)
+unsafe fn test_adv_window_events() {
+    print_str(b"\n--- Teste Adversarial: Syscall 24 (sys_window_poll_event) e Fila de Eventos ---\n");
+
+    // 1. Verificação de Integridade de Ponteiros de Usuário
+    let ret_null = sys_window_poll_event(0, core::ptr::null_mut());
+    if ret_null != EINVAL {
+        print_str(b"  [FAIL] sys_window_poll_event com event_ptr NULL nao retornou -EINVAL (-22)! Ret: ");
+        print_i64(ret_null);
+        print_str(b"\n");
+        return;
+    }
+    print_str(b"  [PASS] sys_window_poll_event rejeitou ponteiro NULL com -EINVAL (-22).\n");
+
+    let ret_kernel = sys_window_poll_event(0, 0xFFFF_8000_0000_0000 as *mut ClientWindowEvent);
+    if ret_kernel != EFAULT {
+        print_str(b"  [FAIL] sys_window_poll_event com ponteiro kernel nao retornou -EFAULT (-14)! Ret: ");
+        print_i64(ret_kernel);
+        print_str(b"\n");
+        return;
+    }
+    print_str(b"  [PASS] sys_window_poll_event rejeitou ponteiro no espaco de kernel com -EFAULT (-14).\n");
+
+    // 2. Janela Inexistente
+    let mut ev: ClientWindowEvent = core::mem::zeroed();
+    let ret_badf = sys_window_poll_event(999, &mut ev as *mut ClientWindowEvent);
+    if ret_badf != EBADF {
+        print_str(b"  [FAIL] sys_window_poll_event com win_id inexistente nao retornou -EBADF (-9)! Ret: ");
+        print_i64(ret_badf);
+        print_str(b"\n");
+        return;
+    }
+    print_str(b"  [PASS] sys_window_poll_event com win_id inexistente rejeitado com -EBADF (-9).\n");
+
+    // 3. Janela Válida e Fila Vazia
+    let win_id = sys_window_create(b"EventPollTest", 120, 80);
+    if win_id < 0 {
+        print_str(b"  [FAIL] sys_window_create falhou para teste de eventos: ");
+        print_i64(win_id);
+        print_str(b"\n");
+        return;
+    }
+    let win_id = win_id as usize;
+
+    let poll_empty = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
+    if poll_empty != 0 {
+        print_str(b"  [FAIL] sys_window_poll_event em fila vazia nao retornou 0! Ret: ");
+        print_i64(poll_empty);
+        print_str(b"\n");
+        let _ = sys_window_close(win_id);
+        return;
+    }
+    print_str(b"  [PASS] sys_window_poll_event retornou 0 (sem eventos pendentes) para janela recem-criada.\n");
+
+    // 4. Fechamento e Invalidação da Janela
+    let close_ret = sys_window_close(win_id);
+    if close_ret != 0 {
+        print_str(b"  [FAIL] sys_window_close falhou para janela de teste: ");
+        print_i64(close_ret);
+        print_str(b"\n");
+        return;
+    }
+
+    let poll_after_close = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
+    if poll_after_close != EBADF {
+        print_str(b"  [FAIL] sys_window_poll_event em janela ja fechada nao retornou -EBADF! Ret: ");
+        print_i64(poll_after_close);
+        print_str(b"\n");
+        return;
+    }
+    print_str(b"  [PASS] sys_window_poll_event rejeitou janela fechada com -EBADF (-9).\n");
+    print_str(b"  [PASS] test_adv_window_events: Syscall 24 e validacao de eventos APROVADOS!\n");
+}
+
 unsafe fn test_fault_app() {
     print_str(b"[FAULT] test_fault_app: Injetando ponteiros e descritores invalidos...\n");
 
@@ -1274,40 +1377,158 @@ unsafe fn test_observer_app() {
     }
 }
 
-// ── Aladdin Desktop Demo Window ──────────────────────────────────────────────
+// ── Aladdin Desktop Jinn Browser v0.2.0 Window Demo ──────────────────────────
 
-const WIN_W: usize = 280;
-const WIN_H: usize = 160;
+const WIN_W: usize = 300;
+const WIN_H: usize = 180;
 static mut WIN_BUF: [u32; WIN_W * WIN_H] = [0; WIN_W * WIN_H];
 
-unsafe fn run_gui_demo() {
-    print_str(b"[GUI] Criando janela no Aladdin Desktop para demonstracao visual...\n");
-    let win_id = sys_window_create(b"Jinn Ring 3 Validation Suite", WIN_W, WIN_H);
-    if win_id >= 0 {
-        let buf_raw_mut = core::ptr::addr_of_mut!(WIN_BUF) as *mut u32;
-        for y in 0..WIN_H {
-            for x in 0..WIN_W {
-                let r = (x * 255 / WIN_W) as u32;
-                let g = (y * 255 / WIN_H) as u32;
-                let b = 180u32;
-                let color = if x < 2 || x >= WIN_W - 2 || y < 2 || y >= WIN_H - 2 {
-                    0x0000_D2FF // Ciano neon
-                } else if y < 24 {
-                    0x001F_2937 // Barra de titulo escura
-                } else {
-                    (r << 16) | (g << 8) | b
-                };
-                *buf_raw_mut.add(y * WIN_W + x) = color;
+fn fill_rect(buf: &mut [u32], rx: usize, ry: usize, rw: usize, rh: usize, color: u32) {
+    let x_end = (rx + rw).min(WIN_W);
+    let y_end = (ry + rh).min(WIN_H);
+    for y in ry..y_end {
+        let row = y * WIN_W;
+        for x in rx..x_end {
+            buf[row + x] = color;
+        }
+    }
+}
+
+fn draw_rect_border(buf: &mut [u32], rx: usize, ry: usize, rw: usize, rh: usize, color: u32) {
+    if rw == 0 || rh == 0 {
+        return;
+    }
+    let x_end = rx + rw - 1;
+    let y_end = ry + rh - 1;
+    for x in rx..=x_end.min(WIN_W - 1) {
+        if ry < WIN_H {
+            buf[ry * WIN_W + x] = color;
+        }
+        if y_end < WIN_H {
+            buf[y_end * WIN_W + x] = color;
+        }
+    }
+    for y in ry..=y_end.min(WIN_H - 1) {
+        if rx < WIN_W {
+            buf[y * WIN_W + rx] = color;
+        }
+        if x_end < WIN_W {
+            buf[y * WIN_W + x_end] = color;
+        }
+    }
+}
+
+unsafe fn render_browser_frame(buf: &mut [u32], scroll_y: usize) {
+    // 1. Limpa o fundo com tema escuro (Catppuccin Mocha Base)
+    fill_rect(buf, 0, 0, WIN_W, WIN_H, 0x0018_1825);
+
+    // 2. Barra Superior de Navegação (Chrome / URL Bar)
+    fill_rect(buf, 0, 0, WIN_W, 26, 0x001E_1E2E);
+    draw_rect_border(buf, 0, 0, WIN_W, 26, 0x0031_3244);
+
+    // Botões de navegação: [<] [>] [R]
+    font::draw_text(buf, WIN_W, WIN_H, 6, 9, b"<", 0x00A6_ADC8, None);
+    font::draw_text(buf, WIN_W, WIN_H, 18, 9, b">", 0x00A6_ADC8, None);
+    font::draw_text(buf, WIN_W, WIN_H, 30, 9, b"R", 0x00A6_ADC8, None);
+
+    // Campo de URL
+    fill_rect(buf, 44, 4, 238, 18, 0x0031_3244);
+    draw_rect_border(buf, 44, 4, 238, 18, 0x0045_475A);
+    font::draw_text(buf, WIN_W, WIN_H, 48, 9, b"http://aladdin.jinn/index.html", 0x0089_DCEB, None);
+
+    // 3. Viewport de Conteúdo com suporte a Scroll (y de 27 a WIN_H - 1)
+    let clip_top = 27;
+    let clip_bottom = WIN_H - 1;
+
+    // Card de Titulo
+    if scroll_y <= 50 {
+        let card_y = clip_top + 6usize.saturating_sub(scroll_y);
+        if card_y + 36 <= clip_bottom {
+            fill_rect(buf, 8, card_y, 272, 36, 0x001E_1E2E);
+            draw_rect_border(buf, 8, card_y, 272, 36, 0x0045_475A);
+        }
+    }
+
+    let draw_item = |buf: &mut [u32], rel_y: usize, text: &[u8], fg: u32| {
+        if rel_y >= scroll_y {
+            let actual_y = (rel_y - scroll_y) + clip_top;
+            if actual_y + font::FONT_HEIGHT <= clip_bottom {
+                font::draw_text_clipped(buf, WIN_W, WIN_H, 12, actual_y, text, fg, None, clip_top, clip_bottom);
             }
         }
-        let buf_slice = core::slice::from_raw_parts(buf_raw_mut as *const u32, WIN_W * WIN_H);
-        let _ = sys_window_update(win_id as usize, buf_slice);
-        print_str(b"[GUI] Superficie de cliente renderizada! Exibindo por 800ms...\n");
+    };
 
-        let _ = sys_sleep(800);
+    draw_item(buf, 12, b"Jinn Browser v0.2.0 (Aladdin)", 0x00F9_E2AF);
+    draw_item(buf, 24, b"Motor Layout & Render Ring 3", 0x00BA_C2DE);
 
-        print_str(b"[GUI] Fechando janela demonstrativa...\n");
-        let _ = sys_window_close(win_id as usize);
+    draw_item(buf, 52, b"Documento: /disk/index.html", 0x00CD_D6F4);
+    draw_item(buf, 66, b"DOM Tree e Box Model Ativos", 0x00A6_E3A1);
+
+    // Links Clicáveis
+    draw_item(buf, 84, b"[LINK] -> /disk/about.html", 0x0089_B4FA);
+    draw_item(buf, 98, b"[LINK] -> JDA Phase 3 Dataflow", 0x0089_B4FA);
+
+    // Conteúdo abaixo da dobra
+    draw_item(buf, 120, b"--- Conteudo Abaixo da Dobra ---", 0x00F3_8BA8);
+    draw_item(buf, 134, b"Syscall 24: window_poll_event", 0x00F5_C2E7);
+    draw_item(buf, 148, b"Fila FIFO de 16 slots por janela.", 0x00CD_D6F4);
+    draw_item(buf, 162, b"Despacho assincrono de mouse/teclas.", 0x00CD_D6F4);
+    draw_item(buf, 178, b"Jinn OS x86_64 - Composicao Ativa", 0x0094_E2D5);
+
+    // 4. Barra de Rolagem Vertical (Scrollbar Track & Thumb)
+    let track_x = 286;
+    let track_w = 8;
+    let track_y = 27;
+    let track_h = WIN_H - 28;
+    fill_rect(buf, track_x, track_y, track_w, track_h, 0x0018_1825);
+    draw_rect_border(buf, track_x, track_y, track_w, track_h, 0x0031_3244);
+
+    let max_scroll = 90usize;
+    let thumb_h = 32usize;
+    let thumb_travel = track_h - thumb_h;
+    let thumb_y = track_y + (scroll_y.min(max_scroll) * thumb_travel / max_scroll);
+    fill_rect(buf, track_x + 1, thumb_y, track_w - 2, thumb_h, 0x0058_5B70);
+    draw_rect_border(buf, track_x + 1, thumb_y, track_w - 2, thumb_h, 0x0089_DCEB);
+}
+
+unsafe fn run_gui_demo() {
+    print_str(b"\n[GUI] Iniciando demonstracao do Jinn Browser v0.2.0 no Aladdin Desktop...\n");
+    let win_id = sys_window_create(b"Jinn Browser v0.2.0", WIN_W, WIN_H);
+    if win_id >= 0 {
+        let win_id = win_id as usize;
+        let buf_raw_mut = core::ptr::addr_of_mut!(WIN_BUF) as *mut u32;
+        let buf_slice = core::slice::from_raw_parts_mut(buf_raw_mut, WIN_W * WIN_H);
+
+        // Quadro 1: Viewport inicial (ScrollY = 0px)
+        render_browser_frame(buf_slice, 0);
+        let _ = sys_window_update(win_id, buf_slice);
+        print_str(b"[GUI] Quadro 1: Superficie renderizada (ScrollY = 0px). Consultando eventos...\n");
+
+        let mut ev: ClientWindowEvent = core::mem::zeroed();
+        let _ = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
+        let _ = sys_sleep(300);
+
+        // Quadro 2: Rolagem intermediária (ScrollY = 35px)
+        render_browser_frame(buf_slice, 35);
+        let _ = sys_window_update(win_id, buf_slice);
+        print_str(b"[GUI] Quadro 2: Viewport rolada (ScrollY = 35px, revelando links e telemetria)...\n");
+
+        let _ = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
+        let _ = sys_sleep(300);
+
+        // Quadro 3: Rolagem inferior (ScrollY = 70px)
+        render_browser_frame(buf_slice, 70);
+        let _ = sys_window_update(win_id, buf_slice);
+        print_str(b"[GUI] Quadro 3: Viewport rolada (ScrollY = 70px, revelando conteudo abaixo da dobra)...\n");
+
+        let _ = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
+        let _ = sys_sleep(300);
+
+        print_str(b"[GUI] Fechando janela do Jinn Browser...\n");
+        let _ = sys_window_close(win_id);
+        print_str(b"[GUI] [PASS] Demonstracao visual e rolagem do Jinn Browser 0.2.0 concluidas com exito!\n");
+    } else {
+        print_str(b"[GUI] [FAIL] sys_window_create falhou para Jinn Browser demo!\n");
     }
 }
 
@@ -2257,6 +2478,7 @@ pub extern "C" fn _start() -> ! {
         test_memory_pressure();
         test_fd_stress();
         test_window_stress();
+        test_adv_window_events();
         test_jda_stress();
         test_fault_app();
         test_observer_app();

@@ -3,6 +3,10 @@
 
 use crate::limine;
 pub use aladdin::contracts::system::{CapabilityMode, JinnWallProfile};
+pub use aladdin::contracts::input::{
+    ClientWindowEvent, EVENT_KEY_DOWN, EVENT_KEY_UP, EVENT_MOUSE_DOWN, EVENT_MOUSE_MOVE,
+    EVENT_MOUSE_UP, EVENT_NONE, EVENT_SCROLL, EVENT_WINDOW_CLOSE,
+};
 use aladdin::contracts::framebuffer::{DirtyRect, FramebufferDevice};
 use aladdin::contracts::system::{SystemHost, SystemStats};
 use aladdin::contracts::vfs::VfsHost;
@@ -296,6 +300,22 @@ pub fn window_close(owner_pid: usize, win_id: usize) -> Result<(), isize> {
                 }
             }
             res
+        } else {
+            Err(crate::syscall::ENOSYS)
+        }
+    }
+}
+
+/// Consulta o próximo evento de entrada pendente para a janela `win_id` do processo `owner_pid`.
+pub fn window_poll_event(owner_pid: usize, win_id: usize) -> Result<Option<ClientWindowEvent>, isize> {
+    unsafe {
+        if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
+            session.poll_client_event(owner_pid, win_id)
+                .map_err(|e| match e {
+                    aladdin::wm::WindowOpError::NotFound => crate::syscall::EBADF,
+                    aladdin::wm::WindowOpError::PermissionDenied => crate::syscall::EPERM,
+                    aladdin::wm::WindowOpError::InvalidDimensions => crate::syscall::EINVAL,
+                })
         } else {
             Err(crate::syscall::ENOSYS)
         }

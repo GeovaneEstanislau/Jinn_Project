@@ -85,6 +85,19 @@ impl LayoutBox {
     pub fn line_height(font_size: f32) -> f32 {
         (font_size * 1.3).ceil()
     }
+
+    /// Computes the maximum bottom extent (Y + height) of this box and all its children.
+    pub fn content_height(&self) -> f32 {
+        let margin_b = self.dimensions.margin_box();
+        let mut max_y = margin_b.y + margin_b.height;
+        for line in &self.lines {
+            max_y = max_y.max(line.rect.y + line.rect.height);
+        }
+        for child in &self.children {
+            max_y = max_y.max(child.content_height());
+        }
+        max_y
+    }
 }
 
 /// Builds the layout box tree from DOM and computed styles, then executes layout.

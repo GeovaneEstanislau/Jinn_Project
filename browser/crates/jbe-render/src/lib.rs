@@ -250,20 +250,36 @@ impl RenderBackend for TestBackend {
     fn end_frame(&mut self) {}
 }
 
-/// Recursively generates paint commands from the layout box tree.
-pub fn generate_paint_commands(root_box: &LayoutBox, dom: &DomTree) -> Vec<PaintCommand> {
+/// Recursively generates paint commands from the layout box tree with an optional scroll offset.
+pub fn generate_paint_commands_with_scroll(
+    root_box: &LayoutBox,
+    dom: &DomTree,
+    scroll_x: f32,
+    scroll_y: f32,
+) -> Vec<PaintCommand> {
     let mut commands = Vec::new();
-    collect_paint_commands(root_box, dom, &mut commands);
+    collect_paint_commands_offset(root_box, dom, -scroll_x, -scroll_y, &mut commands);
     commands
 }
 
-fn collect_paint_commands(
+/// Recursively generates paint commands from the layout box tree without offset.
+pub fn generate_paint_commands(root_box: &LayoutBox, dom: &DomTree) -> Vec<PaintCommand> {
+    generate_paint_commands_with_scroll(root_box, dom, 0.0, 0.0)
+}
+
+fn offset_rect(r: &Rect, dx: f32, dy: f32) -> Rect {
+    Rect::new(r.x + dx, r.y + dy, r.width, r.height)
+}
+
+fn collect_paint_commands_offset(
     layout_box: &LayoutBox,
     dom: &DomTree,
+    dx: f32,
+    dy: f32,
     commands: &mut Vec<PaintCommand>,
 ) {
-    let padding_box = layout_box.dimensions.padding_box();
-    let border_box = layout_box.dimensions.border_box();
+    let padding_box = offset_rect(&layout_box.dimensions.padding_box(), dx, dy);
+    let border_box = offset_rect(&layout_box.dimensions.border_box(), dx, dy);
 
     // 1. Background fill
     if let Some(bg_color) = layout_box.style.background_color {
@@ -290,7 +306,7 @@ fn collect_paint_commands(
     for line in &layout_box.lines {
         commands.push(PaintCommand::DrawText {
             text: line.text.clone(),
-            point: Point::new(line.rect.x, line.rect.y),
+            point: Point::new(line.rect.x + dx, line.rect.y + dy),
             font_size: layout_box.style.font_size,
             color: layout_box.style.color,
         });
@@ -314,7 +330,7 @@ fn collect_paint_commands(
 
     // 5. Recurse children
     for child in &layout_box.children {
-        collect_paint_commands(child, dom, commands);
+        collect_paint_commands_offset(child, dom, dx, dy, commands);
     }
 }
 
@@ -377,5 +393,49 @@ mod tests {
             backend.click_at(Point::new(10.0, 10.0)),
             Some("page2.html")
         );
+    }
+
+    #[test]
+    fn test_paint_commands_with_scroll_offset() {
+        let limits = EngineLimits::default();
+        let mut dom = DomTree::new(limits);
+        let div = dom
+            .create_element(
+                "div",
+                vec![("style".into(), "background-color: #ff0000; height: 100px;".into())],
+            )
+            .unwrap();
+        let a = dom
+            .create_element(
+                "a",
+                vec![
+                    ("href".into(), "scrolled_target.html".into()),
+                    ("style".into(), "color: #00ff00;".into()),
+                ],
+            )
+            .unwrap();
+        let txt = dom.create_text("Scrolled link").unwrap();
+        dom.append_child(dom.root(), div).unwrap();
+        dom.append_child(div, a).unwrap();
+        dom.append_child(a, txt).unwrap();
+
+        let sheet = StyleSheet::new();
+        let styles = jbe_css::resolve_styles(&dom, &sheet);
+        let layout_tree = build_and_layout_tree(&dom, &styles, 400.0).unwrap();
+
+        // Generate with 30px vertical scroll down
+        let commands = generate_paint_commands_with_scroll(&layout_tree, &dom, 0.0, 30.0);
+        let mut backend = TestBackend::new(400, 300);
+        backend.begin_frame(400, 300);
+        for cmd in &commands {
+            backend.execute_command(cmd);
+        }
+        backend.end_frame();
+
+        assert_eq!(backend.click_regions.len(), 1);
+        let (rect, target) = &backend.click_regions[0];
+        assert_eq!(target, "scrolled_target.html");
+        // Click region Y should have shifted by -30.0
+        assert_eq!(rect.y, -30.0);
     }
 }

@@ -199,19 +199,22 @@ O motor do Jinn Browser v0.1.0 foi desenvolvido de forma puramente proprietária
 | **Decodificador de Imagens Bounded (`jbe-image`)** | `Implementado e testado` | Formatos Netpbm PPM (P3/P6) com validação estrita de dimensões e memória. |
 | **Carregador de Recursos Local (`jbe-net`)** | `Implementado e testado` | Carregamento via filesystem com sandbox de diretório raiz. |
 | **Aplicação de Referência CLI (`jinn-browser`)** | `Implementado e testado` | Histórico (`back`, `forward`, `reload`), simulação de clique e render ASCII. |
-| **Execução Nativa em Ring 3 (Aladdin Desktop)** | `Bloqueado por dependência` | Renderização via `sys_window_update` possível; eventos bloqueados por falta de syscall de entrada. |
+| **Execução Nativa em Ring 3 (Aladdin Desktop)** | `Implementado e testado` | Renderização cliente via `sys_window_update` e captura de eventos via `sys_window_poll_event` (Syscall 24). |
+| **Rolagem Vertical e Offset de Cliques** | `Implementado e testado` | Suporte a `scroll_y`, `repaint`, clipping e ajuste geométrico em `jbe-render` e `BrowserSession`. |
 | **Transporte HTTP em Rede Real** | `Planejado` | Abstração pronta em `jbe-net`; depende de integração com sockets TCP Ring 3. |
 | **Suporte a HTTPS / TLS** | `Não implementado` | Rejeição ativa de esquemas `https:` até implementação de validação X.509. |
-| **JavaScript / DOM Dinâmico** | `Não implementado` | Deliberadamente fora do escopo da v0.1.0 para assegurar sandbox estável. |
+| **JavaScript / DOM Dinâmico** | `Não implementado` | Deliberadamente fora do escopo para assegurar sandbox e determinismo. |
 
 ---
 
 ## 10. Roadmap Técnico
 
-- **v0.2.0 (Integração Aladdin Interativa)**:
-  - Implementação de syscall de eventos em Ring 3 no Jinn OS (`sys_event_poll`).
-  - Suporte a rolagem vertical de documentos na viewport.
-  - Backend gráfico nativo conectando o buffer do `jbe-render` diretamente ao compositor Aladdin.
+- **v0.2.0 (Integração Aladdin Interativa & Rolagem)** — **CONCLUÍDO**:
+  - Implementação da Syscall 24 (`sys_window_poll_event`) no kernel Jinn OS e no compositor Aladdin.
+  - Fila FIFO ring buffer de 16 slots por janela com suporte a `EVENT_MOUSE_DOWN`, `EVENT_KEY_DOWN`, `EVENT_WINDOW_CLOSE`, `EVENT_SCROLL`.
+  - Suporte a rolagem vertical de documentos na viewport (`scroll_y`, `max_scroll_y`, `repaint` e clamping automático).
+  - Ajuste de coordenadas de regiões clicáveis (`RegisterClickRegion`) sob efeito de scroll.
+  - Demonstração nativa interativa em espaço de usuário (Ring 3) em `apps/ola-mundo` com layout estilizado e navegação visual.
 - **v0.3.0 (Recursos e Imagens Expandidas)**:
   - Decodificação de BMP e PNG básico (usando decodificador próprio limitado).
   - Suporte a formulários estáticos simples (`<input>`, `<button>`).

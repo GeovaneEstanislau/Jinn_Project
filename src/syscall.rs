@@ -27,6 +27,8 @@
 ///   20 — window_create(title, len, dim) Create Aladdin desktop window
 ///   21 — window_update(id, buf, len)   Update Aladdin window client buffer
 ///   22 — window_close(id)              Close Aladdin desktop window
+///   23 — sync()                        Flush filesystem caches and sync storage
+///   24 — window_poll_event(id, ptr, f) Poll Aladdin window client input events
 ///   25 — res_stat(pid, stat_ptr, len)  Query process resource limits & telemetry
 ///   30 — socket(domain, type, proto)   Create network socket endpoint
 ///   31 — connect(fd, addr, len)        Connect to remote network peer
@@ -242,6 +244,7 @@ pub extern "C" fn syscall_dispatch(
         21 => sys_window_update(arg0, arg1 as *const u32, arg2),
         22 => sys_window_close(arg0),
         23 => sys_sync(),
+        24 => sys_window_poll_event(arg0, arg1 as *mut crate::gui::ClientWindowEvent, arg2),
         25 => sys_res_stat(arg0, arg1 as *mut crate::resources::ProcessResourceStat, arg2),
         26 => sys_jda_shm_share(arg0, arg1, arg2 != 0),
         27 => sys_jda_ring_submit(arg0 as *const crate::jda::ring::JdaSqe, arg1),
@@ -1187,6 +1190,34 @@ fn sys_window_close(win_id: usize) -> isize {
     let pid = scheduler::current_pid();
     match crate::gui::window_close(pid, win_id) {
         Ok(()) => 0,
+        Err(err) => err,
+    }
+}
+
+/// `sys_window_poll_event(win_id, event_ptr, flags)` — Coleta o próximo evento de entrada da janela.
+/// Retorna:
+///   1 se um evento foi copiado para `event_ptr`
+///   0 se não há eventos pendentes (fila vazia)
+///   < 0 em caso de erro (-EINVAL, -EFAULT, -EBADF, -EPERM, -ENOSYS)
+fn sys_window_poll_event(win_id: usize, event_ptr: *mut crate::gui::ClientWindowEvent, _flags: usize) -> isize {
+    let pid = scheduler::current_pid();
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(event_ptr as *const u8, core::mem::size_of::<crate::gui::ClientWindowEvent>(), true) {
+            return e;
+        }
+    }
+    if event_ptr.is_null() {
+        return EINVAL;
+    }
+
+    match crate::gui::window_poll_event(pid, win_id) {
+        Ok(Some(ev)) => {
+            unsafe {
+                core::ptr::write_unaligned(event_ptr, ev);
+            }
+            1
+        }
+        Ok(None) => 0,
         Err(err) => err,
     }
 }

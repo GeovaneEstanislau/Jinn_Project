@@ -176,6 +176,23 @@ Investigação experimental para eliminar movimentação desnecessária de dados
 
 ---
 
+## 🌐 Linha de Produto: Jinn Browser Engine (v0.1.0 e v0.2.0 Concluídas ✅)
+
+Motor de navegação estático nativo ("in-house") e desacoplado, escrito em Rust sem dependências externas, projetado para o ecossistema Jinn OS e Aladdin Desktop Compositor.
+
+- [x] **v0.1.0 — Fundação do Motor de Renderização & CLI**:
+  - Modularização em 10 crates no workspace `browser/` (`jbe-core`, `jbe-url`, `jbe-dom`, `jbe-html`, `jbe-css`, `jbe-layout`, `jbe-render`, `jbe-image`, `jbe-net`, `jinn-browser`).
+  - Suporte a parsing HTML determinístico sem regex, resolução de estilos CSS (especificidade e cascata), cálculo de Box Model e quebra de linhas.
+  - Decodificação limitada e segura de imagens PPM (P3/P6) e sandboxing rigoroso contra travessia de diretório.
+  - Histórico de navegação (`back`, `forward`, `reload`) e backend determinístico de testes.
+- [x] **v0.2.0 — Integração com Aladdin Desktop, Eventos e Rolagem**:
+  - Implementação da Syscall 24 (`sys_window_poll_event`) no microkernel e no compositor Aladdin com fila circular FIFO de 16 slots.
+  - Captura e despacho assíncrono de eventos de entrada (`EVENT_MOUSE_DOWN`, `EVENT_KEY_DOWN`, `EVENT_WINDOW_CLOSE`, `EVENT_SCROLL`).
+  - Rolagem vertical determinística na viewport (`scroll_y`, `max_scroll_y`, `repaint`) e ajuste de coordenadas em regiões de clique.
+  - Demonstração nativa interativa em espaço de usuário Ring 3 (`apps/ola-mundo`) renderizando interface completa com barra de navegação, cards e scrollbar responsiva.
+
+---
+
 ## 🤝 Como Participar e Ajudar
 
 Nós valorizamos cada pessoa interessada em sistemas operacionais, Rust e computação de baixo nível!
