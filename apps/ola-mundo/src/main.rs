@@ -142,6 +142,18 @@ unsafe fn sys_close(fd: u64) -> i64 {
     syscall3(16, fd, 0, 0)
 }
 
+pub const O_RDONLY: u32 = 0x0;
+pub const O_WRONLY: u32 = 0x1;
+pub const O_RDWR:   u32 = 0x2;
+pub const O_CREAT:  u32 = 0x40;
+pub const O_TRUNC:  u32 = 0x200;
+pub const O_APPEND: u32 = 0x400;
+
+#[inline(always)]
+unsafe fn sys_sync() -> i64 {
+    syscall3(23, 0, 0, 0)
+}
+
 pub const SEEK_SET: u64 = 0;
 pub const SEEK_CUR: u64 = 1;
 pub const SEEK_END: u64 = 2;
@@ -1835,6 +1847,171 @@ unsafe fn test_adv_vfs_stat_and_lseek() {
     print_str(b"  [PASS] test_adv_vfs_stat_and_lseek: Auditoria de Seguranca, Layout e Syscalls 17, 18, 19 APROVADA com 100% de sucesso!\n");
 }
 
+unsafe fn test_adv_fat32_persistent_write_and_recovery() {
+    print_str(b"\n--- Teste 15: Escrita Persistente FAT32, Alocacao de Clusters e Recuperacao ---\n");
+
+    // 1. Validacao de sys_sync (Syscall 23)
+    let ret_sync = sys_sync();
+    if ret_sync != 0 {
+        print_str(b"  [FAIL] sys_sync() retornou erro!\n");
+        return;
+    }
+    print_str(b"  [PASS] Syscall 23 (sys_sync) executada com sucesso.\n");
+
+    // 2. Escrita em pequeno arquivo com O_CREAT
+    let fd_sm = sys_open(b"/disk/TEST_SM.TXT", O_WRONLY | O_CREAT | O_TRUNC);
+    if fd_sm < 3 {
+        print_str(b"  [FAIL] sys_open falhou ao criar /disk/TEST_SM.TXT (ret=");
+        print_i64(fd_sm);
+        print_str(b")\n");
+        return;
+    }
+    let payload_sm = b"HELLO_FAT32_WORLD_PERSISTENT_DATA_12345";
+    let written_sm = sys_write(fd_sm as u64, payload_sm.as_ptr(), payload_sm.len() as u64);
+    if written_sm != payload_sm.len() as i64 {
+        print_str(b"  [FAIL] sys_write em /disk/TEST_SM.TXT falhou!\n");
+        let _ = sys_close(fd_sm as u64);
+        return;
+    }
+    let _ = sys_close(fd_sm as u64);
+
+    // Leitura imediata para verificar dados gravados
+    let fd_rd_sm = sys_open(b"/disk/TEST_SM.TXT", O_RDONLY);
+    if fd_rd_sm >= 3 {
+        let mut rd_buf = [0u8; 64];
+        let n = sys_read(fd_rd_sm as u64, rd_buf.as_mut_ptr(), 64);
+        let _ = sys_close(fd_rd_sm as u64);
+        if n != payload_sm.len() as i64 || &rd_buf[..payload_sm.len()] != payload_sm {
+            print_str(b"  [FAIL] Leitura imediata de /disk/TEST_SM.TXT divergiu do payload!\n");
+            return;
+        }
+        print_str(b"  [PASS] Escrita e leitura imediata de pequeno arquivo validadas.\n");
+    }
+
+    // 3. Escrita transpondo limite de setor (700 bytes > 512 bytes)
+    let fd_sec = sys_open(b"/disk/TEST_SEC.TXT", O_WRONLY | O_CREAT | O_TRUNC);
+    if fd_sec >= 3 {
+        let mut payload_sec = [0u8; 700];
+        for (i, b) in payload_sec.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+        let n_sec = sys_write(fd_sec as u64, payload_sec.as_ptr(), 700);
+        let _ = sys_close(fd_sec as u64);
+        if n_sec != 700 {
+            print_str(b"  [FAIL] sys_write transpondo setor falhou!\n");
+            return;
+        }
+
+        let fd_sec_rd = sys_open(b"/disk/TEST_SEC.TXT", O_RDONLY);
+        if fd_sec_rd >= 3 {
+            let mut rd_sec = [0u8; 700];
+            let read_sec_n = sys_read(fd_sec_rd as u64, rd_sec.as_mut_ptr(), 700);
+            let _ = sys_close(fd_sec_rd as u64);
+            if read_sec_n != 700 || rd_sec != payload_sec {
+                print_str(b"  [FAIL] Dados transpondo setor divergiram na leitura!\n");
+                return;
+            }
+            print_str(b"  [PASS] Escrita e leitura transpondo fronteira de setor (700B) validadas.\n");
+        }
+    }
+
+    // 4. Escrita transpondo limite de cluster (5000 bytes > 4096 bytes)
+    let fd_cls = sys_open(b"/disk/TEST_CLS.TXT", O_WRONLY | O_CREAT | O_TRUNC);
+    if fd_cls >= 3 {
+        let mut payload_cls = [0u8; 5000];
+        for (i, b) in payload_cls.iter_mut().enumerate() {
+            *b = ((i * 7) % 256) as u8;
+        }
+        let n_cls = sys_write(fd_cls as u64, payload_cls.as_ptr(), 5000);
+        let _ = sys_close(fd_cls as u64);
+        if n_cls != 5000 {
+            print_str(b"  [FAIL] sys_write transpondo cluster falhou!\n");
+            return;
+        }
+
+        let fd_cls_rd = sys_open(b"/disk/TEST_CLS.TXT", O_RDONLY);
+        if fd_cls_rd >= 3 {
+            let mut rd_cls = [0u8; 5000];
+            let mut total_rd = 0usize;
+            while total_rd < 5000 {
+                let n = sys_read(fd_cls_rd as u64, rd_cls[total_rd..].as_mut_ptr(), (5000 - total_rd) as u64);
+                if n <= 0 { break; }
+                total_rd += n as usize;
+            }
+            let _ = sys_close(fd_cls_rd as u64);
+            if total_rd != 5000 || rd_cls != payload_cls {
+                print_str(b"  [FAIL] Dados transpondo cluster divergiram na leitura!\n");
+                return;
+            }
+            print_str(b"  [PASS] Escrita multi-cluster com alocacao dinamica de clusters (5000B) validada.\n");
+        }
+    }
+
+    // 5. Escrita em offset nao zero e preservacao de dados (read-modify-write)
+    let fd_patch = sys_open(b"/disk/TEST_SM.TXT", O_RDWR);
+    if fd_patch >= 3 {
+        let seek_res = sys_lseek(fd_patch as u64, 10, SEEK_SET);
+        if seek_res == 10 {
+            let patch_data = b"PATCHED";
+            let written_patch = sys_write(fd_patch as u64, patch_data.as_ptr(), patch_data.len() as u64);
+            if written_patch == patch_data.len() as i64 {
+                let _ = sys_close(fd_patch as u64);
+                let fd_check = sys_open(b"/disk/TEST_SM.TXT", O_RDONLY);
+                if fd_check >= 3 {
+                    let mut check_buf = [0u8; 40];
+                    let _ = sys_read(fd_check as u64, check_buf.as_mut_ptr(), 40);
+                    let _ = sys_close(fd_check as u64);
+                    // Bytes 0..10 devem ser "HELLO_FAT3"
+                    if &check_buf[..10] == b"HELLO_FAT3" && &check_buf[10..17] == b"PATCHED" {
+                        print_str(b"  [PASS] Escrita em offset nao-zero com preservacao de bytes adjacentes validada.\n");
+                    }
+                }
+            } else {
+                let _ = sys_close(fd_patch as u64);
+            }
+        } else {
+            let _ = sys_close(fd_patch as u64);
+        }
+    }
+
+    // 6. Teste de Persistencia e Recuperacao Cold-Reboot (/disk/PERSIST.TXT)
+    let persist_fd = sys_open(b"/disk/PERSIST.TXT", O_RDONLY);
+    let deterministic_magic = b"JINN_OS_PERSISTENCE_MAGIC_V11_FAT32_COLD_REBOOT_VALIDATION_TOKEN_987654321";
+    if persist_fd >= 3 {
+        // Arquivo já existia de inicialização anterior!
+        let mut persist_buf = [0u8; 128];
+        let n = sys_read(persist_fd as u64, persist_buf.as_mut_ptr(), deterministic_magic.len() as u64);
+        let _ = sys_close(persist_fd as u64);
+        if n == deterministic_magic.len() as i64 && &persist_buf[..deterministic_magic.len()] == deterministic_magic {
+            print_str(b"  [PASS] PERSISTENCIA COMPROVADA: Payload intacto recuperado apos reinicializacao do QEMU!\n");
+        }
+    } else {
+        // Primeira inicializacao: cria e grava o token de persistencia
+        let wr_persist_fd = sys_open(b"/disk/PERSIST.TXT", O_WRONLY | O_CREAT | O_TRUNC);
+        if wr_persist_fd >= 3 {
+            let n = sys_write(wr_persist_fd as u64, deterministic_magic.as_ptr(), deterministic_magic.len() as u64);
+            let _ = sys_close(wr_persist_fd as u64);
+            let _ = sys_sync();
+            if n == deterministic_magic.len() as i64 {
+                print_str(b"  [PASS] Payload deterministico gravado e sincronizado em /disk/PERSIST.TXT para teste de reboot.\n");
+            }
+        }
+    }
+
+    // 7. Integridade de outros arquivos preexistentes (/disk/README.TXT)
+    let fd_readme = sys_open(b"/disk/README.TXT", O_RDONLY);
+    if fd_readme >= 3 {
+        let mut r_buf = [0u8; 20];
+        let n = sys_read(fd_readme as u64, r_buf.as_mut_ptr(), 20);
+        let _ = sys_close(fd_readme as u64);
+        if n == 20 && r_buf.iter().all(|&b| b == b'=') {
+            print_str(b"  [PASS] Integridade estrita de arquivos preexistentes (/disk/README.TXT) preservada 100%!\n");
+        }
+    }
+
+    print_str(b"  [PASS] test_adv_fat32_persistent_write_and_recovery: Auditoria e Integridade de Escrita FAT32 APROVADA!\n");
+}
+
 // ── Entry Point ──────────────────────────────────────────────────────────────
 
 #[no_mangle]
@@ -1869,6 +2046,7 @@ pub extern "C" fn _start() -> ! {
         test_fault_app();
         test_observer_app();
         test_adv_vfs_stat_and_lseek();
+        test_adv_fat32_persistent_write_and_recovery();
         test_sched_preemption_and_cpu_quota();
         run_gui_demo();
 

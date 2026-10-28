@@ -45,6 +45,7 @@ use crate::scheduler;
 pub const EPERM:        isize = -1;   // Operation not permitted
 pub const ENOENT:       isize = -2;   // No such file or directory
 pub const ESRCH:        isize = -3;   // No such process
+pub const EIO:          isize = -5;   // I/O error
 pub const EBADF:        isize = -9;   // Bad file descriptor
 pub const ECHILD:       isize = -10;  // No child processes
 pub const EAGAIN:       isize = -11;  // Resource temporarily unavailable / Would block
@@ -223,6 +224,7 @@ pub extern "C" fn syscall_dispatch(
         20 => sys_window_create(arg0 as *const u8, arg1, arg2),
         21 => sys_window_update(arg0, arg1 as *const u32, arg2),
         22 => sys_window_close(arg0),
+        23 => sys_sync(),
         25 => sys_res_stat(arg0, arg1 as *mut crate::resources::ProcessResourceStat, arg2),
         26 => sys_jda_shm_share(arg0, arg1, arg2 != 0),
         27 => sys_jda_ring_submit(arg0 as *const crate::jda::ring::JdaSqe, arg1),
@@ -289,7 +291,13 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
                                         fd_entry.offset += n as u64;
                                         n as isize
                                     }
-                                    Err(_) => EPERM,
+                                    Err(e) => match e {
+                                        crate::vfs::VfsError::NoSpace => ENOSPC,
+                                        crate::vfs::VfsError::PermissionDenied => EPERM,
+                                        crate::vfs::VfsError::InvalidPath => EINVAL,
+                                        crate::vfs::VfsError::IoError => EIO,
+                                        _ => EIO,
+                                    },
                                 }
                             } else {
                                 EBADF
@@ -1161,6 +1169,14 @@ fn sys_window_close(win_id: usize) -> isize {
     match crate::gui::window_close(pid, win_id) {
         Ok(()) => 0,
         Err(err) => err,
+    }
+}
+
+/// `sys_sync()` — Sincroniza todos os sistemas de arquivos montados e descarrega a cache de blocos primária para a mídia não volátil.
+fn sys_sync() -> isize {
+    match crate::vfs::sync_all() {
+        Ok(()) => 0,
+        Err(_) => EIO,
     }
 }
 

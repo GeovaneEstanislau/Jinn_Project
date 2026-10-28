@@ -84,7 +84,7 @@ A tabela a seguir reflete com fidelidade técnica o estado real do código em `s
 | **20** | `sys_window_create` | **Implementada** | `rdi: *const u8 (title)`, `rsi: len (usize)`, `rdx: packed_dims (u64)` | `i64` (win_id no compositor Aladdin) | `-EINVAL` (-22), `-EFAULT` (-14), `-EMFILE` (-24), `-ENOSYS` (-38) | Janelas do compositor Aladdin, cota `max_windows` | `src/syscall.rs:548`, `test_window_stress` |
 | **21** | `sys_window_update` | **Implementada** | `rdi: win_id (usize)`, `rsi: *const u32 (buf)`, `rdx: len_bytes (usize)` | `0` (sucesso) | `-EBADF` (-9), `-EPERM` (-1), `-EINVAL` (-22), `-EFAULT` (-14) | Buffer cliente do compositor, invalidação visual | `src/syscall.rs:581`, `test_client_window_protocol` |
 | **22** | `sys_window_close` | **Implementada** | `rdi: win_id (usize)` | `0` (sucesso) | `-EBADF` (-9), `-EPERM` (-1) | Janelas do compositor, desalocação de buffers | `src/syscall.rs:616`, `test_window_stress` |
-| **23** | Reservada | **Indefinida** | Reservado | `-ENOSYS` (-38) | `-ENOSYS` (-38) | N/A | `src/syscall.rs` |
+| **23** | `sys_sync` | **Implementada** | Nenhum | `0` (sucesso) | `-EIO` (-5) | VFS e Cache de Blocos ATA/IDE | `src/syscall.rs:1176`, `scripts/test_persistence.ps1` |
 | **24** | Reservada | **Indefinida** | Reservado | `-ENOSYS` (-38) | `-ENOSYS` (-38) | N/A | `src/syscall.rs` |
 | **25** | `sys_res_stat` | **Implementada** | `rdi: target_pid (usize)`, `rsi: *mut ProcessResourceStat`, `rdx: size (usize)` | `0` (sucesso) | `-ESRCH` (-3), `-EFAULT` (-14), `-EINVAL` (-22) | Telemetria de recursos da tarefa | `src/syscall.rs`, `test_observer_app` |
 | **26** | `sys_jda_shm_share` | **Implementada** | `rdi: handle (u64)`, `rsi: target_pid (usize)`, `rdx: make_owner_ro (u64)` | `i64` (endereço virtual no alvo) | `-EPERM` (-1), `-EINVAL` (-22) | Compartilhamento Zero-Copy, remapeamento PML4, ref_count | `src/syscall.rs`, `test_jda_phase3_ioring_and_zerocopy` |
@@ -250,6 +250,26 @@ A implementação de sockets servidores TCP opera com filas delimitadas e segura
   - A conexão retirada tem seu ponteiro `parent_listener` desvinculado (`None`), garantindo entrega exatamente uma vez para o descritor recém-alocado.
 - **Encerramento de Listener e Processos:**
   - Ao fechar o socket ou no término do processo (`close_all_for_pid`), todas as conexões pendentes em `syn_queue` e `accept_queue` são abortadas com emissão de pacote `RST|ACK` ao par remoto, e suas entradas na tabela Conntrack do JinnWall e tabela global de sockets são liberadas.
+
+#### Contrato de Escrita Persistente FAT32, Alocação de Clusters e Sincronização (`sys_write` e `sys_sync`)
+O driver de sistema de arquivos FAT32 do Jinn OS opera com semântica de escrita persistente real sobre discos ATA/IDE (modo PIO LBA28):
+- **Alocação Dinâmica de Clusters:**
+  - A busca por clusters livres varre as entradas da FAT32 (entradas com valor `0x0000_0000`).
+  - Ao alocar, a entrada é imediatamente marcada com marca de fim de arquivo (`0x0FFF_FFFF`) preservando os 4 bits superiores reservados.
+  - Para conformidade estrita com o padrão FAT32, a gravação é **espelhada em todas as tabelas FAT do volume** (`num_fats`).
+  - Os setores de dados do cluster alocado são zerados na mídia para mitigar vazamento de dados residuais.
+- **Transposição de Limites de Setor e Cluster:**
+  - A escrita suporta cargas de dados contíguas que cruzam múltiplos setores (512 bytes) e múltiplos clusters (4096 bytes).
+  - Escritas parciais preservam bytes adjacentes fora da janela modificada via protocolo *read-modify-write*.
+  - Escritas que atingem o final da cadeia alocam dinamicamente novos clusters, encadeando `cluster_anterior -> novo_cluster` em todas as tabelas FAT.
+- **Atualização Consistente de Metadados e Entradas de Diretório:**
+  - O descritor aberto armazena `dir_sector_lba` e `dir_entry_offset`.
+  - Ao expandir o arquivo ou alocar o primeiro cluster, a entrada de diretório de 32 bytes correspondente tem seu tamanho (`size`) e cluster inicial (`first_cluster`) atualizados e persistidos diretamente no disco.
+- **Garantias de Persistência e Sincronização (`sys_sync` - Syscall 23):**
+  - O fechamento do descritor (`sys_close`) e a chamada explícita de `sys_sync()` invocam `flush_primary_cache()`, descarregando todos os blocos sujos da memória RAM para os setores físicos do disco rígido.
+  - A persistência física dos bytes é mantida integralmente através de ciclos de desligamento e reinicialização a frio (*Cold Reboot*), com validação forense no arquivo `disk.img` e leitura íntegra via VFS.
+- **Limitações e Integridade pós-Falha:**
+  - O FAT32 não possui *journaling* transacional nativo. Quedas abruptas de energia durante a transição de setores podem gerar clusters órfãos. A ordem operacional do Jinn OS (dados -> FAT -> diretório) minimiza a exposição de dados corrompidos.
 
 
 ---

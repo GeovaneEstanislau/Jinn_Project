@@ -20,6 +20,8 @@ pub struct FatDirEntry {
     pub is_dir: bool,
     pub first_cluster: u32,
     pub size: u32,
+    pub dir_sector_lba: u32,
+    pub dir_entry_offset: usize,
 }
 
 impl FatDirEntry {
@@ -30,6 +32,8 @@ impl FatDirEntry {
             is_dir: false,
             first_cluster: 0,
             size: 0,
+            dir_sector_lba: 0,
+            dir_entry_offset: 0,
         }
     }
 }
@@ -46,6 +50,8 @@ pub struct Fat32Fs {
     bytes_per_sector: u16,
     sectors_per_cluster: u8,
     fat_start_lba: u32,
+    sectors_per_fat: u32,
+    num_fats: u8,
     data_start_lba: u32,
     root_cluster: u32,
     is_mounted: bool,
@@ -65,6 +71,8 @@ impl Fat32Fs {
             bytes_per_sector: 512,
             sectors_per_cluster: 1,
             fat_start_lba: 0,
+            sectors_per_fat: 0,
+            num_fats: 2,
             data_start_lba: 0,
             root_cluster: 2,
             is_mounted: false,
@@ -140,6 +148,8 @@ impl Fat32Fs {
         self.bytes_per_sector = bytes_per_sector;
         self.sectors_per_cluster = sectors_per_cluster;
         self.fat_start_lba = fat_start;
+        self.sectors_per_fat = sectors_per_fat32;
+        self.num_fats = num_fats;
         self.data_start_lba = data_start;
         self.root_cluster = root_cluster;
         self.is_mounted = true;
@@ -257,6 +267,8 @@ impl Fat32Fs {
                         is_dir,
                         first_cluster,
                         size,
+                        dir_sector_lba: start_lba + sec as u32,
+                        dir_entry_offset: offset,
                     };
 
                     if !cb(entry) {
@@ -285,6 +297,8 @@ impl Fat32Fs {
                 is_dir: true,
                 first_cluster: self.root_cluster,
                 size: 0,
+                dir_sector_lba: 0,
+                dir_entry_offset: 0,
             });
         }
 
@@ -346,12 +360,43 @@ impl Fat32Fs {
         Ok(res)
     }
 
+    /// Ajusta o próximo cluster na cadeia da FAT32, espelhando a escrita em todas as tabelas FAT do volume.
+    pub fn set_next_cluster(&self, cluster: u32, next: u32) -> Result<(), VfsError> {
+        if cluster < 2 {
+            return Err(VfsError::IoError);
+        }
+        let fat_offset = cluster * 4;
+        let fat_sector = fat_offset / 512;
+        let entry_offset = (fat_offset % 512) as usize;
+
+        let mut sector_buf = [0u8; 512];
+        let lba0 = self.fat_start_lba + fat_sector;
+        if self.read_sec(lba0, &mut sector_buf).is_err() {
+            return Err(VfsError::IoError);
+        }
+
+        let old_hi = sector_buf[entry_offset + 3] & 0xF0;
+        sector_buf[entry_offset] = (next & 0xFF) as u8;
+        sector_buf[entry_offset + 1] = ((next >> 8) & 0xFF) as u8;
+        sector_buf[entry_offset + 2] = ((next >> 16) & 0xFF) as u8;
+        sector_buf[entry_offset + 3] = old_hi | (((next >> 24) & 0x0F) as u8);
+
+        let fats = if self.num_fats == 0 { 1 } else { self.num_fats };
+        for fat_idx in 0..fats {
+            let lba = self.fat_start_lba + (fat_idx as u32 * self.sectors_per_fat) + fat_sector;
+            if self.write_sec(lba, &sector_buf).is_err() {
+                return Err(VfsError::IoError);
+            }
+        }
+        Ok(())
+    }
+
     /// Encontra um cluster livre na FAT, marca-o como EOF (0x0FFF_FFFF) e limpa seus setores de dados com zeros.
     fn alloc_cluster(&self) -> Result<u32, VfsError> {
         let mut fat_sector_buf = [0u8; 512];
+        let max_sec = if self.sectors_per_fat > 0 { self.sectors_per_fat.min(512) } else { 64 };
 
-        // Varre até 64 setores da tabela FAT (cobre 8.192 clusters = 32 MiB de disco)
-        for sec in 0..64u32 {
+        for sec in 0..max_sec {
             let fat_sec_lba = self.fat_start_lba + sec;
             if self.read_sec(fat_sec_lba, &mut fat_sector_buf).is_err() {
                 return Err(VfsError::IoError);
@@ -370,14 +415,19 @@ impl Fat32Fs {
                     | (((fat_sector_buf[offset + 3] & 0x0F) as u32) << 24);
 
                 if val == 0 {
-                    // Cluster livre encontrado! Marca como EOF (0x0FFF_FFFF)
+                    // Cluster livre encontrado! Marca como EOF (0x0FFF_FFFF) preservando bits altos
+                    let old_hi = fat_sector_buf[offset + 3] & 0xF0;
                     fat_sector_buf[offset] = 0xFF;
                     fat_sector_buf[offset + 1] = 0xFF;
                     fat_sector_buf[offset + 2] = 0xFF;
-                    fat_sector_buf[offset + 3] = 0x0F;
+                    fat_sector_buf[offset + 3] = old_hi | 0x0F;
 
-                    if self.write_sec(fat_sec_lba, &fat_sector_buf).is_err() {
-                        return Err(VfsError::IoError);
+                    let fats = if self.num_fats == 0 { 1 } else { self.num_fats };
+                    for fat_idx in 0..fats {
+                        let mirror_sec = self.fat_start_lba + (fat_idx as u32 * self.sectors_per_fat) + sec;
+                        if self.write_sec(mirror_sec, &fat_sector_buf).is_err() {
+                            return Err(VfsError::IoError);
+                        }
                     }
 
                     // Zera os setores de dados do cluster alocado
@@ -395,17 +445,18 @@ impl Fat32Fs {
         Err(VfsError::NoSpace)
     }
 
-    /// Libera toda a cadeia de clusters na FAT marcando-os como 0x0000_0000
+    /// Libera toda a cadeia de clusters na FAT marcando-os como 0x0000_0000 (com espelhamento em todas as FATs)
     fn free_cluster_chain(&self, start_cluster: u32) -> Result<(), VfsError> {
         let mut cur = start_cluster;
         let mut sector_buf = [0u8; 512];
 
         while cur >= 2 && cur < FAT32_EOF {
             let fat_offset = cur * 4;
-            let fat_sector = self.fat_start_lba + (fat_offset / 512);
+            let fat_sector = fat_offset / 512;
             let entry_offset = (fat_offset % 512) as usize;
 
-            if self.read_sec(fat_sector, &mut sector_buf).is_err() {
+            let lba0 = self.fat_start_lba + fat_sector;
+            if self.read_sec(lba0, &mut sector_buf).is_err() {
                 return Err(VfsError::IoError);
             }
 
@@ -414,14 +465,19 @@ impl Fat32Fs {
                 | ((sector_buf[entry_offset + 2] as u32) << 16)
                 | (((sector_buf[entry_offset + 3] & 0x0F) as u32) << 24);
 
-            // Zera o cluster atual na FAT
+            // Zera o cluster atual na FAT preservando os 4 bits reservados
+            let old_hi = sector_buf[entry_offset + 3] & 0xF0;
             sector_buf[entry_offset] = 0x00;
             sector_buf[entry_offset + 1] = 0x00;
             sector_buf[entry_offset + 2] = 0x00;
-            sector_buf[entry_offset + 3] = 0x00;
+            sector_buf[entry_offset + 3] = old_hi;
 
-            if self.write_sec(fat_sector, &sector_buf).is_err() {
-                return Err(VfsError::IoError);
+            let fats = if self.num_fats == 0 { 1 } else { self.num_fats };
+            for fat_idx in 0..fats {
+                let mirror_sec = self.fat_start_lba + (fat_idx as u32 * self.sectors_per_fat) + fat_sector;
+                if self.write_sec(mirror_sec, &sector_buf).is_err() {
+                    return Err(VfsError::IoError);
+                }
             }
 
             cur = next;
@@ -430,7 +486,39 @@ impl Fat32Fs {
         Ok(())
     }
 
-    /// Atualiza o tamanho do arquivo na entrada de diretório no disco
+    /// Atualiza diretamente os metadados (primeiro cluster e tamanho) da entrada de diretório no disco
+    pub fn update_entry_metadata(&self, dir_sec_lba: u32, dir_offset: usize, first_cluster: u32, new_size: u32) -> Result<(), VfsError> {
+        if dir_sec_lba == 0 {
+            return Ok(()); // Diretório raiz ou arquivo virtual sem setor de diretório fixo
+        }
+        let mut dir_buf = [0u8; 512];
+        if self.read_sec(dir_sec_lba, &mut dir_buf).is_err() {
+            return Err(VfsError::IoError);
+        }
+
+        // High cluster
+        let clus_hi = ((first_cluster >> 16) & 0xFFFF) as u16;
+        dir_buf[dir_offset + 20] = (clus_hi & 0xFF) as u8;
+        dir_buf[dir_offset + 21] = ((clus_hi >> 8) & 0xFF) as u8;
+
+        // Low cluster
+        let clus_lo = (first_cluster & 0xFFFF) as u16;
+        dir_buf[dir_offset + 26] = (clus_lo & 0xFF) as u8;
+        dir_buf[dir_offset + 27] = ((clus_lo >> 8) & 0xFF) as u8;
+
+        // Tamanho em bytes
+        dir_buf[dir_offset + 28] = (new_size & 0xFF) as u8;
+        dir_buf[dir_offset + 29] = ((new_size >> 8) & 0xFF) as u8;
+        dir_buf[dir_offset + 30] = ((new_size >> 16) & 0xFF) as u8;
+        dir_buf[dir_offset + 31] = ((new_size >> 24) & 0xFF) as u8;
+
+        if self.write_sec(dir_sec_lba, &dir_buf).is_err() {
+            return Err(VfsError::IoError);
+        }
+        Ok(())
+    }
+
+    /// Atualiza o tamanho do arquivo na entrada de diretório no disco (busca por cluster)
     pub fn update_entry_size(&self, first_cluster: u32, new_size: u32) -> Result<(), VfsError> {
         let root_lba = self.cluster_to_lba(self.root_cluster);
         let mut dir_buf = [0u8; 512];
@@ -509,18 +597,34 @@ impl FileSystem for Fat32Fs {
         })
     }
 
-    fn open(&self, path: &str, _flags: u32) -> VfsResult<u64> {
+    fn open(&self, path: &str, flags: u32) -> VfsResult<u64> {
         if !self.is_mounted {
             return Err(VfsError::NotSupported);
         }
 
-        let entry = self.find_file(path)?;
+        let mut entry = match self.find_file(path) {
+            Ok(e) => e,
+            Err(VfsError::NotFound) if (flags & crate::vfs::O_CREAT) != 0 => {
+                self.create(path)?;
+                self.find_file(path)?
+            }
+            Err(e) => return Err(e),
+        };
         if entry.is_dir {
             return Err(VfsError::IsADirectory);
         }
 
+        // Truncamento se solicitado via O_TRUNC
+        if (flags & crate::vfs::O_TRUNC) != 0 && entry.size > 0 {
+            if entry.first_cluster >= 2 && entry.first_cluster < FAT32_EOF {
+                let _ = self.free_cluster_chain(entry.first_cluster);
+            }
+            entry.first_cluster = 0;
+            entry.size = 0;
+            let _ = self.update_entry_metadata(entry.dir_sector_lba, entry.dir_entry_offset, 0, 0);
+        }
+
         // Armazena na tabela de arquivos abertos (handle index)
-        // Como o método recebe &self, usamos mutabilidade controlada por SpinLock global
         unsafe {
             let fs_ptr = core::ptr::addr_of_mut!(FAT32_GLOBAL);
             let fs = &mut (*fs_ptr);
@@ -546,6 +650,7 @@ impl FileSystem for Fat32Fs {
             let fs_ptr = core::ptr::addr_of_mut!(FAT32_GLOBAL);
             (*fs_ptr).open_files[idx].is_active = false;
         }
+        let _ = self.sync();
         Ok(())
     }
 
@@ -626,13 +731,16 @@ impl FileSystem for Fat32Fs {
         if !self.is_mounted {
             return Err(VfsError::NotSupported);
         }
+        if buf.is_empty() {
+            return Ok(0);
+        }
 
         let idx = handle as usize;
         if idx >= MAX_OPEN_FILES {
             return Err(VfsError::InvalidPath);
         }
 
-        let entry = unsafe {
+        let mut entry = unsafe {
             let fs_ptr = core::ptr::addr_of!(FAT32_GLOBAL);
             let slot = &(*fs_ptr).open_files[idx];
             if !slot.is_active {
@@ -645,26 +753,40 @@ impl FileSystem for Fat32Fs {
             return Err(VfsError::IsADirectory);
         }
 
+        // Valida limites contra overflow e tamanho máximo de 4 GiB do FAT32
+        if offset > 0xFFFF_FFFF || (offset as u64).saturating_add(buf.len() as u64) > 0xFFFF_FFFF {
+            return Err(VfsError::InvalidPath);
+        }
+
         let cluster_bytes = (self.sectors_per_cluster as usize) * 512;
-        let mut max_allowed = entry.size as usize;
-        if max_allowed == 0 {
-            max_allowed = cluster_bytes; // Permite escrever no cluster alocado de arquivo recém-criado
+        if cluster_bytes == 0 {
+            return Err(VfsError::IoError);
         }
 
-        if (offset as usize) >= max_allowed {
-            return Ok(0);
+        // Se o arquivo ainda não possui cluster alocado (arquivo de tamanho 0 recém-criado), aloca o primeiro
+        if entry.first_cluster < 2 || entry.first_cluster >= FAT32_EOF {
+            let new_c = self.alloc_cluster()?;
+            entry.first_cluster = new_c;
+            let _ = self.update_entry_metadata(entry.dir_sector_lba, entry.dir_entry_offset, entry.first_cluster, entry.size);
+            unsafe {
+                let fs_ptr = core::ptr::addr_of_mut!(FAT32_GLOBAL);
+                (*fs_ptr).open_files[idx].entry.first_cluster = new_c;
+            }
         }
-
-        let bytes_to_write = (max_allowed - (offset as usize)).min(buf.len());
 
         let mut cluster_skip = (offset as usize) / cluster_bytes;
         let mut cluster_offset = (offset as usize) % cluster_bytes;
 
         let mut current_cluster = entry.first_cluster;
         while cluster_skip > 0 {
-            match self.get_next_cluster(current_cluster) {
-                Ok(Some(next)) => current_cluster = next,
-                _ => return Ok(0),
+            match self.get_next_cluster(current_cluster).map_err(|_| VfsError::IoError)? {
+                Some(next) => current_cluster = next,
+                None => {
+                    // Aloca cluster para preencher lacuna até o offset
+                    let new_c = self.alloc_cluster()?;
+                    self.set_next_cluster(current_cluster, new_c)?;
+                    current_cluster = new_c;
+                }
             }
             cluster_skip -= 1;
         }
@@ -672,7 +794,7 @@ impl FileSystem for Fat32Fs {
         let mut bytes_written = 0;
         let mut sector_buf = [0u8; 512];
 
-        while bytes_written < bytes_to_write && current_cluster >= 2 && current_cluster < FAT32_EOF {
+        while bytes_written < buf.len() && current_cluster >= 2 && current_cluster < FAT32_EOF {
             let start_lba = self.cluster_to_lba(current_cluster);
 
             let start_sec = cluster_offset / 512;
@@ -681,19 +803,21 @@ impl FileSystem for Fat32Fs {
             for sec in start_sec..(self.sectors_per_cluster as usize) {
                 let sec_lba = start_lba + sec as u32;
 
-                // Lê o setor para preservar bytes ao redor da região modificada
-                if self.read_sec(sec_lba, &mut sector_buf).is_err() {
-                    return Err(VfsError::IoError);
-                }
-
                 let available_in_sec = 512 - sec_offset;
-                let needed = bytes_to_write - bytes_written;
+                let needed = buf.len() - bytes_written;
                 let copy_count = available_in_sec.min(needed);
+
+                // Preservação de dados fora da região modificada (read-modify-write)
+                if sec_offset > 0 || copy_count < 512 {
+                    if self.read_sec(sec_lba, &mut sector_buf).is_err() {
+                        return Err(VfsError::IoError);
+                    }
+                }
 
                 sector_buf[sec_offset..sec_offset + copy_count]
                     .copy_from_slice(&buf[bytes_written..bytes_written + copy_count]);
 
-                // Escreve o setor modificado no disco físico via ATA PIO LBA28
+                // Grava o setor modificado no disco físico via Block Device
                 if self.write_sec(sec_lba, &sector_buf).is_err() {
                     return Err(VfsError::IoError);
                 }
@@ -701,19 +825,26 @@ impl FileSystem for Fat32Fs {
                 bytes_written += copy_count;
                 sec_offset = 0;
 
-                if bytes_written >= bytes_to_write {
+                if bytes_written >= buf.len() {
                     break;
                 }
             }
 
             cluster_offset = 0;
-            match self.get_next_cluster(current_cluster) {
-                Ok(Some(next)) => current_cluster = next,
-                _ => break,
+            if bytes_written < buf.len() {
+                match self.get_next_cluster(current_cluster).map_err(|_| VfsError::IoError)? {
+                    Some(next) => current_cluster = next,
+                    None => {
+                        // Expande a cadeia de clusters na FAT32
+                        let new_c = self.alloc_cluster()?;
+                        self.set_next_cluster(current_cluster, new_c)?;
+                        current_cluster = new_c;
+                    }
+                }
             }
         }
 
-        // Se o tamanho gravado superou o tamanho anterior, atualiza no handle e no diretório
+        // Se a escrita ampliou o arquivo, atualiza o tamanho em memória e na entrada de diretório no disco
         let end_pos = (offset as usize) + bytes_written;
         if end_pos > entry.size as usize {
             let new_size = end_pos as u32;
@@ -721,7 +852,7 @@ impl FileSystem for Fat32Fs {
                 let fs_ptr = core::ptr::addr_of_mut!(FAT32_GLOBAL);
                 (*fs_ptr).open_files[idx].entry.size = new_size;
             }
-            let _ = self.update_entry_size(entry.first_cluster, new_size);
+            let _ = self.update_entry_metadata(entry.dir_sector_lba, entry.dir_entry_offset, entry.first_cluster, new_size);
         }
 
         Ok(bytes_written)
@@ -786,6 +917,7 @@ impl FileSystem for Fat32Fs {
                     if self.write_sec(sec_lba, &dir_buf).is_err() {
                         return Err(VfsError::IoError);
                     }
+                    let _ = self.sync();
 
                     return Ok(());
                 }
