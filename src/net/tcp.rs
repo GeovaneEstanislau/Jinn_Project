@@ -335,7 +335,7 @@ pub fn send_tcp_packet(
 pub fn handle_incoming_tcp_packet(src_ip: [u8; 4], _dst_ip: [u8; 4], tcp: &TcpPacket) {
     unsafe {
         // 1. Procura primeiro por socket já conectado ou em handshake SynReceived
-        for slot in crate::net::socket::SOCKET_TABLE.iter_mut() {
+        for (idx, slot) in crate::net::socket::SOCKET_TABLE.iter_mut().enumerate() {
             if let Some(ref mut sock) = slot {
                 if sock.sock_type == crate::net::socket::SOCK_STREAM
                     && sock.local_port == tcp.dst_port
@@ -348,7 +348,7 @@ pub fn handle_incoming_tcp_packet(src_ip: [u8; 4], _dst_ip: [u8; 4], tcp: &TcpPa
                         || sock.tcb.state == TcpState::FinWait2
                         || sock.tcb.state == TcpState::CloseWait)
                 {
-                    process_connected_tcp_event(sock, src_ip, tcp);
+                    process_connected_tcp_event(idx, src_ip, tcp);
                     return;
                 }
             }
@@ -370,13 +370,13 @@ pub fn handle_incoming_tcp_packet(src_ip: [u8; 4], _dst_ip: [u8; 4], tcp: &TcpPa
         }
 
         // 3. Procura por socket em modo LISTEN para aceitar conexões entrantes
-        for slot in crate::net::socket::SOCKET_TABLE.iter_mut() {
+        for (idx, slot) in crate::net::socket::SOCKET_TABLE.iter_mut().enumerate() {
             if let Some(ref mut sock) = slot {
                 if sock.sock_type == crate::net::socket::SOCK_STREAM
                     && sock.local_port == tcp.dst_port
                     && sock.tcb.state == TcpState::Listen
                 {
-                    process_listen_tcp_event(sock, src_ip, tcp);
+                    process_listen_tcp_event(idx, src_ip, tcp);
                     return;
                 }
             }
@@ -426,62 +426,130 @@ fn process_syn_sent_event(sock: &mut crate::net::socket::Socket, src_ip: [u8; 4]
     }
 }
 
-fn process_listen_tcp_event(listening_sock: &mut crate::net::socket::Socket, src_ip: [u8; 4], tcp: &TcpPacket) {
+fn process_listen_tcp_event(listening_idx: usize, src_ip: [u8; 4], tcp: &TcpPacket) {
     if (tcp.flags & TCP_FLAG_SYN) != 0 && (tcp.flags & TCP_FLAG_ACK) == 0 {
-        if listening_sock.pending_count < 4 {
-            let listening_port = listening_sock.local_port;
-            let owner_pid = listening_sock.owner_pid;
+        let (listening_port, owner_pid, can_accept) = unsafe {
+            let listening_sock = match crate::net::socket::SOCKET_TABLE[listening_idx].as_ref() {
+                Some(s) => s,
+                None => return,
+            };
+            let can = listening_sock.syn_count < crate::net::socket::MAX_SYN_BACKLOG
+                && (listening_sock.accept_count + listening_sock.syn_count) < (listening_sock.backlog * 2).max(4);
+            (listening_sock.local_port, listening_sock.owner_pid, can)
+        };
 
-            // Procura um slot livre na tabela para o novo socket filho
-            unsafe {
-                for (idx, slot) in crate::net::socket::SOCKET_TABLE.iter_mut().enumerate() {
-                    if slot.is_none() {
-                        let mut child = crate::net::socket::Socket::empty();
-                        child.owner_pid = owner_pid;
-                        child.sock_type = crate::net::socket::SOCK_STREAM;
-                        child.local_port = listening_port;
-                        child.remote_ip = src_ip;
-                        child.remote_port = tcp.src_port;
-                        child.is_bound = true;
-                        child.is_connected = false;
-                        child.tcb.state = TcpState::SynReceived;
-                        child.tcb.remote_win = tcp.window;
-                        child.tcb.remote_seq = tcp.seq_num.wrapping_add(1);
-                        child.tcb.local_seq = (crate::timer::ticks() as u32).wrapping_mul(1000).wrapping_add(tcp.src_port as u32);
+        if !can_accept {
+            // Fila de SYN ou capacidade máxima de backlog atingida: descarte silencioso (RFC 1122)
+            return;
+        }
 
-                        // Envia SYN | ACK para o cliente
-                        send_tcp_packet(
-                            listening_port,
-                            src_ip,
-                            tcp.src_port,
-                            child.tcb.local_seq,
-                            child.tcb.remote_seq,
-                            TCP_FLAG_SYN | TCP_FLAG_ACK,
-                            child.tcb.local_win,
-                            &[],
-                        );
-                        child.tcb.local_seq = child.tcb.local_seq.wrapping_add(1);
+        // Procura um slot livre na tabela para o novo socket filho
+        unsafe {
+            for (idx, slot) in crate::net::socket::SOCKET_TABLE.iter_mut().enumerate() {
+                if slot.is_none() {
+                    let mut child = crate::net::socket::Socket::empty();
+                    child.owner_pid = owner_pid;
+                    child.sock_type = crate::net::socket::SOCK_STREAM;
+                    child.local_port = listening_port;
+                    child.remote_ip = src_ip;
+                    child.remote_port = tcp.src_port;
+                    child.is_bound = true;
+                    child.is_connected = false;
+                    child.parent_listener = Some(listening_idx);
+                    child.tcb.state = TcpState::SynReceived;
+                    child.tcb.remote_win = tcp.window;
+                    child.tcb.remote_seq = tcp.seq_num.wrapping_add(1);
+                    child.tcb.local_seq = (crate::timer::ticks() as u32).wrapping_mul(1000).wrapping_add(tcp.src_port as u32);
+                    child.tcb.last_tx_tick = crate::timer::ticks();
 
-                        *slot = Some(child);
-                        listening_sock.pending_conns[listening_sock.pending_count] = Some(idx);
-                        listening_sock.pending_count += 1;
-                        return;
+                    // Envia SYN | ACK para o cliente
+                    send_tcp_packet(
+                        listening_port,
+                        src_ip,
+                        tcp.src_port,
+                        child.tcb.local_seq,
+                        child.tcb.remote_seq,
+                        TCP_FLAG_SYN | TCP_FLAG_ACK,
+                        child.tcb.local_win,
+                        &[],
+                    );
+                    child.tcb.local_seq = child.tcb.local_seq.wrapping_add(1);
+
+                    *slot = Some(child);
+                    if let Some(Some(ref mut listening_sock)) = crate::net::socket::SOCKET_TABLE.get_mut(listening_idx) {
+                        listening_sock.push_syn(idx);
                     }
+                    return;
                 }
             }
         }
     }
 }
 
-fn process_connected_tcp_event(sock: &mut crate::net::socket::Socket, src_ip: [u8; 4], tcp: &TcpPacket) {
+fn process_connected_tcp_event(sock_idx: usize, src_ip: [u8; 4], tcp: &TcpPacket) {
+    let sock = match unsafe { crate::net::socket::SOCKET_TABLE[sock_idx].as_mut() } {
+        Some(s) => s,
+        None => return,
+    };
+
     // Atualiza a janela remota anunciada pelo peer (RFC 793)
     sock.tcb.remote_win = tcp.window;
 
     match sock.tcb.state {
         TcpState::SynReceived => {
-            if (tcp.flags & TCP_FLAG_ACK) != 0 && tcp.ack_num == sock.tcb.local_seq {
-                sock.tcb.state = TcpState::Established;
-                sock.is_connected = true;
+            if (tcp.flags & TCP_FLAG_RST) != 0 {
+                sock.tcb.state = TcpState::Closed;
+                sock.is_connected = false;
+                let parent_opt = sock.parent_listener;
+                sock.parent_listener = None;
+                if let Some(parent_idx) = parent_opt {
+                    if let Some(Some(ref mut parent)) = unsafe { crate::net::socket::SOCKET_TABLE.get_mut(parent_idx) } {
+                        parent.remove_syn(sock_idx);
+                    }
+                }
+                unsafe { crate::net::socket::SOCKET_TABLE[sock_idx] = None; }
+                return;
+            }
+
+            if (tcp.flags & (TCP_FLAG_ACK | TCP_FLAG_SYN)) == TCP_FLAG_ACK && tcp.ack_num == sock.tcb.local_seq {
+                // Handshake de 3 vias finalizado pelo cliente: promove para Established e enfileira na accept_queue do listener
+                let mut promoted = false;
+                let parent_opt = sock.parent_listener;
+                if let Some(parent_idx) = parent_opt {
+                    if let Some(Some(ref mut parent)) = unsafe { crate::net::socket::SOCKET_TABLE.get_mut(parent_idx) } {
+                        if parent.tcb.state == TcpState::Listen {
+                            parent.remove_syn(sock_idx);
+                            if parent.push_accept(sock_idx) {
+                                promoted = true;
+                            }
+                        }
+                    }
+                }
+
+                let sock = match unsafe { crate::net::socket::SOCKET_TABLE[sock_idx].as_mut() } {
+                    Some(s) => s,
+                    None => return,
+                };
+
+                if promoted {
+                    sock.tcb.state = TcpState::Established;
+                    sock.is_connected = true;
+                } else {
+                    // Backlog cheio ou listener fechado: aborta conexão com RST conforme política de segurança
+                    send_tcp_packet(
+                        sock.local_port,
+                        src_ip,
+                        tcp.src_port,
+                        sock.tcb.local_seq,
+                        tcp.seq_num,
+                        TCP_FLAG_RST | TCP_FLAG_ACK,
+                        0,
+                        &[],
+                    );
+                    sock.tcb.state = TcpState::Closed;
+                    sock.is_connected = false;
+                    unsafe { crate::net::socket::SOCKET_TABLE[sock_idx] = None; }
+                }
             }
         }
         TcpState::Established => {
@@ -499,6 +567,14 @@ fn process_connected_tcp_event(sock: &mut crate::net::socket::Socket, src_ip: [u
                         sock.local_port,
                         sock.remote_port,
                     );
+                }
+                let parent_opt = sock.parent_listener;
+                sock.parent_listener = None;
+                if let Some(parent_idx) = parent_opt {
+                    if let Some(Some(ref mut parent)) = unsafe { crate::net::socket::SOCKET_TABLE.get_mut(parent_idx) } {
+                        parent.remove_accept(sock_idx);
+                    }
+                    unsafe { crate::net::socket::SOCKET_TABLE[sock_idx] = None; }
                 }
                 return;
             }
@@ -675,13 +751,50 @@ fn process_connected_tcp_event(sock: &mut crate::net::socket::Socket, src_ip: [u
 /// sondagens de persistência para janela zero e expiração de conexões inativas.
 pub fn poll_tcp_retransmissions(ticks: u64) {
     unsafe {
-        for slot in crate::net::socket::SOCKET_TABLE.iter_mut() {
+        for (slot_idx, slot) in crate::net::socket::SOCKET_TABLE.iter_mut().enumerate() {
             if let Some(ref mut sock) = slot {
                 if sock.sock_type != crate::net::socket::SOCK_STREAM {
                     continue;
                 }
 
-                if sock.tcb.state == TcpState::Established {
+                if sock.tcb.state == TcpState::SynReceived {
+                    // Timeout de handshake em andamento (3 retransmissoes do SYN-ACK)
+                    if ticks.saturating_sub(sock.tcb.last_tx_tick) >= sock.tcb.rto_ticks {
+                        if sock.tcb.retransmit_count < 3 {
+                            sock.tcb.retransmit_count += 1;
+                            sock.tcb.last_tx_tick = ticks;
+                            sock.tcb.rto_ticks = (sock.tcb.rto_ticks * 2).min(400);
+                            let retrans_seq = sock.tcb.local_seq.wrapping_sub(1);
+                            send_tcp_packet(
+                                sock.local_port,
+                                sock.remote_ip,
+                                sock.remote_port,
+                                retrans_seq,
+                                sock.tcb.remote_seq,
+                                TCP_FLAG_SYN | TCP_FLAG_ACK,
+                                sock.tcb.local_win,
+                                &[],
+                            );
+                        } else {
+                            // Timeout definitivo do handshake SYN: limpa recursos e remove do pai
+                            let parent_opt = sock.parent_listener;
+                            let our_ip = crate::net::dhcp::DHCP_CLIENT.ip;
+                            crate::net::jinnwall::JINNWALL.clear_connection(
+                                our_ip,
+                                sock.remote_ip,
+                                crate::net::ipv4::PROTO_TCP,
+                                sock.local_port,
+                                sock.remote_port,
+                            );
+                            if let Some(parent_idx) = parent_opt {
+                                if let Some(Some(ref mut parent)) = crate::net::socket::SOCKET_TABLE.get_mut(parent_idx) {
+                                    parent.remove_syn(slot_idx);
+                                }
+                            }
+                            *slot = None;
+                        }
+                    }
+                } else if sock.tcb.state == TcpState::Established {
                     // 1. Retransmissão RTO com recuo exponencial (RFC 793 / RFC 6298)
                     if sock.tcb.unacked_len > 0 {
                         if ticks.saturating_sub(sock.tcb.last_tx_tick) >= sock.tcb.rto_ticks {

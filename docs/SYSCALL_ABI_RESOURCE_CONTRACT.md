@@ -237,6 +237,21 @@ pub struct JinnWallStats {
 }
 ```
 
+#### Contrato de Backlog TCP e Fila de Conexões (`sys_listen` e `sys_accept`)
+A implementação de sockets servidores TCP opera com filas delimitadas e seguras:
+- **Separação de Filas:**
+  - `syn_queue`: Armazena conexões embrionárias (SYN recebido, handshake em andamento no estado `SynReceived`). Limite máximo: `MAX_SYN_BACKLOG = 8`.
+  - `accept_queue`: Armazena conexões totalmente estabelecidas (`Established`) aguardando retirada via `sys_accept`. Limite configurável pelo argumento `backlog` em `sys_listen(sockfd, backlog)`, delimitado no intervalo `1..=MAX_BACKLOG (8)`.
+- **Comportamento em Saturação:**
+  - Caso `syn_queue` ou a soma de conexões pendentes atinja a capacidade, novos pacotes `SYN` são silenciosamente descartados (conforme RFC 1122), induzindo o cliente a retransmitir sob backoff exponencial.
+  - Caso a `accept_queue` esteja saturada no momento da conclusão do handshake (ACK final), a conexão é abortada com emissão de segmento `RST` para prevenir conexões órfãs.
+- **Entrega Única e Ordem FIFO:**
+  - `sys_accept` extrai conexões da cabeça da `accept_queue` (FIFO estrito).
+  - A conexão retirada tem seu ponteiro `parent_listener` desvinculado (`None`), garantindo entrega exatamente uma vez para o descritor recém-alocado.
+- **Encerramento de Listener e Processos:**
+  - Ao fechar o socket ou no término do processo (`close_all_for_pid`), todas as conexões pendentes em `syn_queue` e `accept_queue` são abortadas com emissão de pacote `RST|ACK` ao par remoto, e suas entradas na tabela Conntrack do JinnWall e tabela global de sockets são liberadas.
+
+
 ---
 
 ### 5.1. Preempção por Hardware vs Yields Voluntários

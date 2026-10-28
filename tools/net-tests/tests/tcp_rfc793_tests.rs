@@ -217,6 +217,11 @@ pub struct MockSocket {
 
     pub tcb: TcpControlBlock,
     pub backlog: usize,
+    pub parent_listener: Option<usize>,
+    pub syn_queue: [Option<usize>; 8],
+    pub syn_count: usize,
+    pub accept_queue: [Option<usize>; 8],
+    pub accept_count: usize,
     pub pending_conns: [Option<usize>; 4],
     pub pending_count: usize,
 
@@ -238,12 +243,79 @@ impl MockSocket {
             is_connected: false,
             tcb: TcpControlBlock::new(),
             backlog: 0,
+            parent_listener: None,
+            syn_queue: [None; 8],
+            syn_count: 0,
+            accept_queue: [None; 8],
+            accept_count: 0,
             pending_conns: [None; 4],
             pending_count: 0,
             rx_buf: [[0; SOCK_RX_BUF_SIZE]; 4],
             rx_len: [0; 4],
             rx_head: 0,
             rx_tail: 0,
+        }
+    }
+
+    pub fn push_syn(&mut self, child_idx: usize) -> bool {
+        if self.syn_count >= 8 { return false; }
+        for slot in self.syn_queue.iter_mut() {
+            if slot.is_none() {
+                *slot = Some(child_idx);
+                self.syn_count += 1;
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn remove_syn(&mut self, child_idx: usize) -> bool {
+        for slot in self.syn_queue.iter_mut() {
+            if *slot == Some(child_idx) {
+                *slot = None;
+                self.syn_count = self.syn_count.saturating_sub(1);
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn push_accept(&mut self, child_idx: usize) -> bool {
+        let cap = self.backlog.min(8);
+        if self.accept_count >= cap { return false; }
+        self.accept_queue[self.accept_count] = Some(child_idx);
+        self.accept_count += 1;
+        true
+    }
+
+    pub fn pop_accept(&mut self) -> Option<usize> {
+        if self.accept_count == 0 { return None; }
+        let popped = self.accept_queue[0];
+        for i in 0..(self.accept_count - 1) {
+            self.accept_queue[i] = self.accept_queue[i + 1];
+        }
+        self.accept_queue[self.accept_count - 1] = None;
+        self.accept_count = self.accept_count.saturating_sub(1);
+        popped
+    }
+
+    pub fn remove_accept(&mut self, child_idx: usize) -> bool {
+        let mut found = None;
+        for i in 0..self.accept_count {
+            if self.accept_queue[i] == Some(child_idx) {
+                found = Some(i);
+                break;
+            }
+        }
+        if let Some(idx) = found {
+            for i in idx..(self.accept_count - 1) {
+                self.accept_queue[i] = self.accept_queue[i + 1];
+            }
+            self.accept_queue[self.accept_count - 1] = None;
+            self.accept_count = self.accept_count.saturating_sub(1);
+            true
+        } else {
+            false
         }
     }
 
@@ -919,4 +991,110 @@ fn test_tcp_retransmission_exponential_backoff_and_timeout() {
     }
     assert_eq!(tcb.state, TcpState::Closed);
     assert_eq!(tcb.unacked_len, 0);
+}
+
+#[test]
+fn test_tcp_backlog_queue_fifo_order() {
+    let mut server = MockSocket::empty();
+    server.tcb.state = TcpState::Listen;
+    server.backlog = 4;
+
+    // Enfileira 4 conexões filhas completadas
+    assert!(server.push_accept(10));
+    assert!(server.push_accept(20));
+    assert!(server.push_accept(30));
+    assert!(server.push_accept(40));
+    assert_eq!(server.accept_count, 4);
+
+    // Valida retirada em estrita ordem FIFO
+    assert_eq!(server.pop_accept(), Some(10));
+    assert_eq!(server.accept_count, 3);
+    assert_eq!(server.pop_accept(), Some(20));
+    assert_eq!(server.accept_count, 2);
+    assert_eq!(server.pop_accept(), Some(30));
+    assert_eq!(server.accept_count, 1);
+    assert_eq!(server.pop_accept(), Some(40));
+    assert_eq!(server.accept_count, 0);
+    assert_eq!(server.pop_accept(), None);
+}
+
+#[test]
+fn test_tcp_backlog_capacity_limit_rejection() {
+    let mut server = MockSocket::empty();
+    server.tcb.state = TcpState::Listen;
+    server.backlog = 2; // Capacidade configurada: 2 conexões
+
+    assert!(server.push_accept(1));
+    assert!(server.push_accept(2));
+    assert_eq!(server.accept_count, 2);
+
+    // 3ª conexão deve ser REJEITADA por backlog cheio
+    assert!(!server.push_accept(3));
+    assert_eq!(server.accept_count, 2);
+
+    // Esvazia 1 posição
+    assert_eq!(server.pop_accept(), Some(1));
+    assert_eq!(server.accept_count, 1);
+
+    // Agora há espaço para a nova conexão
+    assert!(server.push_accept(3));
+    assert_eq!(server.accept_count, 2);
+}
+
+#[test]
+fn test_tcp_backlog_client_rst_purges_pending() {
+    let mut server = MockSocket::empty();
+    server.tcb.state = TcpState::Listen;
+    server.backlog = 4;
+
+    assert!(server.push_accept(100));
+    assert!(server.push_accept(200));
+    assert!(server.push_accept(300));
+    assert_eq!(server.accept_count, 3);
+
+    // Cliente 200 envia RST antes de ser aceito pela aplicação
+    let removed = server.remove_accept(200);
+    assert!(removed);
+    assert_eq!(server.accept_count, 2);
+
+    // Accept subsequente deve entregar 100 e depois 300 (sem saltar ou entregar 200)
+    assert_eq!(server.pop_accept(), Some(100));
+    assert_eq!(server.pop_accept(), Some(300));
+    assert_eq!(server.pop_accept(), None);
+}
+
+#[test]
+fn test_tcp_backlog_listener_close_aborts_all_pending() {
+    let mut server = MockSocket::empty();
+    server.tcb.state = TcpState::Listen;
+    server.backlog = 4;
+
+    // Conexões em handshake SYN
+    assert!(server.push_syn(1));
+    assert!(server.push_syn(2));
+    assert_eq!(server.syn_count, 2);
+
+    // Conexões estabelecidas aguardando accept
+    assert!(server.push_accept(3));
+    assert!(server.push_accept(4));
+    assert_eq!(server.accept_count, 2);
+
+    // Simula fechamento do listener
+    let mut aborted_syn = Vec::new();
+    for slot in server.syn_queue.iter_mut() {
+        if let Some(child) = slot.take() {
+            aborted_syn.push(child);
+        }
+    }
+    server.syn_count = 0;
+
+    let mut aborted_acc = Vec::new();
+    while let Some(child) = server.pop_accept() {
+        aborted_acc.push(child);
+    }
+
+    assert_eq!(aborted_syn, vec![1, 2]);
+    assert_eq!(aborted_acc, vec![3, 4]);
+    assert_eq!(server.syn_count, 0);
+    assert_eq!(server.accept_count, 0);
 }

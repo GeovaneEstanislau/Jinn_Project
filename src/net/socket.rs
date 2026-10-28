@@ -6,7 +6,9 @@ pub const AF_INET:     u32 = 2;
 pub const SOCK_STREAM: u32 = 1; // TCP
 pub const SOCK_DGRAM:  u32 = 2; // UDP
 
-pub const MAX_SOCKETS: usize = 16;
+pub const MAX_SOCKETS: usize = 32;
+pub const MAX_BACKLOG: usize = 8;
+pub const MAX_SYN_BACKLOG: usize = 8;
 pub const SOCK_RX_BUF_SIZE: usize = 1536;
 
 #[repr(C)]
@@ -31,8 +33,15 @@ pub struct Socket {
     // Controle de estado e conexões TCP (RFC 793)
     pub tcb: crate::net::tcp::TcpControlBlock,
     pub backlog: usize,
-    pub pending_conns: [Option<usize>; 4],
-    pub pending_count: usize,
+    pub parent_listener: Option<usize>,
+
+    // Fila de SYN recebidos (handshake em andamento - SynReceived)
+    pub syn_queue: [Option<usize>; MAX_SYN_BACKLOG],
+    pub syn_count: usize,
+
+    // Fila de conexões estabelecidas aguardando sys_accept (Established)
+    pub accept_queue: [Option<usize>; MAX_BACKLOG],
+    pub accept_count: usize,
 
     // Fila circular de recepção para o socket
     pub rx_buf: [[u8; SOCK_RX_BUF_SIZE]; 4],
@@ -53,12 +62,88 @@ impl Socket {
             is_connected: false,
             tcb: crate::net::tcp::TcpControlBlock::new(),
             backlog: 0,
-            pending_conns: [None; 4],
-            pending_count: 0,
+            parent_listener: None,
+            syn_queue: [None; MAX_SYN_BACKLOG],
+            syn_count: 0,
+            accept_queue: [None; MAX_BACKLOG],
+            accept_count: 0,
             rx_buf: [[0; SOCK_RX_BUF_SIZE]; 4],
             rx_len: [0; 4],
             rx_head: 0,
             rx_tail: 0,
+        }
+    }
+
+    /// Insere uma conexão filha em handshake na fila SYN do listener.
+    pub fn push_syn(&mut self, child_idx: usize) -> bool {
+        if self.syn_count >= MAX_SYN_BACKLOG {
+            return false;
+        }
+        for slot in self.syn_queue.iter_mut() {
+            if slot.is_none() {
+                *slot = Some(child_idx);
+                self.syn_count += 1;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Remove uma conexão filha da fila SYN após conclusão ou aborto.
+    pub fn remove_syn(&mut self, child_idx: usize) -> bool {
+        for slot in self.syn_queue.iter_mut() {
+            if *slot == Some(child_idx) {
+                *slot = None;
+                self.syn_count = self.syn_count.saturating_sub(1);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Insere uma conexão concluída (Established) na fila de accept respeitando o backlog configurado.
+    pub fn push_accept(&mut self, child_idx: usize) -> bool {
+        let cap = self.backlog.min(MAX_BACKLOG);
+        if self.accept_count >= cap {
+            return false; // Backlog de conexões estabelecidas esgotado
+        }
+        self.accept_queue[self.accept_count] = Some(child_idx);
+        self.accept_count += 1;
+        true
+    }
+
+    /// Desenfileira em ordem FIFO a conexão estabelecida mais antiga para entrega via sys_accept.
+    pub fn pop_accept(&mut self) -> Option<usize> {
+        if self.accept_count == 0 {
+            return None;
+        }
+        let popped = self.accept_queue[0];
+        for i in 0..(self.accept_count - 1) {
+            self.accept_queue[i] = self.accept_queue[i + 1];
+        }
+        self.accept_queue[self.accept_count - 1] = None;
+        self.accept_count = self.accept_count.saturating_sub(1);
+        popped
+    }
+
+    /// Remove uma conexão da fila de accept caso tenha sido abortada pelo cliente antes de ser aceita.
+    pub fn remove_accept(&mut self, child_idx: usize) -> bool {
+        let mut found = None;
+        for i in 0..self.accept_count {
+            if self.accept_queue[i] == Some(child_idx) {
+                found = Some(i);
+                break;
+            }
+        }
+        if let Some(idx) = found {
+            for i in idx..(self.accept_count - 1) {
+                self.accept_queue[i] = self.accept_queue[i + 1];
+            }
+            self.accept_queue[self.accept_count - 1] = None;
+            self.accept_count = self.accept_count.saturating_sub(1);
+            true
+        } else {
+            false
         }
     }
 
@@ -271,7 +356,7 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
     Err(ETIMEDOUT)
 }
 
-/// Habilita escuta passiva de conexões TCP em uma porta bound (listen).
+/// Habilita escuta passiva de conexões TCP em uma porta bound (listen) com controle de backlog configurável.
 pub fn listen_socket(pid: usize, sockfd: usize, backlog: usize) -> Result<(), isize> {
     unsafe {
         let sock = match SOCKET_TABLE.get_mut(sockfd).and_then(|s| s.as_mut()) {
@@ -288,16 +373,21 @@ pub fn listen_socket(pid: usize, sockfd: usize, backlog: usize) -> Result<(), is
             return Err(EINVAL);
         }
         sock.tcb.state = crate::net::tcp::TcpState::Listen;
-        sock.backlog = backlog.clamp(1, 4);
+        // Validação e delimitação de backlog: 0 é promovido a 1; valores altos limitados a MAX_BACKLOG (RFC / BSD)
+        sock.backlog = if backlog == 0 { 1 } else { backlog.min(MAX_BACKLOG) };
+        sock.syn_count = 0;
+        sock.syn_queue = [None; MAX_SYN_BACKLOG];
+        sock.accept_count = 0;
+        sock.accept_queue = [None; MAX_BACKLOG];
         Ok(())
     }
 }
 
-/// Aceita uma conexão TCP estabelecida a partir da fila de conexões pendentes (accept).
+/// Aceita uma conexão TCP estabelecida a partir da fila de accept FIFO do listener.
 pub fn accept_socket(pid: usize, sockfd: usize) -> Result<usize, isize> {
     crate::net::poll();
     unsafe {
-        let _ = match SOCKET_TABLE.get(sockfd).and_then(|s| s.as_ref()) {
+        let listening_sock = match SOCKET_TABLE.get_mut(sockfd).and_then(|s| s.as_mut()) {
             Some(s) => {
                 if s.owner_pid != pid { return Err(EPERM); }
                 if s.tcb.state != crate::net::tcp::TcpState::Listen { return Err(EINVAL); }
@@ -306,20 +396,13 @@ pub fn accept_socket(pid: usize, sockfd: usize) -> Result<usize, isize> {
             None => return Err(EBADF),
         };
 
-        if let Some(ref mut listening_sock) = SOCKET_TABLE[sockfd] {
-            for i in 0..listening_sock.pending_count {
-                if let Some(child_fd) = listening_sock.pending_conns[i] {
-                    if let Some(Some(child)) = SOCKET_TABLE.get(child_fd) {
-                        if child.tcb.state == crate::net::tcp::TcpState::Established {
-                            listening_sock.pending_conns[i] = None;
-                            for j in i..(listening_sock.pending_count - 1) {
-                                listening_sock.pending_conns[j] = listening_sock.pending_conns[j + 1];
-                            }
-                            listening_sock.pending_conns[listening_sock.pending_count - 1] = None;
-                            listening_sock.pending_count = listening_sock.pending_count.saturating_sub(1);
-                            return Ok(child_fd);
-                        }
-                    }
+        // Desenfileira da accept_queue; descarta sockets que foram abortados ou fechados antes do accept
+        while let Some(child_fd) = listening_sock.pop_accept() {
+            if let Some(Some(ref mut child)) = SOCKET_TABLE.get_mut(child_fd) {
+                if child.tcb.state == crate::net::tcp::TcpState::Established {
+                    // Desassocia o socket filho do listener pai pois agora foi entregue à aplicação
+                    child.parent_listener = None;
+                    return Ok(child_fd);
                 }
             }
         }
@@ -329,7 +412,8 @@ pub fn accept_socket(pid: usize, sockfd: usize) -> Result<usize, isize> {
 }
 
 /// Fecha o socket e libera recursos.
-/// Para TCP em Established, envia FIN para encerramento gracioso (RFC 793).
+/// Para listener TCP, aborta graciosamente todas as conexões em syn_queue e accept_queue.
+/// Para TCP conectado, envia FIN para encerramento gracioso (RFC 793).
 pub fn close_socket(pid: usize, sockfd: usize) -> Result<(), isize> {
     unsafe {
         let sock = match SOCKET_TABLE.get_mut(sockfd).and_then(|s| s.as_mut()) {
@@ -340,7 +424,43 @@ pub fn close_socket(pid: usize, sockfd: usize) -> Result<(), isize> {
             return Err(EPERM);
         }
 
-        if sock.sock_type == SOCK_STREAM && sock.tcb.state == crate::net::tcp::TcpState::Established {
+        let our_ip = crate::net::dhcp::DHCP_CLIENT.ip;
+
+        // Se for socket de escuta (LISTEN), encerra com RST todas as conexões filhas pendentes
+        if sock.tcb.state == crate::net::tcp::TcpState::Listen {
+            let syn_q = sock.syn_queue;
+            let acc_q = sock.accept_queue;
+            sock.syn_queue = [None; MAX_SYN_BACKLOG];
+            sock.syn_count = 0;
+            sock.accept_queue = [None; MAX_BACKLOG];
+            sock.accept_count = 0;
+            sock.tcb.state = crate::net::tcp::TcpState::Closed;
+
+            for child_opt in syn_q.iter().chain(acc_q.iter()) {
+                if let Some(child_idx) = *child_opt {
+                    if let Some(Some(ref mut child)) = SOCKET_TABLE.get_mut(child_idx) {
+                        crate::net::tcp::send_tcp_packet(
+                            child.local_port,
+                            child.remote_ip,
+                            child.remote_port,
+                            child.tcb.local_seq,
+                            child.tcb.remote_seq,
+                            crate::net::tcp::TCP_FLAG_RST | crate::net::tcp::TCP_FLAG_ACK,
+                            0,
+                            &[],
+                        );
+                        crate::net::jinnwall::JINNWALL.clear_connection(
+                            our_ip,
+                            child.remote_ip,
+                            crate::net::ipv4::PROTO_TCP,
+                            child.local_port,
+                            child.remote_port,
+                        );
+                        SOCKET_TABLE[child_idx] = None;
+                    }
+                }
+            }
+        } else if sock.sock_type == SOCK_STREAM && sock.tcb.state == crate::net::tcp::TcpState::Established {
             crate::net::tcp::send_tcp_packet(
                 sock.local_port,
                 sock.remote_ip,
@@ -355,8 +475,15 @@ pub fn close_socket(pid: usize, sockfd: usize) -> Result<(), isize> {
             sock.tcb.state = crate::net::tcp::TcpState::FinWait1;
         }
 
+        // Se era um socket filho pendente aguardando accept em um listener pai, remove-se das filas do pai
+        if let Some(parent_idx) = sock.parent_listener {
+            if let Some(Some(ref mut parent)) = SOCKET_TABLE.get_mut(parent_idx) {
+                parent.remove_syn(sockfd);
+                parent.remove_accept(sockfd);
+            }
+        }
+
         // Limpa estado no firewall JinnWall SPI
-        let our_ip = crate::net::dhcp::DHCP_CLIENT.ip;
         crate::net::jinnwall::JINNWALL.clear_connection(
             our_ip,
             sock.remote_ip,
@@ -374,14 +501,45 @@ pub fn close_socket(pid: usize, sockfd: usize) -> Result<(), isize> {
 }
 
 /// Fecha todos os sockets pertencentes ao processo `pid` (chamado no `exit_task`).
-/// Notifica endpoints remotos conectados com RST para evitar conexões zumbis.
+/// Notifica endpoints remotos conectados e conexões pendentes com RST para evitar conexões zumbis.
 pub fn close_all_for_pid(pid: usize) {
     unsafe {
         let our_ip = crate::net::dhcp::DHCP_CLIENT.ip;
         for slot in SOCKET_TABLE.iter_mut() {
             if let Some(sock) = slot {
                 if sock.owner_pid == pid {
-                    if sock.sock_type == SOCK_STREAM && (sock.is_connected || sock.tcb.state == crate::net::tcp::TcpState::Established) {
+                    if sock.tcb.state == crate::net::tcp::TcpState::Listen {
+                        let syn_q = sock.syn_queue;
+                        let acc_q = sock.accept_queue;
+                        sock.syn_queue = [None; MAX_SYN_BACKLOG];
+                        sock.syn_count = 0;
+                        sock.accept_queue = [None; MAX_BACKLOG];
+                        sock.accept_count = 0;
+                        for child_opt in syn_q.iter().chain(acc_q.iter()) {
+                            if let Some(child_idx) = *child_opt {
+                                if let Some(Some(ref mut child)) = SOCKET_TABLE.get_mut(child_idx) {
+                                    crate::net::tcp::send_tcp_packet(
+                                        child.local_port,
+                                        child.remote_ip,
+                                        child.remote_port,
+                                        child.tcb.local_seq,
+                                        child.tcb.remote_seq,
+                                        crate::net::tcp::TCP_FLAG_RST | crate::net::tcp::TCP_FLAG_ACK,
+                                        0,
+                                        &[],
+                                    );
+                                    crate::net::jinnwall::JINNWALL.clear_connection(
+                                        our_ip,
+                                        child.remote_ip,
+                                        crate::net::ipv4::PROTO_TCP,
+                                        child.local_port,
+                                        child.remote_port,
+                                    );
+                                    SOCKET_TABLE[child_idx] = None;
+                                }
+                            }
+                        }
+                    } else if sock.sock_type == SOCK_STREAM && (sock.is_connected || sock.tcb.state == crate::net::tcp::TcpState::Established) {
                         crate::net::tcp::send_tcp_packet(
                             sock.local_port,
                             sock.remote_ip,
