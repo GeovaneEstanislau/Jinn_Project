@@ -162,6 +162,9 @@ $bpb[510] = 0x55; $bpb[511] = 0xAA                                      # Boot s
 Write-BytesAt $part1ByteOffset $bpb
 Write-BytesAt ($part1ByteOffset + 6 * $sectorSize) $bpb
 
+$clusterBytes = 8 * 512 # 4096 bytes
+$elfClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($elfBytes.Length / $clusterBytes))
+
 # FSInfo Sector (Setor 1 da partição FAT32)
 $indexClus = 4 + $elfClustersNeeded
 $aboutClus = $indexClus + 1
@@ -185,8 +188,6 @@ Set-FatEntry 1 0x0FFFFFFF
 Set-FatEntry 2 0x0FFFFFFF
 Set-FatEntry 3 0x0FFFFFFF
 
-$clusterBytes = 8 * 512 # 4096 bytes
-$elfClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($elfBytes.Length / $clusterBytes))
 for ($i = 0; $i -lt $elfClustersNeeded; $i++) {
     $currentClus = 4 + $i
     if ($i -eq $elfClustersNeeded - 1) {
@@ -253,6 +254,7 @@ Add-DirEntry 1 "README  TXT" 0x20 3 ($readmeBytes.Length)
 Add-DirEntry 2 "OLA     ELF" 0x20 4 ($elfBytes.Length)
 Add-DirEntry 3 "INDEX   HTM" 0x20 $indexClus ($indexHtmlBytes.Length)
 Add-DirEntry 4 "ABOUT   HTM" 0x20 $aboutClus ($aboutHtmlBytes.Length)
+Add-DirEntry 5 "BROWSER ELF" 0x20 4 ($elfBytes.Length)
 
 Write-BytesAt $dataStartByteOffset1 $rootDir
 Write-BytesAt ($dataStartByteOffset1 + [long](3 - 2) * $clusterBytes) $readmeBytes

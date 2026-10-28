@@ -179,6 +179,7 @@ def main():
         add_entry(2, "OLA     ELF", 0x20, 4, len(elf_bytes))
         add_entry(3, "INDEX   HTM", 0x20, index_clus, len(index_html))
         add_entry(4, "ABOUT   HTM", 0x20, about_clus, len(about_html))
+        add_entry(5, "BROWSER ELF", 0x20, 4, len(elf_bytes))
 
         f.seek(data_start_offset)
         f.write(root_dir)

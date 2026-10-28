@@ -186,14 +186,35 @@ impl ProcessHost for JinnProcess {
     }
 
     fn spawn_app(&mut self, path: &str) -> Result<usize, ()> {
+        let is_browser = path.contains("browser") || path.contains("BROWSER");
+        let argv: [&str; 2] = [path, if is_browser { "browser" } else { "" }];
+        let argv_slice: &[&str] = if is_browser { &argv[..2] } else { &argv[..1] };
+
+        if let Ok(pid) = crate::scheduler::get().spawn_user_task_from_vfs(path, argv_slice, &[]) {
+            crate::ipc::register(pid);
+            return Ok(pid);
+        }
         let pid = crate::scheduler::get().add_user_task_from_vfs("user_app[U3]", path);
         if pid > 0 {
             crate::ipc::register(pid);
             return Ok(pid);
         }
         // Fallback: tenta caminhos padrão no disco se o caminho direto falhou
-        let fallback_paths = ["/disk/OLA.ELF", "/disk/ola-mundo.elf", "/ext2/OLA.ELF"];
+        let fallback_paths = [
+            "/disk/browser.elf",
+            "/disk/BROWSER.ELF",
+            "/disk/OLA.ELF",
+            "/disk/ola.elf",
+            "/disk/ola-mundo.elf",
+            "/ext2/OLA.ELF",
+        ];
         for fb_path in fallback_paths {
+            let fb_argv: [&str; 2] = [fb_path, if is_browser { "browser" } else { "" }];
+            let fb_slice = if is_browser { &fb_argv[..2] } else { &fb_argv[..1] };
+            if let Ok(fb_pid) = crate::scheduler::get().spawn_user_task_from_vfs(fb_path, fb_slice, &[]) {
+                crate::ipc::register(fb_pid);
+                return Ok(fb_pid);
+            }
             let fb_pid = crate::scheduler::get().add_user_task_from_vfs("user_app[U3]", fb_path);
             if fb_pid > 0 {
                 crate::ipc::register(fb_pid);

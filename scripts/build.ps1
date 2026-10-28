@@ -52,6 +52,7 @@ if (-not (Test-Path $appElfPath)) {
 $isoAppsDir = Join-Path -Path (Get-Location) "iso_root\apps"
 New-Item -ItemType Directory -Force -Path $isoAppsDir | Out-Null
 Copy-Item -Path $appElfPath -Destination (Join-Path $isoAppsDir "ola-mundo.elf") -Force
+Copy-Item -Path $appElfPath -Destination (Join-Path $isoAppsDir "browser.elf") -Force
 
 # --- Gera imagem de disco virtual FAT32 com MBR ---
 $makeDiskScript = Join-Path -Path (Get-Location) "scripts\make_disk.ps1"

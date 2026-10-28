@@ -1583,6 +1583,205 @@ unsafe fn run_gui_demo() {
     print_str(b"[BROWSER] [PASS] Jinn Browser 0.2.0 validado nativamente em Ring 3 com 100% de sucesso!\n");
 }
 
+fn str_contains(haystack: *const u8, needle: &[u8]) -> bool {
+    if haystack.is_null() || needle.is_empty() { return false; }
+    let mut h_len = 0;
+    unsafe {
+        while *haystack.add(h_len) != 0 && h_len < 256 {
+            h_len += 1;
+        }
+        if h_len < needle.len() { return false; }
+        for i in 0..=(h_len - needle.len()) {
+            let mut matches = true;
+            for j in 0..needle.len() {
+                let hc = *haystack.add(i + j);
+                let nc = needle[j];
+                let hc_low = if (b'A'..=b'Z').contains(&hc) { hc + 32 } else { hc };
+                let nc_low = if (b'A'..=b'Z').contains(&nc) { nc + 32 } else { nc };
+                if hc_low != nc_low {
+                    matches = false;
+                    break;
+                }
+            }
+            if matches { return true; }
+        }
+    }
+    false
+}
+
+fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 64]) -> &'a [u8] {
+    let mut clean = target;
+    if clean.starts_with(b"file://") {
+        clean = &clean[7..];
+    }
+    if clean.starts_with(b"/") {
+        let len = clean.len().min(63);
+        buf[..len].copy_from_slice(&clean[..len]);
+        buf[len] = 0;
+        &buf[..len]
+    } else {
+        let prefix = b"/disk/";
+        let p_len = prefix.len();
+        buf[..p_len].copy_from_slice(prefix);
+        let c_len = clean.len().min(63 - p_len);
+        buf[p_len..p_len + c_len].copy_from_slice(&clean[..c_len]);
+        let total = p_len + c_len;
+        buf[total] = 0;
+        &buf[..total]
+    }
+}
+
+fn get_cstr_len(s: &[u8]) -> usize {
+    let mut l = 0;
+    while l < s.len() && s[l] != 0 {
+        l += 1;
+    }
+    l
+}
+
+unsafe fn run_browser_interactive() -> ! {
+    print_str(b"\n==================================================================\n");
+    print_str(b"  JINN BROWSER 0.2.0 - SESSAO INTERATIVA NATIVA (RING 3)\n");
+    print_str(b"==================================================================\n");
+
+    let mut session = browser::BrowserSession::new();
+    let win_buf_ptr = core::ptr::addr_of_mut!(WIN_BUF) as *mut u32;
+    let buf_slice = core::slice::from_raw_parts_mut(win_buf_ptr, browser::WIN_W * browser::WIN_H);
+
+    // 1. Carrega documento inicial do VFS (/disk/INDEX.HTM)
+    print_str(b"[BROWSER] Carregando /disk/INDEX.HTM...\n");
+    let bytes_read = match read_html_file(b"/disk/INDEX.HTM") {
+        Some(len) => len,
+        None => {
+            let fallback = b"<html><head><title>Jinn OS Portal</title></head><body><h1>Jinn Browser 0.2.0</h1><p>Bem-vindo ao Jinn Browser rodando nativamente sobre o microkernel Jinn OS e Aladdin Desktop Compositor.</p><p><a href=\"about.htm\">Sobre o Sistema</a></p></body></html>";
+            let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
+            core::ptr::copy_nonoverlapping(fallback.as_ptr(), f_ptr, fallback.len());
+            fallback.len()
+        }
+    };
+
+    let raw_bytes = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, bytes_read);
+    session.load_document_bytes(raw_bytes, b"file:///disk/INDEX.HTM");
+
+    // 2. Cria janela nativa no Aladdin Desktop
+    let win_id = sys_window_create(b"Jinn Browser v0.2.0", browser::WIN_W, browser::WIN_H);
+    if win_id < 0 {
+        print_str(b"[BROWSER] sys_window_create falhou para Jinn Browser!\n");
+        sys_exit(1);
+    }
+    let win_id = win_id as usize;
+    print_str(b"[BROWSER] Janela criada com sucesso! ID=");
+    print_u64(win_id as u64);
+    print_str(b"\n");
+
+    // 3. Renderiza e atualiza primeiro quadro
+    session.render(buf_slice);
+    let _ = sys_window_update(win_id, buf_slice);
+
+    // 4. Laço Interativo de Eventos do Aladdin
+    let mut ev: ClientWindowEvent = core::mem::zeroed();
+    loop {
+        let has_ev = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
+        if has_ev == 1 {
+            match ev.event_type {
+                EVENT_WINDOW_CLOSE => {
+                    print_str(b"[BROWSER] Recebido EVENT_WINDOW_CLOSE. Encerrando...\n");
+                    let _ = sys_window_close(win_id);
+                    sys_exit(0);
+                }
+                EVENT_MOUSE_DOWN => {
+                    let click_x = ev.x as usize;
+                    let click_y = ev.y as usize;
+
+                    // Botão Voltar [<]
+                    if click_x >= 4 && click_x <= 16 && click_y >= 4 && click_y <= 22 {
+                        if session.has_history && session.history_prev_len > 0 {
+                            session.has_history = false;
+                            let mut prev_target = [0u8; 64];
+                            let p_len = session.history_prev_len;
+                            prev_target[..p_len].copy_from_slice(&session.history_prev[..p_len]);
+
+                            let mut path_buf = [0u8; 64];
+                            let path = resolve_target_path(&prev_target[..p_len], &mut path_buf);
+                            if let Some(len) = read_html_file(path) {
+                                let doc_slice = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, len);
+                                session.load_document_bytes(doc_slice, path);
+                                session.render(buf_slice);
+                                let _ = sys_window_update(win_id, buf_slice);
+                            }
+                        }
+                    } else if let Some(target) = session.handle_click(click_x, click_y) {
+                        let target_len = get_cstr_len(&target);
+                        if target_len > 0 {
+                            let mut path_buf = [0u8; 64];
+                            let path = resolve_target_path(&target[..target_len], &mut path_buf);
+                            if let Some(len) = read_html_file(path) {
+                                session.history_prev = session.current_url;
+                                session.history_prev_len = session.current_url_len;
+                                session.has_history = true;
+
+                                let doc_slice = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, len);
+                                session.load_document_bytes(doc_slice, path);
+                                session.render(buf_slice);
+                                let _ = sys_window_update(win_id, buf_slice);
+                            }
+                        }
+                    }
+                }
+                EVENT_KEY_DOWN => {
+                    match ev.button_or_key {
+                        0x50 => { // Seta para Baixo (Scroll +20px)
+                            session.scroll_by(20);
+                            session.render(buf_slice);
+                            let _ = sys_window_update(win_id, buf_slice);
+                        }
+                        0x48 => { // Seta para Cima (Scroll -20px)
+                            session.scroll_by(-20);
+                            session.render(buf_slice);
+                            let _ = sys_window_update(win_id, buf_slice);
+                        }
+                        0x51 => { // Page Down (Scroll +80px)
+                            session.scroll_by(80);
+                            session.render(buf_slice);
+                            let _ = sys_window_update(win_id, buf_slice);
+                        }
+                        0x49 => { // Page Up (Scroll -80px)
+                            session.scroll_by(-80);
+                            session.render(buf_slice);
+                            let _ = sys_window_update(win_id, buf_slice);
+                        }
+                        0x0E => { // Backspace (Navegação Voltar)
+                            if session.has_history && session.history_prev_len > 0 {
+                                session.has_history = false;
+                                let mut prev_target = [0u8; 64];
+                                let p_len = session.history_prev_len;
+                                prev_target[..p_len].copy_from_slice(&session.history_prev[..p_len]);
+
+                                let mut path_buf = [0u8; 64];
+                                let path = resolve_target_path(&prev_target[..p_len], &mut path_buf);
+                                if let Some(len) = read_html_file(path) {
+                                    let doc_slice = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, len);
+                                    session.load_document_bytes(doc_slice, path);
+                                    session.render(buf_slice);
+                                    let _ = sys_window_update(win_id, buf_slice);
+                                }
+                            }
+                        }
+                        0x01 => { // Escape (Fechar Janela)
+                            let _ = sys_window_close(win_id);
+                            sys_exit(0);
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        } else {
+            let _ = sys_sleep(25);
+        }
+    }
+}
+
 unsafe fn test_jda_stress() {
     print_str(b"[STRESS] test_jda_stress: Alocando buffers JDA ate o limite max_jda_buffers (4)...\n");
     let mut jda_handles = [0i64; 6];
@@ -2501,6 +2700,15 @@ pub extern "C" fn _start() -> ! {
                 run_child_task(argc, argv);
             } else if streq(arg1, b"exec_done") {
                 run_exec_target(argc, argv);
+            } else if streq(arg1, b"browser") {
+                run_browser_interactive();
+            }
+        }
+
+        if argc > 0 && !argv.is_null() {
+            let arg0 = *argv;
+            if str_contains(arg0, b"browser") {
+                run_browser_interactive();
             }
         }
 
