@@ -1,0 +1,11 @@
+[package]
+name = "jbe-render"
+version = "0.1.0"
+edition = "2021"
+description = "Paint command generator and deterministic rendering backend for Jinn Browser"
+
+[dependencies]
+jbe-core = { path = "../jbe-core" }
+jbe-layout = { path = "../jbe-layout" }
+jbe-dom = { path = "../jbe-dom" }
+jbe-css = { path = "../jbe-css" }

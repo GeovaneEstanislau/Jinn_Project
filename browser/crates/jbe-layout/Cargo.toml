@@ -1,0 +1,10 @@
+[package]
+name = "jbe-layout"
+version = "0.1.0"
+edition = "2021"
+description = "Block flow layout engine for Jinn Browser"
+
+[dependencies]
+jbe-core = { path = "../jbe-core" }
+jbe-dom = { path = "../jbe-dom" }
+jbe-css = { path = "../jbe-css" }

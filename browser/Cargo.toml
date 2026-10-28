@@ -1,0 +1,14 @@
+[workspace]
+members = [
+    "crates/jbe-core",
+    "crates/jbe-url",
+    "crates/jbe-dom",
+    "crates/jbe-html",
+    "crates/jbe-css",
+    "crates/jbe-layout",
+    "crates/jbe-render",
+    "crates/jbe-image",
+    "crates/jbe-net",
+    "jinn-browser",
+]
+resolver = "2"

@@ -1,0 +1,12 @@
+[package]
+name = "jbe-url"
+version = "0.1.0"
+edition = "2021"
+description = "URL parsing, scheme validation, and relative path resolution for the Jinn Browser Engine"
+
+[features]
+default = ["std"]
+std = ["jbe-core/std"]
+
+[dependencies]
+jbe-core = { path = "../jbe-core", default-features = false }

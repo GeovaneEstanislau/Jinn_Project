@@ -1,0 +1,16 @@
+[package]
+name = "jinn-browser"
+version = "0.1.0"
+edition = "2021"
+description = "Reference browser application and CLI runner for Jinn Browser Engine"
+
+[dependencies]
+jbe-core = { path = "../crates/jbe-core" }
+jbe-url = { path = "../crates/jbe-url" }
+jbe-dom = { path = "../crates/jbe-dom" }
+jbe-html = { path = "../crates/jbe-html" }
+jbe-css = { path = "../crates/jbe-css" }
+jbe-layout = { path = "../crates/jbe-layout" }
+jbe-render = { path = "../crates/jbe-render" }
+jbe-image = { path = "../crates/jbe-image" }
+jbe-net = { path = "../crates/jbe-net" }

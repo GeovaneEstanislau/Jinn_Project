@@ -1,0 +1,8 @@
+[package]
+name = "jbe-dom"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal DOM tree and arena storage for Jinn Browser"
+
+[dependencies]
+jbe-core = { path = "../jbe-core" }

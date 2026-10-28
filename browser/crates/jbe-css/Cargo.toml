@@ -1,0 +1,9 @@
+[package]
+name = "jbe-css"
+version = "0.1.0"
+edition = "2021"
+description = "CSS parser, selector matcher, and computed style resolver for Jinn Browser"
+
+[dependencies]
+jbe-core = { path = "../jbe-core" }
+jbe-dom = { path = "../jbe-dom" }

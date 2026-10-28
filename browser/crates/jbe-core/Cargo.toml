@@ -1,0 +1,11 @@
+[package]
+name = "jbe-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core types, geometry, limits, and error definitions for the Jinn Browser Engine"
+
+[features]
+default = ["std"]
+std = []
+
+[dependencies]

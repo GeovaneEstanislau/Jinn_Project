@@ -1,0 +1,9 @@
+[package]
+name = "jbe-html"
+version = "0.1.0"
+edition = "2021"
+description = "Deterministic state-machine HTML parser and DOM builder for Jinn Browser"
+
+[dependencies]
+jbe-core = { path = "../jbe-core" }
+jbe-dom = { path = "../jbe-dom" }

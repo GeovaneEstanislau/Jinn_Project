@@ -1,0 +1,9 @@
+[package]
+name = "jbe-net"
+version = "0.1.0"
+edition = "2021"
+description = "Resource loader abstraction and local file transport for Jinn Browser"
+
+[dependencies]
+jbe-core = { path = "../jbe-core" }
+jbe-url = { path = "../jbe-url" }
