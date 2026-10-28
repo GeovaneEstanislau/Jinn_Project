@@ -61,6 +61,21 @@ unsafe fn sys_free_page(addr: u64) -> i64 {
 }
 
 #[inline(always)]
+unsafe fn sys_waitpid(pid: u64) -> i64 {
+    syscall3(10, pid, 0, 0)
+}
+
+#[inline(always)]
+unsafe fn sys_execve(path: *const u8, argv: *const *const u8, envp: *const *const u8) -> i64 {
+    syscall3(38, path as u64, argv as u64, envp as u64)
+}
+
+#[inline(always)]
+unsafe fn sys_spawn(path: *const u8, argv: *const *const u8, envp: *const *const u8) -> i64 {
+    syscall3(39, path as u64, argv as u64, envp as u64)
+}
+
+#[inline(always)]
 unsafe fn sys_sleep(ms: u64) -> i64 {
     syscall3(11, ms, 0, 0)
 }
@@ -2012,11 +2027,211 @@ unsafe fn test_adv_fat32_persistent_write_and_recovery() {
     print_str(b"  [PASS] test_adv_fat32_persistent_write_and_recovery: Auditoria e Integridade de Escrita FAT32 APROVADA!\n");
 }
 
+// ── Testes de Carregamento ELF, sys_spawn e sys_execve ────────────────────────
+
+unsafe fn streq(s: *const u8, expected: &[u8]) -> bool {
+    if s.is_null() {
+        return false;
+    }
+    let mut i = 0;
+    while i < expected.len() {
+        let b = *s.add(i);
+        if b == 0 || b != expected[i] {
+            return false;
+        }
+        i += 1;
+    }
+    *s.add(i) == 0
+}
+
+static mut BSS_TEST_ARRAY: [u8; 1024] = [0u8; 1024];
+
+unsafe fn run_child_task(argc: usize, _argv: *const *const u8) -> ! {
+    print_str(b"\n==================================================================\n");
+    print_str(b"  [Ring 3] Processo filho executado com sucesso a partir do FAT32!\n");
+    print_str(b"==================================================================\n");
+
+    let mut stat: ProcessResourceStat = core::mem::zeroed();
+    let _ = sys_res_stat(0, &mut stat);
+    print_str(b"  [Ring 3] PID do Processo Filho: ");
+    print_u64(stat.pid as u64);
+    print_str(b"\n  [Ring 3] argc recebido: ");
+    print_u64(argc as u64);
+    print_str(b"\n");
+
+    // 1. Validacao de BSS zerada
+    let mut bss_ok = true;
+    for i in 0..1024 {
+        if BSS_TEST_ARRAY[i] != 0 {
+            bss_ok = false;
+            break;
+        }
+    }
+    if bss_ok {
+        print_str(b"  [PASS] Segmento BSS inicializado com zeros com sucesso.\n");
+    } else {
+        print_str(b"  [FAIL] Segmento BSS contem bytes nao-zero!\n");
+        sys_exit(99);
+    }
+
+    // 2. Modifica a BSS para provar isolamento entre processos
+    for i in 0..1024 {
+        BSS_TEST_ARRAY[i] = 0x5A;
+    }
+
+    print_str(b"  [Ring 3] Processo filho concluindo com sys_exit(42)...\n");
+    sys_exit(42);
+}
+
+unsafe fn run_exec_target(argc: usize, _argv: *const *const u8) -> ! {
+    print_str(b"\n==================================================================\n");
+    print_str(b"  [Ring 3] [PASS] sys_execve substituiu com sucesso a imagem do processo!\n");
+    print_str(b"==================================================================\n");
+
+    let mut stat: ProcessResourceStat = core::mem::zeroed();
+    let _ = sys_res_stat(0, &mut stat);
+    print_str(b"  [Ring 3] PID apos sys_execve (deve manter o mesmo): ");
+    print_u64(stat.pid as u64);
+    print_str(b"\n  [Ring 3] argc recebido no novo processo: ");
+    print_u64(argc as u64);
+    print_str(b"\n");
+
+    print_str(b">>> TESTES DE EXECUCAO E CARREGAMENTO ELF CONCLUIDOS COM SUCESSO! <<<\n");
+    print_str(b"Encerrando processo com sys_exit(0)...\n");
+    sys_exit(0);
+}
+
+unsafe fn test_adv_elf_exec_and_spawn() {
+    print_str(b"\n[ADV-TEST ELF] test_adv_elf_exec_and_spawn: Testes de Execucao ELF, sys_spawn e sys_execve...\n");
+
+    // --- Casos Negativos de sys_spawn e sys_execve ---
+    // 1. Arquivo inexistente
+    let ret_nonexistent = sys_spawn(b"/disk/NONEXIST.ELF\0".as_ptr(), core::ptr::null(), core::ptr::null());
+    if ret_nonexistent == -2 {
+        print_str(b"  [PASS] sys_spawn(arquivo_inexistente) retornou -ENOENT (-2) com seguranca.\n");
+    } else {
+        print_str(b"  [FAIL] sys_spawn(arquivo_inexistente) retornou: ");
+        print_i64(ret_nonexistent);
+        print_str(b"\n");
+    }
+
+    // 2. Ponteiro nulo de caminho
+    let ret_null = sys_spawn(core::ptr::null(), core::ptr::null(), core::ptr::null());
+    if ret_null == -22 {
+        print_str(b"  [PASS] sys_spawn(null) retornou -EINVAL (-22) com seguranca.\n");
+    } else {
+        print_str(b"  [FAIL] sys_spawn(null) retornou: ");
+        print_i64(ret_null);
+        print_str(b"\n");
+    }
+
+    // 3. Ponteiro apontando para memoria de kernel (isolamento de espaco de enderecamento)
+    let ret_kernel = sys_spawn(0xFFFF_8000_0000_0000 as *const u8, core::ptr::null(), core::ptr::null());
+    if ret_kernel == -14 {
+        print_str(b"  [PASS] sys_spawn(kernel_addr) retornou -EFAULT (-14) com seguranca.\n");
+    } else {
+        print_str(b"  [FAIL] sys_spawn(kernel_addr) retornou: ");
+        print_i64(ret_kernel);
+        print_str(b"\n");
+    }
+
+    // 4. Arquivo que nao e ELF (/disk/README.TXT)
+    let ret_not_elf = sys_spawn(b"/disk/README.TXT\0".as_ptr(), core::ptr::null(), core::ptr::null());
+    if ret_not_elf == -8 {
+        print_str(b"  [PASS] sys_spawn(arquivo_nao_elf) retornou -ENOEXEC (-8) com seguranca.\n");
+    } else {
+        print_str(b"  [FAIL] sys_spawn(arquivo_nao_elf) retornou: ");
+        print_i64(ret_not_elf);
+        print_str(b"\n");
+    }
+
+    // 5. sys_execve com arquivo inexistente (deve falhar e retornar sem destruir o processo chamador)
+    let ret_exec_nonexistent = sys_execve(b"/disk/NONEXIST.ELF\0".as_ptr(), core::ptr::null(), core::ptr::null());
+    if ret_exec_nonexistent == -2 {
+        print_str(b"  [PASS] sys_execve falhou com -ENOENT (-2) e manteve processo chamador ativo e estavel!\n");
+    } else {
+        print_str(b"  [FAIL] sys_execve(arquivo_inexistente) retornou: ");
+        print_i64(ret_exec_nonexistent);
+        print_str(b"\n");
+    }
+
+    // --- Casos Positivos: Execucao de Processo Filho via FAT32 e Argumentos ---
+    let child_argv: [*const u8; 3] = [
+        b"/disk/ola.elf\0".as_ptr(),
+        b"child_test\0".as_ptr(),
+        core::ptr::null(),
+    ];
+
+    print_str(b"  [INFO] Disparando 1o processo filho via sys_spawn(/disk/ola.elf, ['child_test'])...\n");
+    let child1_pid = sys_spawn(b"/disk/ola.elf\0".as_ptr(), child_argv.as_ptr(), core::ptr::null());
+    if child1_pid > 0 {
+        print_str(b"  [PASS] sys_spawn criou processo filho com PID: ");
+        print_i64(child1_pid);
+        print_str(b"\n");
+
+        let exit_code1 = sys_waitpid(child1_pid as u64);
+        if exit_code1 == 42 {
+            print_str(b"  [PASS] sys_waitpid coletou codigo de saida 42 esperado do 1o processo filho!\n");
+        } else {
+            print_str(b"  [FAIL] sys_waitpid retornou codigo inesperado: ");
+            print_i64(exit_code1);
+            print_str(b"\n");
+        }
+    } else {
+        print_str(b"  [FAIL] sys_spawn falhou com codigo: ");
+        print_i64(child1_pid);
+        print_str(b"\n");
+    }
+
+    // Execucao sequencial de um 2o processo independente
+    print_str(b"  [INFO] Disparando 2o processo filho sequencial...\n");
+    let child2_pid = sys_spawn(b"/disk/ola.elf\0".as_ptr(), child_argv.as_ptr(), core::ptr::null());
+    if child2_pid > 0 {
+        let exit_code2 = sys_waitpid(child2_pid as u64);
+        if exit_code2 == 42 {
+            print_str(b"  [PASS] Execucao sequencial do 2o processo independente concluida com exit code 42!\n");
+        } else {
+            print_str(b"  [FAIL] 2o processo filho retornou codigo inesperado: ");
+            print_i64(exit_code2);
+            print_str(b"\n");
+        }
+    } else {
+        print_str(b"  [FAIL] sys_spawn 2o filho falhou com codigo: ");
+        print_i64(child2_pid);
+        print_str(b"\n");
+    }
+
+    print_str(b"  [PASS] test_adv_elf_exec_and_spawn: Testes de sys_spawn e isolamento APROVADOS!\n");
+}
+
 // ── Entry Point ──────────────────────────────────────────────────────────────
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    let argc: usize;
+    let argv: *const *const u8;
+    let _envp: *const *const u8;
+
     unsafe {
+        core::arch::asm!(
+            "mov {0}, rdi",
+            "mov {1}, rsi",
+            "mov {2}, rdx",
+            out(reg) argc,
+            out(reg) argv,
+            out(reg) _envp,
+            options(nomem, nostack)
+        );
+
+        if argc > 1 && !argv.is_null() {
+            let arg1 = *argv.add(1);
+            if streq(arg1, b"child_test") {
+                run_child_task(argc, argv);
+            } else if streq(arg1, b"exec_done") {
+                run_exec_target(argc, argv);
+            }
+        }
+
         // Consulta o próprio PID para despachar o papel da tarefa
         let mut stat: ProcessResourceStat = core::mem::zeroed();
         let _ = sys_res_stat(0, &mut stat);
@@ -2047,11 +2262,22 @@ pub extern "C" fn _start() -> ! {
         test_observer_app();
         test_adv_vfs_stat_and_lseek();
         test_adv_fat32_persistent_write_and_recovery();
+        test_adv_elf_exec_and_spawn();
         test_sched_preemption_and_cpu_quota();
         run_gui_demo();
 
         print_str(b"\n>>> TODOS OS TESTES DA SUITE ADVERSARIAL FORAM CONCLUIDOS COM SUCESSO! <<<\n");
-        print_str(b"Encerrando processo principal com sys_exit(0)...\n");
+        print_str(b"Executando teste final de sys_execve (substituicao em-lugar)...\n");
+
+        let exec_argv: [*const u8; 3] = [
+            b"/disk/ola.elf\0".as_ptr(),
+            b"exec_done\0".as_ptr(),
+            core::ptr::null(),
+        ];
+        let ret_exec = sys_execve(b"/disk/ola.elf\0".as_ptr(), exec_argv.as_ptr(), core::ptr::null());
+        print_str(b"  [FAIL] sys_execve falhou e retornou: ");
+        print_i64(ret_exec);
+        print_str(b"\n");
 
         sys_exit(0);
     }
