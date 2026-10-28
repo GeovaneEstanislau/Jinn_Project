@@ -172,9 +172,9 @@ O motor do Jinn Browser v0.1.0 foi desenvolvido de forma puramente proprietária
 1. **Motor de Renderização (`browser/`)**:
    - Desenvolvido em Rust com biblioteca padrão (`std`), projetado para compilação multiplataforma e suíte determinística com 42 testes unitários e de integração (HTML, CSS, DOM, Layout em blocos, Decodificação de imagem Netpbm, PaintCommands, viewport scrolling e hit-testing).
    - Executa no host via `cargo run --manifest-path browser/Cargo.toml` gerando rasterização em memória e canvas ASCII.
-2. **Aplicação Gráfica Nativa de Demonstração (`apps/ola-mundo`)**:
+2. **Aplicação Gráfica Nativa Ring 3 (`apps/ola-mundo/src/browser.rs`)**:
    - Binário ELF `#![no_std]` executado diretamente pelo microkernel Jinn OS em Ring 3 sem biblioteca C ou runtime dinâmico.
-   - Demonstra a integração visual completa com o compositor Aladdin Desktop via Syscalls 20 (`sys_window_create`), 21 (`sys_window_update`), 22 (`sys_window_close`) e 24 (`sys_window_poll_event`), validando viewport inicial (0px), rolagem intermediária (35px) e rolagem inferior (70px).
+   - Executa o pipeline completo de ponta a ponta: carrega `/disk/INDEX.HTM` do VFS via `sys_open`/`sys_read`, realiza parsing HTML de máquina de estados em memória determinística, constrói blocos DOM e Box Model com quebra de linhas, rasteriza o documento no framebuffer da janela via Syscalls 20 (`sys_window_create`) e 21 (`sys_window_update`), trata cliques em links com resolução de URL relativa para `/disk/ABOUT.HTM`, gerencia histórico de navegação com botão Voltar `[<]`, e executa rolagem vertical na viewport com clipping estrito e fechamento gracioso via Syscall 22 (`sys_window_close`).
 
 ### 8.2 Capacidades Validadas no Aladdin Desktop e Syscall 24
 - **Syscall 24 (`sys_window_poll_event`)**:
