@@ -383,3 +383,20 @@ pub unsafe fn sys_jda_shm_get_vaddr(handle: u64) -> i64 {
     syscall3(29, handle, 0, 0)
 }
 
+// ── Syscall 38 — execve ───────────────────────────────────────────────────────
+
+/// Substitui a imagem do processo atual pelo executável ELF especificado em `path`.
+/// Mantém o mesmo PID e herda descritores de arquivo válidos.
+#[inline(always)]
+pub unsafe fn sys_execve(path: *const u8, argv: *const *const u8, envp: *const *const u8) -> i64 {
+    syscall3(38, path as u64, argv as u64, envp as u64)
+}
+
+// ── Syscall 39 — spawn ────────────────────────────────────────────────────────
+
+/// Cria um novo processo filho independente a partir do executável ELF em `path`.
+/// Retorna o PID do novo processo em caso de sucesso ou código negativo em caso de erro.
+#[inline(always)]
+pub unsafe fn sys_spawn_process(path: *const u8, argv: *const *const u8, envp: *const *const u8) -> i64 {
+    syscall3(39, path as u64, argv as u64, envp as u64)
+}

@@ -83,6 +83,28 @@ pub enum ElfError {
     OutOfMemory,
     VfsError,
     SecurityPolicyViolation,
+    OverlappingSegments,
+    EntryNotInExecutableSegment,
+    FileNotFound,
+    NotAFile,
+    FileTooLarge,
+    AlignmentError,
+    ArgumentTooLong,
+    TooManyArguments,
+}
+
+impl ElfError {
+    pub fn to_errno(self) -> isize {
+        match self {
+            ElfError::FileNotFound => -2,  // ENOENT
+            ElfError::NotAFile => -13,     // EACCES
+            ElfError::OutOfMemory => -12,  // ENOMEM
+            ElfError::FileTooLarge => -27, // EFBIG
+            ElfError::ArgumentTooLong | ElfError::TooManyArguments => -7, // E2BIG
+            ElfError::VfsError => -5,      // EIO
+            _ => -8,                       // ENOEXEC (exec format error)
+        }
+    }
 }
 
 /// Metadados verificados de um executável ELF64 válido
@@ -152,6 +174,7 @@ pub fn validate_elf(elf_data: &[u8]) -> Result<ElfInfo, ElfError> {
     }
 
     let mut load_segments_count = 0;
+    let mut load_segs = [(0u64, 0u64, false); MAX_PROGRAM_HEADERS];
 
     // 4. Verificação estrita de cada segmento PT_LOAD
     for i in 0..phnum {
@@ -165,7 +188,6 @@ pub fn validate_elf(elf_data: &[u8]) -> Result<ElfInfo, ElfError> {
             if phdr.p_memsz == 0 {
                 continue;
             }
-            load_segments_count += 1;
 
             // Validações de tamanho do segmento
             if phdr.p_filesz > phdr.p_memsz {
@@ -182,17 +204,57 @@ pub fn validate_elf(elf_data: &[u8]) -> Result<ElfInfo, ElfError> {
                 return Err(ElfError::InvalidVirtualAddress);
             }
 
+            // Validação de alinhamento do segmento
+            if phdr.p_align > 1 {
+                if !phdr.p_align.is_power_of_two() {
+                    return Err(ElfError::AlignmentError);
+                }
+                if (phdr.p_vaddr % phdr.p_align) != (phdr.p_offset % phdr.p_align) {
+                    return Err(ElfError::AlignmentError);
+                }
+            }
+
             // Política de Segurança W^X: segmento nunca pode ser W (gravável) e X (executável) simultaneamente
             let is_writable = (phdr.p_flags & PF_W) != 0;
             let is_exec = (phdr.p_flags & PF_X) != 0;
             if is_writable && is_exec {
                 return Err(ElfError::SecurityPolicyViolation);
             }
+
+            if load_segments_count < MAX_PROGRAM_HEADERS {
+                load_segs[load_segments_count] = (phdr.p_vaddr, mem_end, is_exec);
+                load_segments_count += 1;
+            } else {
+                return Err(ElfError::InvalidProgramHeaders);
+            }
         }
     }
 
     if load_segments_count == 0 {
         return Err(ElfError::InvalidProgramHeaders);
+    }
+
+    // 5. Validação de Não-Sobreposição entre Segmentos PT_LOAD
+    for i in 0..load_segments_count {
+        let (start_a, end_a, _) = load_segs[i];
+        for j in (i + 1)..load_segments_count {
+            let (start_b, end_b, _) = load_segs[j];
+            if start_a < end_b && start_b < end_a {
+                return Err(ElfError::OverlappingSegments);
+            }
+        }
+    }
+
+    // 6. Validação de que o ponto de entrada reside em segmento executável válido
+    let mut entry_in_exec = false;
+    for &(start, end, is_exec) in &load_segs[..load_segments_count] {
+        if is_exec && ehdr.e_entry >= start && ehdr.e_entry < end {
+            entry_in_exec = true;
+            break;
+        }
+    }
+    if !entry_in_exec {
+        return Err(ElfError::EntryNotInExecutableSegment);
     }
 
     Ok(ElfInfo {
@@ -315,22 +377,181 @@ pub fn load_elf(elf_data: &[u8], pml4_phys: u64) -> Result<(u64, usize), ElfErro
 ///
 /// Suporta arquivos em partições FAT32 (`/disk/...`) e Ext2 (`/ext2/...`).
 pub fn load_elf_from_vfs(path: &str, pml4_phys: u64) -> Result<(u64, usize), ElfError> {
-    let stat = crate::vfs::stat(path).map_err(|_| ElfError::VfsError)?;
+    let stat = match crate::vfs::stat(path) {
+        Ok(s) => s,
+        Err(crate::vfs::VfsError::NotFound) => return Err(ElfError::FileNotFound),
+        Err(_) => return Err(ElfError::VfsError),
+    };
     if stat.node_type != crate::vfs::NodeType::File {
-        return Err(ElfError::VfsError);
+        return Err(ElfError::NotAFile);
     }
 
     let size = stat.size as usize;
-    if size < core::mem::size_of::<Elf64_Ehdr>() || size > 16 * 1024 * 1024 {
+    if size < core::mem::size_of::<Elf64_Ehdr>() {
         return Err(ElfError::BufferTooSmall);
+    }
+    if size > 16 * 1024 * 1024 {
+        return Err(ElfError::FileTooLarge);
     }
 
     // Aloca buffer temporário no heap do kernel para leitura do binário
     let mut elf_buf = alloc::vec![0u8; size];
-    let n = crate::vfs::read_file(path, &mut elf_buf).map_err(|_| ElfError::VfsError)?;
+    let n = crate::vfs::read_file(path, &mut elf_buf).map_err(|e| match e {
+        crate::vfs::VfsError::NotFound => ElfError::FileNotFound,
+        _ => ElfError::VfsError,
+    })?;
     if n != size {
         return Err(ElfError::SegmentTruncated);
     }
 
     load_elf(&elf_buf, pml4_phys)
+}
+
+/// Aloca e inicializa a pilha de usuário com argumentos (`argv`) e variáveis de ambiente (`envp`).
+///
+/// Implementa a convenção x86-64 System V ABI:
+/// - Strings copiadas no topo da página de pilha.
+/// - Tabela com ponteiros `envp`, terminador NULL, ponteiros `argv`, terminador NULL, e `argc`.
+/// - Alinhamento do RSP a 16 bytes.
+///
+/// Retorna `(user_rsp, argc, argv_ptr, envp_ptr, frames_allocated)`.
+pub fn setup_user_stack_with_args(
+    pml4_phys: u64,
+    task_id: usize,
+    argv: &[&str],
+    envp: &[&str],
+) -> Result<(usize, usize, usize, usize, usize), ElfError> {
+    const USTACK_SIZE: usize = 262144; // 256 KiB
+    const USER_STACK_BASE: u64 = 0x0000_7FFF_F000_0000;
+
+    if argv.len() > 32 || envp.len() > 32 {
+        return Err(ElfError::TooManyArguments);
+    }
+
+    let stack_top_virt  = USER_STACK_BASE - (task_id as u64 * USTACK_SIZE as u64);
+    let stack_base_virt = stack_top_virt - USTACK_SIZE as u64;
+
+    let pml4 = paging::phys_to_virt(pml4_phys) as *mut paging::PageTable;
+    let pages = USTACK_SIZE / 4096; // 64 pages
+
+    let mut frames = alloc::vec::Vec::with_capacity(pages);
+    for i in 0..pages {
+        let virt = stack_base_virt + (i as u64 * 4096);
+        let phys = match crate::memory::alloc_frame() {
+            Some(f) => f,
+            None => {
+                return Err(ElfError::OutOfMemory);
+            }
+        };
+        frames.push(phys);
+        unsafe {
+            paging::map_page(pml4, virt, phys, paging::USER_RW);
+            // Zera o frame para segurança total contra vazamento de dados
+            let frame_virt = paging::phys_to_virt(phys) as *mut u8;
+            core::ptr::write_bytes(frame_virt, 0, 4096);
+        }
+    }
+
+    // A página de topo é frames[pages - 1]
+    let top_frame_phys = frames[pages - 1];
+    let top_frame_virt = paging::phys_to_virt(top_frame_phys) as *mut u8;
+
+    let mut page_offset = 4096usize;
+
+    // 1. Escreve strings de envp em ordem reversa
+    let mut envp_ptrs = alloc::vec::Vec::with_capacity(envp.len());
+    for s in envp.iter().rev() {
+        let bytes = s.as_bytes();
+        let len = bytes.len() + 1; // +1 para \0
+        if page_offset < len + 256 {
+            return Err(ElfError::ArgumentTooLong);
+        }
+        page_offset -= len;
+        unsafe {
+            let dst = top_frame_virt.add(page_offset);
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len());
+            *dst.add(bytes.len()) = 0;
+        }
+        let user_vaddr = (stack_top_virt - 4096) + page_offset as u64;
+        envp_ptrs.push(user_vaddr);
+    }
+    envp_ptrs.reverse();
+
+    // 2. Escreve strings de argv em ordem reversa
+    let mut argv_ptrs = alloc::vec::Vec::with_capacity(argv.len());
+    for s in argv.iter().rev() {
+        let bytes = s.as_bytes();
+        let len = bytes.len() + 1; // +1 para \0
+        if page_offset < len + 256 {
+            return Err(ElfError::ArgumentTooLong);
+        }
+        page_offset -= len;
+        unsafe {
+            let dst = top_frame_virt.add(page_offset);
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len());
+            *dst.add(bytes.len()) = 0;
+        }
+        let user_vaddr = (stack_top_virt - 4096) + page_offset as u64;
+        argv_ptrs.push(user_vaddr);
+    }
+    argv_ptrs.reverse();
+
+    // 3. Alinha page_offset para 8 bytes
+    page_offset &= !7;
+
+    // 4. Monta tabela de ponteiros na pilha (System V ABI)
+    // Total de palavras: argc (1) + argv ptrs (len) + NULL (1) + envp ptrs (len) + NULL (1)
+    let total_words = 1 + argv_ptrs.len() + 1 + envp_ptrs.len() + 1;
+    let table_bytes = total_words * 8;
+    if page_offset < table_bytes + 64 {
+        return Err(ElfError::TooManyArguments);
+    }
+
+    // Alinha previamente para que, apos subtrair table_bytes, page_offset seja multiplo de 16
+    let target_offset = page_offset - table_bytes;
+    if (target_offset % 16) != 0 {
+        page_offset -= 8; // padding de alinhamento
+    }
+
+    // envp NULL terminator
+    page_offset -= 8;
+    unsafe { (top_frame_virt.add(page_offset) as *mut u64).write(0); }
+
+    // envp pointers
+    for &ptr in envp_ptrs.iter().rev() {
+        page_offset -= 8;
+        unsafe { (top_frame_virt.add(page_offset) as *mut u64).write(ptr); }
+    }
+    let envp_table_vaddr = if envp_ptrs.is_empty() {
+        (stack_top_virt - 4096) + page_offset as u64
+    } else {
+        (stack_top_virt - 4096) + page_offset as u64
+    };
+
+    // argv NULL terminator
+    page_offset -= 8;
+    unsafe { (top_frame_virt.add(page_offset) as *mut u64).write(0); }
+
+    // argv pointers
+    for &ptr in argv_ptrs.iter().rev() {
+        page_offset -= 8;
+        unsafe { (top_frame_virt.add(page_offset) as *mut u64).write(ptr); }
+    }
+    let argv_table_vaddr = (stack_top_virt - 4096) + page_offset as u64;
+
+    // argc
+    page_offset -= 8;
+    let argc = argv.len();
+    unsafe { (top_frame_virt.add(page_offset) as *mut u64).write(argc as u64); }
+
+    // O topo da pilha agora aponta diretamente para argc e esta perfeitamente alinhado a 16 bytes
+    let final_sp_vaddr = (stack_top_virt - 4096) + page_offset as u64;
+
+    Ok((
+        final_sp_vaddr as usize,
+        argc,
+        argv_table_vaddr as usize,
+        envp_table_vaddr as usize,
+        pages,
+    ))
 }

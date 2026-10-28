@@ -75,7 +75,7 @@ fn create_valid_dummy_elf() -> ([u8; 256], usize) {
         p_paddr: USER_SPACE_MIN + 0x1000,
         p_filesz: 32,
         p_memsz: 32,
-        p_align: 4096,
+        p_align: 0,
     };
 
     unsafe {
@@ -195,7 +195,25 @@ pub fn run_elf_security_selftests() -> (usize, usize) {
     }
     assert_test!("Prevencao de Overflow Aritmetico", validate_elf(&buf[..len]) == Err(ElfError::ArithmeticOverflow));
 
-    // 13. Binário válido de referência deve ser aceito
+    // 13. Rejeição de segmento com alinhamento incoerente
+    let (mut buf, len) = create_valid_dummy_elf();
+    unsafe {
+        let phdr = buf.as_mut_ptr().add(ehdr_size) as *mut Elf64_Phdr_Raw;
+        (*phdr).p_align = 4096;
+        (*phdr).p_vaddr = USER_SPACE_MIN + 0x1000; // vaddr % 4096 == 0
+        // p_offset = 120 -> offset % 4096 == 120 != 0
+    }
+    assert_test!("Rejeicao de Desalinhamento (AlignmentError)", validate_elf(&buf[..len]) == Err(ElfError::AlignmentError));
+
+    // 14. Rejeição de ponto de entrada fora do segmento executável
+    let (mut buf, len) = create_valid_dummy_elf();
+    unsafe {
+        let ehdr = buf.as_mut_ptr() as *mut Elf64_Ehdr_Raw;
+        (*ehdr).e_entry = USER_SPACE_MIN + 0x40000;
+    }
+    assert_test!("Rejeicao de Entry Fora de Segmento Executavel", validate_elf(&buf[..len]) == Err(ElfError::EntryNotInExecutableSegment));
+
+    // 15. Binário válido de referência deve ser aceito
     let (buf, len) = create_valid_dummy_elf();
     assert_test!("ELF Valido Aceito", validate_elf(&buf[..len]).is_ok());
 

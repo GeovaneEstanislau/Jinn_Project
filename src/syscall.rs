@@ -46,6 +46,8 @@ pub const EPERM:        isize = -1;   // Operation not permitted
 pub const ENOENT:       isize = -2;   // No such file or directory
 pub const ESRCH:        isize = -3;   // No such process
 pub const EIO:          isize = -5;   // I/O error
+pub const E2BIG:        isize = -7;   // Argument list too long
+pub const ENOEXEC:      isize = -8;   // Exec format error
 pub const EBADF:        isize = -9;   // Bad file descriptor
 pub const ECHILD:       isize = -10;  // No child processes
 pub const EAGAIN:       isize = -11;  // Resource temporarily unavailable / Would block
@@ -180,6 +182,21 @@ pub extern "C" fn syscall_dispatch_framed(frame: *mut usize) -> usize {
             scheduler::set_yielded();
             scheduler::get().preempt(frame as usize)
         }
+        38 => {
+            // sys_execve: substitui a imagem do processo atual no mesmo PID
+            let ret = sys_execve_framed(arg0, arg1, arg2, frame);
+            if ret != 0 {
+                // Se falhou, retorna o código de erro em RAX para o processo chamador
+                unsafe { *frame.add(14) = ret as usize; }
+            }
+            0
+        }
+        39 => {
+            // sys_spawn: cria um novo processo filho a partir de um ELF no VFS
+            let ret = sys_spawn_process(arg0, arg1, arg2);
+            unsafe { *frame.add(14) = ret as usize; }
+            0
+        }
         _ => {
             let ret = syscall_dispatch(nr, arg0, arg1, arg2);
             unsafe { *frame.add(14) = ret as usize; } // atualiza o RAX salvo com o código de retorno
@@ -238,6 +255,8 @@ pub extern "C" fn syscall_dispatch(
         35 => sys_send(arg0, arg1 as *const u8, arg2, 0),
         36 => sys_recv(arg0, arg1 as *mut u8, arg2, 0),
         37 => sys_jinnwall_ctrl(arg0, arg1, arg2),
+        38 => sys_execve(arg0, arg1, arg2),
+        39 => sys_spawn_process(arg0, arg1, arg2),
         _  => ENOSYS,
     }
 }
@@ -1564,6 +1583,156 @@ fn sys_jinnwall_ctrl(cmd: usize, arg0: usize, _arg1: usize) -> isize {
     }
 }
 
+
+// ── Syscalls de Execução Segura de Processos (Syscalls 38 e 39) ───────────────
+
+/// Lê e valida uma string terminada em null (`\0`) a partir do espaço de usuário.
+fn parse_user_string(ptr: *const u8, max_len: usize) -> Result<alloc::string::String, isize> {
+    if ptr.is_null() {
+        return Err(EINVAL);
+    }
+    let is_user = is_current_task_user();
+    let mut bytes = alloc::vec::Vec::new();
+    let mut curr = ptr;
+    for _ in 0..max_len {
+        if is_user {
+            validate_user_buffer(curr, 1, false)?;
+        }
+        let b = unsafe { *curr };
+        if b == 0 {
+            let s = alloc::string::String::from_utf8(bytes).map_err(|_| EINVAL)?;
+            return Ok(s);
+        }
+        bytes.push(b);
+        curr = unsafe { curr.add(1) };
+    }
+    Err(EINVAL)
+}
+
+/// Lê e valida um array de ponteiros para strings terminadas em null a partir do espaço de usuário.
+fn parse_user_str_array(
+    arr_ptr: *const *const u8,
+    max_items: usize,
+    max_str_len: usize,
+) -> Result<alloc::vec::Vec<alloc::string::String>, isize> {
+    if arr_ptr.is_null() {
+        return Ok(alloc::vec::Vec::new());
+    }
+    let is_user = is_current_task_user();
+    let mut result = alloc::vec::Vec::new();
+    let mut curr_entry = arr_ptr;
+    for _ in 0..max_items {
+        if is_user {
+            validate_user_buffer(curr_entry as *const u8, core::mem::size_of::<*const u8>(), false)?;
+        }
+        let str_ptr = unsafe { *curr_entry };
+        if str_ptr.is_null() {
+            return Ok(result);
+        }
+        let s = parse_user_string(str_ptr, max_str_len)?;
+        result.push(s);
+        curr_entry = unsafe { curr_entry.add(1) };
+    }
+    Err(E2BIG)
+}
+
+/// `sys_execve_framed` — Substitui a imagem do processo atual com frame de interrupção atualizado (Syscall 38).
+fn sys_execve_framed(path_ptr: usize, argv_ptr: usize, envp_ptr: usize, frame: *mut usize) -> isize {
+    let pid = scheduler::current_pid();
+    let path = match parse_user_string(path_ptr as *const u8, 256) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if path.is_empty() {
+        return EINVAL;
+    }
+
+    let argv_strings = match parse_user_str_array(argv_ptr as *const *const u8, 32, 256) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let envp_strings = match parse_user_str_array(envp_ptr as *const *const u8, 32, 256) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    let mut argv_slices: alloc::vec::Vec<&str> = argv_strings.iter().map(|s| s.as_str()).collect();
+    if argv_slices.is_empty() {
+        argv_slices.push(&path);
+    }
+    let envp_slices: alloc::vec::Vec<&str> = envp_strings.iter().map(|s| s.as_str()).collect();
+
+    let res = scheduler::get().replace_task_image_from_vfs(pid, &path, &argv_slices, &envp_slices);
+    match res {
+        Ok((entry_rip, user_rsp, argc, argv_table, envp_table)) => {
+            unsafe {
+                // Atualiza o frame de interrupção na pilha de kernel para saltar diretamente no novo executável
+                *frame.add(17) = entry_rip as usize; // RIP
+                *frame.add(18) = crate::gdt::USER_CODE_SEL as usize; // CS
+                *frame.add(19) = 0x202; // RFLAGS
+                *frame.add(20) = user_rsp - 8; // RSP (alinhamento ABI para _start)
+                *frame.add(21) = crate::gdt::USER_DATA_SEL as usize; // SS
+
+                // Registradores iniciais da System V ABI para _start:
+                *frame.add(8) = argc; // RDI = argc
+                *frame.add(9) = argv_table; // RSI = argv
+                *frame.add(12) = envp_table; // RDX = envp
+                *frame.add(14) = 0; // RAX = 0
+
+                // Zera os registradores restantes
+                *frame.add(13) = 0; // RCX
+                *frame.add(11) = 0; // RBX
+                *frame.add(10) = 0; // RBP
+                *frame.add(7) = 0;  // R8
+                *frame.add(6) = 0;  // R9
+                *frame.add(5) = 0;  // R10
+                *frame.add(4) = 0;  // R11
+                *frame.add(3) = 0;  // R12
+                *frame.add(2) = 0;  // R13
+                *frame.add(1) = 0;  // R14
+                *frame.add(0) = 0;  // R15
+            }
+            0
+        }
+        Err(e) => e,
+    }
+}
+
+/// Invocação direta de `sys_execve` sem contexto de frame (retorna ENOSYS pois execve requer frame).
+fn sys_execve(_path_ptr: usize, _argv_ptr: usize, _envp_ptr: usize) -> isize {
+    ENOSYS
+}
+
+/// `sys_spawn_process` — Cria um novo processo filho no VFS (Syscall 39).
+fn sys_spawn_process(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> isize {
+    let path = match parse_user_string(path_ptr as *const u8, 256) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if path.is_empty() {
+        return EINVAL;
+    }
+
+    let argv_strings = match parse_user_str_array(argv_ptr as *const *const u8, 32, 256) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let envp_strings = match parse_user_str_array(envp_ptr as *const *const u8, 32, 256) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    let mut argv_slices: alloc::vec::Vec<&str> = argv_strings.iter().map(|s| s.as_str()).collect();
+    if argv_slices.is_empty() {
+        argv_slices.push(&path);
+    }
+    let envp_slices: alloc::vec::Vec<&str> = envp_strings.iter().map(|s| s.as_str()).collect();
+
+    match scheduler::get().spawn_user_task_from_vfs(&path, &argv_slices, &envp_slices) {
+        Ok(pid) => pid as isize,
+        Err(e) => e,
+    }
+}
 
 // ── Kernel-internal invoke ────────────────────────────────────────────────────
 

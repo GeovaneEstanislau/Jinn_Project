@@ -99,6 +99,29 @@ A tabela a seguir reflete com fidelidade técnica o estado real do código em `s
 | **35** | `sys_send` | **Implementada** | `rdi: sockfd (u64)`, `rsi: *const u8 (buf)`, `rdx: len (usize)` | `usize` (bytes transmitidos) | `-EBADF` (-9), `-EFAULT` (-14), `-EINVAL` (-22) | Placa VirtIO-Net, firewall JinnWall (conntrack de saída) | `src/syscall.rs:214`, `test_adv_real_network_dns` |
 | **36** | `sys_recv` | **Implementada** | `rdi: sockfd (u64)`, `rsi: *mut u8 (buf)`, `rdx: len (usize)` | `usize` (bytes recebidos ou 0 se fila vazia) | `-EBADF` (-9), `-EFAULT` (-14), `-EINVAL` (-22) | Fila circular RX do socket | `src/syscall.rs:260`, `test_adv_real_network_dns` |
 | **37** | `sys_jinnwall_ctrl` | **Implementada** | `rdi: cmd (usize)`, `rsi: arg0 (usize)`, `rdx: arg1 (usize)` | `i64` (perfil ou 0 sucesso) | `-EINVAL` (-22), `-EFAULT` (-14) | Controle e telemetria do firewall stateful JinnWall SPI | `src/syscall.rs`, `test_tcp_network_interoperability` |
+| **38** | `sys_execve` | **Implementada** | `rdi: *const u8 (path)`, `rsi: *const *const u8 (argv)`, `rdx: *const *const u8 (envp)` | `0` (sucesso não retorna; substitui imagem) | `-ENOENT` (-2), `-EACCES` (-13), `-EFAULT` (-14), `-EINVAL` (-22), `-ENOEXEC` (-8), `-E2BIG` (-7), `-ENOMEM` (-12) | Espaço de endereçamento (CR3 comutado para novo PML4), registradores Ring 3 resetados, janelas/buffers JDA antigos limpos; mantém o mesmo PID e FDs abertos | `src/syscall.rs:185`, `src/scheduler.rs:456`, `apps/ola-mundo` |
+| **39** | `sys_spawn` | **Implementada** | `rdi: *const u8 (path)`, `rsi: *const *const u8 (argv)`, `rdx: *const *const u8 (envp)` | `i64` (novo PID > 0) | `-ENOENT` (-2), `-EACCES` (-13), `-EFAULT` (-14), `-EINVAL` (-22), `-ENOEXEC` (-8), `-E2BIG` (-7), `-ENOMEM` (-12), `-EMFILE` (-24) | Cria novo processo filho independente em Ring 3, novo PML4, nova pilha com `argc`, `argv`, `envp` | `src/syscall.rs:194`, `src/scheduler.rs:341`, `apps/ola-mundo` |
+
+---
+
+## 3.1. Semântica Normativa de Execução: `sys_execve` vs `sys_spawn`
+
+O Jinn OS distingue com rigor técnico as duas primitivas de execução de programas ELF:
+
+1. **`sys_spawn` (Criação de Processo Filho):**
+   - Cria uma nova entrada na tabela de tarefas (`scheduler.tasks[new_pid]`), atribuindo um PID único.
+   - Constrói um novo espaço de paginação PML4 isolado a partir do clone das tabelas do kernel.
+   - Carrega integralmente os segmentos `PT_LOAD` do binário ELF a partir do caminho no VFS (ex: `/disk/APP.ELF`).
+   - Constrói a pilha de usuário mapeando 64 frames (256 KiB) sob a base `0x0000_7FFF_FFFF_0000 - (PID * 256 KiB)` e serializa strings e ponteiros de `argc`, `argv` e `envp` no topo da pilha.
+   - Inicializa os registradores na pilha de kernel com a convenção System V AMD64 (`RDI=argc`, `RSI=argv`, `RDX=envp`) e alinhamento de 16 bytes.
+   - O processo chamador continua executando concorrentemente e pode aguardar o encerramento do filho chamando `sys_waitpid(child_pid)`.
+
+2. **`sys_execve` (Substituição de Imagem no Mesmo PID):**
+   - Substitui o programa em execução no processo corrente, **preservando o mesmo PID** e a herança de descritores de arquivos abertos válidos.
+   - Constrói o novo PML4, carrega o ELF e aloca a nova pilha com argumentos em segundo plano (*off-line*).
+   - **Ponto de Commit Transacional:** Se a abertura no VFS, o parser ELF ou as alocações de memória falharem, o kernel aborta a operação e retorna o código de erro em `RAX`, mantendo o processo chamador 100% intacto, sem alterar o CR3 nem invalidar a memória anterior.
+   - Uma vez validados todos os segmentos e frames, o ponto de commit é atingido: as janelas GUI antigas e buffers Zero-Copy antigos são desalocados, o registrador CR3 da CPU é comutado para o novo PML4, a memória do espaço de usuário antigo é liberada via `paging::free_user_pml4(pml4_old)`, e o frame de interrupção na pilha de kernel é reconfigurado para retornar diretamente no ponto de entrada (`e_entry`) em Ring 3 via `iretq`.
+
 
 ---
 

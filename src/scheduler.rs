@@ -337,6 +337,192 @@ impl Scheduler {
         0
     }
 
+    /// Cria uma tarefa de usuário Ring 3 a partir do VFS passando argumentos (`argv`) e variáveis (`envp`).
+    pub fn spawn_user_task_from_vfs(
+        &mut self,
+        path: &str,
+        argv: &[&str],
+        envp: &[&str],
+    ) -> Result<usize, isize> {
+        let _guard = SCHED_LOCK.lock();
+        let mut id = self.next_id;
+        while id < MAX_TASKS {
+            if self.tasks[id].is_none() {
+                // 1. Espaço de endereçamento isolado
+                let pml4_phys = paging::clone_kernel_pml4();
+
+                // 2. Carregar o ELF do VFS
+                let (entry_virt, elf_frames) = match crate::elf::load_elf_from_vfs(path, pml4_phys) {
+                    Ok(res) => res,
+                    Err(e) => {
+                        unsafe { paging::free_user_pml4(pml4_phys); }
+                        return Err(e.to_errno());
+                    }
+                };
+
+                // 3. Montar a pilha de usuário com argv e envp
+                let (user_rsp, argc, argv_ptr, envp_ptr, stack_frames) =
+                    match crate::elf::setup_user_stack_with_args(pml4_phys, id, argv, envp) {
+                        Ok(res) => res,
+                        Err(e) => {
+                            unsafe { paging::free_user_pml4(pml4_phys); }
+                            return Err(e.to_errno());
+                        }
+                    };
+
+                // 4. Configurar pilha de kernel
+                let kstack_base = unsafe { KSTACKS[id].as_ptr() as usize };
+                let kstack_top = (kstack_base + KSTACK_SIZE) & !15;
+
+                let cs_sel = gdt::USER_CODE_SEL as u64;
+                let ss_sel = gdt::USER_DATA_SEL as u64;
+
+                let mut sp = kstack_top;
+                let rflags: u64 = 0x202; // IF=1
+
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(ss_sel); }
+                let abi_rsp = (user_rsp - 8) as u64;
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(abi_rsp); }
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(rflags); }
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(cs_sel); }
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(entry_virt); }
+
+                // Dummy vector + error code (consumidos pelo stub)
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+
+                // GPRs: rax, rcx, rdx, rbx, rbp, rsi, rdi, r8..r15
+                // rax = 0
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+                // rcx = 0
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+                // rdx = envp_ptr
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(envp_ptr as u64); }
+                // rbx = 0
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+                // rbp = 0
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+                // rsi = argv_ptr
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(argv_ptr as u64); }
+                // rdi = argc
+                sp -= 8; unsafe { (sp as *mut u64).write_volatile(argc as u64); }
+                // r8..r15 (8 registers)
+                for _ in 0..8 {
+                    sp -= 8;
+                    unsafe { (sp as *mut u64).write_volatile(0); }
+                }
+
+                let mut res = crate::resources::ProcessResources::new();
+                let limits = crate::resources::ResourceLimits::user_default();
+                let _ = res.check_and_alloc_frames(stack_frames + elf_frames, &limits);
+
+                self.tasks[id] = Some(Task {
+                    id,
+                    name: "spawned-user[U3]",
+                    state: TaskState::Ready,
+                    priority: TaskPriority::Normal,
+                    ring: Ring::User,
+                    saved_rsp: sp,
+                    kstack_top,
+                    pml4_phys,
+                    exit_code: 0,
+                    cpu_ticks: 0,
+                    ctx_switches: 0,
+                    irq_preemptions: 0,
+                    voluntary_yields: 0,
+                    quantum_remaining: QUANTUM_NORMAL,
+                    fds: [None; MAX_TASK_FDS],
+                    dynamic_pages: [0; MAX_DYNAMIC_PAGES],
+                    cleanup_done: false,
+                    resources: res,
+                    limits,
+                    running_on_cpu: None,
+                });
+                self.next_id = id + 1;
+                crate::ipc::register(id);
+                return Ok(id);
+            }
+            id += 1;
+        }
+        Err(-24) // EMFILE (limite de tarefas atingido)
+    }
+
+    /// Substitui a imagem do processo atual (`execve`) a partir de um executável ELF no VFS.
+    ///
+    /// Se a validação, carregamento ou alocação falhar, nenhuma alteração é feita
+    /// no processo chamador, retornando `Err(errno)`.
+    ///
+    /// Se for bem-sucedido, comuta o PML4 em CR3, atualiza os recursos e retorna
+    /// `(entry_rip, user_rsp, argc, argv_ptr, envp_ptr)`.
+    pub fn replace_task_image_from_vfs(
+        &mut self,
+        pid: usize,
+        path: &str,
+        argv: &[&str],
+        envp: &[&str],
+    ) -> Result<(u64, usize, usize, usize, usize), isize> {
+        let _guard = SCHED_LOCK.lock();
+
+        // 1. Cria o novo espaço de endereçamento limpo
+        let pml4_new = paging::clone_kernel_pml4();
+
+        // 2. Carrega o ELF no novo PML4
+        let (entry_virt, elf_frames) = match crate::elf::load_elf_from_vfs(path, pml4_new) {
+            Ok(res) => res,
+            Err(e) => {
+                unsafe { paging::free_user_pml4(pml4_new); }
+                return Err(e.to_errno());
+            }
+        };
+
+        // 3. Monta a nova pilha com os argumentos e variáveis de ambiente
+        let (user_rsp, argc, argv_ptr, envp_ptr, stack_frames) =
+            match crate::elf::setup_user_stack_with_args(pml4_new, pid, argv, envp) {
+                Ok(res) => res,
+                Err(e) => {
+                    unsafe { paging::free_user_pml4(pml4_new); }
+                    return Err(e.to_errno());
+                }
+            };
+
+        // ─────────────────────────────────────────────────────────────────
+        // PONTO DE COMMIT (Não há mais falhas a partir deste ponto)
+        // ─────────────────────────────────────────────────────────────────
+        let task = match self.tasks.get_mut(pid).and_then(|t| t.as_mut()) {
+            Some(t) => t,
+            None => {
+                unsafe { paging::free_user_pml4(pml4_new); }
+                return Err(-3); // ESRCH
+            }
+        };
+
+        let pml4_old = task.pml4_phys;
+
+        // Limpa janelas GUI criadas pela imagem antiga
+        crate::gui::close_windows_for_pid(pid);
+
+        // Libera buffers Zero-Copy criados pela imagem antiga
+        crate::jda::shmem::SHARED_BUFFER_POOL.lock().release_all_for_pid(pid);
+
+        // Zera o registro de páginas dinâmicas antigas
+        task.dynamic_pages = [0; MAX_DYNAMIC_PAGES];
+
+        // Atualiza a tabela de páginas ativa e recursos
+        task.pml4_phys = pml4_new;
+        task.resources.allocated_frames = elf_frames + stack_frames;
+        task.resources.open_windows = 0;
+        task.resources.open_jda_buffers = 0;
+
+        // Comuta CR3 para o novo espaço de usuário
+        unsafe {
+            paging::load_cr3(pml4_new);
+            // Libera a memória do espaço de endereçamento antigo
+            paging::free_user_pml4(pml4_old);
+        }
+
+        Ok((entry_virt, user_rsp, argc, argv_ptr, envp_ptr))
+    }
+
     /// Monta o contexto inicial da pilha e registra a tarefa de usuário.
     fn setup_and_register_user_task(
         &mut self,
@@ -370,7 +556,7 @@ impl Scheduler {
         sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
         sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
 
-        // Registradores GPR zerados (15 regs)
+        // Registradores GPR (15 regs: r15 a rax) zerados
         for _ in 0..15 {
             sp -= 8;
             unsafe { (sp as *mut u64).write_volatile(0); }
