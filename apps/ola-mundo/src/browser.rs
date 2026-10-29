@@ -62,6 +62,7 @@ impl BlockItem {
     }
 }
 
+#[allow(dead_code)]
 pub struct ParsedPage {
     pub title: [u8; 64],
     pub title_len: usize,
@@ -105,6 +106,7 @@ pub struct RenderLine {
 
 // ── Máquina de Estados do Parser HTML ─────────────────────────────────────────
 
+#[allow(unused_assignments)]
 pub fn parse_html(html: &[u8], page: &mut ParsedPage) {
     page.title_len = 0;
     page.block_count = 0;
@@ -434,14 +436,35 @@ impl DocumentLayout {
     }
 }
 
+// ── Ações Interativas do Navegador ──────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrowserAction {
+    None,
+    Back,
+    Forward,
+    Reload,
+    NavigateTarget([u8; 64], usize),
+    FocusAddress,
+    Scroll(i32),
+}
+
 // ── Sessão Interativa do Navegador ────────────────────────────────────────────
+
+pub const MAX_HISTORY: usize = 8;
 
 pub struct BrowserSession {
     pub current_url: [u8; 64],
     pub current_url_len: usize,
-    pub history_prev: [u8; 64],
-    pub history_prev_len: usize,
-    pub has_history: bool,
+    pub history_back: [[u8; 64]; MAX_HISTORY],
+    pub history_back_lens: [usize; MAX_HISTORY],
+    pub history_back_count: usize,
+    pub history_fwd: [[u8; 64]; MAX_HISTORY],
+    pub history_fwd_lens: [usize; MAX_HISTORY],
+    pub history_fwd_count: usize,
+    pub is_address_focused: bool,
+    pub address_edit: [u8; 64],
+    pub address_edit_len: usize,
     pub scroll_y: usize,
     pub max_scroll: usize,
     pub page: ParsedPage,
@@ -453,9 +476,15 @@ impl BrowserSession {
         Self {
             current_url: [0; 64],
             current_url_len: 0,
-            history_prev: [0; 64],
-            history_prev_len: 0,
-            has_history: false,
+            history_back: [[0; 64]; MAX_HISTORY],
+            history_back_lens: [0; MAX_HISTORY],
+            history_back_count: 0,
+            history_fwd: [[0; 64]; MAX_HISTORY],
+            history_fwd_lens: [0; MAX_HISTORY],
+            history_fwd_count: 0,
+            is_address_focused: false,
+            address_edit: [0; 64],
+            address_edit_len: 0,
             scroll_y: 0,
             max_scroll: 0,
             page: ParsedPage::new(),
@@ -463,15 +492,146 @@ impl BrowserSession {
         }
     }
 
+    pub fn can_go_back(&self) -> bool {
+        self.history_back_count > 0
+    }
+
+    pub fn can_go_forward(&self) -> bool {
+        self.history_fwd_count > 0
+    }
+
     pub fn set_url(&mut self, url: &[u8]) {
         let len = url.len().min(63);
         self.current_url[..len].copy_from_slice(&url[..len]);
+        self.current_url[len] = 0;
         self.current_url_len = len;
+    }
+
+    pub fn push_back_current(&mut self) {
+        if self.current_url_len == 0 {
+            return;
+        }
+        if self.history_back_count < MAX_HISTORY {
+            let idx = self.history_back_count;
+            self.history_back[idx] = self.current_url;
+            self.history_back_lens[idx] = self.current_url_len;
+            self.history_back_count += 1;
+        } else {
+            for i in 0..MAX_HISTORY - 1 {
+                self.history_back[i] = self.history_back[i + 1];
+                self.history_back_lens[i] = self.history_back_lens[i + 1];
+            }
+            let idx = MAX_HISTORY - 1;
+            self.history_back[idx] = self.current_url;
+            self.history_back_lens[idx] = self.current_url_len;
+        }
+    }
+
+    pub fn push_fwd_current(&mut self) {
+        if self.current_url_len == 0 {
+            return;
+        }
+        if self.history_fwd_count < MAX_HISTORY {
+            let idx = self.history_fwd_count;
+            self.history_fwd[idx] = self.current_url;
+            self.history_fwd_lens[idx] = self.current_url_len;
+            self.history_fwd_count += 1;
+        } else {
+            for i in 0..MAX_HISTORY - 1 {
+                self.history_fwd[i] = self.history_fwd[i + 1];
+                self.history_fwd_lens[i] = self.history_fwd_lens[i + 1];
+            }
+            let idx = MAX_HISTORY - 1;
+            self.history_fwd[idx] = self.current_url;
+            self.history_fwd_lens[idx] = self.current_url_len;
+        }
+    }
+
+    /// Executa navegação Voltar (<). Salva URL atual no histórico Forward e retorna URL anterior.
+    pub fn go_back(&mut self) -> Option<([u8; 64], usize)> {
+        if !self.can_go_back() {
+            return None;
+        }
+        self.push_fwd_current();
+        self.history_back_count -= 1;
+        let idx = self.history_back_count;
+        let target = self.history_back[idx];
+        let len = self.history_back_lens[idx];
+        Some((target, len))
+    }
+
+    /// Executa navegação Avançar (>). Salva URL atual no histórico Back e retorna URL avançada.
+    pub fn go_forward(&mut self) -> Option<([u8; 64], usize)> {
+        if !self.can_go_forward() {
+            return None;
+        }
+        self.push_back_current();
+        self.history_fwd_count -= 1;
+        let idx = self.history_fwd_count;
+        let target = self.history_fwd[idx];
+        let len = self.history_fwd_lens[idx];
+        Some((target, len))
+    }
+
+    /// Inicia edição da barra de endereços
+    pub fn focus_address(&mut self) {
+        self.is_address_focused = true;
+        self.address_edit = self.current_url;
+        self.address_edit_len = self.current_url_len;
+    }
+
+    /// Cancela edição da barra de endereços
+    pub fn unfocus_address(&mut self) {
+        self.is_address_focused = false;
+    }
+
+    /// Processa pressionamento de tecla enquanto a barra de endereços está focada
+    pub fn address_key(&mut self, key: u32) -> BrowserAction {
+        if !self.is_address_focused {
+            return BrowserAction::None;
+        }
+
+        // Enter (0x0A, 0x0D, ou scancode 0x1C)
+        if key == 0x0A || key == 0x0D || key == 0x1C {
+            self.is_address_focused = false;
+            if self.address_edit_len > 0 {
+                return BrowserAction::NavigateTarget(self.address_edit, self.address_edit_len);
+            }
+            return BrowserAction::None;
+        }
+
+        // Backspace (0x08 ou scancode 0x0E)
+        if key == 0x08 || key == 0x0E {
+            if self.address_edit_len > 0 {
+                self.address_edit_len -= 1;
+                self.address_edit[self.address_edit_len] = 0;
+            }
+            return BrowserAction::None;
+        }
+
+        // Escape (0x1B ou scancode 0x01)
+        if key == 0x1B || key == 0x01 {
+            self.unfocus_address();
+            return BrowserAction::None;
+        }
+
+        // Caracteres imprimíveis ASCII (32..=126)
+        if (32..=126).contains(&key) {
+            if self.address_edit_len < 63 {
+                self.address_edit[self.address_edit_len] = key as u8;
+                self.address_edit_len += 1;
+                self.address_edit[self.address_edit_len] = 0;
+            }
+            return BrowserAction::None;
+        }
+
+        BrowserAction::None
     }
 
     pub fn load_document_bytes(&mut self, html: &[u8], url: &[u8]) {
         self.set_url(url);
         self.scroll_y = 0;
+        self.is_address_focused = false;
         parse_html(html, &mut self.page);
         self.layout.compute(&self.page, WIN_W - 24);
 
@@ -493,31 +653,76 @@ impl BrowserSession {
         }
     }
 
-    /// Hit-testing para cliques do mouse: retorna se clicou em Back ou em um link
-    pub fn handle_click(&mut self, click_x: usize, click_y: usize) -> Option<[u8; 64]> {
-        // 1. Botão Back [<] em (6..16, 4..22)
-        if click_x >= 4 && click_x <= 16 && click_y >= 4 && click_y <= 22 {
-            if self.has_history && self.history_prev_len > 0 {
-                let mut prev = [0u8; 64];
-                prev[..self.history_prev_len].copy_from_slice(&self.history_prev[..self.history_prev_len]);
-                return Some(prev);
+    /// Hit-testing para cliques do mouse: despacha botões do chrome, barra de endereço, rolagem e links
+    pub fn handle_click(&mut self, click_x: usize, click_y: usize) -> BrowserAction {
+        // 1. Barra de ferramentas / Chrome (y: 3..24)
+        if click_y >= 3 && click_y <= 24 {
+            // Botão Back [<] em (4..16)
+            if click_x >= 4 && click_x <= 16 {
+                if self.can_go_back() {
+                    return BrowserAction::Back;
+                }
+                return BrowserAction::None;
+            }
+
+            // Botão Forward [>] em (17..27)
+            if click_x >= 17 && click_x <= 27 {
+                if self.can_go_forward() {
+                    return BrowserAction::Forward;
+                }
+                return BrowserAction::None;
+            }
+
+            // Botão Reload [R] em (28..40)
+            if click_x >= 28 && click_x <= 40 {
+                return BrowserAction::Reload;
+            }
+
+            // Barra de Endereço em (44..282)
+            if click_x >= 44 && click_x <= 282 {
+                self.focus_address();
+                return BrowserAction::FocusAddress;
             }
         }
 
         // 2. Viewport de Conteúdo: aplica deslocamento de scroll_y
         if click_y >= CLIP_TOP && click_y <= CLIP_BOTTOM {
+            // Clicar fora da barra de endereços cancela o foco
+            if self.is_address_focused {
+                self.unfocus_address();
+            }
+
+            // Se clicou na barra de rolagem (track_x = 286..294)
+            if click_x >= WIN_W - 14 {
+                let track_y = CLIP_TOP;
+                let track_h = WIN_H - CLIP_TOP - 1;
+                if self.max_scroll > 0 {
+                    let thumb_h = 24usize.max(track_h * (CLIP_BOTTOM - CLIP_TOP) / self.layout.total_height.max(1));
+                    let thumb_travel = track_h.saturating_sub(thumb_h);
+                    let thumb_y = track_y + (self.scroll_y * thumb_travel / self.max_scroll.max(1));
+
+                    if click_y < thumb_y {
+                        return BrowserAction::Scroll(-40);
+                    } else if click_y > thumb_y + thumb_h {
+                        return BrowserAction::Scroll(40);
+                    }
+                }
+                return BrowserAction::None;
+            }
+
+            // Hit-test em links do documento
             let doc_y = (click_y - CLIP_TOP) + self.scroll_y;
             for i in 0..self.layout.click_count {
                 let r = &self.layout.click_regions[i];
                 if click_x >= r.x && click_x <= r.x + r.w && doc_y >= r.y && doc_y <= r.y + r.h {
                     let mut target = [0u8; 64];
                     target[..r.target_len].copy_from_slice(&r.target[..r.target_len]);
-                    return Some(target);
+                    return BrowserAction::NavigateTarget(target, r.target_len);
                 }
             }
         }
 
-        None
+        BrowserAction::None
     }
 
     pub fn render(&self, buf: &mut [u32]) {
@@ -529,16 +734,31 @@ impl BrowserSession {
         draw_rect_border(buf, 0, 0, WIN_W, 26, COLOR_BORDER);
 
         // Botões: [<] [>] [R]
-        let back_col = if self.has_history { COLOR_BTN_TEXT } else { 0x0058_5B70 };
-        font::draw_text(buf, WIN_W, WIN_H, 6, 9, b"<", back_col, None);
-        font::draw_text(buf, WIN_W, WIN_H, 18, 9, b">", 0x0058_5B70, None);
-        font::draw_text(buf, WIN_W, WIN_H, 30, 9, b"R", COLOR_BTN_TEXT, None);
+        let back_col = if self.can_go_back() { COLOR_BTN_TEXT } else { 0x0058_5B70 };
+        let fwd_col = if self.can_go_forward() { COLOR_BTN_TEXT } else { 0x0058_5B70 };
+        let reload_col = COLOR_URL_TEXT;
 
-        // Campo de URL
+        font::draw_text(buf, WIN_W, WIN_H, 6, 9, b"<", back_col, None);
+        font::draw_text(buf, WIN_W, WIN_H, 18, 9, b">", fwd_col, None);
+        font::draw_text(buf, WIN_W, WIN_H, 30, 9, b"R", reload_col, None);
+
+        // Campo de URL (Barra de Endereço)
+        let border_col = if self.is_address_focused { COLOR_H1 } else { COLOR_URL_BORDER };
         fill_rect(buf, 44, 4, 238, 18, COLOR_URL_BG);
-        draw_rect_border(buf, 44, 4, 238, 18, COLOR_URL_BORDER);
-        let url_slice = &self.current_url[..self.current_url_len];
-        font::draw_text_clipped(buf, WIN_W, WIN_H, 48, 9, url_slice, COLOR_URL_TEXT, None, 4, 22);
+        draw_rect_border(buf, 44, 4, 238, 18, border_col);
+
+        if self.is_address_focused {
+            let edit_slice = &self.address_edit[..self.address_edit_len];
+            font::draw_text_clipped(buf, WIN_W, WIN_H, 48, 9, edit_slice, COLOR_H1, None, 4, 22);
+            // Desenha cursor sublinhado '_'
+            let cursor_x = 48 + self.address_edit_len * font::FONT_WIDTH;
+            if cursor_x + font::FONT_WIDTH <= 280 {
+                font::draw_text_clipped(buf, WIN_W, WIN_H, cursor_x, 9, b"_", COLOR_H1, None, 4, 22);
+            }
+        } else {
+            let url_slice = &self.current_url[..self.current_url_len];
+            font::draw_text_clipped(buf, WIN_W, WIN_H, 48, 9, url_slice, COLOR_URL_TEXT, None, 4, 22);
+        }
 
         // 3. Documento no Viewport (com scroll_y aplicado e clipping)
         for i in 0..self.layout.line_count {
@@ -599,7 +819,6 @@ impl BrowserSession {
         }
     }
 }
-
 // ── Primitivas Gráficas Locais ────────────────────────────────────────────────
 
 fn fill_rect(buf: &mut [u32], rx: usize, ry: usize, rw: usize, rh: usize, color: u32) {

@@ -234,3 +234,27 @@ O motor do Jinn Browser v0.1.0 foi desenvolvido de forma puramente proprietária
 - **v0.4.0 (Rede HTTP Básica)**:
   - Conexão do `jbe-net` aos sockets TCP validados do Jinn OS (`sys_socket`, `sys_connect`, `sys_send`, `sys_recv`).
   - Parser de respostas HTTP/1.1 estáticas (status 200, 301, 404).
+
+---
+
+## 11. Dualidade Arquitetural: Motor Modular (browser/) vs. Implementação Bare-Metal (apps/ola-mundo)
+
+O ecossistema do Jinn Browser adota deliberadamente uma estratégia em duas frentes complementares:
+
+### 11.1 Motor Modular em Workspace (rowser/)
+- **Composição**: 8 crates especializadas (jbe-core, jbe-url, jbe-dom, jbe-html, jbe-css, jbe-layout, jbe-render, jbe-image, jbe-net, jinn-browser).
+- **Ambiente de Execução**: Host (std/lloc), permitindo testes unitários, testes de regressão automatizados e desenvolvimento ágil com estruturas dinâmicas (Vec, String, Box, cálculos de ponto flutuante).
+- **Cobertura**: 41 testes unitários e de integração com cobertura rigorosa de parser HTML, resolução de especificidade CSS, modelo de caixas, decodificação PPM e integridade de URL.
+- **Papel no Projeto**: Especificação viva e motor modular de referência visando a v0.3.0.
+
+### 11.2 Executável Nativo Ring 3 Bare-Metal (pps/ola-mundo/src/browser.rs + main.rs)
+- **Composição**: Executável único compilado como target bare-metal x86_64-jinn-user (-Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem), empacotado como /disk/browser.elf no sistema de arquivos FAT32 do disco rígido virtual.
+- **Ambiente de Execução**: Ring 3 sob o microkernel Jinn OS com isolamento de memória, preempção por hardware e sem dependência de alocador de heap (#![no_std], no-alloc). Utiliza estruturas estáticas com limites determinísticos (MAX_HISTORY = 8, buffers de 64 bytes para URLs, 32 linhas de layout e 8 regiões clicáveis).
+- **Interface Gráfica e Compositor**: Comunicação bidirecional com o Aladdin Desktop Compositor através das syscalls 20 (sys_window_create), 21 (sys_window_update), 22 (sys_window_close) e 24 (sys_window_poll_event).
+- **Funcionalidades de Usuário**:
+  - Botões Voltar [<], Avançar [>] (com styling dinâmico ativo/inativo) e Recarregar [R].
+  - Barra de endereços interativa com foco por clique, edição de texto ASCII, exclusão via Backspace e navegação via Enter.
+  - Viewport de conteúdo com quebra de linhas, suporte a links clicáveis e barra de rolagem proporcional com hit-test.
+
+### 11.3 Estratégia de Unificação (Roadmap v0.3.0)
+Conforme o runtime de Ring 3 do Jinn OS estabilizar a integração de alocadores de usuário (lloc) e syscalls de expansão de heap (sys_brk / sys_mmap), as crates jbe-* serão compiladas diretamente para o target de usuário, unificando a árvore de código do workspace rowser/ com o executável /disk/browser.elf.

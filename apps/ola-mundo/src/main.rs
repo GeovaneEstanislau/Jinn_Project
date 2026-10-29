@@ -49,6 +49,7 @@ unsafe fn sys_read(fd: u64, buf: *mut u8, len: u64) -> i64 {
 }
 
 #[inline(always)]
+#[allow(dead_code)]
 unsafe fn sys_yield() -> i64 {
     syscall3(3, 0, 0, 0)
 }
@@ -1435,6 +1436,32 @@ unsafe fn read_html_file(path: &[u8]) -> Option<usize> {
     }
 }
 
+unsafe fn browser_load_and_display(
+    session: &mut browser::BrowserSession,
+    target: &[u8],
+    win_id: usize,
+    buf_slice: &mut [u32],
+) -> bool {
+    let mut path_buf = [0u8; 64];
+    let path = resolve_target_path(target, &mut path_buf);
+    if let Some(len) = read_html_file(path) {
+        let doc_slice = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, len);
+        session.load_document_bytes(doc_slice, path);
+        session.render(buf_slice);
+        let _ = sys_window_update(win_id, buf_slice);
+        true
+    } else {
+        let err_page = b"<html><head><title>404</title></head><body><h1>404 Nao Encontrado</h1><p>Documento local nao localizado.</p><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>";
+        let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
+        core::ptr::copy_nonoverlapping(err_page.as_ptr(), f_ptr, err_page.len());
+        let doc_slice = core::slice::from_raw_parts(f_ptr as *const u8, err_page.len());
+        session.load_document_bytes(doc_slice, path);
+        session.render(buf_slice);
+        let _ = sys_window_update(win_id, buf_slice);
+        false
+    }
+}
+
 unsafe fn run_gui_demo() {
     print_str(b"\n==================================================================\n");
     print_str(b"  JINN BROWSER 0.2.0 - INTEGRACAO NATIVA, EVENTOS E INTERATIVIDADE\n");
@@ -1512,65 +1539,95 @@ unsafe fn run_gui_demo() {
         // Simula clique dentro da bounding box do link
         let click_x = link_reg.x + 4;
         let click_y = browser::CLIP_TOP + link_reg.y + 2;
-        if let Some(_target) = session.handle_click(click_x, click_y) {
+        let act = session.handle_click(click_x, click_y);
+        if let browser::BrowserAction::NavigateTarget(target, len) = act {
             print_str(b"  Hit-test positivo! Carregando documento alvo (/disk/ABOUT.HTM)...\n");
+            session.push_back_current();
+            session.history_fwd_count = 0;
 
-            // Salva histórico
-            session.history_prev = session.current_url;
-            session.history_prev_len = session.current_url_len;
-            session.has_history = true;
-
-            let bytes_about = match read_html_file(b"/disk/ABOUT.HTM") {
-                Some(len) => len,
-                None => {
-                    let fallback_about = b"<html><head><title>Sobre o Jinn</title></head><body><h1>Sobre o Jinn OS</h1><p>Microkernel modular x86_64 com isolamento Ring 3 e Compositor Aladdin.</p><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>";
-                    let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
-                    core::ptr::copy_nonoverlapping(fallback_about.as_ptr(), f_ptr, fallback_about.len());
-                    fallback_about.len()
-                }
-            };
-
-            let about_slice = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, bytes_about);
-            session.load_document_bytes(about_slice, b"file:///disk/ABOUT.HTM");
-            session.render(buf_slice);
-            let _ = sys_window_update(win_id, buf_slice);
-            print_str(b"  [PASS] Quadro 2: Navegacao por link concluida com exito (URL: file:///disk/ABOUT.HTM)!\n");
+            if browser_load_and_display(&mut session, &target[..len], win_id, buf_slice) {
+                print_str(b"  [PASS] Quadro 2: Navegacao por link concluida com exito (URL: file:///disk/ABOUT.HTM)!\n");
+            }
         }
     }
     let _ = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
     let _ = sys_sleep(200);
 
     // 5. Testando Botão Voltar [<]
-    print_str(b"[BROWSER] 3. Testando botao Voltar [<] e historico de navegacao...\n");
-    if let Some(_prev_url) = session.handle_click(10, 12) {
-        print_str(b"  Botao [<] acionado! Restaurando documento anterior (/disk/INDEX.HTM)...\n");
-        session.has_history = false;
-        let bytes_idx = match read_html_file(b"/disk/INDEX.HTM") {
-            Some(len) => len,
-            None => 0,
-        };
-        if bytes_idx > 0 {
-            let idx_slice = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, bytes_idx);
-            session.load_document_bytes(idx_slice, b"file:///disk/INDEX.HTM");
-            session.render(buf_slice);
-            let _ = sys_window_update(win_id, buf_slice);
-            print_str(b"  [PASS] Quadro 3: Historico restaurado com exito (URL: file:///disk/INDEX.HTM)!\n");
+    print_str(b"[BROWSER] 3. Testando botao Voltar [<] e historico bidirecional...\n");
+    let act_back = session.handle_click(10, 12);
+    if act_back == browser::BrowserAction::Back {
+        print_str(b"  Botao [<] acionado via hit-test! Restaurando documento anterior (/disk/INDEX.HTM)...\n");
+        if let Some((prev_target, p_len)) = session.go_back() {
+            if browser_load_and_display(&mut session, &prev_target[..p_len], win_id, buf_slice) {
+                print_str(b"  [PASS] Quadro 3: Historico anterior restaurado com exito (URL: file:///disk/INDEX.HTM)!\n");
+            }
         }
     }
     let _ = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
     let _ = sys_sleep(200);
 
-    // 6. Testando Viewport e Rolagem Vertical
-    print_str(b"[BROWSER] 4. Testando viewport e rolagem vertical...\n");
-    session.scroll_by(35);
-    session.render(buf_slice);
-    let _ = sys_window_update(win_id, buf_slice);
-    print_str(b"  [PASS] Quadro 4: Viewport rolada (ScrollY = 35px, verificando clipping e scrollbar).\n");
+    // 6. Testando Botão Avançar [>]
+    print_str(b"[BROWSER] 4. Testando botao Avancar [>]...\n");
+    let act_fwd = session.handle_click(22, 12);
+    if act_fwd == browser::BrowserAction::Forward {
+        print_str(b"  Botao [>] acionado via hit-test! Avancando para documento (/disk/ABOUT.HTM)...\n");
+        if let Some((fwd_target, f_len)) = session.go_forward() {
+            if browser_load_and_display(&mut session, &fwd_target[..f_len], win_id, buf_slice) {
+                print_str(b"  [PASS] Quadro 4: Historico avancado com exito (URL: file:///disk/ABOUT.HTM)!\n");
+            }
+        }
+    }
     let _ = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
     let _ = sys_sleep(200);
 
-    // 7. Encerramento Gracioso e Liberação de Recursos
-    print_str(b"[BROWSER] 5. Encerramento gracioso da janela do navegador...\n");
+    // 7. Testando Botão Recarregar [R]
+    print_str(b"[BROWSER] 5. Testando botao Recarregar [R]...\n");
+    let act_reload = session.handle_click(34, 12);
+    if act_reload == browser::BrowserAction::Reload {
+        print_str(b"  Botao [R] acionado via hit-test! Recarregando documento sem alterar historico...\n");
+        let curr = session.current_url;
+        let len = session.current_url_len;
+        if browser_load_and_display(&mut session, &curr[..len], win_id, buf_slice) {
+            print_str(b"  [PASS] Quadro 5: Recarregamento concluido com exito!\n");
+        }
+    }
+    let _ = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
+    let _ = sys_sleep(200);
+
+    // 8. Testando Barra de Endereço (Focus, Typing & Navigation)
+    print_str(b"[BROWSER] 6. Testando foco e edicao na barra de enderecos...\n");
+    let act_focus = session.handle_click(100, 12);
+    if act_focus == browser::BrowserAction::FocusAddress {
+        print_str(b"  Barra de enderecos focada via hit-test! Digitando 'index.htm'...\n");
+        session.address_edit_len = 0;
+        let input_url = b"index.htm";
+        for &b in input_url {
+            let _ = session.address_key(b as u32);
+        }
+        let act_enter = session.address_key(0x0A);
+        if let browser::BrowserAction::NavigateTarget(t, l) = act_enter {
+            session.push_back_current();
+            session.history_fwd_count = 0;
+            if browser_load_and_display(&mut session, &t[..l], win_id, buf_slice) {
+                print_str(b"  [PASS] Quadro 6: Navegacao via barra de enderecos concluida com exito!\n");
+            }
+        }
+    }
+    let _ = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
+    let _ = sys_sleep(200);
+
+    // 9. Testando Viewport e Rolagem Vertical
+    print_str(b"[BROWSER] 7. Testando viewport e rolagem vertical...\n");
+    session.scroll_by(35);
+    session.render(buf_slice);
+    let _ = sys_window_update(win_id, buf_slice);
+    print_str(b"  [PASS] Quadro 7: Viewport rolada (ScrollY = 35px, verificando clipping e scrollbar).\n");
+    let _ = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
+    let _ = sys_sleep(200);
+
+    // 10. Encerramento Gracioso e Liberação de Recursos
+    print_str(b"[BROWSER] 8. Encerramento gracioso da janela do navegador...\n");
     let close_ret = sys_window_close(win_id);
     if close_ret == 0 {
         print_str(b"  [PASS] Janela encerrada com sucesso via sys_window_close (recursos liberados).\n");
@@ -1631,6 +1688,7 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 64]) -> &'a [u8] {
     }
 }
 
+#[allow(dead_code)]
 fn get_cstr_len(s: &[u8]) -> usize {
     let mut l = 0;
     while l < s.len() && s[l] != 0 {
@@ -1683,100 +1741,123 @@ unsafe fn run_browser_interactive() -> ! {
     loop {
         let has_ev = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
         if has_ev < 0 {
-            print_str(b"[BROWSER] sys_window_poll_event retornou erro ou janela fechada. Encerrando...
-");
+            print_str(b"[BROWSER] sys_window_poll_event retornou erro ou janela fechada. Encerrando...\n");
             sys_exit(0);
         } else if has_ev == 1 {
             match ev.event_type {
                 EVENT_WINDOW_CLOSE => {
-                    print_str(b"[BROWSER] Recebido EVENT_WINDOW_CLOSE. Encerrando...
-");
+                    print_str(b"[BROWSER] Recebido EVENT_WINDOW_CLOSE. Encerrando...\n");
                     let _ = sys_window_close(win_id);
                     sys_exit(0);
                 }
                 EVENT_MOUSE_DOWN => {
                     let click_x = ev.x as usize;
                     let click_y = ev.y as usize;
+                    let action = session.handle_click(click_x, click_y);
 
-                    // Botao Voltar [<]
-                    if click_x >= 4 && click_x <= 16 && click_y >= 4 && click_y <= 22 {
-                        if session.has_history && session.history_prev_len > 0 {
-                            session.has_history = false;
-                            let mut prev_target = [0u8; 64];
-                            let p_len = session.history_prev_len;
-                            prev_target[..p_len].copy_from_slice(&session.history_prev[..p_len]);
-
-                            let mut path_buf = [0u8; 64];
-                            let path = resolve_target_path(&prev_target[..p_len], &mut path_buf);
-                            if let Some(len) = read_html_file(path) {
-                                let doc_slice = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, len);
-                                session.load_document_bytes(doc_slice, path);
-                                session.render(buf_slice);
-                                let _ = sys_window_update(win_id, buf_slice);
+                    match action {
+                        browser::BrowserAction::Back => {
+                            if let Some((target, len)) = session.go_back() {
+                                browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
                             }
                         }
-                    } else if let Some(target) = session.handle_click(click_x, click_y) {
-                        let target_len = get_cstr_len(&target);
-                        if target_len > 0 {
-                            let mut path_buf = [0u8; 64];
-                            let path = resolve_target_path(&target[..target_len], &mut path_buf);
-                            if let Some(len) = read_html_file(path) {
-                                session.history_prev = session.current_url;
-                                session.history_prev_len = session.current_url_len;
-                                session.has_history = true;
-
-                                let doc_slice = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, len);
-                                session.load_document_bytes(doc_slice, path);
-                                session.render(buf_slice);
-                                let _ = sys_window_update(win_id, buf_slice);
+                        browser::BrowserAction::Forward => {
+                            if let Some((target, len)) = session.go_forward() {
+                                browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
                             }
+                        }
+                        browser::BrowserAction::Reload => {
+                            let curr = session.current_url;
+                            let len = session.current_url_len;
+                            if len > 0 {
+                                browser_load_and_display(&mut session, &curr[..len], win_id, buf_slice);
+                            }
+                        }
+                        browser::BrowserAction::NavigateTarget(target, len) => {
+                            session.push_back_current();
+                            session.history_fwd_count = 0;
+                            browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
+                        }
+                        browser::BrowserAction::FocusAddress => {
+                            session.render(buf_slice);
+                            let _ = sys_window_update(win_id, buf_slice);
+                        }
+                        browser::BrowserAction::Scroll(delta) => {
+                            session.scroll_by(delta);
+                            session.render(buf_slice);
+                            let _ = sys_window_update(win_id, buf_slice);
+                        }
+                        browser::BrowserAction::None => {
+                            session.render(buf_slice);
+                            let _ = sys_window_update(win_id, buf_slice);
                         }
                     }
                 }
                 EVENT_KEY_DOWN => {
-                    match ev.button_or_key {
-                        0x50 | 0x6A | 0x4A => { // Seta para Baixo (0x50) / 'j' / 'J' (Scroll +20px)
-                            session.scroll_by(20);
-                            session.render(buf_slice);
-                            let _ = sys_window_update(win_id, buf_slice);
-                        }
-                        0x48 | 0x6B | 0x4B => { // Seta para Cima (0x48) / 'k' / 'K' (Scroll -20px)
-                            session.scroll_by(-20);
-                            session.render(buf_slice);
-                            let _ = sys_window_update(win_id, buf_slice);
-                        }
-                        0x51 | 0x20 => { // Page Down (0x51) / Space (0x20) (Scroll +80px)
-                            session.scroll_by(80);
-                            session.render(buf_slice);
-                            let _ = sys_window_update(win_id, buf_slice);
-                        }
-                        0x49 => { // Page Up (0x49) (Scroll -80px)
-                            session.scroll_by(-80);
-                            session.render(buf_slice);
-                            let _ = sys_window_update(win_id, buf_slice);
-                        }
-                        0x0E | 0x08 | 0x62 | 0x68 => { // Backspace (scancode 0x0E, ASCII 0x08) ou 'b'/'h' (Navegacao Voltar)
-                            if session.has_history && session.history_prev_len > 0 {
-                                session.has_history = false;
-                                let mut prev_target = [0u8; 64];
-                                let p_len = session.history_prev_len;
-                                prev_target[..p_len].copy_from_slice(&session.history_prev[..p_len]);
-
-                                let mut path_buf = [0u8; 64];
-                                let path = resolve_target_path(&prev_target[..p_len], &mut path_buf);
-                                if let Some(len) = read_html_file(path) {
-                                    let doc_slice = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, len);
-                                    session.load_document_bytes(doc_slice, path);
-                                    session.render(buf_slice);
-                                    let _ = sys_window_update(win_id, buf_slice);
-                                }
+                    let key = ev.button_or_key;
+                    if session.is_address_focused {
+                        let action = session.address_key(key);
+                        match action {
+                            browser::BrowserAction::NavigateTarget(target, len) => {
+                                session.push_back_current();
+                                session.history_fwd_count = 0;
+                                browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
+                            }
+                            _ => {
+                                session.render(buf_slice);
+                                let _ = sys_window_update(win_id, buf_slice);
                             }
                         }
-                        0x01 | 0x1B | 0x71 => { // Escape (scancode 0x01, ASCII 0x1B) ou 'q' (Fechar Janela)
-                            let _ = sys_window_close(win_id);
-                            sys_exit(0);
+                    } else {
+                        match key {
+                            0x50 | 0x6A | 0x4A => { // Seta para Baixo (0x50) / 'j' / 'J' (Scroll +20px)
+                                session.scroll_by(20);
+                                session.render(buf_slice);
+                                let _ = sys_window_update(win_id, buf_slice);
+                            }
+                            0x48 | 0x6B | 0x4B => { // Seta para Cima (0x48) / 'k' / 'K' (Scroll -20px)
+                                session.scroll_by(-20);
+                                session.render(buf_slice);
+                                let _ = sys_window_update(win_id, buf_slice);
+                            }
+                            0x51 | 0x20 => { // Page Down (0x51) / Space (0x20) (Scroll +80px)
+                                session.scroll_by(80);
+                                session.render(buf_slice);
+                                let _ = sys_window_update(win_id, buf_slice);
+                            }
+                            0x49 => { // Page Up (0x49) (Scroll -80px)
+                                session.scroll_by(-80);
+                                session.render(buf_slice);
+                                let _ = sys_window_update(win_id, buf_slice);
+                            }
+                            0x0E | 0x08 | 0x62 | 0x68 => { // Backspace (0x0E / 0x08) ou 'b'/'h' (Voltar)
+                                if let Some((target, len)) = session.go_back() {
+                                    browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
+                                }
+                            }
+                            0x66 | 0x6C => { // 'f' / 'l' (Avançar)
+                                if let Some((target, len)) = session.go_forward() {
+                                    browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
+                                }
+                            }
+                            0x72 | 0x52 => { // 'r' / 'R' (Recarregar)
+                                let curr = session.current_url;
+                                let len = session.current_url_len;
+                                if len > 0 {
+                                    browser_load_and_display(&mut session, &curr[..len], win_id, buf_slice);
+                                }
+                            }
+                            0x2F | 0x09 => { // '/' ou Tab: focar barra de endereço
+                                session.focus_address();
+                                session.render(buf_slice);
+                                let _ = sys_window_update(win_id, buf_slice);
+                            }
+                            0x01 | 0x1B | 0x71 => { // Escape (0x01 / 0x1B) ou 'q' (Fechar Janela)
+                                let _ = sys_window_close(win_id);
+                                sys_exit(0);
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
                 _ => {}
