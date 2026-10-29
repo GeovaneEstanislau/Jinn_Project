@@ -9,44 +9,29 @@ use jbe_core::{Color, Edges, NodeId};
 use jbe_dom::{DomTree, Node, NodeType};
 
 /// CSS display property value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Display {
     Block,
+    #[default]
     Inline,
     None,
 }
 
-impl Default for Display {
-    fn default() -> Self {
-        Display::Inline
-    }
-}
-
 /// CSS font weight property.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontWeight {
+    #[default]
     Normal,
     Bold,
 }
 
-impl Default for FontWeight {
-    fn default() -> Self {
-        FontWeight::Normal
-    }
-}
-
 /// CSS text alignment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextAlign {
+    #[default]
     Left,
     Center,
     Right,
-}
-
-impl Default for TextAlign {
-    fn default() -> Self {
-        TextAlign::Left
-    }
 }
 
 /// Fully computed CSS style for a DOM node.
@@ -303,10 +288,10 @@ pub fn parse_selector(s: &str) -> Selector {
     let mut class = None;
     let mut id = None;
 
-    if s.starts_with('.') {
-        class = Some(s[1..].to_string());
-    } else if s.starts_with('#') {
-        id = Some(s[1..].to_string());
+    if let Some(rest) = s.strip_prefix('.') {
+        class = Some(rest.to_string());
+    } else if let Some(rest) = s.strip_prefix('#') {
+        id = Some(rest.to_string());
     } else if let Some(dot_idx) = s.find('.') {
         tag = Some(s[..dot_idx].to_ascii_lowercase());
         class = Some(s[dot_idx + 1..].to_string());
@@ -413,10 +398,7 @@ pub fn parse_length(val: &str) -> Option<f32> {
 
 /// Parses 1, 2, or 4 values into Edges (top, right, bottom, left).
 pub fn parse_edges(val: &str) -> Option<Edges> {
-    let parts: Vec<f32> = val
-        .split_whitespace()
-        .filter_map(parse_length)
-        .collect();
+    let parts: Vec<f32> = val.split_whitespace().filter_map(parse_length).collect();
 
     match parts.len() {
         1 => Some(Edges::all(parts[0])),
@@ -513,12 +495,13 @@ pub fn resolve_styles(
         // Determine base style: inherit inherited properties from parent if present
         let mut style = if let Some(parent_id) = node.parent {
             if let Some(parent_style) = computed_map.get(&parent_id) {
-                let mut inherited = ComputedStyle::default();
-                inherited.color = parent_style.color;
-                inherited.font_size = parent_style.font_size;
-                inherited.font_weight = parent_style.font_weight;
-                inherited.text_align = parent_style.text_align;
-                inherited
+                ComputedStyle {
+                    color: parent_style.color,
+                    font_size: parent_style.font_size,
+                    font_weight: parent_style.font_weight,
+                    text_align: parent_style.text_align,
+                    ..ComputedStyle::default()
+                }
             } else {
                 ComputedStyle::default()
             }

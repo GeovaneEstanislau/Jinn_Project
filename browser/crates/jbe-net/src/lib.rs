@@ -98,7 +98,8 @@ impl ResourceLoader for FileSystemLoader {
                 "HTTP remote fetching is not configured on this host backend".into(),
             )),
             UrlScheme::Https => Err(EngineError::SecurityViolation(
-                "HTTPS is disabled in v0.1.0 until TLS certificate validation is implemented".into(),
+                "HTTPS is disabled in v0.1.0 until TLS certificate validation is implemented"
+                    .into(),
             )),
             UrlScheme::About => {
                 let content = match url.path.as_str() {
@@ -128,7 +129,8 @@ impl MockLoader {
     }
 
     pub fn insert(&mut self, url: &str, bytes: Vec<u8>, mime_type: &str) {
-        self.resources.insert(url.to_string(), (bytes, mime_type.to_string()));
+        self.resources
+            .insert(url.to_string(), (bytes, mime_type.to_string()));
     }
 }
 
@@ -142,7 +144,10 @@ impl ResourceLoader for MockLoader {
                 url: url.clone(),
             })
         } else {
-            Err(EngineError::ResourceNotFound(format!("Mock resource not found: {}", key)))
+            Err(EngineError::ResourceNotFound(format!(
+                "Mock resource not found: {}",
+                key
+            )))
         }
     }
 }
@@ -155,7 +160,11 @@ mod tests {
     fn test_mock_loader() {
         let mut loader = MockLoader::new();
         let url = Url::parse("file:///index.html").unwrap();
-        loader.insert("file:///index.html", b"<h1>Hello</h1>".to_vec(), "text/html");
+        loader.insert(
+            "file:///index.html",
+            b"<h1>Hello</h1>".to_vec(),
+            "text/html",
+        );
 
         let res = loader.load(&url).unwrap();
         assert_eq!(res.mime_type, "text/html");

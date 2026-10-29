@@ -471,7 +471,7 @@ pub fn parse_html(html: &str, limits: &EngineLimits) -> Result<DomTree, EngineEr
         });
     }
 
-    let mut dom = DomTree::new(limits.clone());
+    let mut dom = DomTree::new(*limits);
     let mut open_stack: Vec<NodeId> = vec![dom.root()];
     let mut tokenizer = HtmlTokenizer::new(html, limits);
 
@@ -543,17 +543,15 @@ fn auto_close_tags(next_tag: &str, open_stack: &mut Vec<NodeId>, dom: &DomTree) 
     let last_id = *open_stack.last().unwrap();
     if let Some(node) = dom.get(last_id) {
         if let Some(last_tag) = node.tag_name() {
-            if next_tag == "p" && last_tag == "p" {
-                open_stack.pop();
-            } else if next_tag == "li" && last_tag == "li" {
-                open_stack.pop();
-            } else if (next_tag == "h1"
-                || next_tag == "h2"
-                || next_tag == "h3"
-                || next_tag == "h4"
-                || next_tag == "h5"
-                || next_tag == "h6")
-                && (last_tag == "p")
+            if (next_tag == "p" && last_tag == "p")
+                || (next_tag == "li" && last_tag == "li")
+                || ((next_tag == "h1"
+                    || next_tag == "h2"
+                    || next_tag == "h3"
+                    || next_tag == "h4"
+                    || next_tag == "h5"
+                    || next_tag == "h6")
+                    && (last_tag == "p"))
             {
                 open_stack.pop();
             }

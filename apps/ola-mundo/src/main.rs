@@ -1682,10 +1682,15 @@ unsafe fn run_browser_interactive() -> ! {
     let mut ev: ClientWindowEvent = core::mem::zeroed();
     loop {
         let has_ev = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
-        if has_ev == 1 {
+        if has_ev < 0 {
+            print_str(b"[BROWSER] sys_window_poll_event retornou erro ou janela fechada. Encerrando...
+");
+            sys_exit(0);
+        } else if has_ev == 1 {
             match ev.event_type {
                 EVENT_WINDOW_CLOSE => {
-                    print_str(b"[BROWSER] Recebido EVENT_WINDOW_CLOSE. Encerrando...\n");
+                    print_str(b"[BROWSER] Recebido EVENT_WINDOW_CLOSE. Encerrando...
+");
                     let _ = sys_window_close(win_id);
                     sys_exit(0);
                 }
@@ -1693,7 +1698,7 @@ unsafe fn run_browser_interactive() -> ! {
                     let click_x = ev.x as usize;
                     let click_y = ev.y as usize;
 
-                    // Botão Voltar [<]
+                    // Botao Voltar [<]
                     if click_x >= 4 && click_x <= 16 && click_y >= 4 && click_y <= 22 {
                         if session.has_history && session.history_prev_len > 0 {
                             session.has_history = false;
@@ -1730,27 +1735,27 @@ unsafe fn run_browser_interactive() -> ! {
                 }
                 EVENT_KEY_DOWN => {
                     match ev.button_or_key {
-                        0x50 => { // Seta para Baixo (Scroll +20px)
+                        0x50 | 0x6A | 0x4A => { // Seta para Baixo (0x50) / 'j' / 'J' (Scroll +20px)
                             session.scroll_by(20);
                             session.render(buf_slice);
                             let _ = sys_window_update(win_id, buf_slice);
                         }
-                        0x48 => { // Seta para Cima (Scroll -20px)
+                        0x48 | 0x6B | 0x4B => { // Seta para Cima (0x48) / 'k' / 'K' (Scroll -20px)
                             session.scroll_by(-20);
                             session.render(buf_slice);
                             let _ = sys_window_update(win_id, buf_slice);
                         }
-                        0x51 => { // Page Down (Scroll +80px)
+                        0x51 | 0x20 => { // Page Down (0x51) / Space (0x20) (Scroll +80px)
                             session.scroll_by(80);
                             session.render(buf_slice);
                             let _ = sys_window_update(win_id, buf_slice);
                         }
-                        0x49 => { // Page Up (Scroll -80px)
+                        0x49 => { // Page Up (0x49) (Scroll -80px)
                             session.scroll_by(-80);
                             session.render(buf_slice);
                             let _ = sys_window_update(win_id, buf_slice);
                         }
-                        0x0E => { // Backspace (Navegação Voltar)
+                        0x0E | 0x08 | 0x62 | 0x68 => { // Backspace (scancode 0x0E, ASCII 0x08) ou 'b'/'h' (Navegacao Voltar)
                             if session.has_history && session.history_prev_len > 0 {
                                 session.has_history = false;
                                 let mut prev_target = [0u8; 64];
@@ -1767,7 +1772,7 @@ unsafe fn run_browser_interactive() -> ! {
                                 }
                             }
                         }
-                        0x01 => { // Escape (Fechar Janela)
+                        0x01 | 0x1B | 0x71 => { // Escape (scancode 0x01, ASCII 0x1B) ou 'q' (Fechar Janela)
                             let _ = sys_window_close(win_id);
                             sys_exit(0);
                         }

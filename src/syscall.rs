@@ -931,30 +931,17 @@ fn sys_spawn(fn_ptr: usize, _name_ptr: *const u8, ring_flag: usize) -> isize {
 /// O escalonador desbloqueará esta tarefa quando o alvo chamar `exit`.
 fn sys_waitpid(pid: usize) -> isize {
     let my_pid = scheduler::current_pid();
-    let sched = scheduler::get();
-
-    // Tenta coletar imediatamente
-    if let Some(code) = sched.collect_zombie(pid) {
-        return code as isize;
-    }
-
-    // Bloqueia esperando o alvo terminar
-    if !sched.wait_on(my_pid, pid) {
-        // Tarefa existe mas ainda não terminou — yield para ser acordado depois
-        unsafe { core::arch::asm!("int 32", options(nomem, nostack)); }
-
-        // Ao acordar, o alvo já virou Zombie. Coleta.
+    loop {
         let sched = scheduler::get();
         if let Some(code) = sched.collect_zombie(pid) {
             return code as isize;
         }
-    }
-
-    // Se wait_on retornou true, o alvo já estava Zombie
-    let sched = scheduler::get();
-    match sched.collect_zombie(pid) {
-        Some(code) => code as isize,
-        None => EINVAL, // Tarefa não encontrada
+        if pid >= crate::scheduler::MAX_TASKS || sched.tasks[pid].is_none() {
+            return EINVAL;
+        }
+        let _ = sched.wait_on(my_pid, pid);
+        scheduler::set_yielded();
+        unsafe { core::arch::asm!("int 32", options(nomem, nostack)); }
     }
 }
 

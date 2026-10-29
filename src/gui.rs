@@ -185,6 +185,10 @@ impl ProcessHost for JinnProcess {
         crate::shell::execute_string_command(cmd, output);
     }
 
+    fn is_process_alive(&self, pid: usize) -> bool {
+        crate::scheduler::get().task_state(pid).is_some()
+    }
+
     fn spawn_app(&mut self, path: &str) -> Result<usize, ()> {
         let is_browser = path.contains("browser") || path.contains("BROWSER");
         let argv: [&str; 2] = [path, if is_browser { "browser" } else { "" }];
@@ -194,41 +198,25 @@ impl ProcessHost for JinnProcess {
             crate::ipc::register(pid);
             return Ok(pid);
         }
-        let pid = crate::scheduler::get().add_user_task_from_vfs("user_app[U3]", path);
-        if pid > 0 {
-            crate::ipc::register(pid);
-            return Ok(pid);
-        }
-        // Fallback: tenta caminhos padrão no disco se o caminho direto falhou
-        let fallback_paths = [
-            "/disk/browser.elf",
-            "/disk/BROWSER.ELF",
-            "/disk/OLA.ELF",
-            "/disk/ola.elf",
-            "/disk/ola-mundo.elf",
-            "/ext2/OLA.ELF",
-        ];
-        for fb_path in fallback_paths {
-            let fb_argv: [&str; 2] = [fb_path, if is_browser { "browser" } else { "" }];
-            let fb_slice = if is_browser { &fb_argv[..2] } else { &fb_argv[..1] };
-            if let Ok(fb_pid) = crate::scheduler::get().spawn_user_task_from_vfs(fb_path, fb_slice, &[]) {
-                crate::ipc::register(fb_pid);
-                return Ok(fb_pid);
-            }
-            let fb_pid = crate::scheduler::get().add_user_task_from_vfs("user_app[U3]", fb_path);
-            if fb_pid > 0 {
-                crate::ipc::register(fb_pid);
-                return Ok(fb_pid);
+
+        // Tenta apenas variantes de caixa no FAT32 para o mesmo aplicativo sem cruzar para executaveis alheios
+        let alt_path = if is_browser {
+            if path.contains("BROWSER") { "/disk/browser.elf" } else { "/disk/BROWSER.ELF" }
+        } else if path.contains("OLA") || path.contains("ola") {
+            if path.contains("OLA") { "/disk/ola.elf" } else { "/disk/OLA.ELF" }
+        } else {
+            ""
+        };
+
+        if !alt_path.is_empty() && alt_path != path {
+            let alt_argv: [&str; 2] = [alt_path, if is_browser { "browser" } else { "" }];
+            let alt_slice = if is_browser { &alt_argv[..2] } else { &alt_argv[..1] };
+            if let Ok(pid) = crate::scheduler::get().spawn_user_task_from_vfs(alt_path, alt_slice, &[]) {
+                crate::ipc::register(pid);
+                return Ok(pid);
             }
         }
-        // Fallback final: módulo Limine injetado no boot
-        if let Some(data) = crate::limine::get_module(0) {
-            let boot_pid = crate::scheduler::get().add_user_task("user_app[U3]", data);
-            if boot_pid > 0 {
-                crate::ipc::register(boot_pid);
-                return Ok(boot_pid);
-            }
-        }
+
         Err(())
     }
 }

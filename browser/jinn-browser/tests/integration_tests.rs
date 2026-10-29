@@ -31,12 +31,16 @@ fn test_full_pipeline_complex_document() {
     loader.insert("file:///index.html", html.as_bytes().to_vec(), "text/html");
 
     let mut session = BrowserSession::new(640, 480, Box::new(loader));
-    session.navigate("file:///index.html").expect("Navigation should succeed");
+    session
+        .navigate("file:///index.html")
+        .expect("Navigation should succeed");
 
     // Verify DOM
     let dom = session.current_dom.as_ref().unwrap();
     assert!(dom.node_count() > 10);
-    let h1_id = dom.find_first_by_tag("h1").expect("H1 element should exist");
+    let h1_id = dom
+        .find_first_by_tag("h1")
+        .expect("H1 element should exist");
     assert_eq!(dom.text_content(h1_id), "Jinn OS System Architecture");
 
     // Verify Layout Box Tree
@@ -53,11 +57,17 @@ fn test_full_pipeline_complex_document() {
 
     // Verify Framebuffer Pixel values:
     // (0, 0) is html document background #12121a = rgb(18, 18, 26)
-    let root_pixel = session.backend.get_pixel(0, 0).expect("Pixel (0,0) should exist");
+    let root_pixel = session
+        .backend
+        .get_pixel(0, 0)
+        .expect("Pixel (0,0) should exist");
     assert_eq!(root_pixel, Color::rgb(18, 18, 26));
 
     // (25, 25) is body background #101018 = rgb(16, 16, 24)
-    let body_pixel = session.backend.get_pixel(25, 25).expect("Pixel (25,25) should exist");
+    let body_pixel = session
+        .backend
+        .get_pixel(25, 25)
+        .expect("Pixel (25,25) should exist");
     assert_eq!(body_pixel, Color::rgb(16, 16, 24));
 }
 
@@ -74,12 +84,19 @@ fn test_malformed_html_resilience() {
             <!-- Unclosed comment at end of document
     "#;
 
-    loader.insert("file:///broken.html", broken_html.as_bytes().to_vec(), "text/html");
+    loader.insert(
+        "file:///broken.html",
+        broken_html.as_bytes().to_vec(),
+        "text/html",
+    );
 
     let mut session = BrowserSession::new(400, 300, Box::new(loader));
     let res = session.navigate("file:///broken.html");
     // The state-machine parser must safely recover without crashing or panic
-    assert!(res.is_ok(), "Parser should safely recover from malformed HTML");
+    assert!(
+        res.is_ok(),
+        "Parser should safely recover from malformed HTML"
+    );
 
     let dom = session.current_dom.as_ref().unwrap();
     assert!(dom.find_first_by_tag("h1").is_some());
@@ -149,14 +166,13 @@ fn test_image_loading_and_bounded_decoding() {
     // 2x2 binary PPM image
     let mut ppm_bytes = Vec::new();
     ppm_bytes.extend_from_slice(b"P6\n2 2\n255\n");
-    ppm_bytes.extend_from_slice(&[
-        255, 0, 0,
-        0, 255, 0,
-        0, 0, 255,
-        255, 255, 255,
-    ]);
+    ppm_bytes.extend_from_slice(&[255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255]);
 
-    loader.insert("file:///page_with_img.html", b"<html><body><img src=\"test.ppm\"></body></html>".to_vec(), "text/html");
+    loader.insert(
+        "file:///page_with_img.html",
+        b"<html><body><img src=\"test.ppm\"></body></html>".to_vec(),
+        "text/html",
+    );
     loader.insert("file:///test.ppm", ppm_bytes, "image/x-portable-pixmap");
 
     let mut session = BrowserSession::new(400, 300, Box::new(loader));
@@ -167,9 +183,21 @@ fn test_image_loading_and_bounded_decoding() {
 #[test]
 fn test_navigation_history_back_forward_reload() {
     let mut loader = MockLoader::new();
-    loader.insert("file:///page1.html", b"<h1>Page 1</h1><a href=\"page2.html\">Next</a>".to_vec(), "text/html");
-    loader.insert("file:///page2.html", b"<h1>Page 2</h1><a href=\"page3.html\">Next</a>".to_vec(), "text/html");
-    loader.insert("file:///page3.html", b"<h1>Page 3</h1>".to_vec(), "text/html");
+    loader.insert(
+        "file:///page1.html",
+        b"<h1>Page 1</h1><a href=\"page2.html\">Next</a>".to_vec(),
+        "text/html",
+    );
+    loader.insert(
+        "file:///page2.html",
+        b"<h1>Page 2</h1><a href=\"page3.html\">Next</a>".to_vec(),
+        "text/html",
+    );
+    loader.insert(
+        "file:///page3.html",
+        b"<h1>Page 3</h1>".to_vec(),
+        "text/html",
+    );
 
     let mut session = BrowserSession::new(400, 300, Box::new(loader));
     session.navigate("file:///page1.html").unwrap();
@@ -222,14 +250,22 @@ fn test_viewport_scrolling_and_clamping() {
             </body>
         </html>
     "#;
-    loader.insert("file:///long.html", long_html.as_bytes().to_vec(), "text/html");
+    loader.insert(
+        "file:///long.html",
+        long_html.as_bytes().to_vec(),
+        "text/html",
+    );
 
     // Viewport height is 300px, content will be > 800px
     let mut session = BrowserSession::new(400, 300, Box::new(loader));
     session.navigate("file:///long.html").unwrap();
 
     let content_h = session.content_height();
-    assert!(content_h > 800.0, "Content height should exceed 800px, got {}", content_h);
+    assert!(
+        content_h > 800.0,
+        "Content height should exceed 800px, got {}",
+        content_h
+    );
     let max_scroll = session.max_scroll_y();
     assert_eq!(max_scroll, content_h - 300.0);
 
@@ -282,7 +318,11 @@ fn test_link_click_interaction_after_scrolling() {
     "#;
 
     loader.insert("file:///doc1.html", doc1.as_bytes().to_vec(), "text/html");
-    loader.insert("file:///page_target.html", doc2.as_bytes().to_vec(), "text/html");
+    loader.insert(
+        "file:///page_target.html",
+        doc2.as_bytes().to_vec(),
+        "text/html",
+    );
 
     // Viewport height: 300px
     let mut session = BrowserSession::new(400, 300, Box::new(loader));
@@ -306,4 +346,3 @@ fn test_link_click_interaction_after_scrolling() {
     let h1_id = dom.find_first_by_tag("h1").unwrap();
     assert_eq!(dom.text_content(h1_id), "Target Page Loaded Successfully");
 }
-

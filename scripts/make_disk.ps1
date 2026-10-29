@@ -1,7 +1,8 @@
 # scripts/make_disk.ps1 - Gera um disco virtual RAW (disk.img) de 64 MiB formatado com MBR Dual-Partition (FAT32 + Ext2)
 param(
     [string]$DiskPath = "disk.img",
-    [string]$AppElfPath = "iso_root\apps\ola-mundo.elf"
+    [string]$AppElfPath = "iso_root\apps\ola-mundo.elf",
+    [string]$BrowserElfPath = "iso_root\apps\browser.elf"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,6 +28,20 @@ if (Test-Path $resolvedElf) {
     $elfBytes = [byte[]]::new(512)
 }
 
+# Lê o binário do navegador (browser.elf)
+$browserBytes = @()
+$resolvedBrowser = Join-Path $projectRoot $BrowserElfPath
+if (Test-Path $resolvedBrowser) {
+    $browserBytes = [System.IO.File]::ReadAllBytes($resolvedBrowser)
+    Write-Host "Binário browser encontrado: $resolvedBrowser ($($browserBytes.Length) bytes)"
+} elseif ($elfBytes.Length -gt 0) {
+    $browserBytes = $elfBytes
+    Write-Host "Aviso: $resolvedBrowser não encontrado. Usando ola-mundo.elf ($($browserBytes.Length) bytes)."
+} else {
+    Write-Host "Aviso: $resolvedBrowser não encontrado. Usando payload dummy de 512 bytes."
+    $browserBytes = [byte[]]::new(512)
+}
+
 # Texto do README.TXT da partição FAT32 (/disk)
 $readmeText = @"
 =====================================================
@@ -39,11 +54,13 @@ do disco rigido virtual usando o driver de VFS.
 
 Executaveis disponiveis nesta particao:
   - /disk/ola.elf (Processo de espaco de usuario Ring 3)
+  - /disk/browser.elf (Jinn Browser Engine v0.2.0)
 
 Experimente executar no shell do Jinn:
   jinn[K]> ls /disk
   jinn[K]> cat /disk/readme.txt
   jinn[K]> spawn /disk/ola.elf
+  jinn[K]> spawn /disk/browser.elf
   jinn[K]> ps
 "@
 $readmeBytes = [System.Text.Encoding]::ASCII.GetBytes($readmeText)
@@ -163,13 +180,16 @@ Write-BytesAt $part1ByteOffset $bpb
 Write-BytesAt ($part1ByteOffset + 6 * $sectorSize) $bpb
 
 $clusterBytes = 8 * 512 # 4096 bytes
-$elfClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($elfBytes.Length / $clusterBytes))
+$olaClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($elfBytes.Length / $clusterBytes))
+$browserClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($browserBytes.Length / $clusterBytes))
 
-# FSInfo Sector (Setor 1 da partição FAT32)
-$indexClus = 4 + $elfClustersNeeded
+$olaStartClus = 4
+$browserStartClus = $olaStartClus + $olaClustersNeeded
+$indexClus = $browserStartClus + $browserClustersNeeded
 $aboutClus = $indexClus + 1
 $nextFreeClus = $aboutClus + 1
 
+# FSInfo Sector (Setor 1 da partição FAT32)
 $fsinfo = [byte[]]::new(512)
 [System.BitConverter]::GetBytes([uint32]0x41615252).CopyTo($fsinfo, 0)   # LeadSig "RRaA"
 [System.BitConverter]::GetBytes([uint32]0x61417272).CopyTo($fsinfo, 484) # StrucSig "rrAa"
@@ -188,14 +208,26 @@ Set-FatEntry 1 0x0FFFFFFF
 Set-FatEntry 2 0x0FFFFFFF
 Set-FatEntry 3 0x0FFFFFFF
 
-for ($i = 0; $i -lt $elfClustersNeeded; $i++) {
-    $currentClus = 4 + $i
-    if ($i -eq $elfClustersNeeded - 1) {
+# Cadeia OLA.ELF
+for ($i = 0; $i -lt $olaClustersNeeded; $i++) {
+    $currentClus = $olaStartClus + $i
+    if ($i -eq $olaClustersNeeded - 1) {
         Set-FatEntry $currentClus 0x0FFFFFFF
     } else {
         Set-FatEntry $currentClus ([uint32]($currentClus + 1))
     }
 }
+
+# Cadeia BROWSER.ELF
+for ($i = 0; $i -lt $browserClustersNeeded; $i++) {
+    $currentClus = $browserStartClus + $i
+    if ($i -eq $browserClustersNeeded - 1) {
+        Set-FatEntry $currentClus 0x0FFFFFFF
+    } else {
+        Set-FatEntry $currentClus ([uint32]($currentClus + 1))
+    }
+}
+
 Set-FatEntry $indexClus 0x0FFFFFFF
 Set-FatEntry $aboutClus 0x0FFFFFFF
 
@@ -251,14 +283,15 @@ $aboutHtmlBytes = [System.Text.Encoding]::ASCII.GetBytes($aboutHtmlText)
 
 Add-DirEntry 0 "JINN DISK  " 0x08 0 0
 Add-DirEntry 1 "README  TXT" 0x20 3 ($readmeBytes.Length)
-Add-DirEntry 2 "OLA     ELF" 0x20 4 ($elfBytes.Length)
+Add-DirEntry 2 "OLA     ELF" 0x20 $olaStartClus ($elfBytes.Length)
 Add-DirEntry 3 "INDEX   HTM" 0x20 $indexClus ($indexHtmlBytes.Length)
 Add-DirEntry 4 "ABOUT   HTM" 0x20 $aboutClus ($aboutHtmlBytes.Length)
-Add-DirEntry 5 "BROWSER ELF" 0x20 4 ($elfBytes.Length)
+Add-DirEntry 5 "BROWSER ELF" 0x20 $browserStartClus ($browserBytes.Length)
 
 Write-BytesAt $dataStartByteOffset1 $rootDir
 Write-BytesAt ($dataStartByteOffset1 + [long](3 - 2) * $clusterBytes) $readmeBytes
-Write-BytesAt ($dataStartByteOffset1 + [long](4 - 2) * $clusterBytes) $elfBytes
+Write-BytesAt ($dataStartByteOffset1 + [long]($olaStartClus - 2) * $clusterBytes) $elfBytes
+Write-BytesAt ($dataStartByteOffset1 + [long]($browserStartClus - 2) * $clusterBytes) $browserBytes
 Write-BytesAt ($dataStartByteOffset1 + [long]($indexClus - 2) * $clusterBytes) $indexHtmlBytes
 Write-BytesAt ($dataStartByteOffset1 + [long]($aboutClus - 2) * $clusterBytes) $aboutHtmlBytes
 
@@ -285,7 +318,8 @@ $sb = [byte[]]::new(1024)
 [System.BitConverter]::GetBytes([uint32]$ext2InodesCount).CopyTo($sb, 40)      # s_inodes_per_group
 [System.BitConverter]::GetBytes([uint16]0xEF53).CopyTo($sb, 56)                # s_magic = 0xEF53
 [System.BitConverter]::GetBytes([uint16]1).CopyTo($sb, 58)                     # s_state = 1 (Cleanly unmounted)
-[System.BitConverter]::GetBytes([uint16]1).CopyTo($sb, 62)                     # s_minor_rev_level
+[System.BitConverter]::GetBytes([uint16]1).CopyTo($sb, 60)                     # s_errors = 1 (Continue)
+[System.BitConverter]::GetBytes([uint16]0).CopyTo($sb, 62)                     # s_minor_rev_level
 [System.BitConverter]::GetBytes([uint32]1).CopyTo($sb, 76)                     # s_rev_level = 1 (Dynamic inodes)
 [System.BitConverter]::GetBytes([uint16]11).CopyTo($sb, 84)                    # s_first_ino = 11
 [System.BitConverter]::GetBytes([uint16]128).CopyTo($sb, 88)                   # s_inode_size = 128

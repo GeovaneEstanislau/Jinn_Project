@@ -110,7 +110,10 @@ impl BrowserSession {
 
     /// Returns total scrollable content height of current document.
     pub fn content_height(&self) -> f32 {
-        self.current_layout.as_ref().map(|l| l.content_height()).unwrap_or(0.0)
+        self.current_layout
+            .as_ref()
+            .map(|l| l.content_height())
+            .unwrap_or(0.0)
     }
 
     /// Returns max possible scroll_y given viewport height.
@@ -134,8 +137,10 @@ impl BrowserSession {
     /// Repaints the current document using the active scroll_y offset.
     pub fn repaint(&mut self) {
         if let (Some(layout), Some(dom)) = (&self.current_layout, &self.current_dom) {
-            let paint_commands = generate_paint_commands_with_scroll(layout, dom, 0.0, self.scroll_y);
-            self.backend.begin_frame(self.viewport_width, self.viewport_height);
+            let paint_commands =
+                generate_paint_commands_with_scroll(layout, dom, 0.0, self.scroll_y);
+            self.backend
+                .begin_frame(self.viewport_width, self.viewport_height);
             for cmd in &paint_commands {
                 self.backend.execute_command(cmd);
             }

@@ -144,7 +144,8 @@ impl TestBackend {
             for c in 0..cols {
                 let px = ((c as f32 + 0.5) * step_x) as u32;
                 if let Some(col) = self.get_pixel(px, py) {
-                    let luma = 0.299 * (col.r as f32) + 0.587 * (col.g as f32) + 0.114 * (col.b as f32);
+                    let luma =
+                        0.299 * (col.r as f32) + 0.587 * (col.g as f32) + 0.114 * (col.b as f32);
                     let ch = if luma > 200.0 {
                         '#'
                     } else if luma > 150.0 {
@@ -173,7 +174,8 @@ impl RenderBackend for TestBackend {
         self.height = height;
         self.commands.clear();
         self.click_regions.clear();
-        self.framebuffer.resize((width * height) as usize, 0xFF000000);
+        self.framebuffer
+            .resize((width * height) as usize, 0xFF000000);
         self.framebuffer.fill(0xFF000000);
     }
 
@@ -224,7 +226,9 @@ impl RenderBackend for TestBackend {
                     }
                 }
             }
-            PaintCommand::DrawText { text, point, color, .. } => {
+            PaintCommand::DrawText {
+                text, point, color, ..
+            } => {
                 let mut start_x = point.x as u32;
                 let start_y = point.y as u32;
 
@@ -348,7 +352,10 @@ mod tests {
         let div = dom
             .create_element(
                 "div",
-                vec![("style".into(), "background-color: #ff0000; height: 40px;".into())],
+                vec![(
+                    "style".into(),
+                    "background-color: #ff0000; height: 40px;".into(),
+                )],
             )
             .unwrap();
         let a = dom
@@ -389,10 +396,7 @@ mod tests {
         // Check click region registered
         assert_eq!(backend.click_regions.len(), 1);
         assert_eq!(backend.click_regions[0].1, "page2.html");
-        assert_eq!(
-            backend.click_at(Point::new(10.0, 10.0)),
-            Some("page2.html")
-        );
+        assert_eq!(backend.click_at(Point::new(10.0, 10.0)), Some("page2.html"));
     }
 
     #[test]
@@ -402,7 +406,10 @@ mod tests {
         let div = dom
             .create_element(
                 "div",
-                vec![("style".into(), "background-color: #ff0000; height: 100px;".into())],
+                vec![(
+                    "style".into(),
+                    "background-color: #ff0000; height: 100px;".into(),
+                )],
             )
             .unwrap();
         let a = dom

@@ -1076,7 +1076,7 @@ impl Scheduler {
                 if task.limits.max_cpu_ticks > 0 && task.cpu_ticks >= task.limits.max_cpu_ticks {
                     quota_violation = true;
                     force_switch = true;
-                } else if task.state == TaskState::Zombie || is_yield || task.quantum_remaining == 0 {
+                } else if task.state != TaskState::Running || is_yield || task.quantum_remaining == 0 {
                     force_switch = true;
                 }
             }

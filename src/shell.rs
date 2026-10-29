@@ -2630,6 +2630,60 @@ where
                 output("Falha ao alocar buffer JDA para benchmark", 0x00EF_4444);
             }
         }
+        "spawn" | "exec" => {
+            if args.is_empty() {
+                output("Uso: spawn <caminho.elf>", 0x00EF_4444);
+            } else {
+                let target = args.trim();
+                let is_browser = target.contains("browser") || target.contains("BROWSER");
+                let resolved_path = if target.starts_with('/') {
+                    alloc::string::String::from(target)
+                } else {
+                    let mut s = alloc::string::String::from("/disk/");
+                    s.push_str(target);
+                    if !s.ends_with(".elf") && !s.ends_with(".ELF") {
+                        s.push_str(".elf");
+                    }
+                    s
+                };
+                let argv: [&str; 2] = [&resolved_path, if is_browser { "browser" } else { "" }];
+                let argv_slice = if is_browser { &argv[..2] } else { &argv[..1] };
+                let sched = crate::scheduler::get();
+                match sched.spawn_user_task_from_vfs(&resolved_path, argv_slice, &[]) {
+                    Ok(pid) => {
+                        crate::ipc::register(pid);
+                        output("[OK] Processo Ring 3 iniciado com sucesso!", 0x0022_C55E);
+                        let mut p_buf = [0u8; 16];
+                        let p_len = aladdin::compositor::format_num(pid, &mut p_buf);
+                        if let Ok(pid_str) = core::str::from_utf8(&p_buf[..p_len]) {
+                            output(pid_str, 0x0038_BDF8);
+                        }
+                    }
+                    Err(_) => {
+                        output("[ERRO] Falha ao carregar ELF: arquivo nao encontrado ou invalido.", 0x00EF_4444);
+                    }
+                }
+            }
+        }
+        "browser" => {
+            let path = "/disk/browser.elf";
+            let argv: [&str; 2] = [path, "browser"];
+            let sched = crate::scheduler::get();
+            match sched.spawn_user_task_from_vfs(path, &argv, &[]) {
+                Ok(pid) => {
+                    crate::ipc::register(pid);
+                    output("[OK] Jinn Browser iniciado com sucesso!", 0x0022_C55E);
+                    let mut p_buf = [0u8; 16];
+                    let p_len = aladdin::compositor::format_num(pid, &mut p_buf);
+                    if let Ok(pid_str) = core::str::from_utf8(&p_buf[..p_len]) {
+                        output(pid_str, 0x0038_BDF8);
+                    }
+                }
+                Err(_) => {
+                    output("[ERRO] Falha ao iniciar /disk/browser.elf", 0x00EF_4444);
+                }
+            }
+        }
         "reboot" => {
             unsafe {
                 let null_idt: [u8; 10] = [0u8; 10];

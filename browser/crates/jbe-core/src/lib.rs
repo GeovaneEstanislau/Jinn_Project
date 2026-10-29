@@ -71,7 +71,10 @@ pub struct Size {
 }
 
 impl Size {
-    pub const ZERO: Self = Self { width: 0.0, height: 0.0 };
+    pub const ZERO: Self = Self {
+        width: 0.0,
+        height: 0.0,
+    };
 
     pub const fn new(width: f32, height: f32) -> Self {
         Self { width, height }
@@ -88,10 +91,20 @@ pub struct Rect {
 }
 
 impl Rect {
-    pub const ZERO: Self = Self { x: 0.0, y: 0.0, width: 0.0, height: 0.0 };
+    pub const ZERO: Self = Self {
+        x: 0.0,
+        y: 0.0,
+        width: 0.0,
+        height: 0.0,
+    };
 
     pub const fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     pub fn right(&self) -> f32 {
@@ -132,10 +145,20 @@ pub struct Edges {
 }
 
 impl Edges {
-    pub const ZERO: Self = Self { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 };
+    pub const ZERO: Self = Self {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
 
     pub const fn all(val: f32) -> Self {
-        Self { top: val, right: val, bottom: val, left: val }
+        Self {
+            top: val,
+            right: val,
+            bottom: val,
+            left: val,
+        }
     }
 
     pub const fn symmetric(vertical: f32, horizontal: f32) -> Self {
@@ -148,7 +171,12 @@ impl Edges {
     }
 
     pub const fn new(top: f32, right: f32, bottom: f32, left: f32) -> Self {
-        Self { top, right, bottom, left }
+        Self {
+            top,
+            right,
+            bottom,
+            left,
+        }
     }
 
     pub fn horizontal(&self) -> f32 {
@@ -172,17 +200,72 @@ pub struct Color {
 }
 
 impl Color {
-    pub const TRANSPARENT: Self = Self { r: 0, g: 0, b: 0, a: 0 };
-    pub const BLACK:       Self = Self { r: 0, g: 0, b: 0, a: 255 };
-    pub const WHITE:       Self = Self { r: 255, g: 255, b: 255, a: 255 };
-    pub const RED:         Self = Self { r: 255, g: 0, b: 0, a: 255 };
-    pub const GREEN:       Self = Self { r: 0, g: 128, b: 0, a: 255 };
-    pub const BLUE:        Self = Self { r: 0, g: 0, b: 255, a: 255 };
-    pub const GRAY:        Self = Self { r: 128, g: 128, b: 128, a: 255 };
-    pub const LIGHT_GRAY:  Self = Self { r: 211, g: 211, b: 211, a: 255 };
-    pub const DARK_GRAY:   Self = Self { r: 64, g: 64, b: 64, a: 255 };
-    pub const NAVY:        Self = Self { r: 0, g: 0, b: 128, a: 255 };
-    pub const TEAL:        Self = Self { r: 0, g: 128, b: 128, a: 255 };
+    pub const TRANSPARENT: Self = Self {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 0,
+    };
+    pub const BLACK: Self = Self {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    pub const WHITE: Self = Self {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 255,
+    };
+    pub const RED: Self = Self {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    pub const GREEN: Self = Self {
+        r: 0,
+        g: 128,
+        b: 0,
+        a: 255,
+    };
+    pub const BLUE: Self = Self {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
+    pub const GRAY: Self = Self {
+        r: 128,
+        g: 128,
+        b: 128,
+        a: 255,
+    };
+    pub const LIGHT_GRAY: Self = Self {
+        r: 211,
+        g: 211,
+        b: 211,
+        a: 255,
+    };
+    pub const DARK_GRAY: Self = Self {
+        r: 64,
+        g: 64,
+        b: 64,
+        a: 255,
+    };
+    pub const NAVY: Self = Self {
+        r: 0,
+        g: 0,
+        b: 128,
+        a: 255,
+    };
+    pub const TEAL: Self = Self {
+        r: 0,
+        g: 128,
+        b: 128,
+        a: 255,
+    };
 
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b, a: 255 }
@@ -258,14 +341,14 @@ pub struct EngineLimits {
 impl Default for EngineLimits {
     fn default() -> Self {
         Self {
-            max_document_size: 512 * 1024,      // 512 KiB document limit
-            max_dom_nodes: 1000,                 // 1000 DOM nodes max
-            max_dom_depth: 32,                   // 32 levels maximum nesting
-            max_attributes_per_element: 32,      // 32 attributes max
-            max_attribute_length: 512,           // 512 bytes per attribute string
-            max_paint_commands: 4000,            // 4000 paint commands per page
-            max_image_dimension: 2048,           // 2048x2048 max width/height
-            max_image_pixels: 1024 * 768,        // 786k pixels max
+            max_document_size: 512 * 1024,           // 512 KiB document limit
+            max_dom_nodes: 1000,                     // 1000 DOM nodes max
+            max_dom_depth: 32,                       // 32 levels maximum nesting
+            max_attributes_per_element: 32,          // 32 attributes max
+            max_attribute_length: 512,               // 512 bytes per attribute string
+            max_paint_commands: 4000,                // 4000 paint commands per page
+            max_image_dimension: 2048,               // 2048x2048 max width/height
+            max_image_pixels: 1024 * 768,            // 786k pixels max
             max_decompressed_bytes: 8 * 1024 * 1024, // 8 MiB decompressed image limit
         }
     }
@@ -310,7 +393,11 @@ impl fmt::Display for EngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ResourceTooLarge { size, max_size } => {
-                write!(f, "Resource size ({} B) exceeds limit ({} B)", size, max_size)
+                write!(
+                    f,
+                    "Resource size ({} B) exceeds limit ({} B)",
+                    size, max_size
+                )
             }
             Self::DomLimitExceeded(msg) => write!(f, "DOM limit exceeded: {}", msg),
             Self::TreeTooDeep { depth, limit } => {
@@ -364,7 +451,10 @@ mod tests {
         assert_eq!(Color::from_hex("#0000ff"), Some(Color::rgb(0, 0, 255)));
         assert_eq!(Color::from_hex("#fff"), Some(Color::rgb(255, 255, 255)));
         assert_eq!(Color::from_hex("#000"), Some(Color::rgb(0, 0, 0)));
-        assert_eq!(Color::from_hex("#12345678"), Some(Color::rgba(0x12, 0x34, 0x56, 0x78)));
+        assert_eq!(
+            Color::from_hex("#12345678"),
+            Some(Color::rgba(0x12, 0x34, 0x56, 0x78))
+        );
         assert_eq!(Color::from_hex("invalid"), None);
     }
 

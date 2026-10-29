@@ -82,7 +82,8 @@ fn decode_ppm_p6(data: &[u8], limits: &EngineLimits) -> Result<DecodedImage, Eng
     }
 
     let mut pixels = Vec::with_capacity(total_pixels);
-    for chunk in pixel_data[..expected_bytes].chunks_exact(3) {
+    let (chunks, _) = pixel_data[..expected_bytes].as_chunks::<3>();
+    for chunk in chunks {
         let r = chunk[0];
         let g = chunk[1];
         let b = chunk[2];
@@ -144,9 +145,9 @@ fn validate_dimensions(width: u32, height: u32, limits: &EngineLimits) -> Result
             width, height, limits.max_image_dimension
         )));
     }
-    let pixels = (width as u64)
-        .checked_mul(height as u64)
-        .ok_or_else(|| EngineError::ImageDecodeFailed("Overflow calculating image pixels".into()))?;
+    let pixels = (width as u64).checked_mul(height as u64).ok_or_else(|| {
+        EngineError::ImageDecodeFailed("Overflow calculating image pixels".into())
+    })?;
 
     if pixels > limits.max_image_pixels as u64 {
         return Err(EngineError::ImageDecodeFailed(format!(
@@ -155,9 +156,9 @@ fn validate_dimensions(width: u32, height: u32, limits: &EngineLimits) -> Result
         )));
     }
 
-    let bytes = pixels
-        .checked_mul(4)
-        .ok_or_else(|| EngineError::ImageDecodeFailed("Overflow calculating image memory".into()))?;
+    let bytes = pixels.checked_mul(4).ok_or_else(|| {
+        EngineError::ImageDecodeFailed("Overflow calculating image memory".into())
+    })?;
 
     if bytes > limits.max_decompressed_bytes as u64 {
         return Err(EngineError::ImageDecodeFailed(format!(

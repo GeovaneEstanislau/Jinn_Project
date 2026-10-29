@@ -59,7 +59,10 @@ impl Url {
         if let Some(rest) = input.strip_prefix("about:") {
             let path = rest.split('?').next().unwrap_or("").trim().to_string();
             if path != "blank" && path != "version" && path != "help" {
-                return Err(EngineError::InvalidUrl(format!("Unknown about: target '{}'", path)));
+                return Err(EngineError::InvalidUrl(format!(
+                    "Unknown about: target '{}'",
+                    path
+                )));
             }
             return Ok(Self {
                 scheme: UrlScheme::About,
@@ -73,19 +76,25 @@ impl Url {
         // 2. Reject explicitly unsupported schemes with helpful errors
         if input.starts_with("https://") {
             return Err(EngineError::UnsupportedScheme(
-                "https:// is unsupported in v0.1.0 (requires TLS / cryptographic verification)".into(),
+                "https:// is unsupported in v0.1.0 (requires TLS / cryptographic verification)"
+                    .into(),
             ));
         }
         if input.starts_with("javascript:") {
             return Err(EngineError::SecurityViolation(
-                "javascript: URLs are rejected by security policy (no script execution in v0.1.0)".into(),
+                "javascript: URLs are rejected by security policy (no script execution in v0.1.0)"
+                    .into(),
             ));
         }
         if input.starts_with("data:") {
-            return Err(EngineError::UnsupportedScheme("data: scheme is unsupported in v0.1.0".into()));
+            return Err(EngineError::UnsupportedScheme(
+                "data: scheme is unsupported in v0.1.0".into(),
+            ));
         }
         if input.starts_with("ftp://") {
-            return Err(EngineError::UnsupportedScheme("ftp:// scheme is unsupported".into()));
+            return Err(EngineError::UnsupportedScheme(
+                "ftp:// scheme is unsupported".into(),
+            ));
         }
 
         // 3. Parse "file://" scheme
@@ -93,7 +102,9 @@ impl Url {
             let (path_part, query) = split_query(rest);
             let normalized_path = normalize_path(path_part)?;
             if normalized_path.is_empty() {
-                return Err(EngineError::InvalidUrl("file:// URL with empty path".into()));
+                return Err(EngineError::InvalidUrl(
+                    "file:// URL with empty path".into(),
+                ));
             }
             return Ok(Self {
                 scheme: UrlScheme::File,
@@ -125,7 +136,9 @@ impl Url {
         }
 
         // 5. Fallback: treat absolute local paths (e.g. `/disk/test.html` or `C:/...`) as file URLs
-        if input.starts_with('/') || (input.len() >= 3 && input.as_bytes()[1] == b':' && input.as_bytes()[2] == b'/') {
+        if input.starts_with('/')
+            || (input.len() >= 3 && input.as_bytes()[1] == b':' && input.as_bytes()[2] == b'/')
+        {
             let (path_part, query) = split_query(input);
             return Ok(Self {
                 scheme: UrlScheme::File,
@@ -136,7 +149,10 @@ impl Url {
             });
         }
 
-        Err(EngineError::InvalidUrl(format!("Unrecognized URL format or missing scheme: '{}'", input)))
+        Err(EngineError::InvalidUrl(format!(
+            "Unrecognized URL format or missing scheme: '{}'",
+            input
+        )))
     }
 
     /// Resolves a relative reference string against `self` as a base URL.
@@ -152,9 +168,9 @@ impl Url {
         }
 
         match self.scheme {
-            UrlScheme::About => {
-                Err(EngineError::InvalidUrl("Cannot resolve relative URL against about: page".into()))
-            }
+            UrlScheme::About => Err(EngineError::InvalidUrl(
+                "Cannot resolve relative URL against about: page".into(),
+            )),
             UrlScheme::File => {
                 let (rel_path, query) = split_query(relative);
                 let merged_path = if rel_path.starts_with('/') {
@@ -214,10 +230,17 @@ impl Url {
             UrlScheme::About => format!("about:{}", self.path),
             UrlScheme::File => format!("file://{}", self.path),
             UrlScheme::Http | UrlScheme::Https => {
-                let scheme_str = if self.scheme == UrlScheme::Https { "https" } else { "http" };
+                let scheme_str = if self.scheme == UrlScheme::Https {
+                    "https"
+                } else {
+                    "http"
+                };
                 let host = self.host.as_deref().unwrap_or("localhost");
                 let port_str = match self.port {
-                    Some(p) if (self.scheme == UrlScheme::Http && p != 80) || (self.scheme == UrlScheme::Https && p != 443) => {
+                    Some(p)
+                        if (self.scheme == UrlScheme::Http && p != 80)
+                            || (self.scheme == UrlScheme::Https && p != 443) =>
+                    {
                         format!(":{}", p)
                     }
                     _ => String::new(),
@@ -226,7 +249,10 @@ impl Url {
                     Some(q) => format!("?{}", q),
                     None => String::new(),
                 };
-                format!("{}://{}{}{}{}", scheme_str, host, port_str, self.path, query_str)
+                format!(
+                    "{}://{}{}{}{}",
+                    scheme_str, host, port_str, self.path, query_str
+                )
             }
         }
     }

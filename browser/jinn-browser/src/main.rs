@@ -60,8 +60,16 @@ fn main() {
         </html>
     "#;
 
-    loader.insert("file:///index.html", index_html.as_bytes().to_vec(), "text/html");
-    loader.insert("file:///about.html", about_html.as_bytes().to_vec(), "text/html");
+    loader.insert(
+        "file:///index.html",
+        index_html.as_bytes().to_vec(),
+        "text/html",
+    );
+    loader.insert(
+        "file:///about.html",
+        about_html.as_bytes().to_vec(),
+        "text/html",
+    );
 
     let mut session = BrowserSession::new(640, 480, Box::new(loader));
 
@@ -88,31 +96,66 @@ fn main() {
         return;
     }
 
-    println!("\n[*] DOM Nodes count: {}", session.current_dom.as_ref().map(|d| d.node_count()).unwrap_or(0));
-    println!("[*] Paint Commands count: {}", session.backend.commands.len());
-    println!("[*] Click regions registered: {}", session.backend.click_regions.len());
+    println!(
+        "\n[*] DOM Nodes count: {}",
+        session
+            .current_dom
+            .as_ref()
+            .map(|d| d.node_count())
+            .unwrap_or(0)
+    );
+    println!(
+        "[*] Paint Commands count: {}",
+        session.backend.commands.len()
+    );
+    println!(
+        "[*] Click regions registered: {}",
+        session.backend.click_regions.len()
+    );
 
     println!("\n[*] Paint Commands Log:");
     for (i, cmd) in session.backend.commands.iter().take(10).enumerate() {
         println!("    [{:02}] {:?}", i, cmd);
     }
     if session.backend.commands.len() > 10 {
-        println!("    ... and {} more commands.", session.backend.commands.len() - 10);
+        println!(
+            "    ... and {} more commands.",
+            session.backend.commands.len() - 10
+        );
     }
 
-    println!("\n[*] Rendered Visual Preview (ASCII Canvas {}x{}):", 60, 20);
+    println!(
+        "\n[*] Rendered Visual Preview (ASCII Canvas {}x{}):",
+        60, 20
+    );
     let ascii = session.backend.render_ascii_canvas(60, 20);
     println!("{}", ascii);
 
     // Demonstrate link interaction
     if !session.backend.click_regions.is_empty() {
         let (rect, ref target) = session.backend.click_regions[0];
-        println!("[*] Simulating click on registered link '{}' at ({}, {})...", target, rect.x + 2.0, rect.y + 2.0);
+        println!(
+            "[*] Simulating click on registered link '{}' at ({}, {})...",
+            target,
+            rect.x + 2.0,
+            rect.y + 2.0
+        );
         match session.click_at(Point::new(rect.x + 2.0, rect.y + 2.0)) {
             Ok(Some(nav_target)) => {
                 println!("[*] Successfully navigated to: {}", nav_target);
-                println!("[*] New DOM Node Count: {}", session.current_dom.as_ref().map(|d| d.node_count()).unwrap_or(0));
-                println!("[*] History length: {}, current index: {}", session.history.len(), session.history_index);
+                println!(
+                    "[*] New DOM Node Count: {}",
+                    session
+                        .current_dom
+                        .as_ref()
+                        .map(|d| d.node_count())
+                        .unwrap_or(0)
+                );
+                println!(
+                    "[*] History length: {}, current index: {}",
+                    session.history.len(),
+                    session.history_index
+                );
             }
             Ok(None) => println!("[*] Click did not hit any active link."),
             Err(e) => eprintln!("[!] Click navigation error: {}", e),

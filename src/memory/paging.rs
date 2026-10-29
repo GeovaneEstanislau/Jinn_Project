@@ -246,15 +246,15 @@ pub unsafe fn load_cr3(pml4_phys: u64) {
 /// Returns the physical address of the new PML4.
 pub fn clone_kernel_pml4() -> u64 {
     unsafe {
-        // Assegura que o PML4 mestre do kernel está gravado
-        let _ = kernel_pml4_phys();
-        let current_pml4 = phys_to_virt(current_cr3()) as *const PageTable;
+        // Assegura que o PML4 mestre do kernel está gravado e clona a partir dele
+        let master_pml4_phys = kernel_pml4_phys();
+        let master_pml4 = phys_to_virt(master_pml4_phys) as *const PageTable;
         let new_table_virt = alloc_table();
         
         // Em x86_64, os endereços do kernel ficam na metade superior (higher half).
-        // Copiamos as entradas 256..512 (índices 256 a 511) do PML4 atual para o novo.
+        // Copiamos as entradas 256..512 (índices 256 a 511) do PML4 mestre para o novo.
         for i in 256..512 {
-            (*new_table_virt).entries[i] = (*current_pml4).entries[i];
+            (*new_table_virt).entries[i] = (*master_pml4).entries[i];
         }
         
         virt_to_phys(new_table_virt as u64)
