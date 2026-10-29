@@ -344,32 +344,38 @@ impl Scheduler {
         argv: &[&str],
         envp: &[&str],
     ) -> Result<usize, isize> {
+        // 1. Espaço de endereçamento isolado
+        let pml4_phys = paging::clone_kernel_pml4();
+
+        // 2. Carregar o ELF do VFS (SEM SEGURAR SCHED_LOCK)
+        let (entry_virt, elf_frames) = match crate::elf::load_elf_from_vfs(path, pml4_phys) {
+            Ok(res) => res,
+            Err(e) => {
+                unsafe { paging::free_user_pml4(pml4_phys); }
+                return Err(e.to_errno());
+            }
+        };
+
+        // 3. Montar a pilha de usuário com argv e envp (SEM SEGURAR SCHED_LOCK)
+        let (user_rsp, argc, argv_ptr, envp_ptr, stack_frames) =
+            match crate::elf::setup_user_stack_with_args(pml4_phys, 0, argv, envp) {
+                Ok(res) => res,
+                Err(e) => {
+                    unsafe { paging::free_user_pml4(pml4_phys); }
+                    return Err(e.to_errno());
+                }
+            };
+
+        let flags: u64;
+        unsafe {
+            core::arch::asm!("pushfq; pop {}", out(reg) flags, options(nomem, nostack));
+            core::arch::asm!("cli", options(nomem, nostack));
+        }
+
         let _guard = SCHED_LOCK.lock();
         let mut id = self.next_id;
         while id < MAX_TASKS {
             if self.tasks[id].is_none() {
-                // 1. Espaço de endereçamento isolado
-                let pml4_phys = paging::clone_kernel_pml4();
-
-                // 2. Carregar o ELF do VFS
-                let (entry_virt, elf_frames) = match crate::elf::load_elf_from_vfs(path, pml4_phys) {
-                    Ok(res) => res,
-                    Err(e) => {
-                        unsafe { paging::free_user_pml4(pml4_phys); }
-                        return Err(e.to_errno());
-                    }
-                };
-
-                // 3. Montar a pilha de usuário com argv e envp
-                let (user_rsp, argc, argv_ptr, envp_ptr, stack_frames) =
-                    match crate::elf::setup_user_stack_with_args(pml4_phys, id, argv, envp) {
-                        Ok(res) => res,
-                        Err(e) => {
-                            unsafe { paging::free_user_pml4(pml4_phys); }
-                            return Err(e.to_errno());
-                        }
-                    };
-
                 // 4. Configurar pilha de kernel
                 let kstack_base = unsafe { KSTACKS[id].as_ptr() as usize };
                 let kstack_top = (kstack_base + KSTACK_SIZE) & !15;
@@ -392,21 +398,13 @@ impl Scheduler {
                 sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
 
                 // GPRs: rax, rcx, rdx, rbx, rbp, rsi, rdi, r8..r15
-                // rax = 0
                 sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
-                // rcx = 0
                 sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
-                // rdx = envp_ptr
                 sp -= 8; unsafe { (sp as *mut u64).write_volatile(envp_ptr as u64); }
-                // rbx = 0
                 sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
-                // rbp = 0
                 sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
-                // rsi = argv_ptr
                 sp -= 8; unsafe { (sp as *mut u64).write_volatile(argv_ptr as u64); }
-                // rdi = argc
                 sp -= 8; unsafe { (sp as *mut u64).write_volatile(argc as u64); }
-                // r8..r15 (8 registers)
                 for _ in 0..8 {
                     sp -= 8;
                     unsafe { (sp as *mut u64).write_volatile(0); }
@@ -416,9 +414,17 @@ impl Scheduler {
                 let limits = crate::resources::ResourceLimits::user_default();
                 let _ = res.check_and_alloc_frames(stack_frames + elf_frames, &limits);
 
+                let task_name = if path.contains("browser") || path.contains("BROWSER") {
+                    "browser[U3]"
+                } else if path.contains("ola") || path.contains("OLA") {
+                    "ola[U3]"
+                } else {
+                    "spawned-user[U3]"
+                };
+
                 self.tasks[id] = Some(Task {
                     id,
-                    name: "spawned-user[U3]",
+                    name: task_name,
                     state: TaskState::Ready,
                     priority: TaskPriority::Normal,
                     ring: Ring::User,
@@ -440,10 +446,20 @@ impl Scheduler {
                 });
                 self.next_id = id + 1;
                 crate::ipc::register(id);
+                drop(_guard);
+                if (flags & 0x200) != 0 {
+                    unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+                }
                 return Ok(id);
             }
             id += 1;
         }
+
+        drop(_guard);
+        if (flags & 0x200) != 0 {
+            unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+        }
+        unsafe { paging::free_user_pml4(pml4_phys); }
         Err(-24) // EMFILE (limite de tarefas atingido)
     }
 
@@ -1248,6 +1264,11 @@ impl Scheduler {
     /// Retorna o estado de uma tarefa pelo PID.
     pub fn task_state(&self, pid: usize) -> Option<TaskState> {
         self.tasks.get(pid)?.as_ref().map(|t| t.state)
+    }
+
+    /// Retorna o nome da tarefa pelo PID.
+    pub fn task_name(&self, pid: usize) -> Option<&'static str> {
+        self.tasks.get(pid)?.as_ref().map(|t| t.name)
     }
 
     /// Retorna os ticks de CPU consumidos por uma tarefa.

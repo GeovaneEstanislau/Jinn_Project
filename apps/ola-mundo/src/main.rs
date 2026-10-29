@@ -1444,20 +1444,51 @@ unsafe fn browser_load_and_display(
 ) -> bool {
     let mut path_buf = [0u8; 64];
     let path = resolve_target_path(target, &mut path_buf);
+
+    if path.starts_with(b"about:") {
+        let content: &[u8] = if path == b"about:blank" {
+            b"<html><head><title>about:blank</title></head><body></body></html>"
+        } else if path == b"about:version" {
+            b"<html><head><title>Sobre o Navegador</title></head><body><h1>Jinn Browser v0.3.0</h1><p>Motor: JBE Modular (10 crates)</p><p>Microkernel: Jinn OS (SMP, Ring 3, VFS FAT32)</p><p>Compositor: Aladdin Desktop</p><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>"
+        } else if path == b"about:blocked" {
+            b"<html><head><title>Acesso Bloqueado</title></head><body><h1>403 - Acesso Bloqueado</h1><p>Acesso fora do diretorio permitido (/disk/) foi bloqueado por seguranca.</p><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>"
+        } else if path == b"about:offline" {
+            b"<html><head><title>Modo Offline</title></head><body><h1>Modo Offline</h1><p>Conexoes externas de rede estao desabilitadas nesta versao.</p><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>"
+        } else {
+            b"<html><head><title>Sobre</title></head><body><h1>Jinn Browser v0.3.0</h1><p>Navegador nativo Ring 3.</p><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>"
+        };
+        let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
+        core::ptr::copy_nonoverlapping(content.as_ptr(), f_ptr, content.len());
+        let doc_slice = core::slice::from_raw_parts(f_ptr as *const u8, content.len());
+        session.load_document_bytes(doc_slice, path);
+        session.render(buf_slice);
+        let _ = sys_window_update(win_id, buf_slice);
+        print_str(b"[BROWSER-INTERACTION] PAGE_LOADED target=");
+        print_str(path);
+        print_str(b"\n");
+        return true;
+    }
+
     if let Some(len) = read_html_file(path) {
         let doc_slice = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, len);
         session.load_document_bytes(doc_slice, path);
         session.render(buf_slice);
         let _ = sys_window_update(win_id, buf_slice);
+        print_str(b"[BROWSER-INTERACTION] PAGE_LOADED target=");
+        print_str(path);
+        print_str(b"\n");
         true
     } else {
-        let err_page = b"<html><head><title>404</title></head><body><h1>404 Nao Encontrado</h1><p>Documento local nao localizado.</p><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>";
+        let err_page = b"<html><head><title>404</title></head><body><h1>404 Nao Encontrado</h1><p>Documento local nao localizado no VFS.</p><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>";
         let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
         core::ptr::copy_nonoverlapping(err_page.as_ptr(), f_ptr, err_page.len());
         let doc_slice = core::slice::from_raw_parts(f_ptr as *const u8, err_page.len());
         session.load_document_bytes(doc_slice, path);
         session.render(buf_slice);
         let _ = sys_window_update(win_id, buf_slice);
+        print_str(b"[BROWSER-INTERACTION] PAGE_404 target=");
+        print_str(path);
+        print_str(b"\n");
         false
     }
 }
@@ -1667,15 +1698,57 @@ fn str_contains(haystack: *const u8, needle: &[u8]) -> bool {
 }
 
 fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 64]) -> &'a [u8] {
-    let mut clean = target;
+    let mut start = 0;
+    while start < target.len() && (target[start] == b' ' || target[start] == b'\t') {
+        start += 1;
+    }
+    let mut end = target.len();
+    while end > start && (target[end - 1] == b' ' || target[end - 1] == b'\t' || target[end - 1] == 0) {
+        end -= 1;
+    }
+    let mut clean = &target[start..end];
+
+    if clean.starts_with(b"about:") {
+        let len = clean.len().min(63);
+        buf[..len].copy_from_slice(&clean[..len]);
+        buf[len] = 0;
+        return &buf[..len];
+    }
+
     if clean.starts_with(b"file://") {
         clean = &clean[7..];
+    } else if clean.starts_with(b"http://") || clean.starts_with(b"https://") {
+        let off = b"about:offline";
+        buf[..off.len()].copy_from_slice(off);
+        buf[off.len()] = 0;
+        return &buf[..off.len()];
     }
-    if clean.starts_with(b"/") {
+
+    // Prevencao de Directory Traversal (..)
+    let mut has_traversal = false;
+    for i in 0..clean.len().saturating_sub(1) {
+        if clean[i] == b'.' && clean[i + 1] == b'.' {
+            has_traversal = true;
+            break;
+        }
+    }
+    if has_traversal {
+        let blk = b"about:blocked";
+        buf[..blk.len()].copy_from_slice(blk);
+        buf[blk.len()] = 0;
+        return &buf[..blk.len()];
+    }
+
+    if clean.starts_with(b"/disk/") {
         let len = clean.len().min(63);
         buf[..len].copy_from_slice(&clean[..len]);
         buf[len] = 0;
         &buf[..len]
+    } else if clean.starts_with(b"/") {
+        let blk = b"about:blocked";
+        buf[..blk.len()].copy_from_slice(blk);
+        buf[blk.len()] = 0;
+        &buf[..blk.len()]
     } else {
         let prefix = b"/disk/";
         let p_len = prefix.len();
@@ -1699,7 +1772,7 @@ fn get_cstr_len(s: &[u8]) -> usize {
 
 unsafe fn run_browser_interactive() -> ! {
     print_str(b"\n==================================================================\n");
-    print_str(b"  JINN BROWSER 0.2.0 - SESSAO INTERATIVA NATIVA (RING 3)\n");
+    print_str(b"  JINN BROWSER 0.3.0 - SESSAO INTERATIVA NATIVA (RING 3)\n");
     print_str(b"==================================================================\n");
 
     let mut session = browser::BrowserSession::new();
@@ -1711,7 +1784,7 @@ unsafe fn run_browser_interactive() -> ! {
     let bytes_read = match read_html_file(b"/disk/INDEX.HTM") {
         Some(len) => len,
         None => {
-            let fallback = b"<html><head><title>Jinn OS Portal</title></head><body><h1>Jinn Browser 0.2.0</h1><p>Bem-vindo ao Jinn Browser rodando nativamente sobre o microkernel Jinn OS e Aladdin Desktop Compositor.</p><p><a href=\"about.htm\">Sobre o Sistema</a></p></body></html>";
+            let fallback = b"<html><head><title>Jinn OS Portal</title></head><body><h1>Jinn Browser 0.3.0</h1><p>Bem-vindo ao Jinn Browser rodando nativamente sobre o microkernel Jinn OS e Aladdin Desktop Compositor.</p><p><a href=\"about.htm\">Sobre o Sistema</a></p></body></html>";
             let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
             core::ptr::copy_nonoverlapping(fallback.as_ptr(), f_ptr, fallback.len());
             fallback.len()
@@ -1722,13 +1795,13 @@ unsafe fn run_browser_interactive() -> ! {
     session.load_document_bytes(raw_bytes, b"file:///disk/INDEX.HTM");
 
     // 2. Cria janela nativa no Aladdin Desktop
-    let win_id = sys_window_create(b"Jinn Browser v0.2.0", browser::WIN_W, browser::WIN_H);
+    let win_id = sys_window_create(b"Jinn Browser v0.3.0", browser::WIN_W, browser::WIN_H);
     if win_id < 0 {
         print_str(b"[BROWSER] sys_window_create falhou para Jinn Browser!\n");
         sys_exit(1);
     }
     let win_id = win_id as usize;
-    print_str(b"[BROWSER] Janela criada com sucesso! ID=");
+    print_str(b"[BROWSER-INTERACTION] WINDOW_CREATED win_id=");
     print_u64(win_id as u64);
     print_str(b"\n");
 
@@ -1741,32 +1814,40 @@ unsafe fn run_browser_interactive() -> ! {
     loop {
         let has_ev = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
         if has_ev < 0 {
-            print_str(b"[BROWSER] sys_window_poll_event retornou erro ou janela fechada. Encerrando...\n");
+            print_str(b"[BROWSER-INTERACTION] CLOSE poll error or window closed. Encerrando...\n");
             sys_exit(0);
         } else if has_ev == 1 {
             match ev.event_type {
                 EVENT_WINDOW_CLOSE => {
-                    print_str(b"[BROWSER] Recebido EVENT_WINDOW_CLOSE. Encerrando...\n");
+                    print_str(b"[BROWSER-INTERACTION] CLOSE window received\n");
                     let _ = sys_window_close(win_id);
                     sys_exit(0);
                 }
                 EVENT_MOUSE_DOWN => {
                     let click_x = ev.x as usize;
                     let click_y = ev.y as usize;
+                    print_str(b"[BROWSER-INTERACTION] MOUSE_DOWN x=");
+                    print_i64(ev.x as i64);
+                    print_str(b" y=");
+                    print_i64(ev.y as i64);
+                    print_str(b"\n");
                     let action = session.handle_click(click_x, click_y);
 
                     match action {
                         browser::BrowserAction::Back => {
+                            print_str(b"[BROWSER-INTERACTION] ACTION Back\n");
                             if let Some((target, len)) = session.go_back() {
                                 browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
                             }
                         }
                         browser::BrowserAction::Forward => {
+                            print_str(b"[BROWSER-INTERACTION] ACTION Forward\n");
                             if let Some((target, len)) = session.go_forward() {
                                 browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
                             }
                         }
                         browser::BrowserAction::Reload => {
+                            print_str(b"[BROWSER-INTERACTION] ACTION Reload\n");
                             let curr = session.current_url;
                             let len = session.current_url_len;
                             if len > 0 {
@@ -1774,15 +1855,22 @@ unsafe fn run_browser_interactive() -> ! {
                             }
                         }
                         browser::BrowserAction::NavigateTarget(target, len) => {
+                            print_str(b"[BROWSER-INTERACTION] ACTION NavigateTarget target=");
+                            print_str(&target[..len]);
+                            print_str(b"\n");
                             session.push_back_current();
                             session.history_fwd_count = 0;
                             browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
                         }
                         browser::BrowserAction::FocusAddress => {
+                            print_str(b"[BROWSER-INTERACTION] ACTION FocusAddress\n");
                             session.render(buf_slice);
                             let _ = sys_window_update(win_id, buf_slice);
                         }
                         browser::BrowserAction::Scroll(delta) => {
+                            print_str(b"[BROWSER-INTERACTION] ACTION Scroll delta=");
+                            print_i64(delta as i64);
+                            print_str(b"\n");
                             session.scroll_by(delta);
                             session.render(buf_slice);
                             let _ = sys_window_update(win_id, buf_slice);
@@ -1795,10 +1883,17 @@ unsafe fn run_browser_interactive() -> ! {
                 }
                 EVENT_KEY_DOWN => {
                     let key = ev.button_or_key;
+                    print_str(b"[BROWSER-INTERACTION] KEY_DOWN code=");
+                    print_u64(key as u64);
+                    print_str(b" focused=");
+                    if session.is_address_focused { print_str(b"1\n"); } else { print_str(b"0\n"); }
                     if session.is_address_focused {
                         let action = session.address_key(key);
                         match action {
                             browser::BrowserAction::NavigateTarget(target, len) => {
+                                print_str(b"[BROWSER-INTERACTION] ACTION AddressBar Navigate target=");
+                                print_str(&target[..len]);
+                                print_str(b"\n");
                                 session.push_back_current();
                                 session.history_fwd_count = 0;
                                 browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
@@ -1811,36 +1906,43 @@ unsafe fn run_browser_interactive() -> ! {
                     } else {
                         match key {
                             0x50 | 0x6A | 0x4A => { // Seta para Baixo (0x50) / 'j' / 'J' (Scroll +20px)
+                                print_str(b"[BROWSER-INTERACTION] ACTION ScrollDown\n");
                                 session.scroll_by(20);
                                 session.render(buf_slice);
                                 let _ = sys_window_update(win_id, buf_slice);
                             }
                             0x48 | 0x6B | 0x4B => { // Seta para Cima (0x48) / 'k' / 'K' (Scroll -20px)
+                                print_str(b"[BROWSER-INTERACTION] ACTION ScrollUp\n");
                                 session.scroll_by(-20);
                                 session.render(buf_slice);
                                 let _ = sys_window_update(win_id, buf_slice);
                             }
                             0x51 | 0x20 => { // Page Down (0x51) / Space (0x20) (Scroll +80px)
+                                print_str(b"[BROWSER-INTERACTION] ACTION PageDown\n");
                                 session.scroll_by(80);
                                 session.render(buf_slice);
                                 let _ = sys_window_update(win_id, buf_slice);
                             }
                             0x49 => { // Page Up (0x49) (Scroll -80px)
+                                print_str(b"[BROWSER-INTERACTION] ACTION PageUp\n");
                                 session.scroll_by(-80);
                                 session.render(buf_slice);
                                 let _ = sys_window_update(win_id, buf_slice);
                             }
                             0x0E | 0x08 | 0x62 | 0x68 => { // Backspace (0x0E / 0x08) ou 'b'/'h' (Voltar)
+                                print_str(b"[BROWSER-INTERACTION] ACTION KeyBack\n");
                                 if let Some((target, len)) = session.go_back() {
                                     browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
                                 }
                             }
                             0x66 | 0x6C => { // 'f' / 'l' (Avançar)
+                                print_str(b"[BROWSER-INTERACTION] ACTION KeyForward\n");
                                 if let Some((target, len)) = session.go_forward() {
                                     browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
                                 }
                             }
                             0x72 | 0x52 => { // 'r' / 'R' (Recarregar)
+                                print_str(b"[BROWSER-INTERACTION] ACTION KeyReload\n");
                                 let curr = session.current_url;
                                 let len = session.current_url_len;
                                 if len > 0 {
@@ -1848,11 +1950,13 @@ unsafe fn run_browser_interactive() -> ! {
                                 }
                             }
                             0x2F | 0x09 => { // '/' ou Tab: focar barra de endereço
+                                print_str(b"[BROWSER-INTERACTION] ACTION KeyFocusAddress\n");
                                 session.focus_address();
                                 session.render(buf_slice);
                                 let _ = sys_window_update(win_id, buf_slice);
                             }
                             0x01 | 0x1B | 0x71 => { // Escape (0x01 / 0x1B) ou 'q' (Fechar Janela)
+                                print_str(b"[BROWSER-INTERACTION] ACTION KeyClose\n");
                                 let _ = sys_window_close(win_id);
                                 sys_exit(0);
                             }

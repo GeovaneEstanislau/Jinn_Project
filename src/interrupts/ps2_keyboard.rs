@@ -73,6 +73,7 @@ static SCANCODE_MAP_SHIFT: [u8; 88] = [
 
 static mut SHIFT_DOWN: bool = false;
 static mut CAPS_LOCK:  bool = false;
+static mut EXTENDED_KEY: bool = false;
 
 /// Inicializa o controlador PS/2 i8042 e o teclado.
 ///
@@ -144,8 +145,31 @@ pub fn init_and_flush() {
 /// Converte scancode PS/2 Set 1 para ASCII e empurra para o buffer.
 pub fn process_scancode(sc: u8) {
     unsafe {
+        if sc == 0xE0 {
+            EXTENDED_KEY = true;
+            return;
+        }
+
+        let is_extended = EXTENDED_KEY;
+        EXTENDED_KEY = false;
+
         let is_release = (sc & 0x80) != 0;
         let make_code  = sc & 0x7F;
+
+        if is_extended {
+            if !is_release {
+                match make_code {
+                    0x48 => keyboard_buffer::push(0x48), // Seta Cima
+                    0x50 => keyboard_buffer::push(0x50), // Seta Baixo
+                    0x49 => keyboard_buffer::push(0x49), // Page Up
+                    0x51 => keyboard_buffer::push(0x51), // Page Down
+                    0x4B => keyboard_buffer::push(0x4B), // Seta Esquerda
+                    0x4D => keyboard_buffer::push(0x4D), // Seta Direita
+                    _ => {}
+                }
+            }
+            return;
+        }
 
         match make_code {
             0x2A | 0x36 => { SHIFT_DOWN = !is_release; } // Shift L/R

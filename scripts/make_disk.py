@@ -67,7 +67,7 @@ def main():
         "do disco rigido virtual usando o driver de VFS.\n\n"
         "Executaveis disponiveis nesta particao:\n"
         "  - /disk/ola.elf (Processo de espaco de usuario Ring 3)\n"
-        "  - /disk/browser.elf (Jinn Browser Engine v0.2.0)\n\n"
+        "  - /disk/browser.elf (Jinn Browser Engine v0.3.0)\n\n"
         "Experimente executar no shell do Jinn:\n"
         "  jinn[K]> ls /disk\n"
         "  jinn[K]> cat /disk/readme.txt\n"
@@ -94,7 +94,7 @@ def main():
 
     index_html = (
         b"<!DOCTYPE html>\n<html>\n<head><title>Jinn OS Portal</title></head>\n"
-        b"<body>\n  <h1>Jinn Browser 0.2.0</h1>\n"
+        b"<body>\n  <h1>Jinn Browser 0.3.0</h1>\n"
         b"  <p>Bem-vindo ao Jinn Browser rodando nativamente sobre o microkernel Jinn OS e Aladdin Desktop Compositor.</p>\n"
         b"  <p><a href=\"about.htm\">Sobre o Sistema</a></p>\n</body>\n</html>"
     )

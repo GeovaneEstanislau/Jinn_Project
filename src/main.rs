@@ -357,6 +357,26 @@ pub extern "C" fn _start() -> ! {
         w.set_color(Color::LightGray, Color::Black);
     }
 
+    w.write_string("[+] Subsistema Grafico (Limine Framebuffer)...");
+    if let Some(fb) = limine::framebuffer() {
+        gui::init();
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string(" OK ");
+        w.set_color(Color::LightCyan, Color::Black);
+        w.write_string("(");
+        w.write_decimal(fb.width as usize);
+        w.write_string("x");
+        w.write_decimal(fb.height as usize);
+        w.write_string("x");
+        w.write_decimal(fb.bpp as usize);
+        w.write_line(" bpp)");
+        w.set_color(Color::LightGray, Color::Black);
+    } else {
+        w.set_color(Color::Yellow, Color::Black);
+        w.write_line(" AVISO (Modo texto VGA legado)");
+        w.set_color(Color::LightGray, Color::Black);
+    }
+
     w.write_string("[+] Multiprocessamento Simetrico (SMP)...");
     let online_cpus = smp::init();
     if online_cpus > 1 {
@@ -436,26 +456,6 @@ pub extern "C" fn _start() -> ! {
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
-
-    w.write_string("[+] Subsistema Grafico (Limine Framebuffer)...");
-    if let Some(fb) = limine::framebuffer() {
-        gui::init();
-        w.set_color(Color::LightGreen, Color::Black);
-        w.write_string(" OK ");
-        w.set_color(Color::LightCyan, Color::Black);
-        w.write_string("(");
-        w.write_decimal(fb.width as usize);
-        w.write_string("x");
-        w.write_decimal(fb.height as usize);
-        w.write_string("x");
-        w.write_decimal(fb.bpp as usize);
-        w.write_line(" bpp)");
-        w.set_color(Color::LightGray, Color::Black);
-    } else {
-        w.set_color(Color::Yellow, Color::Black);
-        w.write_line(" AVISO (Modo texto VGA legado)");
-        w.set_color(Color::LightGray, Color::Black);
-    }
 
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line("[SUCCESS] Jinn OS pronto - entregando controle ao Escalonador.");

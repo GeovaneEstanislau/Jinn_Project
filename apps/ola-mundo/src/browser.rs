@@ -1,4 +1,4 @@
-//! Jinn Browser Engine v0.2.0 — Motor Nativo Ring 3 para Jinn OS & Aladdin
+//! Jinn Browser Engine v0.3.0 — Motor Nativo Ring 3 para Jinn OS & Aladdin
 //!
 //! Implementação completa e autônoma (#![no_std]) do pipeline:
 //! 1. Leitura de documento HTML local via VFS (sys_open / sys_read / sys_close)
@@ -463,6 +463,7 @@ pub struct BrowserSession {
     pub history_fwd_lens: [usize; MAX_HISTORY],
     pub history_fwd_count: usize,
     pub is_address_focused: bool,
+    pub address_selected: bool,
     pub address_edit: [u8; 64],
     pub address_edit_len: usize,
     pub scroll_y: usize,
@@ -483,6 +484,7 @@ impl BrowserSession {
             history_fwd_lens: [0; MAX_HISTORY],
             history_fwd_count: 0,
             is_address_focused: false,
+            address_selected: false,
             address_edit: [0; 64],
             address_edit_len: 0,
             scroll_y: 0,
@@ -576,6 +578,7 @@ impl BrowserSession {
     /// Inicia edição da barra de endereços
     pub fn focus_address(&mut self) {
         self.is_address_focused = true;
+        self.address_selected = true;
         self.address_edit = self.current_url;
         self.address_edit_len = self.current_url_len;
     }
@@ -583,6 +586,7 @@ impl BrowserSession {
     /// Cancela edição da barra de endereços
     pub fn unfocus_address(&mut self) {
         self.is_address_focused = false;
+        self.address_selected = false;
     }
 
     /// Processa pressionamento de tecla enquanto a barra de endereços está focada
@@ -594,6 +598,7 @@ impl BrowserSession {
         // Enter (0x0A, 0x0D, ou scancode 0x1C)
         if key == 0x0A || key == 0x0D || key == 0x1C {
             self.is_address_focused = false;
+            self.address_selected = false;
             if self.address_edit_len > 0 {
                 return BrowserAction::NavigateTarget(self.address_edit, self.address_edit_len);
             }
@@ -602,7 +607,11 @@ impl BrowserSession {
 
         // Backspace (0x08 ou scancode 0x0E)
         if key == 0x08 || key == 0x0E {
-            if self.address_edit_len > 0 {
+            if self.address_selected {
+                self.address_selected = false;
+                self.address_edit_len = 0;
+                self.address_edit[0] = 0;
+            } else if self.address_edit_len > 0 {
                 self.address_edit_len -= 1;
                 self.address_edit[self.address_edit_len] = 0;
             }
@@ -617,7 +626,12 @@ impl BrowserSession {
 
         // Caracteres imprimíveis ASCII (32..=126)
         if (32..=126).contains(&key) {
-            if self.address_edit_len < 63 {
+            if self.address_selected {
+                self.address_selected = false;
+                self.address_edit[0] = key as u8;
+                self.address_edit_len = 1;
+                self.address_edit[1] = 0;
+            } else if self.address_edit_len < 63 {
                 self.address_edit[self.address_edit_len] = key as u8;
                 self.address_edit_len += 1;
                 self.address_edit[self.address_edit_len] = 0;
@@ -632,6 +646,7 @@ impl BrowserSession {
         self.set_url(url);
         self.scroll_y = 0;
         self.is_address_focused = false;
+        self.address_selected = false;
         parse_html(html, &mut self.page);
         self.layout.compute(&self.page, WIN_W - 24);
 
@@ -748,12 +763,19 @@ impl BrowserSession {
         draw_rect_border(buf, 44, 4, 238, 18, border_col);
 
         if self.is_address_focused {
-            let edit_slice = &self.address_edit[..self.address_edit_len];
-            font::draw_text_clipped(buf, WIN_W, WIN_H, 48, 9, edit_slice, COLOR_H1, None, 4, 22);
-            // Desenha cursor sublinhado '_'
-            let cursor_x = 48 + self.address_edit_len * font::FONT_WIDTH;
-            if cursor_x + font::FONT_WIDTH <= 280 {
-                font::draw_text_clipped(buf, WIN_W, WIN_H, cursor_x, 9, b"_", COLOR_H1, None, 4, 22);
+            if self.address_selected && self.address_edit_len > 0 {
+                let sel_w = (self.address_edit_len * font::FONT_WIDTH).min(234);
+                fill_rect(buf, 46, 6, sel_w + 2, 14, 0x0045_475A);
+                let edit_slice = &self.address_edit[..self.address_edit_len];
+                font::draw_text_clipped(buf, WIN_W, WIN_H, 48, 9, edit_slice, 0x00CD_D6F4, None, 4, 22);
+            } else {
+                let edit_slice = &self.address_edit[..self.address_edit_len];
+                font::draw_text_clipped(buf, WIN_W, WIN_H, 48, 9, edit_slice, COLOR_H1, None, 4, 22);
+                // Desenha cursor sublinhado '_'
+                let cursor_x = 48 + self.address_edit_len * font::FONT_WIDTH;
+                if cursor_x + font::FONT_WIDTH <= 280 {
+                    font::draw_text_clipped(buf, WIN_W, WIN_H, cursor_x, 9, b"_", COLOR_H1, None, 4, 22);
+                }
             }
         } else {
             let url_slice = &self.current_url[..self.current_url_len];

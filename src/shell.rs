@@ -32,7 +32,6 @@ use crate::keyboard_buffer;
 use crate::memory;
 use crate::scheduler;
 use crate::timer;
-use crate::vfs;
 use crate::vga::{Color, Writer};
 
 const MAX_LINE: usize = 128;
@@ -78,6 +77,7 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         "ps" | "tasks" => cmd_ps(w),
         "kill" => cmd_kill(w, args),
         "spawn" | "exec" => cmd_spawn(w, args),
+        "browser" => cmd_spawn(w, "/disk/browser.elf"),
 
         // ── Escalonador & SMP ─────────────────────────────────────────────────
         "sched" => cmd_sched(w),
@@ -368,6 +368,10 @@ fn cmd_spawn(w: &mut Writer, args: &str) {
     let pid_res = sched.spawn_user_task_from_vfs(&resolved_path, &argv_list, &[]);
     match pid_res {
         Ok(pid) => {
+            crate::ipc::register(pid);
+            if resolved_path.contains("browser") {
+                crate::gui::register_browser_pid(pid);
+            }
             w.set_color(Color::LightGreen, Color::Black);
             w.write_string("[OK] Processo Ring 3 iniciado a partir do VFS: PID=");
             w.write_decimal(pid);
@@ -2652,6 +2656,9 @@ where
                 match sched.spawn_user_task_from_vfs(&resolved_path, argv_slice, &[]) {
                     Ok(pid) => {
                         crate::ipc::register(pid);
+                        if is_browser {
+                            crate::gui::register_browser_pid(pid);
+                        }
                         output("[OK] Processo Ring 3 iniciado com sucesso!", 0x0022_C55E);
                         let mut p_buf = [0u8; 16];
                         let p_len = aladdin::compositor::format_num(pid, &mut p_buf);
@@ -2672,6 +2679,7 @@ where
             match sched.spawn_user_task_from_vfs(path, &argv, &[]) {
                 Ok(pid) => {
                     crate::ipc::register(pid);
+                    crate::gui::register_browser_pid(pid);
                     output("[OK] Jinn Browser iniciado com sucesso!", 0x0022_C55E);
                     let mut p_buf = [0u8; 16];
                     let p_len = aladdin::compositor::format_num(pid, &mut p_buf);

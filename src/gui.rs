@@ -262,6 +262,14 @@ pub fn window_create(owner_pid: usize, title: &str, width: usize, height: usize)
     }
     unsafe {
         if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
+            let is_browser = if let Some(task) = crate::scheduler::get().tasks.get(owner_pid).and_then(|t| t.as_ref()) {
+                task.name.contains("browser")
+            } else {
+                false
+            };
+            if is_browser {
+                session.register_browser_pid(owner_pid);
+            }
             match session.create_client_window(owner_pid, title, width, height) {
                 Ok(win_id) => Ok(win_id),
                 Err(_) => {
@@ -332,6 +340,14 @@ pub fn window_poll_event(owner_pid: usize, win_id: usize) -> Result<Option<Clien
 }
 
 /// Fecha todas as janelas do processo `pid` (chamado no encerramento da tarefa).
+pub fn register_browser_pid(pid: usize) {
+    unsafe {
+        if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
+            session.register_browser_pid(pid);
+        }
+    }
+}
+
 pub fn close_windows_for_pid(pid: usize) {
     unsafe {
         if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {

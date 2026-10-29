@@ -54,7 +54,7 @@ do disco rigido virtual usando o driver de VFS.
 
 Executaveis disponiveis nesta particao:
   - /disk/ola.elf (Processo de espaco de usuario Ring 3)
-  - /disk/browser.elf (Jinn Browser Engine v0.2.0)
+  - /disk/browser.elf (Jinn Browser Engine v0.3.0)
 
 Experimente executar no shell do Jinn:
   jinn[K]> ls /disk
@@ -254,13 +254,13 @@ function Add-DirEntry([int]$index, [string]$name11, [byte]$attr, [uint32]$firstC
     [System.BitConverter]::GetBytes($size).CopyTo($rootDir, $offset + 28)
 }
 
-# Documentos HTML de teste para o Jinn Browser v0.2.0
+# Documentos HTML de teste para o Jinn Browser v0.3.0
 $indexHtmlText = @"
 <!DOCTYPE html>
 <html>
 <head><title>Jinn OS Portal</title></head>
 <body>
-  <h1>Jinn Browser 0.2.0</h1>
+  <h1>Jinn Browser 0.3.0</h1>
   <p>Bem-vindo ao Jinn Browser rodando nativamente sobre o microkernel Jinn OS e Aladdin Desktop Compositor.</p>
   <p><a href="about.htm">Sobre o Sistema</a></p>
 </body>
