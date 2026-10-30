@@ -158,7 +158,10 @@ pub fn register(pid: usize) {
 /// Unregister a PID (called on task exit).
 pub fn unregister(pid: usize) {
     if pid < MAX_PROCS {
-        IPC.lock().active[pid] = false;
+        let mut table = IPC.lock();
+        table.active[pid] = false;
+        table.queues[pid].head.store(0, Ordering::Relaxed);
+        table.queues[pid].tail.store(0, Ordering::Relaxed);
     }
 }
 

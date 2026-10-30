@@ -526,6 +526,41 @@ pub fn get_module(index: usize) -> Option<&'static [u8]> {
     }
 }
 
+/// Procura um módulo carregado pelo Limine cujo caminho contenha `name_substr`.
+pub fn get_module_by_name(name_substr: &str) -> Option<&'static [u8]> {
+    unsafe {
+        let resp = core::ptr::read_volatile(&LIMINE_MODULE_REQUEST.response);
+        if resp.is_null() {
+            return None;
+        }
+        let count = core::ptr::read_volatile(&(*resp).module_count) as usize;
+        let modules_ptr = core::ptr::read_volatile(&(*resp).modules);
+        if modules_ptr.is_null() {
+            return None;
+        }
+        for i in 0..count {
+            let file_ptr = *modules_ptr.add(i);
+            if file_ptr.is_null() {
+                continue;
+            }
+            let path_ptr = core::ptr::read_volatile(&(*file_ptr).path);
+            let matches = if !path_ptr.is_null() {
+                cstr_to_str(path_ptr).contains(name_substr)
+            } else {
+                false
+            };
+            if matches {
+                let address = core::ptr::read_volatile(&(*file_ptr).address);
+                let size    = core::ptr::read_volatile(&(*file_ptr).size) as usize;
+                if !address.is_null() && size > 0 {
+                    return Some(core::slice::from_raw_parts(address, size));
+                }
+            }
+        }
+        None
+    }
+}
+
 unsafe fn cstr_to_str(ptr: *const u8) -> &'static str {
     let mut len = 0;
     while *ptr.add(len) != 0 {

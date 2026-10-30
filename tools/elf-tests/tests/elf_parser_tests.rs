@@ -138,7 +138,7 @@ fn validate_elf(elf_data: &[u8]) -> Result<ElfInfo, ElfError> {
     }
 
     let mut load_segments_count = 0;
-    let mut load_segs = [(0u64, 0u64, false); MAX_PROGRAM_HEADERS];
+    let mut load_segs = [(0u64, 0u64, false, false); MAX_PROGRAM_HEADERS];
 
     for i in 0..phnum {
         let phdr_offset = phoff + (i * phentsize);
@@ -182,7 +182,7 @@ fn validate_elf(elf_data: &[u8]) -> Result<ElfInfo, ElfError> {
             }
 
             if load_segments_count < MAX_PROGRAM_HEADERS {
-                load_segs[load_segments_count] = (phdr.p_vaddr, mem_end, is_exec);
+                load_segs[load_segments_count] = (phdr.p_vaddr, mem_end, is_writable, is_exec);
                 load_segments_count += 1;
             } else {
                 return Err(ElfError::InvalidProgramHeaders);
@@ -195,17 +195,35 @@ fn validate_elf(elf_data: &[u8]) -> Result<ElfInfo, ElfError> {
     }
 
     for i in 0..load_segments_count {
-        let (start_a, end_a, _) = load_segs[i];
+        let (start_a, end_a, is_writable_a, is_exec_a) = load_segs[i];
         for j in (i + 1)..load_segments_count {
-            let (start_b, end_b, _) = load_segs[j];
+            let (start_b, end_b, is_writable_b, is_exec_b) = load_segs[j];
+
             if start_a < end_b && start_b < end_a {
                 return Err(ElfError::OverlappingSegments);
+            }
+
+            let page_start_a = start_a & !0xFFF;
+            let page_end_a = match end_a.checked_add(0xFFF) {
+                Some(e) => e & !0xFFF,
+                None => return Err(ElfError::ArithmeticOverflow),
+            };
+            let page_start_b = start_b & !0xFFF;
+            let page_end_b = match end_b.checked_add(0xFFF) {
+                Some(e) => e & !0xFFF,
+                None => return Err(ElfError::ArithmeticOverflow),
+            };
+
+            if page_start_a < page_end_b && page_start_b < page_end_a {
+                if (is_writable_a && is_exec_b) || (is_exec_a && is_writable_b) {
+                    return Err(ElfError::SecurityPolicyViolation);
+                }
             }
         }
     }
 
     let mut entry_in_exec = false;
-    for &(start, end, is_exec) in &load_segs[..load_segments_count] {
+    for &(start, end, _, is_exec) in &load_segs[..load_segments_count] {
         if is_exec && ehdr.e_entry >= start && ehdr.e_entry < end {
             entry_in_exec = true;
             break;
@@ -454,4 +472,68 @@ fn test_elf_reject_misaligned_segment() {
         (*phdr).p_memsz = 32;
     }
     assert_eq!(validate_elf(&buf[..len]), Err(ElfError::AlignmentError));
+}
+
+#[test]
+fn test_elf_reject_wx_page_sharing() {
+    let mut buf = [0u8; 512];
+    let ehdr_size = core::mem::size_of::<Elf64_Ehdr>();
+    let phdr_size = core::mem::size_of::<Elf64_Phdr>();
+
+    let ehdr = Elf64_Ehdr {
+        e_ident: [0x7F, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        e_type: 2,
+        e_machine: 62,
+        e_version: 1,
+        e_entry: USER_SPACE_MIN + 0x1000,
+        e_phoff: ehdr_size as u64,
+        e_shoff: 0,
+        e_flags: 0,
+        e_ehsize: ehdr_size as u16,
+        e_phentsize: phdr_size as u16,
+        e_phnum: 2,
+        e_shentsize: 0,
+        e_shnum: 0,
+        e_shstrndx: 0,
+    };
+
+    // Segmento 1: [0x1000..0x1800) -> Executável (R-X) dentro da página 0x1000
+    let phdr1 = Elf64_Phdr {
+        p_type: PT_LOAD,
+        p_flags: PF_R | PF_X,
+        p_offset: (ehdr_size + phdr_size * 2) as u64,
+        p_vaddr: USER_SPACE_MIN + 0x1000,
+        p_paddr: USER_SPACE_MIN + 0x1000,
+        p_filesz: 64,
+        p_memsz: 0x800,
+        p_align: 0,
+    };
+
+    // Segmento 2: [0x1800..0x2000) -> Gravável (RW-) dentro da MESMA página 0x1000!
+    // Não sobrepõe faixa virtual, mas compartilha a página física de 4 KiB!
+    let phdr2 = Elf64_Phdr {
+        p_type: PT_LOAD,
+        p_flags: PF_R | PF_W,
+        p_offset: (ehdr_size + phdr_size * 2 + 64) as u64,
+        p_vaddr: USER_SPACE_MIN + 0x1800,
+        p_paddr: USER_SPACE_MIN + 0x1800,
+        p_filesz: 64,
+        p_memsz: 0x800,
+        p_align: 0,
+    };
+
+    unsafe {
+        let ehdr_dst = buf.as_mut_ptr() as *mut Elf64_Ehdr;
+        core::ptr::write_unaligned(ehdr_dst, ehdr);
+        let phdr1_dst = buf.as_mut_ptr().add(ehdr_size) as *mut Elf64_Phdr;
+        core::ptr::write_unaligned(phdr1_dst, phdr1);
+        let phdr2_dst = buf.as_mut_ptr().add(ehdr_size + phdr_size) as *mut Elf64_Phdr;
+        core::ptr::write_unaligned(phdr2_dst, phdr2);
+    }
+
+    assert_eq!(
+        validate_elf(&buf),
+        Err(ElfError::SecurityPolicyViolation),
+        "Compartilhamento de página 4 KiB entre segmento executável e gravável deve ser estritamente proibido (W^X)"
+    );
 }

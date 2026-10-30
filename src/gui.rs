@@ -197,15 +197,25 @@ impl ProcessHost for JinnProcess {
         let argv: [&str; 2] = [path, if is_browser { "browser" } else { "" }];
         let argv_slice: &[&str] = if is_browser { &argv[..2] } else { &argv[..1] };
 
-        if let Ok(pid) = crate::scheduler::get().spawn_user_task_from_vfs(path, argv_slice, &[]) {
-            crate::ipc::register(pid);
-            if is_browser {
-                crate::gui::register_browser_pid(pid);
+        // 1. Tenta carregar do VFS (disco FAT32)
+        match crate::scheduler::get().spawn_user_task_from_vfs(path, argv_slice, &[]) {
+            Ok(pid) => {
+                crate::ipc::register(pid);
+                if is_browser {
+                    crate::gui::register_browser_pid(pid);
+                }
+                return Ok(pid);
             }
-            return Ok(pid);
+            Err(errno) => {
+                // Se a falha foi de formato/integridade/segurança (ex: ENOEXEC = -8, EIO = -5),
+                // NÃO podemos mascarar a corrupção caindo silenciosamente no fallback!
+                if errno != -2 /* ENOENT */ {
+                    return Err(());
+                }
+            }
         }
 
-        // Tenta apenas variantes de caixa no FAT32 para o mesmo aplicativo sem cruzar para executaveis alheios
+        // 2. Tenta apenas variantes de caixa no FAT32 se o arquivo primário não foi encontrado (-ENOENT)
         let alt_path = if is_browser {
             if path.contains("BROWSER") { "/disk/browser.elf" } else { "/disk/BROWSER.ELF" }
         } else if path.contains("OLA") || path.contains("ola") {
@@ -217,29 +227,40 @@ impl ProcessHost for JinnProcess {
         if !alt_path.is_empty() && alt_path != path {
             let alt_argv: [&str; 2] = [alt_path, if is_browser { "browser" } else { "" }];
             let alt_slice = if is_browser { &alt_argv[..2] } else { &alt_argv[..1] };
-            if let Ok(pid) = crate::scheduler::get().spawn_user_task_from_vfs(alt_path, alt_slice, &[]) {
-                crate::ipc::register(pid);
-                if is_browser {
-                    crate::gui::register_browser_pid(pid);
+            match crate::scheduler::get().spawn_user_task_from_vfs(alt_path, alt_slice, &[]) {
+                Ok(pid) => {
+                    crate::ipc::register(pid);
+                    if is_browser {
+                        crate::gui::register_browser_pid(pid);
+                    }
+                    return Ok(pid);
                 }
-                return Ok(pid);
+                Err(errno) => {
+                    if errno != -2 /* ENOENT */ {
+                        return Err(());
+                    }
+                }
             }
         }
 
-        // Fallback resiliente: se o disco FAT32 nao estiver montado ou ausente,
-        // carrega o executavel a partir dos modulos ELF do bootloader Limine em memoria
+        // 3. Fallback resiliente: se e somente se o disco FAT32 não estiver montado ou o arquivo
+        // estiver ausente (-ENOENT), busca o executável estritamente correspondente nos módulos
+        // Limine em memória (procura por nome/caminho 'browser', jamais carregando executáveis alheios).
         if is_browser {
-            let mod_opt = limine::get_module(1).or_else(|| limine::get_module(0));
+            let mod_opt = limine::get_module_by_name("browser").or_else(|| limine::get_module(1));
             if let Some(elf_bytes) = mod_opt {
-                if let Ok(pid) = crate::scheduler::get().spawn_user_task_from_memory(
-                    "browser[U3]",
-                    elf_bytes,
-                    &["/disk/browser.elf", "browser"],
-                    &[],
-                ) {
-                    crate::ipc::register(pid);
-                    crate::gui::register_browser_pid(pid);
-                    return Ok(pid);
+                // Valida estritamente a integridade do módulo ELF antes de tentar inicializar
+                if crate::elf::validate_elf(elf_bytes).is_ok() {
+                    if let Ok(pid) = crate::scheduler::get().spawn_user_task_from_memory(
+                        "browser[U3]",
+                        elf_bytes,
+                        &["/disk/browser.elf", "browser"],
+                        &[],
+                    ) {
+                        crate::ipc::register(pid);
+                        crate::gui::register_browser_pid(pid);
+                        return Ok(pid);
+                    }
                 }
             }
         }

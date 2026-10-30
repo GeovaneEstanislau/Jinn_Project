@@ -35,6 +35,35 @@ const STATUS_BSY: u8 = 1 << 7; // Ocupado executando comando
 
 static IDE_LOCK: crate::memory::SpinLock<()> = crate::memory::SpinLock::new(());
 
+/// Guarda RAII que desabilita interrupções locais da CPU durante o lock do controlador IDE.
+///
+/// Previne deadlocks onde uma CPU é preempcionada pelo timer IRQ (32) enquanto segura
+/// o IDE_LOCK, e uma nova tarefa escalonada na mesma CPU tenta acessar o disco.
+pub struct IdeIrqGuard {
+    _guard: crate::memory::SpinLockGuard<'static, ()>,
+    rflags: u64,
+}
+
+impl Drop for IdeIrqGuard {
+    fn drop(&mut self) {
+        if (self.rflags & 0x200) != 0 {
+            unsafe {
+                core::arch::asm!("sti", options(nomem, nostack));
+            }
+        }
+    }
+}
+
+fn lock_ide() -> IdeIrqGuard {
+    let rflags: u64;
+    unsafe {
+        core::arch::asm!("pushfq; pop {}", out(reg) rflags, options(nomem, nostack));
+        core::arch::asm!("cli", options(nomem, nostack));
+    }
+    let guard = IDE_LOCK.lock();
+    IdeIrqGuard { _guard: guard, rflags }
+}
+
 // Comandos ATA
 const CMD_READ_SECTORS:  u8 = 0x20;
 const CMD_WRITE_SECTORS: u8 = 0x30;
@@ -142,7 +171,7 @@ pub struct MbrInfo {
 
 /// Identifica um disco no barramento primário (0 = Master, 1 = Slave).
 pub fn identify(drive: u8) -> Result<DriveInfo, &'static str> {
-    let _guard = IDE_LOCK.lock();
+    let _guard = lock_ide();
     unsafe {
         // Seleciona o drive (Master = 0xA0, Slave = 0xB0)
         let drive_sel = 0xA0 | ((drive & 1) << 4);
@@ -227,7 +256,7 @@ pub fn read_sector(drive: u8, lba: u32, buf: &mut [u8; 512]) -> Result<(), &'sta
         return Err("Endereço LBA excede o limite LBA28 (28 bits)");
     }
 
-    let _guard = IDE_LOCK.lock();
+    let _guard = lock_ide();
     unsafe {
         wait_not_busy()?;
 
@@ -266,7 +295,7 @@ pub fn write_sector(drive: u8, lba: u32, buf: &[u8; 512]) -> Result<(), &'static
         return Err("Endereço LBA excede o limite LBA28 (28 bits)");
     }
 
-    let _guard = IDE_LOCK.lock();
+    let _guard = lock_ide();
     unsafe {
         wait_not_busy()?;
 
@@ -375,6 +404,7 @@ pub fn partition_type_name(ptype: u8) -> &'static str {
 
 /// Inicializa o subsistema IDE/ATA e verifica a integridade do barramento.
 pub fn init() {
+    let _guard = lock_ide();
     unsafe {
         // Habilita interrupções e desativa software reset no controlador
         outb(IDE_CONTROL, 0x00);

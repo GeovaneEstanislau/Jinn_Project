@@ -213,7 +213,57 @@ pub fn run_elf_security_selftests() -> (usize, usize) {
     }
     assert_test!("Rejeicao de Entry Fora de Segmento Executavel", validate_elf(&buf[..len]) == Err(ElfError::EntryNotInExecutableSegment));
 
-    // 15. Binário válido de referência deve ser aceito
+    // 15. Rejeição de compartilhamento de página entre segmento executável e gravável (W^X estrito)
+    let ehdr_size = core::mem::size_of::<Elf64_Ehdr_Raw>();
+    let phdr_size = core::mem::size_of::<Elf64_Phdr_Raw>();
+    let mut wx_buf = [0u8; 512];
+    let wx_ehdr = Elf64_Ehdr_Raw {
+        e_ident: [0x7F, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        e_type: 2,
+        e_machine: 62,
+        e_version: 1,
+        e_entry: USER_SPACE_MIN + 0x1000,
+        e_phoff: ehdr_size as u64,
+        e_shoff: 0,
+        e_flags: 0,
+        e_ehsize: ehdr_size as u16,
+        e_phentsize: phdr_size as u16,
+        e_phnum: 2,
+        e_shentsize: 0,
+        e_shnum: 0,
+        e_shstrndx: 0,
+    };
+    let wx_phdr1 = Elf64_Phdr_Raw {
+        p_type: PT_LOAD,
+        p_flags: PF_R | PF_X,
+        p_offset: (ehdr_size + phdr_size * 2) as u64,
+        p_vaddr: USER_SPACE_MIN + 0x1000,
+        p_paddr: USER_SPACE_MIN + 0x1000,
+        p_filesz: 64,
+        p_memsz: 0x800,
+        p_align: 0,
+    };
+    let wx_phdr2 = Elf64_Phdr_Raw {
+        p_type: PT_LOAD,
+        p_flags: PF_R | PF_W,
+        p_offset: (ehdr_size + phdr_size * 2 + 64) as u64,
+        p_vaddr: USER_SPACE_MIN + 0x1800,
+        p_paddr: USER_SPACE_MIN + 0x1800,
+        p_filesz: 64,
+        p_memsz: 0x800,
+        p_align: 0,
+    };
+    unsafe {
+        let ehdr_dst = wx_buf.as_mut_ptr() as *mut Elf64_Ehdr_Raw;
+        core::ptr::write_unaligned(ehdr_dst, wx_ehdr);
+        let phdr1_dst = wx_buf.as_mut_ptr().add(ehdr_size) as *mut Elf64_Phdr_Raw;
+        core::ptr::write_unaligned(phdr1_dst, wx_phdr1);
+        let phdr2_dst = wx_buf.as_mut_ptr().add(ehdr_size + phdr_size) as *mut Elf64_Phdr_Raw;
+        core::ptr::write_unaligned(phdr2_dst, wx_phdr2);
+    }
+    assert_test!("Rejeicao W^X por Compartilhamento de Pagina", validate_elf(&wx_buf) == Err(ElfError::SecurityPolicyViolation));
+
+    // 16. Binário válido de referência deve ser aceito
     let (buf, len) = create_valid_dummy_elf();
     assert_test!("ELF Valido Aceito", validate_elf(&buf[..len]).is_ok());
 

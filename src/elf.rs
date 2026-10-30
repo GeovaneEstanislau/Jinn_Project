@@ -174,7 +174,7 @@ pub fn validate_elf(elf_data: &[u8]) -> Result<ElfInfo, ElfError> {
     }
 
     let mut load_segments_count = 0;
-    let mut load_segs = [(0u64, 0u64, false); MAX_PROGRAM_HEADERS];
+    let mut load_segs = [(0u64, 0u64, false, false); MAX_PROGRAM_HEADERS];
 
     // 4. Verificação estrita de cada segmento PT_LOAD
     for i in 0..phnum {
@@ -222,7 +222,7 @@ pub fn validate_elf(elf_data: &[u8]) -> Result<ElfInfo, ElfError> {
             }
 
             if load_segments_count < MAX_PROGRAM_HEADERS {
-                load_segs[load_segments_count] = (phdr.p_vaddr, mem_end, is_exec);
+                load_segs[load_segments_count] = (phdr.p_vaddr, mem_end, is_writable, is_exec);
                 load_segments_count += 1;
             } else {
                 return Err(ElfError::InvalidProgramHeaders);
@@ -234,20 +234,42 @@ pub fn validate_elf(elf_data: &[u8]) -> Result<ElfInfo, ElfError> {
         return Err(ElfError::InvalidProgramHeaders);
     }
 
-    // 5. Validação de Não-Sobreposição entre Segmentos PT_LOAD
+    // 5. Validação de Não-Sobreposição e Política W^X entre Segmentos PT_LOAD
     for i in 0..load_segments_count {
-        let (start_a, end_a, _) = load_segs[i];
+        let (start_a, end_a, is_writable_a, is_exec_a) = load_segs[i];
         for j in (i + 1)..load_segments_count {
-            let (start_b, end_b, _) = load_segs[j];
+            let (start_b, end_b, is_writable_b, is_exec_b) = load_segs[j];
+
+            // 5a. Verificação de sobreposição de faixas virtuais
             if start_a < end_b && start_b < end_a {
                 return Err(ElfError::OverlappingSegments);
+            }
+
+            // 5b. Verificação de compartilhamento de páginas de 4 KiB com permissões conflitantes (W^X)
+            let page_start_a = start_a & !0xFFF;
+            let page_end_a = match end_a.checked_add(0xFFF) {
+                Some(e) => e & !0xFFF,
+                None => return Err(ElfError::ArithmeticOverflow),
+            };
+            let page_start_b = start_b & !0xFFF;
+            let page_end_b = match end_b.checked_add(0xFFF) {
+                Some(e) => e & !0xFFF,
+                None => return Err(ElfError::ArithmeticOverflow),
+            };
+
+            if page_start_a < page_end_b && page_start_b < page_end_a {
+                // Os segmentos compartilham ao menos uma página de 4 KiB
+                // Rejeita terminantemente se um segmento for gravável e o outro for executável
+                if (is_writable_a && is_exec_b) || (is_exec_a && is_writable_b) {
+                    return Err(ElfError::SecurityPolicyViolation);
+                }
             }
         }
     }
 
     // 6. Validação de que o ponto de entrada reside em segmento executável válido
     let mut entry_in_exec = false;
-    for &(start, end, is_exec) in &load_segs[..load_segments_count] {
+    for &(start, end, _, is_exec) in &load_segs[..load_segments_count] {
         if is_exec && ehdr.e_entry >= start && ehdr.e_entry < end {
             entry_in_exec = true;
             break;
@@ -327,6 +349,10 @@ pub fn load_elf(elf_data: &[u8], pml4_phys: u64) -> Result<(u64, usize), ElfErro
                         if is_writable {
                             merged_flags |= paging::WRITABLE;
                         }
+                        // Defesa em profundidade W^X: uma página nunca pode ser gravável e executável
+                        if (merged_flags & paging::WRITABLE != 0) && (merged_flags & paging::NO_EXEC == 0) {
+                            return Err(ElfError::SecurityPolicyViolation);
+                        }
                         if merged_flags != existing_flags {
                             paging::set_page_flags(pml4, current_vaddr, merged_flags);
                         }
@@ -340,11 +366,14 @@ pub fn load_elf(elf_data: &[u8], pml4_phys: u64) -> Result<(u64, usize), ElfErro
 
                 let frame_virt = paging::phys_to_virt(phys_frame) as *mut u8;
 
-                // Se a página é nova, zera seu conteúdo completamente (BSS e segurança)
+                // Se a página é nova, inicializa seu conteúdo:
+                // Páginas executáveis são preenchidas com 0xCC (INT3 trap) para evitar execução
+                // descontrolada em áreas de padding. Páginas de dados são zeradas para BSS.
                 if is_new_page {
                     total_allocated_frames += 1;
+                    let fill_byte = if is_exec { 0xCC } else { 0x00 };
                     unsafe {
-                        core::ptr::write_bytes(frame_virt, 0, 4096);
+                        core::ptr::write_bytes(frame_virt, fill_byte, 4096);
                     }
                 }
 
