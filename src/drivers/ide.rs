@@ -33,6 +33,8 @@ const STATUS_DF:  u8 = 1 << 5; // Falha no dispositivo
 const STATUS_RDY: u8 = 1 << 6; // Drive pronto
 const STATUS_BSY: u8 = 1 << 7; // Ocupado executando comando
 
+static IDE_LOCK: crate::memory::SpinLock<()> = crate::memory::SpinLock::new(());
+
 // Comandos ATA
 const CMD_READ_SECTORS:  u8 = 0x20;
 const CMD_WRITE_SECTORS: u8 = 0x30;
@@ -140,6 +142,7 @@ pub struct MbrInfo {
 
 /// Identifica um disco no barramento primário (0 = Master, 1 = Slave).
 pub fn identify(drive: u8) -> Result<DriveInfo, &'static str> {
+    let _guard = IDE_LOCK.lock();
     unsafe {
         // Seleciona o drive (Master = 0xA0, Slave = 0xB0)
         let drive_sel = 0xA0 | ((drive & 1) << 4);
@@ -224,6 +227,7 @@ pub fn read_sector(drive: u8, lba: u32, buf: &mut [u8; 512]) -> Result<(), &'sta
         return Err("Endereço LBA excede o limite LBA28 (28 bits)");
     }
 
+    let _guard = IDE_LOCK.lock();
     unsafe {
         wait_not_busy()?;
 
@@ -262,6 +266,7 @@ pub fn write_sector(drive: u8, lba: u32, buf: &[u8; 512]) -> Result<(), &'static
         return Err("Endereço LBA excede o limite LBA28 (28 bits)");
     }
 
+    let _guard = IDE_LOCK.lock();
     unsafe {
         wait_not_busy()?;
 

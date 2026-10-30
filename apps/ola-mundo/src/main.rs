@@ -2892,6 +2892,10 @@ pub extern "C" fn _start() -> ! {
                 run_exec_target(argc, argv);
             } else if streq(arg1, b"browser") {
                 run_browser_interactive();
+            } else if streq(arg1, b"worker") {
+                run_worker_task(3);
+            } else if streq(arg1, b"periodic") {
+                run_periodic_task(4);
             }
         }
 

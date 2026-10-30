@@ -319,7 +319,17 @@ pub fn load_elf(elf_data: &[u8], pml4_phys: u64) -> Result<(u64, usize), ElfErro
 
                 // Verifica se a página já foi mapeada por outro segmento
                 let (phys_frame, is_new_page) = unsafe {
-                    if let Some((existing_phys, _)) = paging::lookup_page(pml4, current_vaddr) {
+                    if let Some((existing_phys, existing_flags)) = paging::lookup_page(pml4, current_vaddr) {
+                        let mut merged_flags = existing_flags;
+                        if is_exec {
+                            merged_flags &= !paging::NO_EXEC;
+                        }
+                        if is_writable {
+                            merged_flags |= paging::WRITABLE;
+                        }
+                        if merged_flags != existing_flags {
+                            paging::set_page_flags(pml4, current_vaddr, merged_flags);
+                        }
                         (existing_phys, false)
                     } else {
                         let new_frame = crate::memory::alloc_frame().ok_or(ElfError::OutOfMemory)?;

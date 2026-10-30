@@ -186,7 +186,10 @@ impl ProcessHost for JinnProcess {
     }
 
     fn is_process_alive(&self, pid: usize) -> bool {
-        crate::scheduler::get().task_state(pid).is_some()
+        match crate::scheduler::get().task_state(pid) {
+            Some(state) => state != crate::scheduler::TaskState::Zombie && state != crate::scheduler::TaskState::Completed,
+            None => false,
+        }
     }
 
     fn spawn_app(&mut self, path: &str) -> Result<usize, ()> {
@@ -196,6 +199,9 @@ impl ProcessHost for JinnProcess {
 
         if let Ok(pid) = crate::scheduler::get().spawn_user_task_from_vfs(path, argv_slice, &[]) {
             crate::ipc::register(pid);
+            if is_browser {
+                crate::gui::register_browser_pid(pid);
+            }
             return Ok(pid);
         }
 
@@ -213,7 +219,28 @@ impl ProcessHost for JinnProcess {
             let alt_slice = if is_browser { &alt_argv[..2] } else { &alt_argv[..1] };
             if let Ok(pid) = crate::scheduler::get().spawn_user_task_from_vfs(alt_path, alt_slice, &[]) {
                 crate::ipc::register(pid);
+                if is_browser {
+                    crate::gui::register_browser_pid(pid);
+                }
                 return Ok(pid);
+            }
+        }
+
+        // Fallback resiliente: se o disco FAT32 nao estiver montado ou ausente,
+        // carrega o executavel a partir dos modulos ELF do bootloader Limine em memoria
+        if is_browser {
+            let mod_opt = limine::get_module(1).or_else(|| limine::get_module(0));
+            if let Some(elf_bytes) = mod_opt {
+                if let Ok(pid) = crate::scheduler::get().spawn_user_task_from_memory(
+                    "browser[U3]",
+                    elf_bytes,
+                    &["/disk/browser.elf", "browser"],
+                    &[],
+                ) {
+                    crate::ipc::register(pid);
+                    crate::gui::register_browser_pid(pid);
+                    return Ok(pid);
+                }
             }
         }
 

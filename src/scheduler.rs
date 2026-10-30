@@ -281,6 +281,34 @@ impl Scheduler {
 
     // ── Criação de tarefas ────────────────────────────────────────────────────
 
+    /// Encontra um slot de tarefa disponível ou recicla uma tarefa finalizada (Zombie/Completed).
+    pub fn find_or_recycle_slot(&mut self) -> Option<usize> {
+        let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
+        let start = if self.next_id >= 1 && self.next_id < max_alloc {
+            self.next_id
+        } else {
+            1
+        };
+        // 1. Procura primeiro por slots desocupados (None) em round-robin
+        for offset in 0..(max_alloc - 1) {
+            let idx = 1 + (start - 1 + offset) % (max_alloc - 1);
+            if self.tasks[idx].is_none() {
+                return Some(idx);
+            }
+        }
+        // 2. Se todos os slots estiverem preenchidos, recicla tarefas encerradas
+        for offset in 0..(max_alloc - 1) {
+            let idx = 1 + (start - 1 + offset) % (max_alloc - 1);
+            if let Some(t) = &self.tasks[idx] {
+                if (t.state == TaskState::Zombie || t.state == TaskState::Completed) && t.running_on_cpu.is_none() {
+                    self.tasks[idx] = None;
+                    return Some(idx);
+                }
+            }
+        }
+        None
+    }
+
     /// Cria uma tarefa de **kernel (Ring 0)**.
     ///
     /// A tarefa executa com todos os privilégios do kernel.
@@ -291,48 +319,40 @@ impl Scheduler {
 
     /// Cria uma tarefa de **usuário (Ring 3)** a partir de um executável ELF na memória.
     pub fn add_user_task(&mut self, name: &'static str, elf_data: &[u8]) -> usize {
-        let mut id = self.next_id;
-        while id < MAX_TASKS {
-            if self.tasks[id].is_none() {
-                // 1. Espaço de endereçamento isolado
-                let pml4_phys = paging::clone_kernel_pml4();
+        if let Some(id) = self.find_or_recycle_slot() {
+            // 1. Espaço de endereçamento isolado
+            let pml4_phys = paging::clone_kernel_pml4();
 
-                // 2. Carregar o ELF no PML4 do processo
-                let (entry_virt, elf_frames) = match crate::elf::load_elf(elf_data, pml4_phys) {
-                    Ok(res) => res,
-                    Err(_) => {
-                        unsafe { paging::free_user_pml4(pml4_phys); }
-                        return 0;
-                    }
-                };
+            // 2. Carregar o ELF no PML4 do processo
+            let (entry_virt, elf_frames) = match crate::elf::load_elf(elf_data, pml4_phys) {
+                Ok(res) => res,
+                Err(_) => {
+                    unsafe { paging::free_user_pml4(pml4_phys); }
+                    return 0;
+                }
+            };
 
-                return self.setup_and_register_user_task(id, name, entry_virt, pml4_phys, elf_frames);
-            }
-            id += 1;
+            return self.setup_and_register_user_task(id, name, entry_virt, pml4_phys, elf_frames);
         }
         0
     }
 
     /// Cria uma tarefa de **usuário (Ring 3)** carregando o executável ELF a partir do VFS.
     pub fn add_user_task_from_vfs(&mut self, name: &'static str, path: &str) -> usize {
-        let mut id = self.next_id;
-        while id < MAX_TASKS {
-            if self.tasks[id].is_none() {
-                // 1. Espaço de endereçamento isolado
-                let pml4_phys = paging::clone_kernel_pml4();
+        if let Some(id) = self.find_or_recycle_slot() {
+            // 1. Espaço de endereçamento isolado
+            let pml4_phys = paging::clone_kernel_pml4();
 
-                // 2. Carregar o ELF do VFS no PML4 do processo
-                let (entry_virt, elf_frames) = match crate::elf::load_elf_from_vfs(path, pml4_phys) {
-                    Ok(res) => res,
-                    Err(_) => {
-                        unsafe { paging::free_user_pml4(pml4_phys); }
-                        return 0;
-                    }
-                };
+            // 2. Carregar o ELF do VFS no PML4 do processo
+            let (entry_virt, elf_frames) = match crate::elf::load_elf_from_vfs(path, pml4_phys) {
+                Ok(res) => res,
+                Err(_) => {
+                    unsafe { paging::free_user_pml4(pml4_phys); }
+                    return 0;
+                }
+            };
 
-                return self.setup_and_register_user_task(id, name, entry_virt, pml4_phys, elf_frames);
-            }
-            id += 1;
+            return self.setup_and_register_user_task(id, name, entry_virt, pml4_phys, elf_frames);
         }
         0
     }
@@ -373,86 +393,202 @@ impl Scheduler {
         }
 
         let _guard = SCHED_LOCK.lock();
-        let mut id = self.next_id;
-        while id < MAX_TASKS {
-            if self.tasks[id].is_none() {
-                // 4. Configurar pilha de kernel
-                let kstack_base = unsafe { KSTACKS[id].as_ptr() as usize };
-                let kstack_top = (kstack_base + KSTACK_SIZE) & !15;
+        if let Some(id) = self.find_or_recycle_slot() {
+            // 4. Configurar pilha de kernel
+            let kstack_base = unsafe { KSTACKS[id].as_ptr() as usize };
+            let kstack_top = (kstack_base + KSTACK_SIZE) & !15;
 
-                let cs_sel = gdt::USER_CODE_SEL as u64;
-                let ss_sel = gdt::USER_DATA_SEL as u64;
+            let cs_sel = gdt::USER_CODE_SEL as u64;
+            let ss_sel = gdt::USER_DATA_SEL as u64;
 
-                let mut sp = kstack_top;
-                let rflags: u64 = 0x202; // IF=1
+            let mut sp = kstack_top;
+            let rflags: u64 = 0x202; // IF=1
 
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(ss_sel); }
-                let abi_rsp = (user_rsp - 8) as u64;
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(abi_rsp); }
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(rflags); }
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(cs_sel); }
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(entry_virt); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(ss_sel); }
+            let abi_rsp = (user_rsp - 8) as u64;
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(abi_rsp); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(rflags); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(cs_sel); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(entry_virt); }
 
-                // Dummy vector + error code (consumidos pelo stub)
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+            // Dummy vector + error code (consumidos pelo stub)
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
 
-                // GPRs: rax, rcx, rdx, rbx, rbp, rsi, rdi, r8..r15
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(envp_ptr as u64); }
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(argv_ptr as u64); }
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(argc as u64); }
-                for _ in 0..8 {
-                    sp -= 8;
-                    unsafe { (sp as *mut u64).write_volatile(0); }
-                }
-
-                let mut res = crate::resources::ProcessResources::new();
-                let limits = crate::resources::ResourceLimits::user_default();
-                let _ = res.check_and_alloc_frames(stack_frames + elf_frames, &limits);
-
-                let task_name = if path.contains("browser") || path.contains("BROWSER") {
-                    "browser[U3]"
-                } else if path.contains("ola") || path.contains("OLA") {
-                    "ola[U3]"
-                } else {
-                    "spawned-user[U3]"
-                };
-
-                self.tasks[id] = Some(Task {
-                    id,
-                    name: task_name,
-                    state: TaskState::Ready,
-                    priority: TaskPriority::Normal,
-                    ring: Ring::User,
-                    saved_rsp: sp,
-                    kstack_top,
-                    pml4_phys,
-                    exit_code: 0,
-                    cpu_ticks: 0,
-                    ctx_switches: 0,
-                    irq_preemptions: 0,
-                    voluntary_yields: 0,
-                    quantum_remaining: QUANTUM_NORMAL,
-                    fds: [None; MAX_TASK_FDS],
-                    dynamic_pages: [0; MAX_DYNAMIC_PAGES],
-                    cleanup_done: false,
-                    resources: res,
-                    limits,
-                    running_on_cpu: None,
-                });
-                self.next_id = id + 1;
-                crate::ipc::register(id);
-                drop(_guard);
-                if (flags & 0x200) != 0 {
-                    unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
-                }
-                return Ok(id);
+            // GPRs: rax, rcx, rdx, rbx, rbp, rsi, rdi, r8..r15
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(envp_ptr as u64); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(argv_ptr as u64); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(argc as u64); }
+            for _ in 0..8 {
+                sp -= 8;
+                unsafe { (sp as *mut u64).write_volatile(0); }
             }
-            id += 1;
+
+            let mut res = crate::resources::ProcessResources::new();
+            let limits = crate::resources::ResourceLimits::user_default();
+            let _ = res.check_and_alloc_frames(stack_frames + elf_frames, &limits);
+
+            let task_name = if path.contains("browser") || path.contains("BROWSER") {
+                "browser[U3]"
+            } else if path.contains("ola") || path.contains("OLA") {
+                "ola[U3]"
+            } else {
+                "spawned-user[U3]"
+            };
+
+            self.tasks[id] = Some(Task {
+                id,
+                name: task_name,
+                state: TaskState::Ready,
+                priority: TaskPriority::Normal,
+                ring: Ring::User,
+                saved_rsp: sp,
+                kstack_top,
+                pml4_phys,
+                exit_code: 0,
+                cpu_ticks: 0,
+                ctx_switches: 0,
+                irq_preemptions: 0,
+                voluntary_yields: 0,
+                quantum_remaining: QUANTUM_NORMAL,
+                fds: [None; MAX_TASK_FDS],
+                dynamic_pages: [0; MAX_DYNAMIC_PAGES],
+                cleanup_done: false,
+                resources: res,
+                limits,
+                running_on_cpu: None,
+            });
+            let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
+            self.next_id = (id + 1) % max_alloc;
+            if self.next_id == 0 { self.next_id = 1; }
+            crate::ipc::register(id);
+            drop(_guard);
+            if (flags & 0x200) != 0 {
+                unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+            }
+            return Ok(id);
+        }
+
+        drop(_guard);
+        if (flags & 0x200) != 0 {
+            unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+        }
+        unsafe { paging::free_user_pml4(pml4_phys); }
+        Err(-24) // EMFILE (limite de tarefas atingido)
+    }
+
+    /// Cria uma tarefa de usuário Ring 3 a partir de uma imagem ELF na memória,
+    /// passando argumentos (`argv`) e variáveis (`envp`).
+    pub fn spawn_user_task_from_memory(
+        &mut self,
+        name: &'static str,
+        elf_data: &[u8],
+        argv: &[&str],
+        envp: &[&str],
+    ) -> Result<usize, isize> {
+        // 1. Espaço de endereçamento isolado
+        let pml4_phys = paging::clone_kernel_pml4();
+
+        // 2. Carregar o ELF da memória no PML4 do processo
+        let (entry_virt, elf_frames) = match crate::elf::load_elf(elf_data, pml4_phys) {
+            Ok(res) => res,
+            Err(e) => {
+                unsafe { paging::free_user_pml4(pml4_phys); }
+                return Err(e.to_errno());
+            }
+        };
+
+        // 3. Montar a pilha de usuário com argv e envp
+        let (user_rsp, argc, argv_ptr, envp_ptr, stack_frames) =
+            match crate::elf::setup_user_stack_with_args(pml4_phys, 0, argv, envp) {
+                Ok(res) => res,
+                Err(e) => {
+                    unsafe { paging::free_user_pml4(pml4_phys); }
+                    return Err(e.to_errno());
+                }
+            };
+
+        let flags: u64;
+        unsafe {
+            core::arch::asm!("pushfq; pop {}", out(reg) flags, options(nomem, nostack));
+            core::arch::asm!("cli", options(nomem, nostack));
+        }
+
+        let _guard = SCHED_LOCK.lock();
+        if let Some(id) = self.find_or_recycle_slot() {
+            // 4. Configurar pilha de kernel
+            let kstack_base = unsafe { KSTACKS[id].as_ptr() as usize };
+            let kstack_top = (kstack_base + KSTACK_SIZE) & !15;
+
+            let cs_sel = gdt::USER_CODE_SEL as u64;
+            let ss_sel = gdt::USER_DATA_SEL as u64;
+
+            let mut sp = kstack_top;
+            let rflags: u64 = 0x202; // IF=1
+
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(ss_sel); }
+            let abi_rsp = (user_rsp - 8) as u64;
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(abi_rsp); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(rflags); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(cs_sel); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(entry_virt); }
+
+            // Dummy vector + error code (consumidos pelo stub)
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+
+            // GPRs: rax, rcx, rdx, rbx, rbp, rsi, rdi, r8..r15
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(envp_ptr as u64); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(argv_ptr as u64); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(argc as u64); }
+            for _ in 0..8 {
+                sp -= 8;
+                unsafe { (sp as *mut u64).write_volatile(0); }
+            }
+
+            let mut res = crate::resources::ProcessResources::new();
+            let limits = crate::resources::ResourceLimits::user_default();
+            let _ = res.check_and_alloc_frames(stack_frames + elf_frames, &limits);
+
+            self.tasks[id] = Some(Task {
+                id,
+                name,
+                state: TaskState::Ready,
+                priority: TaskPriority::Normal,
+                ring: Ring::User,
+                saved_rsp: sp,
+                kstack_top,
+                pml4_phys,
+                exit_code: 0,
+                cpu_ticks: 0,
+                ctx_switches: 0,
+                irq_preemptions: 0,
+                voluntary_yields: 0,
+                quantum_remaining: QUANTUM_NORMAL,
+                fds: [None; MAX_TASK_FDS],
+                dynamic_pages: [0; MAX_DYNAMIC_PAGES],
+                cleanup_done: false,
+                resources: res,
+                limits,
+                running_on_cpu: None,
+            });
+            let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
+            self.next_id = (id + 1) % max_alloc;
+            if self.next_id == 0 { self.next_id = 1; }
+            crate::ipc::register(id);
+            drop(_guard);
+            if (flags & 0x200) != 0 {
+                unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+            }
+            return Ok(id);
         }
 
         drop(_guard);
@@ -605,7 +741,9 @@ impl Scheduler {
             limits,
             running_on_cpu: None,
         });
-        self.next_id = id + 1;
+        let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
+        self.next_id = (id + 1) % max_alloc;
+        if self.next_id == 0 { self.next_id = 1; }
         id
     }
 
@@ -728,70 +866,68 @@ impl Scheduler {
         priority: TaskPriority,
     ) -> usize {
         let _guard = SCHED_LOCK.lock();
-        let mut id = self.next_id;
-        while id < MAX_TASKS {
-            if self.tasks[id].is_none() {
-                let pml4_phys = paging::current_cr3();
+        if let Some(id) = self.find_or_recycle_slot() {
+            let pml4_phys = paging::current_cr3();
 
-                let kstack_base = unsafe { KSTACKS[id].as_ptr() as usize };
-                let kstack_top  = (kstack_base + KSTACK_SIZE) & !15;
+            let kstack_base = unsafe { KSTACKS[id].as_ptr() as usize };
+            let kstack_top  = (kstack_base + KSTACK_SIZE) & !15;
 
-                let cs = crate::gdt::KERNEL_CODE_SEL as u64;
-                let ss = crate::gdt::KERNEL_DATA_SEL as u64;
-                
-                let mut sp = kstack_top;
-                let rflags: u64 = 0x202;
+            let cs = crate::gdt::KERNEL_CODE_SEL as u64;
+            let ss = crate::gdt::KERNEL_DATA_SEL as u64;
+            
+            let mut sp = kstack_top;
+            let rflags: u64 = 0x202;
 
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(ss); }
-                let abi_rsp = kstack_top - 8; sp -= 8; unsafe { (sp as *mut u64).write_volatile(abi_rsp as u64); }
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(rflags); }
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(cs); }
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(entry as u64);}
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(ss); }
+            let abi_rsp = kstack_top - 8; sp -= 8; unsafe { (sp as *mut u64).write_volatile(abi_rsp as u64); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(rflags); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(cs); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(entry as u64);}
 
-                // Dummy vector and error code
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
-                sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+            // Dummy vector and error code
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
+            sp -= 8; unsafe { (sp as *mut u64).write_volatile(0); }
 
-                for _ in 0..15 {
-                    sp -= 8;
-                    unsafe { (sp as *mut u64).write_volatile(0); }
-                }
-
-                let quantum = match priority {
-                    TaskPriority::RealTime => QUANTUM_REALTIME,
-                    TaskPriority::Normal   => QUANTUM_NORMAL,
-                    TaskPriority::Idle     => QUANTUM_IDLE,
-                };
-
-                let res = crate::resources::ProcessResources::new();
-                let limits = crate::resources::ResourceLimits::kernel_default();
-
-                self.tasks[id] = Some(Task {
-                    id,
-                    name,
-                    state:     TaskState::Ready,
-                    priority,
-                    ring,
-                    saved_rsp: sp,
-                    kstack_top,
-                    pml4_phys,
-                    exit_code: 0,
-                    cpu_ticks: 0,
-                    ctx_switches: 0,
-                    irq_preemptions: 0,
-                    voluntary_yields: 0,
-                    quantum_remaining: quantum,
-                    fds: [None; MAX_TASK_FDS],
-                    dynamic_pages: [0; MAX_DYNAMIC_PAGES],
-                    cleanup_done: false,
-                    resources: res,
-                    limits,
-                    running_on_cpu: None,
-                });
-                self.next_id = id + 1;
-                return id;
+            for _ in 0..15 {
+                sp -= 8;
+                unsafe { (sp as *mut u64).write_volatile(0); }
             }
-            id += 1;
+
+            let quantum = match priority {
+                TaskPriority::RealTime => QUANTUM_REALTIME,
+                TaskPriority::Normal   => QUANTUM_NORMAL,
+                TaskPriority::Idle     => QUANTUM_IDLE,
+            };
+
+            let res = crate::resources::ProcessResources::new();
+            let limits = crate::resources::ResourceLimits::kernel_default();
+
+            self.tasks[id] = Some(Task {
+                id,
+                name,
+                state:     TaskState::Ready,
+                priority,
+                ring,
+                saved_rsp: sp,
+                kstack_top,
+                pml4_phys,
+                exit_code: 0,
+                cpu_ticks: 0,
+                ctx_switches: 0,
+                irq_preemptions: 0,
+                voluntary_yields: 0,
+                quantum_remaining: quantum,
+                fds: [None; MAX_TASK_FDS],
+                dynamic_pages: [0; MAX_DYNAMIC_PAGES],
+                cleanup_done: false,
+                resources: res,
+                limits,
+                running_on_cpu: None,
+            });
+            let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
+            self.next_id = (id + 1) % max_alloc;
+            if self.next_id == 0 { self.next_id = 1; }
+            return id;
         }
 
         0
@@ -1140,7 +1276,11 @@ impl Scheduler {
         }
 
         // Escalonamento por prioridade (Round-Robin dentro de cada nível, SMP-aware)
-        let core_idle_id = if cpu_id < crate::gdt::MAX_CPUS { self.core_idle[cpu_id] } else { 0 };
+        let core_idle_id = if cpu_id < crate::gdt::MAX_CPUS && self.core_idle[cpu_id] != 0 {
+            self.core_idle[cpu_id]
+        } else {
+            self.core_idle.iter().copied().find(|&id| id != 0 && self.tasks.get(id).and_then(|t| t.as_ref()).is_some()).unwrap_or(1)
+        };
 
         for priority in [TaskPriority::RealTime, TaskPriority::Normal, TaskPriority::Idle] {
             let start = cur_id_opt.unwrap_or(usize::MAX);
@@ -1185,7 +1325,7 @@ impl Scheduler {
 
                         // 2. Troca o espaço de endereçamento virtual se for diferente
                         let current_cr3 = paging::current_cr3();
-                        if current_cr3 != task.pml4_phys {
+                        if current_cr3 != task.pml4_phys || task.ring == Ring::User {
                             unsafe { paging::load_cr3(task.pml4_phys); }
                         }
 
@@ -1210,6 +1350,27 @@ impl Scheduler {
                 unsafe { paging::load_cr3(idle.pml4_phys); }
             }
             return idle.saved_rsp;
+        }
+
+        // Se o fallback do núcleo falhou, procura por qualquer Idle task disponível
+        for &cand_id in self.core_idle.iter() {
+            if cand_id != 0 {
+                if let Some(idle) = &mut self.tasks[cand_id] {
+                    idle.state = TaskState::Running;
+                    idle.running_on_cpu = Some(cpu_id);
+                    self.core_current[cpu_id] = Some(cand_id);
+                    if cpu_id == 0 {
+                        self.current = Some(cand_id);
+                        CURRENT_TASK.store(cand_id as i32, Ordering::SeqCst);
+                    }
+                    crate::smp::set_current_pid(cpu_id, Some(cand_id));
+                    let current_cr3 = paging::current_cr3();
+                    if current_cr3 != idle.pml4_phys {
+                        unsafe { paging::load_cr3(idle.pml4_phys); }
+                    }
+                    return idle.saved_rsp;
+                }
+            }
         }
 
         curr_frame_ptr

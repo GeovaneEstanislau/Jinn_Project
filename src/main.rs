@@ -395,7 +395,7 @@ pub extern "C" fn _start() -> ! {
 
     // Tarefa Idle dedicada para o BSP (PID 0)
     let _idle_pid = sched.add_idle_task();
-    sched.core_idle[0] = 0;
+    sched.core_idle[0] = _idle_pid;
 
     // Tarefas Idle dedicadas para os núcleos AP secundários (alocadas nos slots 31, 30, 29...)
     for c in 1..online_cpus {
@@ -417,7 +417,7 @@ pub extern "C" fn _start() -> ! {
             w.write_string("    ELF modulo[0]: ");
             w.write_decimal(elf_data.len());
             w.write_line(" bytes");
-            let u1_pid = sched.add_user_task("ola-mundo[U3]", elf_data);
+            let u1_pid = sched.spawn_user_task_from_memory("main[U3]", elf_data, &["ola-mundo", "main"], &[]).unwrap_or(0);
             if u1_pid > 0 {
                 ipc::register(u1_pid);
                 w.write_string("    Processo Ring 3 criado: PID ");
@@ -429,7 +429,7 @@ pub extern "C" fn _start() -> ! {
                 w.set_color(Color::LightGray, Color::Black);
             }
 
-            let u2_pid = sched.add_user_task("worker[U3]", elf_data);
+            let u2_pid = sched.spawn_user_task_from_memory("worker[U3]", elf_data, &["ola-mundo", "worker"], &[]).unwrap_or(0);
             if u2_pid > 0 {
                 ipc::register(u2_pid);
                 // Atribui cota de CPU de 25 ticks (250 ms) para a tarefa CPU-Hog
@@ -441,7 +441,7 @@ pub extern "C" fn _start() -> ! {
                 w.write_line(" (Worker / CPU-Hog, Cota: 25 ticks)");
             }
 
-            let u3_pid = sched.add_user_task("periodic[U3]", elf_data);
+            let u3_pid = sched.spawn_user_task_from_memory("periodic[U3]", elf_data, &["ola-mundo", "periodic"], &[]).unwrap_or(0);
             if u3_pid > 0 {
                 ipc::register(u3_pid);
                 w.write_string("    Processo Ring 3 criado: PID ");

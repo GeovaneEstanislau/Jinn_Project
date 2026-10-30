@@ -400,5 +400,5 @@ $bw.Close()
 $fs.Close()
 
 Write-Host "Disco virtual criado com sucesso em: $targetDisk"
-Write-Host "  - Particao 1 (FAT32): LBA $startLba1 (31 MiB) -> Arquivos: README.TXT, OLA.ELF"
+Write-Host "  - Particao 1 (FAT32): LBA $startLba1 (31 MiB) -> Arquivos: README.TXT, OLA.ELF, BROWSER.ELF, INDEX.HTM, ABOUT.HTM"
 Write-Host "  - Particao 2 (Ext2):  LBA $startLba2 (31 MiB) -> Arquivos: SERVER.TXT (Read-Only)"
