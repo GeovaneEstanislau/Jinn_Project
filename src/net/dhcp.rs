@@ -76,6 +76,9 @@ pub fn handle_dhcp_reply(payload: &[u8]) {
     }
     let yiaddr = [payload[16], payload[17], payload[18], payload[19]];
     let mut msg_type = 0u8;
+    let mut subnet_mask = [0u8; 4];
+    let mut router_ip = [0u8; 4];
+    let mut dns_ip = [0u8; 4];
 
     let mut i = 240;
     while i < payload.len() {
@@ -88,6 +91,12 @@ pub fn handle_dhcp_reply(payload: &[u8]) {
 
         if opt == 53 && !opt_data.is_empty() {
             msg_type = opt_data[0];
+        } else if opt == 1 && opt_data.len() >= 4 {
+            subnet_mask = [opt_data[0], opt_data[1], opt_data[2], opt_data[3]];
+        } else if opt == 3 && opt_data.len() >= 4 {
+            router_ip = [opt_data[0], opt_data[1], opt_data[2], opt_data[3]];
+        } else if opt == 6 && opt_data.len() >= 4 {
+            dns_ip = [opt_data[0], opt_data[1], opt_data[2], opt_data[3]];
         }
         i += 2 + opt_len;
     }
@@ -96,6 +105,15 @@ pub fn handle_dhcp_reply(payload: &[u8]) {
         // Se for Offer (2) ou Ack (5)
         if (msg_type == 2 || msg_type == 5) && yiaddr != [0, 0, 0, 0] {
             DHCP_CLIENT.ip = yiaddr;
+            if subnet_mask != [0, 0, 0, 0] {
+                DHCP_CLIENT.netmask = subnet_mask;
+            }
+            if router_ip != [0, 0, 0, 0] {
+                DHCP_CLIENT.gateway = router_ip;
+            }
+            if dns_ip != [0, 0, 0, 0] {
+                DHCP_CLIENT.dns = dns_ip;
+            }
             DHCP_CLIENT.state = DhcpState::Bound(yiaddr);
         }
     }

@@ -159,3 +159,16 @@ pub fn send_arp_request(target_ip: [u8; 4]) -> bool {
     let arp_len = build_arp_request(&mut frame[14..], our_mac, our_ip, target_ip);
     dev.transmit(&frame[..(14 + arp_len)]).is_ok()
 }
+
+/// Resolve o endereço MAC para o próximo salto de um pacote com destino a `dst_ip`.
+/// Se `dst_ip` for externo, busca o MAC do gateway padrão configurado no sistema.
+pub fn resolve_mac_for_ip(dst_ip: [u8; 4]) -> [u8; 6] {
+    let next_hop = crate::net::ipv4::get_next_hop_ip(dst_ip);
+    if let Some(mac) = unsafe { ARP_CACHE.lookup(next_hop) } {
+        mac
+    } else {
+        // Envia requisição ARP para o próximo salto (host local ou gateway)
+        send_arp_request(next_hop);
+        crate::net::ethernet::BROADCAST_MAC
+    }
+}

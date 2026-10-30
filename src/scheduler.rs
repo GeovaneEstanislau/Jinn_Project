@@ -86,7 +86,7 @@ const QUANTUM_IDLE:     u64 = 1;
 // ── Estado global ─────────────────────────────────────────────────────────────
 
 static CURRENT_TASK:       AtomicI32 = AtomicI32::new(-1);
-static YIELDED:            AtomicBool = AtomicBool::new(false);
+pub(crate) static YIELDED: [AtomicBool; crate::gdt::MAX_CPUS] = [const { AtomicBool::new(false) }; crate::gdt::MAX_CPUS];
 static TIMER_PREEMPTIONS:   AtomicU64 = AtomicU64::new(0);
 static VOLUNTARY_YIELDS:    AtomicU64 = AtomicU64::new(0);
 
@@ -104,12 +104,18 @@ pub fn current_pid() -> usize {
 
 /// Marca que a tarefa atual solicitou yield voluntário de CPU.
 pub fn set_yielded() {
-    YIELDED.store(true, Ordering::SeqCst);
+    let cpu_id = crate::smp::current_cpu_id();
+    if cpu_id < crate::gdt::MAX_CPUS {
+        YIELDED[cpu_id].store(true, Ordering::SeqCst);
+    }
 }
 
 /// Cede voluntariamente o quantum de CPU restante para a próxima tarefa pronta.
 pub fn yield_now() {
-    YIELDED.store(true, Ordering::SeqCst);
+    let cpu_id = crate::smp::current_cpu_id();
+    if cpu_id < crate::gdt::MAX_CPUS {
+        YIELDED[cpu_id].store(true, Ordering::SeqCst);
+    }
     // Dispara o vetor 32 (APIC Timer) manualmente para forçar preempção.
     unsafe { core::arch::asm!("int 32"); }
 }
@@ -1178,7 +1184,10 @@ impl Scheduler {
                         self.current = Some(idx);
                         task.state   = TaskState::Running;
                         CURRENT_TASK.store(idx as i32, Ordering::SeqCst);
-                        YIELDED.store(false, Ordering::SeqCst);
+                        let cpu_id = crate::smp::current_cpu_id();
+                        if cpu_id < crate::gdt::MAX_CPUS {
+                            YIELDED[cpu_id].store(false, Ordering::SeqCst);
+                        }
                         return Some(idx);
                     }
                 }
@@ -1213,7 +1222,11 @@ impl Scheduler {
         // Localiza a tarefa atual que executava neste núcleo
         let cur_id_opt = self.core_current[cpu_id].or(if cpu_id == 0 { self.current } else { None });
         let mut force_switch = false;
-        let is_yield = YIELDED.load(Ordering::SeqCst);
+        let is_yield = if cpu_id < crate::gdt::MAX_CPUS {
+            YIELDED[cpu_id].swap(false, Ordering::SeqCst)
+        } else {
+            false
+        };
         let mut quota_violation = false;
 
         if let Some(cur) = cur_id_opt {
@@ -1271,9 +1284,7 @@ impl Scheduler {
             }
         }
 
-        if is_yield {
-            YIELDED.store(false, Ordering::SeqCst);
-        }
+
 
         // Escalonamento por prioridade (Round-Robin dentro de cada nível, SMP-aware)
         let core_idle_id = if cpu_id < crate::gdt::MAX_CPUS && self.core_idle[cpu_id] != 0 {

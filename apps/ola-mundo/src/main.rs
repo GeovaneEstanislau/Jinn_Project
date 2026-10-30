@@ -1470,18 +1470,22 @@ unsafe fn fetch_http_document(
             None => return Err(FetchError::InvalidHttp),
         };
 
-        print_str(b"[BROWSER-NET] Resolvendo DNS para host: ");
+        print_str(b"[DIAG-FLOW] URL: ");
+        print_str(target_slice);
+        print_str(b"\n");
+
+        print_str(b"[DIAG-FLOW] DNS: Resolvendo host: ");
         print_str(&parsed.host[..parsed.host_len]);
         print_str(b"\n");
 
         let mut ip = [0u8; 4];
         let dns_res = sys_dns_resolve(parsed.host.as_ptr(), parsed.host_len, ip.as_mut_ptr());
         if dns_res < 0 {
-            print_str(b"[BROWSER-NET] ERRO: Falha ao resolver DNS (ENOENT / Timeout)!\n");
+            print_str(b"[DIAG-FLOW] DNS: ERRO: Falha ao resolver DNS (-ENOENT / Timeout)!\n");
             return Err(FetchError::DnsFailed);
         }
 
-        print_str(b"[BROWSER-NET] DNS resolvido: ");
+        print_str(b"[DIAG-FLOW] IP: ");
         print_u64(ip[0] as u64); print_str(b".");
         print_u64(ip[1] as u64); print_str(b".");
         print_u64(ip[2] as u64); print_str(b".");
@@ -1492,7 +1496,7 @@ unsafe fn fetch_http_document(
 
         let fd = sys_socket(2, 1, 0); // AF_INET=2, SOCK_STREAM=1
         if fd < 0 {
-            print_str(b"[BROWSER-NET] ERRO: sys_socket falhou!\n");
+            print_str(b"[DIAG-FLOW] TCP: ERRO: sys_socket falhou!\n");
             return Err(FetchError::SocketFailed);
         }
         let sockfd = fd as u64;
@@ -1504,27 +1508,28 @@ unsafe fn fetch_http_document(
             sin_zero: [0; 8],
         };
 
-        print_str(b"[BROWSER-NET] Estabelecendo 3-way handshake TCP...\n");
+        print_str(b"[DIAG-FLOW] TCP: Estabelecendo 3-way handshake com servidor remoto...\n");
         let conn_res = sys_connect(sockfd, &addr);
         if conn_res < 0 {
-            print_str(b"[BROWSER-NET] ERRO: sys_connect falhou com codigo ");
+            print_str(b"[DIAG-FLOW] TCP: ERRO: sys_connect falhou com codigo ");
             print_i64(conn_res);
             print_str(b"\n");
             let _ = sys_close(sockfd);
             return Err(FetchError::ConnectFailed(conn_res));
         }
 
-        print_str(b"[BROWSER-NET] TCP Estabelecido! Enviando HTTP GET...\n");
+        print_str(b"[DIAG-FLOW] TCP: Conexao estabelecida com sucesso!\n");
+        print_str(b"[DIAG-FLOW] HTTP: Transmitindo requisicao GET...\n");
         let mut req_buf = [0u8; 512];
         let req_len = browser::build_http_get_request(&parsed, &mut req_buf);
         let sent = sys_send(sockfd, req_buf.as_ptr(), req_len);
         if sent < 0 {
-            print_str(b"[BROWSER-NET] ERRO: sys_send falhou!\n");
+            print_str(b"[DIAG-FLOW] HTTP: ERRO: sys_send falhou!\n");
             let _ = sys_close(sockfd);
             return Err(FetchError::SendFailed);
         }
 
-        print_str(b"[BROWSER-NET] Requisicao enviada. Aguardando resposta HTTP...\n");
+        print_str(b"[DIAG-FLOW] HTTP: Requisicao enviada. Aguardando resposta...\n");
         let rx_ptr = core::ptr::addr_of_mut!(HTTP_RX_BUF) as *mut u8;
         let mut rx_total = 0usize;
         let mut idle_spins = 0usize;
@@ -1680,9 +1685,15 @@ unsafe fn browser_load_and_display(
         match fetch_http_document(path, out_buf) {
             Ok(body_len) => {
                 let doc_slice = &out_buf[..body_len];
+                print_str(b"[DIAG-FLOW] HTML: Extraindo corpo do documento HTML (bytes=");
+                print_u64(body_len as u64);
+                print_str(b")\n");
+                print_str(b"[DIAG-FLOW] DOM: Convertendo HTML para arvore de elementos DOM...\n");
                 session.load_document_bytes(doc_slice, path);
+                print_str(b"[DIAG-FLOW] RENDER: Desenhando documento na janela do Aladdin...\n");
                 session.render(buf_slice);
                 let _ = sys_window_update(win_id, buf_slice);
+                print_str(b"[DIAG-FLOW] SUCESSO: Pagina externa renderizada com exito na tela!\n");
                 print_str(b"[BROWSER-INTERACTION] PAGE_LOADED target=");
                 print_str(path);
                 print_str(b" (bytes=");

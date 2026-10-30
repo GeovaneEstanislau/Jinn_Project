@@ -277,8 +277,7 @@ pub fn send_tcp_packet(
         .map(|d| d.mac_address())
         .unwrap_or([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
 
-    let target_mac = unsafe { crate::net::arp::ARP_CACHE.lookup(dst_ip) }
-        .unwrap_or(crate::net::ethernet::BROADCAST_MAC);
+    let target_mac = crate::net::arp::resolve_mac_for_ip(dst_ip);
 
     let mut eth_buf = [0u8; 1536];
     EthernetFrame::write_header(

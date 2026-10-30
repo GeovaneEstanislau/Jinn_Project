@@ -97,3 +97,29 @@ impl<'a> Ipv4Packet<'a> {
         20
     }
 }
+
+/// Determina se um endereço IP de destino reside na sub-rede local ou requer roteamento via gateway padrão
+pub fn is_local_subnet(dst_ip: [u8; 4], our_ip: [u8; 4], netmask: [u8; 4]) -> bool {
+    (dst_ip[0] & netmask[0] == our_ip[0] & netmask[0])
+        && (dst_ip[1] & netmask[1] == our_ip[1] & netmask[1])
+        && (dst_ip[2] & netmask[2] == our_ip[2] & netmask[2])
+        && (dst_ip[3] & netmask[3] == our_ip[3] & netmask[3])
+}
+
+/// Determina o IP do próximo salto (Next-Hop IP) para um pacote com destino a `dst_ip`.
+/// Se o destino estiver na rede local, o próximo salto é o próprio `dst_ip`.
+/// Se o destino for externo (Internet), o próximo salto é o default gateway.
+pub fn get_next_hop_ip(dst_ip: [u8; 4]) -> [u8; 4] {
+    let (our_ip, netmask, gateway) = unsafe {
+        (
+            crate::net::dhcp::DHCP_CLIENT.ip,
+            crate::net::dhcp::DHCP_CLIENT.netmask,
+            crate::net::dhcp::DHCP_CLIENT.gateway,
+        )
+    };
+    if is_local_subnet(dst_ip, our_ip, netmask) {
+        dst_ip
+    } else {
+        gateway
+    }
+}

@@ -8,7 +8,7 @@
 use crate::net::dhcp::DHCP_CLIENT;
 use crate::net::ipv4::{Ipv4Packet, PROTO_UDP};
 use crate::net::udp::UdpPacket;
-use crate::net::ethernet::{EthernetFrame, ETHERTYPE_IPV4, BROADCAST_MAC};
+use crate::net::ethernet::{EthernetFrame, ETHERTYPE_IPV4};
 
 pub const DNS_PORT: u16 = 53;
 pub const DNS_CLIENT_PORT: u16 = 53535;
@@ -573,8 +573,7 @@ pub fn send_query(name: &str, tx_id: u16) -> Result<(), DnsError> {
     let our_ip = unsafe { DHCP_CLIENT.ip };
     let dns_server_ip = unsafe { DHCP_CLIENT.dns };
     let our_mac = dev.mac_address();
-    let target_mac = unsafe { crate::net::arp::ARP_CACHE.lookup(dns_server_ip) }
-        .unwrap_or(BROADCAST_MAC);
+    let target_mac = crate::net::arp::resolve_mac_for_ip(dns_server_ip);
 
     let mut frame = [0u8; 1536];
     EthernetFrame::write_header(&mut frame[0..14], target_mac, our_mac, ETHERTYPE_IPV4);
@@ -647,14 +646,14 @@ pub fn resolve(name: &str) -> Option<[u8; 4]> {
     if send_query(name, tx_id).is_ok() {
         let start_tick = crate::timer::ticks();
         let mut last_tx = start_tick;
-        // Aguarda ate 200 ticks (2,0s a 100 Hz APIC) com retransmissao a cada 60 ticks (600ms)
-        while crate::timer::ticks().saturating_sub(start_tick) < 200 {
+        // Aguarda ate 400 ticks (4,0s a 100 Hz APIC) com retransmissao a cada 80 ticks (800ms)
+        while crate::timer::ticks().saturating_sub(start_tick) < 400 {
             crate::net::poll();
             if let Some(ip) = unsafe { DNS_CACHE.lookup(name, crate::timer::ticks()) } {
                 unsafe { PENDING_QUERY = None; }
                 return Some(ip);
             }
-            if crate::timer::ticks().saturating_sub(last_tx) >= 60 {
+            if crate::timer::ticks().saturating_sub(last_tx) >= 80 {
                 last_tx = crate::timer::ticks();
                 let _ = send_query(name, tx_id);
             }

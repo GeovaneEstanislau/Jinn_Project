@@ -278,12 +278,8 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
         }
     }
 
-    // Envia requisicao ARP caso o IP remoto ainda nao esteja na tabela ARP
-    unsafe {
-        if crate::net::arp::ARP_CACHE.lookup(remote_ip).is_none() {
-            let _ = crate::net::arp::send_arp_request(remote_ip);
-        }
-    }
+    // Garante resolucao de proximo salto (gateway para IPs externos ou host local)
+    let _ = crate::net::arp::resolve_mac_for_ip(remote_ip);
 
     let syn_seq = unsafe { SOCKET_TABLE[sockfd].as_ref().unwrap().tcb.local_seq };
     crate::net::tcp::send_tcp_packet(
@@ -304,7 +300,7 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
 
     // Loop de espera ativa com polling de rede e retransmissões automáticas (RTO)
     let start_tick = crate::timer::ticks();
-    while crate::timer::ticks().saturating_sub(start_tick) < 300 {
+    while crate::timer::ticks().saturating_sub(start_tick) < 400 {
         crate::net::poll();
 
         unsafe {
@@ -641,8 +637,7 @@ pub fn send_socket(pid: usize, sockfd: usize, data: &[u8]) -> Result<usize, isiz
 
         let mut eth_buf = [0u8; 1536];
         let payload_len = data.len().min(1024);
-        let target_mac = crate::net::arp::ARP_CACHE.lookup(remote_ip)
-            .unwrap_or(crate::net::ethernet::BROADCAST_MAC);
+        let target_mac = crate::net::arp::resolve_mac_for_ip(remote_ip);
 
         crate::net::ethernet::EthernetFrame::write_header(
             &mut eth_buf[0..14],
