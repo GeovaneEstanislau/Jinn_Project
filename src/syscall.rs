@@ -260,6 +260,7 @@ pub extern "C" fn syscall_dispatch(
         37 => sys_jinnwall_ctrl(arg0, arg1, arg2),
         38 => sys_execve(arg0, arg1, arg2),
         39 => sys_spawn_process(arg0, arg1, arg2),
+        40 => sys_dns_resolve(arg0 as *const u8, arg1, arg2 as *mut u8),
         _  => ENOSYS,
     }
 }
@@ -1598,6 +1599,40 @@ fn sys_jinnwall_ctrl(cmd: usize, arg0: usize, _arg1: usize) -> isize {
             0
         }
         _ => EINVAL,
+    }
+}
+
+/// `sys_dns_resolve(name_ptr, name_len, out_ip_ptr)` — Resolve nome de domínio para endereço IPv4 (4 bytes) (Syscall 40).
+fn sys_dns_resolve(name_ptr: *const u8, name_len: usize, out_ip_ptr: *mut u8) -> isize {
+    if name_ptr.is_null() || name_len == 0 || name_len > crate::net::dns::MAX_DOMAIN_LEN {
+        return EINVAL;
+    }
+    if out_ip_ptr.is_null() {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(name_ptr, name_len, false) {
+            return e;
+        }
+        if let Err(e) = validate_user_buffer(out_ip_ptr, 4, true) {
+            return e;
+        }
+    }
+
+    let name_bytes = unsafe { core::slice::from_raw_parts(name_ptr, name_len) };
+    let name_str = match core::str::from_utf8(name_bytes) {
+        Ok(s) => s,
+        Err(_) => return EINVAL,
+    };
+
+    match crate::net::dns::resolve(name_str) {
+        Some(ip) => {
+            unsafe {
+                core::ptr::copy_nonoverlapping(ip.as_ptr(), out_ip_ptr, 4);
+            }
+            0
+        }
+        None => -2, // ENOENT (Host nao encontrado / NXDOMAIN)
     }
 }
 

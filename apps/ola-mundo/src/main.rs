@@ -332,6 +332,11 @@ unsafe fn sys_accept(sockfd: u64, addr: *mut SockAddrIn) -> i64 {
     syscall3(34, sockfd, addr as u64, core::mem::size_of::<SockAddrIn>() as u64)
 }
 
+#[inline(always)]
+unsafe fn sys_dns_resolve(name: *const u8, len: usize, out_ip: *mut u8) -> i64 {
+    syscall3(40, name as u64, len as u64, out_ip as u64)
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct JinnWallStats {
@@ -1419,7 +1424,8 @@ unsafe fn test_observer_app() {
 // ── Aladdin Desktop Jinn Browser v0.2.0 Native Integration ───────────────────
 
 static mut WIN_BUF: [u32; browser::WIN_W * browser::WIN_H] = [0; browser::WIN_W * browser::WIN_H];
-static mut HTML_FILE_BUF: [u8; 4096] = [0; 4096];
+static mut HTML_FILE_BUF: [u8; 32768] = [0; 32768];
+static mut HTTP_RX_BUF: [u8; 32768] = [0; 32768];
 
 unsafe fn read_html_file(path: &[u8]) -> Option<usize> {
     let fd = sys_open(path, O_RDONLY);
@@ -1427,7 +1433,7 @@ unsafe fn read_html_file(path: &[u8]) -> Option<usize> {
         return None;
     }
     let buf_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
-    let n = sys_read(fd as u64, buf_ptr, 4096);
+    let n = sys_read(fd as u64, buf_ptr, 32768);
     let _ = sys_close(fd as u64);
     if n > 0 {
         Some(n as usize)
@@ -1436,30 +1442,224 @@ unsafe fn read_html_file(path: &[u8]) -> Option<usize> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum FetchError {
+    DnsFailed,
+    SocketFailed,
+    ConnectFailed(i64),
+    SendFailed,
+    RecvTimeout,
+    InvalidHttp,
+    TooManyRedirects,
+    HttpStatus(u16),
+}
+
+unsafe fn fetch_http_document(
+    initial_url: &[u8],
+    out_buf: &mut [u8],
+) -> Result<usize, FetchError> {
+    let mut current_target = [0u8; 128];
+    let len = initial_url.len().min(127);
+    current_target[..len].copy_from_slice(&initial_url[..len]);
+    let mut current_target_len = len;
+
+    for _redirect_hop in 0..5 {
+        let target_slice = &current_target[..current_target_len];
+        let parsed = match browser::parse_http_url(target_slice) {
+            Some(p) => p,
+            None => return Err(FetchError::InvalidHttp),
+        };
+
+        print_str(b"[BROWSER-NET] Resolvendo DNS para host: ");
+        print_str(&parsed.host[..parsed.host_len]);
+        print_str(b"\n");
+
+        let mut ip = [0u8; 4];
+        let dns_res = sys_dns_resolve(parsed.host.as_ptr(), parsed.host_len, ip.as_mut_ptr());
+        if dns_res < 0 {
+            print_str(b"[BROWSER-NET] ERRO: Falha ao resolver DNS (ENOENT / Timeout)!\n");
+            return Err(FetchError::DnsFailed);
+        }
+
+        print_str(b"[BROWSER-NET] DNS resolvido: ");
+        print_u64(ip[0] as u64); print_str(b".");
+        print_u64(ip[1] as u64); print_str(b".");
+        print_u64(ip[2] as u64); print_str(b".");
+        print_u64(ip[3] as u64);
+        print_str(b":");
+        print_u64(parsed.port as u64);
+        print_str(b"\n");
+
+        let fd = sys_socket(2, 1, 0); // AF_INET=2, SOCK_STREAM=1
+        if fd < 0 {
+            print_str(b"[BROWSER-NET] ERRO: sys_socket falhou!\n");
+            return Err(FetchError::SocketFailed);
+        }
+        let sockfd = fd as u64;
+
+        let addr = SockAddrIn {
+            sin_family: 2,
+            sin_port: parsed.port.to_be(),
+            sin_addr: ip,
+            sin_zero: [0; 8],
+        };
+
+        print_str(b"[BROWSER-NET] Estabelecendo 3-way handshake TCP...\n");
+        let conn_res = sys_connect(sockfd, &addr);
+        if conn_res < 0 {
+            print_str(b"[BROWSER-NET] ERRO: sys_connect falhou com codigo ");
+            print_i64(conn_res);
+            print_str(b"\n");
+            let _ = sys_close(sockfd);
+            return Err(FetchError::ConnectFailed(conn_res));
+        }
+
+        print_str(b"[BROWSER-NET] TCP Estabelecido! Enviando HTTP GET...\n");
+        let mut req_buf = [0u8; 512];
+        let req_len = browser::build_http_get_request(&parsed, &mut req_buf);
+        let sent = sys_send(sockfd, req_buf.as_ptr(), req_len);
+        if sent < 0 {
+            print_str(b"[BROWSER-NET] ERRO: sys_send falhou!\n");
+            let _ = sys_close(sockfd);
+            return Err(FetchError::SendFailed);
+        }
+
+        print_str(b"[BROWSER-NET] Requisicao enviada. Aguardando resposta HTTP...\n");
+        let rx_ptr = core::ptr::addr_of_mut!(HTTP_RX_BUF) as *mut u8;
+        let mut rx_total = 0usize;
+        let mut idle_spins = 0usize;
+
+        loop {
+            let space = 32768 - rx_total;
+            if space == 0 {
+                break;
+            }
+            let n = sys_recv(sockfd, rx_ptr.add(rx_total), space);
+            if n > 0 {
+                rx_total += n as usize;
+                idle_spins = 0;
+                let rx_slice = core::slice::from_raw_parts(rx_ptr as *const u8, rx_total);
+                if let Some(hdr) = browser::parse_http_response_header(rx_slice) {
+                    if let Some(cl) = hdr.content_length {
+                        if rx_total >= hdr.header_len + cl {
+                            break;
+                        }
+                    }
+                }
+            } else if n == 0 {
+                // EOF recebido
+                break;
+            } else if n == -11 /* EAGAIN */ {
+                idle_spins += 1;
+                if idle_spins > 600 {
+                    print_str(b"[BROWSER-NET] Timeout de recepcao atingido (3.0s)\n");
+                    let _ = sys_close(sockfd);
+                    return Err(FetchError::RecvTimeout);
+                }
+                let _ = sys_sleep(5);
+            } else {
+                print_str(b"[BROWSER-NET] sys_recv erro: ");
+                print_i64(n);
+                print_str(b"\n");
+                break;
+            }
+        }
+
+        let _ = sys_close(sockfd);
+
+        let rx_slice = core::slice::from_raw_parts(rx_ptr as *const u8, rx_total);
+        let hdr = match browser::parse_http_response_header(rx_slice) {
+            Some(h) => h,
+            None => return Err(FetchError::InvalidHttp),
+        };
+
+        print_str(b"[BROWSER-NET] HTTP Status: ");
+        print_u64(hdr.status_code as u64);
+        print_str(b"\n");
+
+        // 301 / 302 Redirection
+        if (hdr.status_code == 301 || hdr.status_code == 302) && hdr.location_len > 0 {
+            print_str(b"[BROWSER-NET] Redirecionamento (Location: ");
+            print_str(&hdr.location[..hdr.location_len]);
+            print_str(b")\n");
+            let loc = &hdr.location[..hdr.location_len];
+            let mut resolved_loc = [0u8; 128];
+            let res_len = browser::resolve_relative_url(target_slice, loc, &mut resolved_loc);
+            current_target[..res_len].copy_from_slice(&resolved_loc[..res_len]);
+            current_target_len = res_len;
+            continue;
+        }
+
+        if hdr.status_code >= 400 {
+            let body_bytes = &rx_slice[hdr.header_len..];
+            if body_bytes.iter().position(|&b| b == b'<').is_some() {
+                let copy_len = body_bytes.len().min(out_buf.len());
+                out_buf[..copy_len].copy_from_slice(&body_bytes[..copy_len]);
+                return Ok(copy_len);
+            } else {
+                return Err(FetchError::HttpStatus(hdr.status_code));
+            }
+        }
+
+        // Extracao de corpo HTTP 200
+        let body_bytes = &rx_slice[hdr.header_len..];
+        if hdr.is_chunked {
+            print_str(b"[BROWSER-NET] Decodificando Transfer-Encoding: chunked...\n");
+            match browser::decode_chunked_body(body_bytes, out_buf) {
+                Ok(decoded_len) => return Ok(decoded_len),
+                Err(_) => {
+                    let copy_len = body_bytes.len().min(out_buf.len());
+                    out_buf[..copy_len].copy_from_slice(&body_bytes[..copy_len]);
+                    return Ok(copy_len);
+                }
+            }
+        } else {
+            let copy_len = body_bytes.len().min(out_buf.len());
+            out_buf[..copy_len].copy_from_slice(&body_bytes[..copy_len]);
+            return Ok(copy_len);
+        }
+    }
+
+    Err(FetchError::TooManyRedirects)
+}
+
 unsafe fn browser_load_and_display(
     session: &mut browser::BrowserSession,
     target: &[u8],
     win_id: usize,
     buf_slice: &mut [u32],
 ) -> bool {
-    let mut path_buf = [0u8; 64];
+    let mut path_buf = [0u8; 128];
     let path = resolve_target_path(target, &mut path_buf);
 
     if path.starts_with(b"about:") {
-        let content: &[u8] = if path == b"about:blank" {
-            b"<html><head><title>about:blank</title></head><body></body></html>"
-        } else if path == b"about:version" {
-            b"<html><head><title>Sobre o Navegador</title></head><body><h1>Jinn Browser v0.3.0</h1><p>Motor: JBE Modular (10 crates)</p><p>Microkernel: Jinn OS (SMP, Ring 3, VFS FAT32)</p><p>Compositor: Aladdin Desktop</p><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>"
-        } else if path == b"about:blocked" {
-            b"<html><head><title>Acesso Bloqueado</title></head><body><h1>403 - Acesso Bloqueado</h1><p>Acesso fora do diretorio permitido (/disk/) foi bloqueado por seguranca.</p><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>"
-        } else if path == b"about:offline" {
-            b"<html><head><title>Modo Offline</title></head><body><h1>Modo Offline</h1><p>Conexoes externas de rede estao desabilitadas nesta versao.</p><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>"
-        } else {
-            b"<html><head><title>Sobre</title></head><body><h1>Jinn Browser v0.3.0</h1><p>Navegador nativo Ring 3.</p><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>"
-        };
         let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
-        core::ptr::copy_nonoverlapping(content.as_ptr(), f_ptr, content.len());
-        let doc_slice = core::slice::from_raw_parts(f_ptr as *const u8, content.len());
+        let out_buf = core::slice::from_raw_parts_mut(f_ptr, 32768);
+        let content_len = if path == b"about:blank" {
+            let s = b"<html><head><title>about:blank</title></head><body></body></html>";
+            out_buf[..s.len()].copy_from_slice(s);
+            s.len()
+        } else if path == b"about:version" {
+            let s = b"<html><head><title>Sobre o Navegador</title></head><body><h1>Jinn Browser v0.4.0</h1><p>Navegacao real na internet: DNS (RFC 1035) + TCP (RFC 793) + HTTP/1.1 (RFC 7230)</p><p>Microkernel: Jinn OS (SMP, Ring 3, VFS FAT32, JinnWall SPI)</p><p>Compositor: Aladdin Desktop</p><hr/><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>";
+            out_buf[..s.len()].copy_from_slice(s);
+            s.len()
+        } else if path == b"about:tls" {
+            browser::format_tls_info_html(target, out_buf)
+        } else if path == b"about:blocked" {
+            let s = b"<html><head><title>Acesso Bloqueado</title></head><body><h1>403 - Acesso Bloqueado</h1><p>Acesso fora do diretorio permitido (/disk/) foi bloqueado por seguranca.</p><hr/><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>";
+            out_buf[..s.len()].copy_from_slice(s);
+            s.len()
+        } else if path == b"about:offline" {
+            let s = b"<html><head><title>Modo Offline</title></head><body><h1>Modo Offline</h1><p>Conexoes externas de rede estao desabilitadas nesta versao.</p><hr/><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>";
+            out_buf[..s.len()].copy_from_slice(s);
+            s.len()
+        } else {
+            let s = b"<html><head><title>Sobre</title></head><body><h1>Jinn Browser v0.4.0</h1><p>Navegador nativo Ring 3.</p><hr/><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>";
+            out_buf[..s.len()].copy_from_slice(s);
+            s.len()
+        };
+
+        let doc_slice = &out_buf[..content_len];
         session.load_document_bytes(doc_slice, path);
         session.render(buf_slice);
         let _ = sys_window_update(win_id, buf_slice);
@@ -1469,7 +1669,86 @@ unsafe fn browser_load_and_display(
         return true;
     }
 
-    if let Some(len) = read_html_file(path) {
+    if path.starts_with(b"http://") {
+        print_str(b"[BROWSER] Requisitando recurso HTTP externo: ");
+        print_str(path);
+        print_str(b"\n");
+
+        let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
+        let out_buf = core::slice::from_raw_parts_mut(f_ptr, 32768);
+
+        match fetch_http_document(path, out_buf) {
+            Ok(body_len) => {
+                let doc_slice = &out_buf[..body_len];
+                session.load_document_bytes(doc_slice, path);
+                session.render(buf_slice);
+                let _ = sys_window_update(win_id, buf_slice);
+                print_str(b"[BROWSER-INTERACTION] PAGE_LOADED target=");
+                print_str(path);
+                print_str(b" (bytes=");
+                print_u64(body_len as u64);
+                print_str(b")\n");
+                true
+            }
+            Err(err) => {
+                let (err_title, err_msg, err_detail): (&[u8], &[u8], &[u8]) = match err {
+                    FetchError::DnsFailed => (
+                        b"Erro de Resolucao DNS",
+                        b"Nao foi possivel encontrar o servidor. Verifique o dominio digitado.",
+                        b"sys_dns_resolve retornou -ENOENT / Servidor DNS upstream inacessivel",
+                    ),
+                    FetchError::SocketFailed => (
+                        b"Erro de Rede Interno",
+                        b"Nao foi possivel alocar socket de rede no sistema.",
+                        b"sys_socket retornou EMFILE ou memoria esgotada",
+                    ),
+                    FetchError::ConnectFailed(code) => (
+                        b"Falha de Conexao TCP",
+                        b"Nao foi possivel conectar ao servidor remoto. O host pode estar indisponivel.",
+                        if code == -111 { b"ECONNREFUSED (Conexao recusada pelo host remoto)" }
+                        else if code == -110 { b"ETIMEDOUT (Tempo limite de conexao excedido)" }
+                        else { b"Erro durante o 3-way handshake SYN/ACK" },
+                    ),
+                    FetchError::SendFailed => (
+                        b"Erro de Transmissao",
+                        b"Falha ao transmitir os dados da requisicao HTTP.",
+                        b"sys_send falhou",
+                    ),
+                    FetchError::RecvTimeout => (
+                        b"Tempo Esgotado",
+                        b"O servidor remoto nao enviou resposta a tempo.",
+                        b"Timeout de leitura excedido (3.0s)",
+                    ),
+                    FetchError::InvalidHttp => (
+                        b"Resposta Invalida",
+                        b"O servidor retornou uma resposta que nao segue o padrao HTTP/1.1.",
+                        b"Cabecalhos HTTP ausentes ou corrompidos",
+                    ),
+                    FetchError::TooManyRedirects => (
+                        b"Redirecionamento em Loop",
+                        b"Muitos redirecionamentos seguidos (limite maximo de 5 excedido).",
+                        b"HTTP 301/302 loop",
+                    ),
+                    FetchError::HttpStatus(code) => (
+                        b"Erro HTTP do Servidor",
+                        b"O servidor retornou um codigo de erro HTTP.",
+                        if code == 404 { b"HTTP 404 Not Found" }
+                        else if code == 500 { b"HTTP 500 Internal Server Error" }
+                        else { b"Status HTTP de erro retornado pelo host" },
+                    ),
+                };
+
+                let err_len = browser::format_net_error_html(path, err_title, err_msg, err_detail, out_buf);
+                session.load_document_bytes(&out_buf[..err_len], path);
+                session.render(buf_slice);
+                let _ = sys_window_update(win_id, buf_slice);
+                print_str(b"[BROWSER-INTERACTION] PAGE_NET_ERROR target=");
+                print_str(path);
+                print_str(b"\n");
+                false
+            }
+        }
+    } else if let Some(len) = read_html_file(path) {
         let doc_slice = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, len);
         session.load_document_bytes(doc_slice, path);
         session.render(buf_slice);
@@ -1479,10 +1758,16 @@ unsafe fn browser_load_and_display(
         print_str(b"\n");
         true
     } else {
-        let err_page = b"<html><head><title>404</title></head><body><h1>404 Nao Encontrado</h1><p>Documento local nao localizado no VFS.</p><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>";
         let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
-        core::ptr::copy_nonoverlapping(err_page.as_ptr(), f_ptr, err_page.len());
-        let doc_slice = core::slice::from_raw_parts(f_ptr as *const u8, err_page.len());
+        let out_buf = core::slice::from_raw_parts_mut(f_ptr, 32768);
+        let err_len = browser::format_net_error_html(
+            path,
+            b"404 - Documento Nao Encontrado",
+            b"O documento solicitado nao foi localizado no disco local (/disk).",
+            b"VfsError::NotFound / Arquivo inexistente",
+            out_buf,
+        );
+        let doc_slice = &out_buf[..err_len];
         session.load_document_bytes(doc_slice, path);
         session.render(buf_slice);
         let _ = sys_window_update(win_id, buf_slice);
@@ -1697,7 +1982,7 @@ fn str_contains(haystack: *const u8, needle: &[u8]) -> bool {
     false
 }
 
-fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 64]) -> &'a [u8] {
+fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
     let mut start = 0;
     while start < target.len() && (target[start] == b' ' || target[start] == b'\t') {
         start += 1;
@@ -1709,7 +1994,21 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 64]) -> &'a [u8] {
     let mut clean = &target[start..end];
 
     if clean.starts_with(b"about:") {
-        let len = clean.len().min(63);
+        let len = clean.len().min(127);
+        buf[..len].copy_from_slice(&clean[..len]);
+        buf[len] = 0;
+        return &buf[..len];
+    }
+
+    if clean.starts_with(b"https://") {
+        let tls = b"about:tls";
+        buf[..tls.len()].copy_from_slice(tls);
+        buf[tls.len()] = 0;
+        return &buf[..tls.len()];
+    }
+
+    if clean.starts_with(b"http://") {
+        let len = clean.len().min(127);
         buf[..len].copy_from_slice(&clean[..len]);
         buf[len] = 0;
         return &buf[..len];
@@ -1717,14 +2016,9 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 64]) -> &'a [u8] {
 
     if clean.starts_with(b"file://") {
         clean = &clean[7..];
-    } else if clean.starts_with(b"http://") || clean.starts_with(b"https://") {
-        let off = b"about:offline";
-        buf[..off.len()].copy_from_slice(off);
-        buf[off.len()] = 0;
-        return &buf[..off.len()];
     }
 
-    // Prevencao de Directory Traversal (..)
+    // Prevencao de Directory Traversal (..) em caminhos locais
     let mut has_traversal = false;
     for i in 0..clean.len().saturating_sub(1) {
         if clean[i] == b'.' && clean[i + 1] == b'.' {
@@ -1740,20 +2034,50 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 64]) -> &'a [u8] {
     }
 
     if clean.starts_with(b"/disk/") {
-        let len = clean.len().min(63);
+        let len = clean.len().min(127);
         buf[..len].copy_from_slice(&clean[..len]);
         buf[len] = 0;
-        &buf[..len]
+        return &buf[..len];
     } else if clean.starts_with(b"/") {
         let blk = b"about:blocked";
         buf[..blk.len()].copy_from_slice(blk);
         buf[blk.len()] = 0;
-        &buf[..blk.len()]
-    } else {
+        return &buf[..blk.len()];
+    }
+
+    // Identifica arquivos locais conhecidos ou extensoes tipicas de arquivos locais sem host
+    let is_local_file = clean.eq_ignore_ascii_case(b"index.htm")
+        || clean.eq_ignore_ascii_case(b"about.htm")
+        || clean.eq_ignore_ascii_case(b"readme.txt")
+        || clean.ends_with(b".htm")
+        || clean.ends_with(b".html")
+        || clean.ends_with(b".txt")
+        || clean.ends_with(b".elf");
+
+    if is_local_file && !clean.contains(&b':') && !clean.contains(&b'.') {
         let prefix = b"/disk/";
         let p_len = prefix.len();
         buf[..p_len].copy_from_slice(prefix);
-        let c_len = clean.len().min(63 - p_len);
+        let c_len = clean.len().min(127 - p_len);
+        buf[p_len..p_len + c_len].copy_from_slice(&clean[..c_len]);
+        let total = p_len + c_len;
+        buf[total] = 0;
+        &buf[..total]
+    } else if clean.eq_ignore_ascii_case(b"index.htm") || clean.eq_ignore_ascii_case(b"about.htm") || clean.eq_ignore_ascii_case(b"readme.txt") {
+        let prefix = b"/disk/";
+        let p_len = prefix.len();
+        buf[..p_len].copy_from_slice(prefix);
+        let c_len = clean.len().min(127 - p_len);
+        buf[p_len..p_len + c_len].copy_from_slice(&clean[..c_len]);
+        let total = p_len + c_len;
+        buf[total] = 0;
+        &buf[..total]
+    } else {
+        // Assume URL na internet (ex: example.com, neverssl.com, 10.0.2.2:8080)
+        let prefix = b"http://";
+        let p_len = prefix.len();
+        buf[..p_len].copy_from_slice(prefix);
+        let c_len = clean.len().min(127 - p_len);
         buf[p_len..p_len + c_len].copy_from_slice(&clean[..c_len]);
         let total = p_len + c_len;
         buf[total] = 0;
@@ -1858,9 +2182,12 @@ unsafe fn run_browser_interactive() -> ! {
                             print_str(b"[BROWSER-INTERACTION] ACTION NavigateTarget target=");
                             print_str(&target[..len]);
                             print_str(b"\n");
+                            let mut resolved = [0u8; 128];
+                            let curr_url = &session.current_url[..session.current_url_len];
+                            let res_len = browser::resolve_relative_url(curr_url, &target[..len], &mut resolved);
                             session.push_back_current();
                             session.history_fwd_count = 0;
-                            browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
+                            browser_load_and_display(&mut session, &resolved[..res_len], win_id, buf_slice);
                         }
                         browser::BrowserAction::FocusAddress => {
                             print_str(b"[BROWSER-INTERACTION] ACTION FocusAddress\n");

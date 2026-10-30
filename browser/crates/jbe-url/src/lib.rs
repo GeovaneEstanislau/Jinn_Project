@@ -382,6 +382,19 @@ mod tests {
     }
 
     #[test]
+    fn test_relative_resolution_http_root_and_dir() {
+        let base = Url::parse("http://example.com/blog/article.html").unwrap();
+        let rel_page = base.resolve_relative("other.html").unwrap();
+        assert_eq!(rel_page.as_str(), "http://example.com/blog/other.html");
+
+        let rel_root = base.resolve_relative("/contact.html").unwrap();
+        assert_eq!(rel_root.as_str(), "http://example.com/contact.html");
+
+        let abs_link = base.resolve_relative("http://neverssl.com/index.html").unwrap();
+        assert_eq!(abs_link.as_str(), "http://neverssl.com/index.html");
+    }
+
+    #[test]
     fn test_rejection_of_unsupported_and_dangerous_schemes() {
         // HTTPS rejection (TLS requirement)
         let err_https = Url::parse("https://example.com").unwrap_err();

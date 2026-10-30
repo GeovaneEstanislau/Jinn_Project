@@ -706,7 +706,20 @@ pub fn recv_socket(pid: usize, sockfd: usize, dest: &mut [u8]) -> Result<usize, 
         }
         match sock.pop_rx(dest) {
             Some(len) => Ok(len),
-            None => Ok(0), // Fila vazia
+            None => {
+                if sock.sock_type == SOCK_STREAM {
+                    if sock.tcb.state == crate::net::tcp::TcpState::CloseWait
+                        || sock.tcb.state == crate::net::tcp::TcpState::Closed
+                        || sock.tcb.state == crate::net::tcp::TcpState::TimeWait
+                    {
+                        Ok(0) // Conexao encerrada pelo peer e sem dados pendentes (EOF)
+                    } else {
+                        Err(EAGAIN) // Sem dados no momento, conexao continua aberta
+                    }
+                } else {
+                    Ok(0)
+                }
+            }
         }
     }
 }

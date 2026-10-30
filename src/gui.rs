@@ -207,15 +207,17 @@ impl ProcessHost for JinnProcess {
                 return Ok(pid);
             }
             Err(errno) => {
-                // Se a falha foi de formato/integridade/segurança (ex: ENOEXEC = -8, EIO = -5),
-                // NÃO podemos mascarar a corrupção caindo silenciosamente no fallback!
-                if errno != -2 /* ENOENT */ {
+                // Se a falha foi de formato/integridade interna do binário (ENOEXEC = -8, E2BIG = -7),
+                // não podemos mascarar a corrupção do arquivo.
+                // Mas se for arquivo não encontrado (-ENOENT = -2) ou erro de VFS/mídia não montada (-EIO = -5),
+                // tentamos caminhos alternativos e o fallback resiliente em memória Limine!
+                if errno != -2 && errno != -5 {
                     return Err(());
                 }
             }
         }
 
-        // 2. Tenta apenas variantes de caixa no FAT32 se o arquivo primário não foi encontrado (-ENOENT)
+        // 2. Tenta apenas variantes de caixa no FAT32 se o arquivo primário não foi encontrado (-ENOENT / -EIO)
         let alt_path = if is_browser {
             if path.contains("BROWSER") { "/disk/browser.elf" } else { "/disk/BROWSER.ELF" }
         } else if path.contains("OLA") || path.contains("ola") {
@@ -236,7 +238,7 @@ impl ProcessHost for JinnProcess {
                     return Ok(pid);
                 }
                 Err(errno) => {
-                    if errno != -2 /* ENOENT */ {
+                    if errno != -2 && errno != -5 {
                         return Err(());
                     }
                 }

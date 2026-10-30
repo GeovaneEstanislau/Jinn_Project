@@ -2688,7 +2688,37 @@ where
                     }
                 }
                 Err(_) => {
-                    output("[ERRO] Falha ao iniciar /disk/browser.elf", 0x00EF_4444);
+                    let alt_path = "/disk/BROWSER.ELF";
+                    let alt_argv: [&str; 2] = [alt_path, "browser"];
+                    if let Ok(pid) = sched.spawn_user_task_from_vfs(alt_path, &alt_argv, &[]) {
+                        crate::ipc::register(pid);
+                        crate::gui::register_browser_pid(pid);
+                        output("[OK] Jinn Browser iniciado com sucesso!", 0x0022_C55E);
+                        let mut p_buf = [0u8; 16];
+                        let p_len = aladdin::compositor::format_num(pid, &mut p_buf);
+                        if let Ok(pid_str) = core::str::from_utf8(&p_buf[..p_len]) {
+                            output(pid_str, 0x0038_BDF8);
+                        }
+                    } else if let Some(elf_bytes) = crate::limine::get_module_by_name("browser").or_else(|| crate::limine::get_module(1)) {
+                        if crate::elf::validate_elf(elf_bytes).is_ok() {
+                            if let Ok(pid) = sched.spawn_user_task_from_memory(
+                                "browser[U3]",
+                                elf_bytes,
+                                &["/disk/browser.elf", "browser"],
+                                &[],
+                            ) {
+                                crate::ipc::register(pid);
+                                crate::gui::register_browser_pid(pid);
+                                output("[OK] Jinn Browser iniciado via memoria Limine!", 0x0022_C55E);
+                            } else {
+                                output("[ERRO] Falha ao iniciar /disk/browser.elf", 0x00EF_4444);
+                            }
+                        } else {
+                            output("[ERRO] Falha ao iniciar /disk/browser.elf", 0x00EF_4444);
+                        }
+                    } else {
+                        output("[ERRO] Falha ao iniciar /disk/browser.elf", 0x00EF_4444);
+                    }
                 }
             }
         }

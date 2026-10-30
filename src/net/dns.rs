@@ -645,12 +645,18 @@ pub fn resolve(name: &str) -> Option<[u8; 4]> {
 
     // 4. Transmite consulta pela rede
     if send_query(name, tx_id).is_ok() {
-        // Polling ativo aguardando pacote de resposta
-        for _ in 0..20 {
+        let start_tick = crate::timer::ticks();
+        let mut last_tx = start_tick;
+        // Aguarda ate 200 ticks (2,0s a 100 Hz APIC) com retransmissao a cada 60 ticks (600ms)
+        while crate::timer::ticks().saturating_sub(start_tick) < 200 {
             crate::net::poll();
             if let Some(ip) = unsafe { DNS_CACHE.lookup(name, crate::timer::ticks()) } {
                 unsafe { PENDING_QUERY = None; }
                 return Some(ip);
+            }
+            if crate::timer::ticks().saturating_sub(last_tx) >= 60 {
+                last_tx = crate::timer::ticks();
+                let _ = send_query(name, tx_id);
             }
             crate::scheduler::yield_now();
         }
