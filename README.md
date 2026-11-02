@@ -120,9 +120,14 @@ Uma vez iniciado, o shell interativo (`jinn>`) suporta:
 
 ---
 
-## Licença
+## Licença e Governança
 
-MIT — Veja o arquivo `LICENSE`.
+O **Jinn OS** adota o modelo de **Duplo Licenciamento (Dual Licensing)**:
+
+1. **Licença Aberta / Comunitária (`GPL-2.0-only`):** Destinada à comunidade open source, entusiastas e pesquisadores acadêmicos. O uso e trabalhos derivados são livres e abertos sob os termos da GNU General Public License versão 2 ([`LICENSES/GPL-2.0-only.txt`](LICENSES/GPL-2.0-only.txt)).
+2. **Licença Comercial Proprietária (`Jinn-Commercial-1.0`):** Destinada ao uso corporativo, embarcado e industrial em dispositivos de hardware fechados ou produtos comerciais que exigem isenção das obrigações copyleft da GPL ([`LICENSES/Jinn-Commercial-1.0.txt`](LICENSES/Jinn-Commercial-1.0.txt)).
+
+Para detalhes completos e orientação sobre o regime de licenças, consulte [`LICENSE`](LICENSE). Contribuições de código exigem a assinatura prévia do [Contributor License Agreement (`CLA.md`)](CLA.md) e observância às diretrizes de [Contribuição (`CONTRIBUTING.md`)](CONTRIBUTING.md).
 
 ## Contato e Contribuição
 
