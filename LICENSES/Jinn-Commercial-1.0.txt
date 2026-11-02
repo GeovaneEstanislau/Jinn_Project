@@ -1,0 +1,68 @@
+JINN COMMERCIAL LICENSE 1.0
+MINUTA PRELIMINAR — AVALIAÇÃO E USO CORPORATIVO
+
+Status: documento de trabalho para avaliação jurídica; não é uma oferta nem
+uma licença executável. Não autoriza uso, distribuição ou implantação.
+
+Esta minuta destina-se a orientar a elaboração de termos comerciais para
+software do Jinn Project cuja titularidade ou autorização de relicenciamento
+comercial tenha sido verificada. Os termos finais dependem de instrumento
+escrito, assinado pelo titular competente e pelo licenciado.
+
+1. Partes e software abrangido
+
+O instrumento definitivo identificará a entidade licenciadora, o cliente
+licenciado, os componentes e versões licenciados, e quaisquer exclusões. A
+licença não abrangerá componentes de terceiros nem contribuições cujos titulares
+não tenham autorizado os direitos comerciais pertinentes.
+
+2. Uso de avaliação
+
+O uso de avaliação será permitido somente se e na medida em que um instrumento
+de avaliação escrito for assinado pelas partes. Esse instrumento deverá
+especificar o prazo, finalidade, ambientes autorizados, usuários e quaisquer
+restrições de cópia ou distribuição. Esta minuta, por si só, não concede
+período de avaliação.
+
+3. Uso corporativo por núcleo
+
+O modelo comercial pretendido é uma licença de uso corporativo dimensionada
+pela quantidade de núcleos de processamento autorizados. O contrato definitivo
+deverá definir, antes da contratação, a métrica de contagem, quais ambientes e
+instâncias são abrangidos, a forma de auditoria, o preço, os tributos, o prazo,
+as renovações e o suporte. Nenhuma quantidade ou preço é fixado nesta minuta.
+
+4. Direitos e restrições
+
+O instrumento definitivo deverá declarar expressamente os direitos concedidos,
+incluindo instalações e uso interno autorizados, e as restrições de reprodução,
+modificação, distribuição, sublicenciamento e disponibilização a terceiros.
+Não se presume aqui qualquer cessão de direitos autorais ou autorização para
+redistribuir código-fonte ou binários.
+
+5. Componentes de terceiros e licenças abertas
+
+Componentes de terceiros continuam regidos por suas próprias licenças. A
+licenciadora não poderá conceder direitos que não detenha, e os termos
+comerciais não eliminam direitos já concedidos a terceiros sob licenças
+aplicáveis, inclusive GPL-2.0-only. O cliente deverá receber a identificação
+dos componentes de terceiros relevantes e os avisos exigidos.
+
+6. Garantias, suporte e responsabilidade
+
+Garantias, exclusões, suporte, manutenção, indenização, limitação de
+responsabilidade, segurança, privacidade e alocação de riscos deverão ser
+negociados e definidos no instrumento final. Esta minuta não cria garantias ou
+obrigações de suporte.
+
+7. Vigência, término e lei aplicável
+
+O contrato definitivo deverá estabelecer vigência, rescisão, efeitos do
+término e lei aplicável. Nenhum desses termos é concedido ou acordado por esta
+minuta.
+
+8. Revisão
+
+Este documento é preliminar e incompleto, sujeito a revisão por advogado
+qualificado nas jurisdições pertinentes antes de qualquer publicação como
+licença ou uso em contratação.

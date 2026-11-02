@@ -1,21 +1,26 @@
-MIT License
+# Jinn Project — licenciamento
 
-Copyright (c) 2026 Jinn Contributors
+O Jinn Project adota como modelo pretendido o licenciamento duplo:
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+- **Licença comunitária:** GNU General Public License, versão 2, somente
+  (`GPL-2.0-only`), conforme o texto em
+  [`LICENSES/GPL-2.0-only.txt`](LICENSES/GPL-2.0-only.txt).
+- **Licença comercial:** Jinn Commercial License 1.0, em minuta preliminar em
+  [`LICENSES/Jinn-Commercial-1.0.txt`](LICENSES/Jinn-Commercial-1.0.txt).
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Quando um arquivo contiver um aviso SPDX `GPL-2.0-only OR
+Jinn-Commercial-1.0`, o destinatário poderá usar esse material sob uma das
+licenças aplicáveis, observados os termos da licença escolhida. O identificador
+comercial é próprio do projeto e não substitui o texto da licença comercial.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+**Este aviso não concede, por si só, direitos sobre todo o conteúdo deste
+repositório.** O histórico do projeto inclui material anteriormente publicado
+sob outras condições, e pode incluir componentes de terceiros. Nenhuma
+alteração de licença é retroativa: o modelo duplo só se aplica a material sobre
+o qual a MANTENEDORA tenha os direitos necessários ou autorização válida de
+todos os titulares. Consulte os avisos de cada arquivo e os termos aplicáveis a
+dependências antes de usar, modificar ou redistribuir qualquer componente.
+
+Contribuições submetidas após a adoção do processo de governança também estarão
+sujeitas ao Contributor License Agreement (`CLA.md`), cuja assinatura não
+substitui os avisos de licença aplicáveis a cada contribuição.
