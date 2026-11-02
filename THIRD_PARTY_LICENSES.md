@@ -75,3 +75,4 @@ O microkernel Jinn OS foi projetado com dependência zero de crates externas do 
 - `compiler-builtins`: Primitivas aritméticas de 128 bits e operações de memória (`memcpy`, `memset`).
 
 Isso garante auditabilidade estrita, ausência de vetores de ataque por cadeia de suprimentos (*supply chain attacks*) e soberania técnica total sobre o código-fonte executado no microkernel.
+
