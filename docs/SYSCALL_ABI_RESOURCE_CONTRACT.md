@@ -55,7 +55,7 @@ pub unsafe fn syscall3(nr: u64, arg0: u64, arg1: u64, arg2: u64) -> i64 {
 
 ---
 
-## 3. Matriz Normativa Completa de Syscalls (0 a 36)
+## 3. Matriz Normativa Completa de Syscalls (0 a 44)
 
 A tabela a seguir reflete com fidelidade técnica o estado real do código em `src/syscall.rs` e drivers correlatos. Nenhum stub é apresentado como funcionalidade concluída.
 
@@ -102,6 +102,10 @@ A tabela a seguir reflete com fidelidade técnica o estado real do código em `s
 | **38** | `sys_execve` | **Implementada** | `rdi: *const u8 (path)`, `rsi: *const *const u8 (argv)`, `rdx: *const *const u8 (envp)` | `0` (sucesso não retorna; substitui imagem) | `-ENOENT` (-2), `-EACCES` (-13), `-EFAULT` (-14), `-EINVAL` (-22), `-ENOEXEC` (-8), `-E2BIG` (-7), `-ENOMEM` (-12) | Espaço de endereçamento (CR3 comutado para novo PML4), registradores Ring 3 resetados, janelas/buffers JDA antigos limpos; mantém o mesmo PID e FDs abertos | `src/syscall.rs:185`, `src/scheduler.rs:456`, `apps/ola-mundo` |
 | **39** | `sys_spawn` | **Implementada** | `rdi: *const u8 (path)`, `rsi: *const *const u8 (argv)`, `rdx: *const *const u8 (envp)` | `i64` (novo PID > 0) | `-ENOENT` (-2), `-EACCES` (-13), `-EFAULT` (-14), `-EINVAL` (-22), `-ENOEXEC` (-8), `-E2BIG` (-7), `-ENOMEM` (-12), `-EMFILE` (-24) | Cria novo processo filho independente em Ring 3, novo PML4, nova pilha com `argc`, `argv`, `envp` | `src/syscall.rs:194`, `src/scheduler.rs:341`, `apps/ola-mundo` |
 | **40** | `sys_dns_resolve` | **Implementada** | `rdi: *const u8 (domain)`, `rsi: name_len (usize)`, `rdx: *mut u8 (out_ip_4bytes)` | `0` (sucesso) | `-ENOENT` (-2), `-EFAULT` (-14), `-EINVAL` (-22), `-ETIMEDOUT` (-110) | Placa VirtIO-Net, DNS UDP/53, Cache DNS do kernel, JinnWall SPI | `src/syscall.rs`, `src/net/dns.rs`, `apps/ola-mundo` |
+| **41** | `sys_statvfs` | **Implementada** | `rdi: *const u8 (path)`, `rsi: path_len (usize)`, `rdx: *mut FsStatUser` | `0` (sucesso) | `-ENOENT` (-2), `-EFAULT` (-14), `-EINVAL` (-22), `-EPERM` (-1) | Virtual Filesystem, métricas de capacidade e blocos livres (FAT32, Ext2, ramfs) | `src/syscall.rs`, `tools/elf-tests` |
+| **42** | `sys_disk_info` | **Implementada** | `rdi: disk_idx (usize)`, `rsi: *mut DiskInfoUser`, `rdx: unused (0)` | `0` (sucesso) | `-ENOENT` (-2), `-EFAULT` (-14), `-EINVAL` (-22) | `StorageManager`, geometria de disco físico, modelo, serial, setores totais | `src/syscall.rs`, `src/drivers/block.rs` |
+| **43** | `sys_mount` | **Implementada** | `rdi: *const u8 (prefix)`, `rsi: prefix_len (usize)`, `rdx: (disk_idx<<16)\|part_idx` | `0` (sucesso) | `-EINVAL` (-22), `-EFAULT` (-14), `-ENOENT` (-2), `-EIO` (-5), `-ENOSYS` (-38) | Montagem dinâmica VFS, auto-detecção via `PartitionScanner` e `FsProber` | `src/syscall.rs`, `src/vfs/mod.rs` |
+| **44** | `sys_unmount` | **Implementada** | `rdi: *const u8 (prefix)`, `rsi: prefix_len (usize)`, `rdx: unused (0)` | `0` (sucesso) | `-EINVAL` (-22), `-EFAULT` (-14), `-ENOENT` (-2), `-EBUSY` (-16), `-EIO` (-5) | Desmontagem VFS, sincronização de caches sujos (`sync`) | `src/syscall.rs`, `src/vfs/mod.rs` |
 
 ---
 
