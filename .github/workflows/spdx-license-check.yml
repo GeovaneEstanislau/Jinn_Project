@@ -1,0 +1,48 @@
+name: SPDX License Check
+
+on:
+  pull_request_target:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate-spdx:
+    name: Validate source file SPDX headers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out pull request files
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require dual-license SPDX headers on changed source files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          failed=0
+
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              *.rs|*.c|*.h|*.asm|*.s|*.S|*.py|*.sh) ;;
+              *) continue ;;
+            esac
+
+            if ! awk 'NR <= 10 && index($0, "SPDX-License-Identifier: GPL-2.0-only OR Jinn-Commercial-1.0") { found = 1 } END { exit !found }' "./$file"; then
+              echo "::error file=$file::Missing the required dual-license SPDX identifier in the first 10 lines."
+              failed=1
+            fi
+          done < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA" "$HEAD_SHA")
+
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
