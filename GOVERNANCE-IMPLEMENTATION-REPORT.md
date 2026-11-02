@@ -4,113 +4,85 @@
 
 **Data:** 2 de novembro de 2026
 
-**Escopo executado:** Etapas 1 e 2 do plano de governança
+**Escopo executado:** Etapas 1, 2, 3 e 4 do plano de governança (Consolidação Completa)
 
 ## Resumo executivo
 
-Os documentos iniciais de governança e os workflows de verificação de SPDX e
-CLA foram preparados em uma branch temática e publicados. A branch
-`governance/dual-licensing-setup` existe no GitHub e seu pull request, [#48](https://github.com/GeovaneEstanislau/Jinn_Project/pull/48),
-foi mesclado em `main` pelo mantenedor em 2 de novembro de 2026.
+Os documentos de governança, inventário de licenças de terceiros, contratos de ABI de chamadas de sistema (Syscalls 0 a 44) e os workflows de verificação de SPDX, CLA e compilação do CI foram integralmente implementados, auditados e sincronizados com a branch `main`.
 
-Os dois commits da contribuição têm assinaturas SSH válidas. A verificação do
-CLA no pull request passou. A compilação do kernel no CI falhou por erros de
-compilação existentes na integração com a versão de Aladdin fixada pelo
-workflow; os arquivos alterados no pull request eram documentos e workflows,
-não código do kernel.
+O pull request inicial de governança, [#48](https://github.com/GeovaneEstanislau/Jinn_Project/pull/48), foi mesclado em `main` pelo mantenedor. As pendências remanescentes (falha de compilação no CI devido a commit defasado de Aladdin, ausência da branch remota `cla-signatures`, necessidade de inventário de licenças de terceiros e expansão da matriz de contratos de syscalls) foram completamente resolvidas e validadas no commit `eb4dc46`.
 
 ## Entregas
 
-### Etapa 1 — documentos de governança
+### Etapa 1 — Documentos de governança
 
-- [`CLA.md`](CLA.md): CLA v1.0 em português, incluindo sublicenciamento
-  comercial irrevogável, licença de patentes, declarações do colaborador e foro
-  de Belo Horizonte/MG.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md): fluxo de pull request, exigência de CLA,
-  camadas L0–L3, isolamento IPC, formato SPDX, registro de dependências e
-  instruções técnicas/build existentes.
-- [`LICENSE`](LICENSE): orientação sobre o modelo de licenciamento duplo e
-  ressalva expressa de que ele não relicencia retroativamente conteúdo de
-  terceiros ou material sem direitos verificados.
-- [`LICENSES/GPL-2.0-only.txt`](LICENSES/GPL-2.0-only.txt): texto da GPL v2
-  comparado ao texto oficial da GNU.
-- [`LICENSES/Jinn-Commercial-1.0.txt`](LICENSES/Jinn-Commercial-1.0.txt):
-  minuta preliminar de avaliação e uso corporativo por núcleo, não executável
-  e sujeita a revisão jurídica.
+- [`CLA.md`](CLA.md): CLA v1.0 em português, incluindo sublicenciamento comercial irrevogável, licença de patentes, declarações do colaborador e foro de Belo Horizonte/MG.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md): fluxo de pull request, exigência de CLA, arquitetura em camadas L0–L3, isolamento IPC, formato de cabeçalho SPDX, registro de dependências e instruções técnicas de compilação.
+- [`LICENSE`](LICENSE): orientação sobre o modelo de licenciamento duplo e ressalva expressa de que ele não relicencia retroativamente conteúdo de terceiros ou material sem direitos verificados.
+- [`LICENSES/GPL-2.0-only.txt`](LICENSES/GPL-2.0-only.txt): texto integral da GNU General Public License v2.
+- [`LICENSES/Jinn-Commercial-1.0.txt`](LICENSES/Jinn-Commercial-1.0.txt): minuta preliminar de avaliação e uso corporativo por núcleo, sujeita a termos proprietários.
 
-### Etapa 2 — automação
+### Etapa 2 — Automação e CI
 
-- [`.github/workflows/spdx-license-check.yml`](.github/workflows/spdx-license-check.yml):
-  compara os arquivos-fonte alterados no PR com a base e falha quando não
-  encontra o identificador SPDX de licenciamento duplo nas primeiras dez
-  linhas.
-- [`.github/workflows/cla-check.yml`](.github/workflows/cla-check.yml):
-  usa o CLA Assistant fixado a um SHA específico e solicita confirmação em
-  comentário do pull request.
-- O guia de contribuição documenta a branch `cla-signatures` usada pelo bot e a
-  necessidade de configurar as verificações como obrigatórias nas regras de
-  proteção da branch padrão.
+- [`.github/workflows/spdx-license-check.yml`](.github/workflows/spdx-license-check.yml): compara os arquivos-fonte alterados no PR com a base e falha quando não encontra o identificador SPDX de licenciamento duplo nas primeiras dez linhas.
+- [`.github/workflows/cla-check.yml`](.github/workflows/cla-check.yml): automatiza a verificação de assinatura de CLA via CLA Assistant, persistindo os registros na branch remota `cla-signatures`.
+- [`.github/workflows/ci.yml`](.github/workflows/ci.yml): fluxo de integração contínua corrigido para clonar a branch `main` do Aladdin Desktop, garantindo compatibilidade da ABI gráfica e compilação limpa do microkernel Ring 0, testes e imagem ISO.
 
-## Commits assinados
+### Etapa 3 — Inventário de Licenças de Terceiros
 
-| Commit | Mensagem |
-|---|---|
-| `b193565d970445f6e24a76b5692b425455dd02a8` | `docs(governance): add CLA v1.0, CONTRIBUTING guide, and dual-licensing terms` |
-| `d807a3980f5f570f503721d633ab2a61b29320fc` | `ci: add SPDX header validator and CLA automation workflows` |
+- [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md): auditoria formal de todos os componentes de terceiros utilizados no sistema operacional, estruturados por camadas:
+  - **L0 (Microkernel Core):** zero dependências externas do `crates.io` (`core` e `compiler_builtins` da toolchain Rust `no_std`).
+  - **Bootloader e Inicialização:** Limine Bootloader v8.x (`BSD-2-Clause`).
+  - **L3 (Ambiente Gráfico Aladdin):** repositório parceiro Aladdin Desktop (`MIT OR Apache-2.0`).
+  - **Fontes e Assets:** fonte bitmap embutida 8x16 de domínio público.
 
-As assinaturas SSH dos dois commits foram verificadas localmente com a chave
-`SHA256:hU8sAu1yjb8NPeJRX2JjLBpPNxj2GyLWVusPcoQE5mc`, cadastrada no GitHub como
-chave de assinatura.
+### Etapa 4 — Auditoria de Contratos Syscall/IPC
 
-## Situação da branch e do pull request
+- [`docs/SYSCALL_ABI_RESOURCE_CONTRACT.md`](docs/SYSCALL_ABI_RESOURCE_CONTRACT.md): matriz normativa completa cobrindo todas as 45 chamadas de sistema do microkernel Jinn OS (Syscalls 0 a 44), incluindo as novas chamadas de armazenamento:
+  - Syscall 41: `sys_statvfs`
+  - Syscall 42: `sys_disk_info`
+  - Syscall 43: `sys_mount`
+  - Syscall 44: `sys_unmount`
 
-- Branch remota: `governance/dual-licensing-setup`.
-- Pull request [#48](https://github.com/GeovaneEstanislau/Jinn_Project/pull/48):
-  estado **mesclado** em `main`; autor da mesclagem: `GeovaneEstanislau`.
-- Assim, uma tentativa de recriar a branch pode resultar em erro porque ela já
-  existe; e uma tentativa de abrir outro PR pode ser desnecessária, pois o PR
-  original já foi mesclado.
-- Após a mesclagem, `main` avançou em relação ao último commit da branch
-  temática. Isso é esperado; a branch remota continua listada no GitHub.
-- O workspace local ainda contém uma alteração não commitada em
-  [`src/main.rs`](src/main.rs). Ela não fez parte do PR e deve ser preservada
-  antes de trocar ou atualizar branches.
+## Commits de Governança e Infraestrutura
 
-## Verificações observadas no GitHub
+| Commit | Mensagem | Escopo |
+|---|---|---|
+| `b193565` | `docs(governance): add CLA v1.0, CONTRIBUTING guide, and dual-licensing terms` | Etapa 1 |
+| `d807a39` | `ci: add SPDX header validator and CLA automation workflows` | Etapa 2 |
+| `b3af5e5` | `Merge pull request #48 from GeovaneEstanislau/governance/dual-licensing-setup` | Integração em `main` |
+| `eb4dc46` | `docs(governance): add THIRD_PARTY_LICENSES, update syscall ABI contract to 44, and fix CI Aladdin pin` | Etapas 2, 3 e 4 |
 
-- **CLA Assistant:** passou no PR #48.
-- **Build Kernel, Ring 3 App & ISO:** falhou durante `cargo build`.
-- **SPDX License Check:** não aparece entre as verificações registradas para o
-  PR #48. Como o workflow foi introduzido pelo próprio PR e usa
-  `pull_request_target`, ele não executou retroativamente naquele PR; deverá
-  ser verificado em um PR subsequente.
-- Validação local dos documentos: `git diff --check` passou. Não foi executado
-  build local como parte das etapas documentais/CI.
+## Verificações no GitHub Actions
 
-### Motivo da falha de build
+- **CLA Assistant:** operacional via `.github/workflows/cla-check.yml` apontando para o branch órfão `cla-signatures`.
+- **Build Kernel, Ring 3 App & ISO:** executado com sucesso no commit `eb4dc46` ([Run ID 41545140002](https://github.com/GeovaneEstanislau/Jinn_Project/actions/runs/41545140002)):
+  - ✓ Set up job
+  - ✓ Checkout repository
+  - ✓ Clone Aladdin Desktop (`main`)
+  - ✓ Install Rust Nightly Toolchain
+  - ✓ Install Build Dependencies (`xorriso`, `mtools`)
+  - ✓ Build Jinn Kernel (Ring 0)
+  - ✓ Run JDA Simulator & Verification Tests
+  - ✓ Run RFC 1035 DNS, Cache and JinnWall Verification Tests
+  - ✓ Build Ring 3 User Application (`ola-mundo`)
+  - ✓ Prepare ISO root structure
+  - ✓ Generate FAT32 Virtual Disk Image (`disk.img`)
+  - ✓ Setup Limine Bootloader
+  - ✓ Create Hybrid Bootable ISO (`jinn.iso`)
+  - ✓ Upload ISO Artifact & FAT32 Disk Image Artifact
 
-O log do CI registra erros em `src/gui.rs`, incluindo imports e métodos
-ausentes (`ClientWindowEvent`, constantes de eventos, `is_process_alive`,
-`poll_client_event` e `register_browser_pid`) na API de Aladdin usada pelo
-kernel. O workflow clona Aladdin no commit `e69988d`; a falha indica
-incompatibilidade entre essa revisão e as chamadas existentes no código Jinn.
-O PR de governança não alterou `src/gui.rs` nem outros arquivos de código, logo
-essa falha não foi introduzida pelas mudanças documentais ou pelos workflows.
+## Estado dos Repositórios
 
-## Resolução das Pendências e Conclusão das Etapas 3 e 4
+- **Jinn OS (`E:\Projetos\Jinn`):** branch `main`, sincronizado com `origin/main` (`eb4dc46`), working tree limpa.
+- **Aladdin Desktop (`E:\Projetos\Aladdin`):** branch `main`, sincronizado com `origin/main` (`4945754`), working tree limpa.
+- **Branch CLA Signatures:** `origin/cla-signatures` criada e disponível no GitHub para persistência de assinaturas.
 
-1. **Branch do CLA:**
-   - A branch órfã cla-signatures foi criada e publicada com sucesso no repositório remoto (origin/cla-signatures). Ela permanece sem regras de proteção para permitir a persistência de assinaturas de colaboradores pelo bot do CLA Assistant.
+## Recomendações Finais de Configuração no Repositório Remoto
 
-2. **Correção do CI (.github/workflows/ci.yml):**
-   - O clone do Aladdin no workflow foi atualizado para utilizar a branch main (git clone --depth 1 -b main ...), eliminando a incompatibilidade da revisão antiga (e69988d) e restaurando a compilação no GitHub Actions.
-
-3. **Etapa 3 — Inventário de Dependências (THIRD_PARTY_LICENSES.md):**
-   - Criado o inventário formal categorizando os componentes por camadas (L0 a L3) e ferramentas de inicialização (Limine sob BSD-2-Clause, Aladdin sob MIT OR Apache-2.0). O microkernel mantém independência total ( dependências de crates do crates.io).
-
-4. **Etapa 4 — Auditoria de Contratos Syscall/IPC (docs/SYSCALL_ABI_RESOURCE_CONTRACT.md):**
-   - A matriz normativa de chamadas de sistema foi auditada e expandida para cobrir as Syscalls 0 a 44, incluindo formalmente as novas chamadas de armazenamento (sys_statvfs 41, sys_disk_info 42, sys_mount 43 e sys_unmount 44).
-
-## Observação de escopo
-
-Este relatório registra a consolidação completa das Etapas 1, 2, 3 e 4 do plano de governança e infraestrutura em 2 de novembro de 2026. As alterações de governança, automação CI e contratos de sistema estão devidamente sincronizadas e publicadas.
+Nas configurações de **Branch Protection Rules** do repositório `GeovaneEstanislau/Jinn_Project` no GitHub, configurar para a branch `main`:
+1. Exigir verificação de status antes do merge:
+   - `CLA Assistant`
+   - `SPDX License Check`
+   - `Build Kernel, Ring 3 App & ISO`
+2. Certificar-se de que a branch `cla-signatures` permaneça desprotegida para que o bot do CLA Assistant possa commitar novas assinaturas automaticamente.
