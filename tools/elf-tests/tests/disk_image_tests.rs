@@ -351,3 +351,50 @@ fn test_ext2_partition_superblock() {
     let volume_name = String::from_utf8_lossy(&sb[120..136]);
     assert!(volume_name.starts_with("JINN_EXT2_VOL"), "Nome do volume Ext2 inesperado: {}", volume_name);
 }
+
+#[test]
+fn test_filesystem_probing_signatures_fat32_and_ext2() {
+    let disk_path = ensure_disk_image();
+    let mut file = File::open(&disk_path).expect("Não foi possível abrir disk.img");
+
+    // Partição 1: LBA 2048 -> FAT32 BPB signatures
+    let p1_offset = 2048 * 512;
+    file.seek(SeekFrom::Start(p1_offset)).unwrap();
+    let mut p1_sec0 = [0u8; 512];
+    file.read_exact(&mut p1_sec0).unwrap();
+    assert_eq!(p1_sec0[510], 0x55);
+    assert_eq!(p1_sec0[511], 0xAA);
+    let fat32_type_label = &p1_sec0[82..90];
+    assert_eq!(fat32_type_label, b"FAT32   ");
+
+    // Partição 2: LBA 65536 -> Ext2 Superblock magic 0xEF53
+    let p2_offset = 65536 * 512;
+    file.seek(SeekFrom::Start(p2_offset + 1024)).unwrap();
+    let mut p2_sb = [0u8; 1024];
+    file.read_exact(&mut p2_sb).unwrap();
+    let magic = u16::from_le_bytes([p2_sb[56], p2_sb[57]]);
+    assert_eq!(magic, 0xEF53, "Assinatura Ext2 esperada 0xEF53");
+}
+
+#[test]
+fn test_ext2_write_capacity_and_direct_blocks_invariants() {
+    let disk_path = ensure_disk_image();
+    let mut file = File::open(&disk_path).expect("Não foi possível abrir disk.img");
+    let p2_offset = 65536 * 512;
+    file.seek(SeekFrom::Start(p2_offset + 1024)).unwrap();
+    let mut sb = [0u8; 1024];
+    file.read_exact(&mut sb).unwrap();
+
+    let total_blocks = u32::from_le_bytes(sb[4..8].try_into().unwrap());
+    let free_blocks = u32::from_le_bytes(sb[12..16].try_into().unwrap());
+    let log_block_size = u32::from_le_bytes(sb[24..28].try_into().unwrap());
+    let block_size = 1024u64 << log_block_size;
+
+    assert!(total_blocks > 0, "Ext2 total_blocks deve ser maior que 0");
+    assert!(free_blocks <= total_blocks, "free_blocks não pode exceder total_blocks");
+    assert_eq!(block_size, 1024, "Ext2 block size padronizado em 1024 bytes");
+
+    // 12 blocos diretos (0..11) suportam até 12 * 1024 = 12288 bytes
+    let max_direct_capacity = 12 * block_size;
+    assert_eq!(max_direct_capacity, 12288, "Capacidade direta de blocos Ext2 deve ser 12 KiB");
+}

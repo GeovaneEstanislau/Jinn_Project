@@ -400,3 +400,44 @@ pub unsafe fn sys_execve(path: *const u8, argv: *const *const u8, envp: *const *
 pub unsafe fn sys_spawn_process(path: *const u8, argv: *const *const u8, envp: *const *const u8) -> i64 {
     syscall3(39, path as u64, argv as u64, envp as u64)
 }
+
+// ── Syscall 40 — dns_resolve ──────────────────────────────────────────────────
+
+/// Resolve um nome de domínio de internet (FQDN) para um endereço IPv4 (4 bytes).
+#[inline(always)]
+pub unsafe fn sys_dns_resolve(name_ptr: *const u8, name_len: usize, out_ip_ptr: *mut u8) -> i64 {
+    syscall3(40, name_ptr as u64, name_len as u64, out_ip_ptr as u64)
+}
+
+// ── Syscall 41 — statvfs ──────────────────────────────────────────────────────
+
+/// Obtém métricas e capacidade de armazenamento do filesystem montado em `path`.
+#[inline(always)]
+pub unsafe fn sys_statvfs(path_ptr: *const u8, path_len: usize, out_stat: *mut crate::syscall::FsStatUser) -> i64 {
+    syscall3(41, path_ptr as u64, path_len as u64, out_stat as u64)
+}
+
+// ── Syscall 42 — disk_info ────────────────────────────────────────────────────
+
+/// Obtém informações sobre um disco de armazenamento físico indexado por `disk_idx`.
+#[inline(always)]
+pub unsafe fn sys_disk_info(disk_idx: usize, out_info: *mut crate::syscall::DiskInfoUser) -> i64 {
+    syscall3(42, disk_idx as u64, out_info as u64, 0)
+}
+
+// ── Syscall 43 — mount ────────────────────────────────────────────────────────
+
+/// Monta dinamicamente a partição `part_idx` do disco `disk_idx` no prefixo VFS especificado.
+#[inline(always)]
+pub unsafe fn sys_mount(prefix_ptr: *const u8, prefix_len: usize, disk_idx: usize, part_idx: usize) -> i64 {
+    let disk_and_part = ((disk_idx as u64 & 0xFFFF) << 16) | (part_idx as u64 & 0xFFFF);
+    syscall3(43, prefix_ptr as u64, prefix_len as u64, disk_and_part)
+}
+
+// ── Syscall 44 — unmount ──────────────────────────────────────────────────────
+
+/// Desmonta o sistema de arquivos registrado no prefixo VFS especificado.
+#[inline(always)]
+pub unsafe fn sys_unmount(prefix_ptr: *const u8, prefix_len: usize) -> i64 {
+    syscall3(44, prefix_ptr as u64, prefix_len as u64, 0)
+}

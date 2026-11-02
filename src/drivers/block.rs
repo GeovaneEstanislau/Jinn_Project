@@ -561,3 +561,120 @@ pub fn periodic_flush_check() {
         let _ = flush_primary_cache();
     }
 }
+
+// ── Storage Device Manager (L1) ───────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageKind {
+    Unknown,
+    AtaDisk,
+    AtapiCdrom,
+    VirtioBlk,
+    RamDisk,
+    Removable,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct StorageDeviceInfo {
+    pub id: usize,
+    pub name: [u8; 32],
+    pub name_len: usize,
+    pub kind: StorageKind,
+    pub sector_size: usize,
+    pub total_sectors: u64,
+    pub size_mb: u64,
+    pub is_read_only: bool,
+    pub is_removable: bool,
+    pub model: [u8; 40],
+    pub serial: [u8; 20],
+}
+
+impl StorageDeviceInfo {
+    pub const fn empty() -> Self {
+        Self {
+            id: 0,
+            name: [0; 32],
+            name_len: 0,
+            kind: StorageKind::AtaDisk,
+            sector_size: 512,
+            total_sectors: 0,
+            size_mb: 0,
+            is_read_only: false,
+            is_removable: false,
+            model: [b' '; 40],
+            serial: [b' '; 20],
+        }
+    }
+}
+
+pub const MAX_STORAGE_DISKS: usize = 8;
+
+pub struct StorageManager {
+    pub disks: [Option<StorageDeviceInfo>; MAX_STORAGE_DISKS],
+    pub count: usize,
+    pub boot_disk_idx: Option<usize>,
+}
+
+impl StorageManager {
+    pub const fn new() -> Self {
+        Self {
+            disks: [None; MAX_STORAGE_DISKS],
+            count: 0,
+            boot_disk_idx: None,
+        }
+    }
+
+    /// Varre canais IDE primário e secundário (0..2) descobrindo discos e unidades ópticas
+    pub fn probe_devices(&mut self) {
+        self.count = 0;
+        self.boot_disk_idx = None;
+
+        // Procura canais IDE: 0 (Primary Master), 1 (Primary Slave)
+        for drive_id in 0..2u8 {
+            if let Ok(info) = ide::identify(drive_id) {
+                let mut dev = StorageDeviceInfo::empty();
+                dev.id = self.count;
+                let prefix: &[u8] = if drive_id == 0 { b"ide0 (Master)" } else { b"ide1 (Slave)" };
+                dev.name[..prefix.len()].copy_from_slice(prefix);
+                dev.name_len = prefix.len();
+                dev.kind = if info.is_atapi { StorageKind::AtapiCdrom } else { StorageKind::AtaDisk };
+                dev.sector_size = DEFAULT_SECTOR_SIZE;
+                dev.total_sectors = info.sectors_lba28 as u64;
+                dev.size_mb = (info.sectors_lba28 as u64 * DEFAULT_SECTOR_SIZE as u64) / (1024 * 1024);
+                dev.is_read_only = info.is_atapi;
+                dev.is_removable = info.is_atapi;
+                dev.model = info.model;
+                dev.serial = info.serial;
+
+                if self.boot_disk_idx.is_none() && !info.is_atapi && dev.total_sectors > 0 {
+                    self.boot_disk_idx = Some(self.count);
+                }
+
+                if self.count < MAX_STORAGE_DISKS {
+                    self.disks[self.count] = Some(dev);
+                    self.count += 1;
+                }
+            }
+        }
+    }
+
+    pub fn get_disk(&self, idx: usize) -> Option<&StorageDeviceInfo> {
+        if idx < self.count {
+            self.disks[idx].as_ref()
+        } else {
+            None
+        }
+    }
+
+    pub fn disk_count(&self) -> usize {
+        self.count
+    }
+}
+
+pub static STORAGE_MANAGER: crate::memory::SpinLock<StorageManager> = crate::memory::SpinLock::new(StorageManager::new());
+
+/// Inicializa e realiza a descoberta de dispositivos de armazenamento físicos
+pub fn init_storage_manager() {
+    let mut mgr = STORAGE_MANAGER.lock();
+    mgr.probe_devices();
+}

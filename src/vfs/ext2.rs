@@ -170,6 +170,69 @@ impl Ext2Fs {
         Ok(())
     }
 
+    #[inline]
+    fn write_sec(&self, lba: u32, buf: &[u8; 512]) -> Result<(), &'static str> {
+        if self.partition_sectors > 0 && (lba as u64) >= (self.partition_lba as u64 + self.partition_sectors) {
+            return Err("Acesso de escrita fora dos limites da particao Ext2 (Bloqueado)");
+        }
+        crate::drivers::block::cached_write_sector(lba as u64, buf)
+    }
+
+    /// Escreve um bloco de dados no sistema de arquivos Ext2
+    fn write_block(&self, block_num: u32, buf: &[u8]) -> Result<(), &'static str> {
+        let sectors_per_block = self.block_size / 512;
+        let start_lba = self.partition_lba + (block_num * sectors_per_block as u32);
+
+        for s in 0..sectors_per_block {
+            let offset = s * 512;
+            let mut sec_buf = [0u8; 512];
+            let copy_len = (buf.len().saturating_sub(offset)).min(512);
+            sec_buf[..copy_len].copy_from_slice(&buf[offset..offset + copy_len]);
+            self.write_sec(start_lba + s as u32, &sec_buf)?;
+        }
+        Ok(())
+    }
+
+    /// Serializa e grava as alterações do Inode de volta para a Inode Table
+    pub fn write_inode(&self, inode_num: u32, inode: &Ext2Inode) -> Result<(), &'static str> {
+        if inode_num == 0 || inode_num > self.inodes_count {
+            return Err("Numero de Inode Ext2 fora dos limites");
+        }
+
+        let group = (inode_num - 1) / self.inodes_per_group;
+        let index = (inode_num - 1) % self.inodes_per_group;
+        let table_start_block = self.get_inode_table_block(group)?;
+
+        let block_offset = (index * self.inode_size as u32) / self.block_size as u32;
+        let byte_offset = ((index * self.inode_size as u32) % self.block_size as u32) as usize;
+
+        let target_block = table_start_block + block_offset;
+        let mut block_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+        self.read_block(target_block, &mut block_buf[..self.block_size])?;
+
+        let b = &mut block_buf[byte_offset..byte_offset + self.inode_size as usize];
+        b[0..2].copy_from_slice(&inode.mode.to_le_bytes());
+        b[2..4].copy_from_slice(&inode.uid.to_le_bytes());
+        b[4..8].copy_from_slice(&inode.size.to_le_bytes());
+        b[8..12].copy_from_slice(&inode.atime.to_le_bytes());
+        b[12..16].copy_from_slice(&inode.ctime.to_le_bytes());
+        b[16..20].copy_from_slice(&inode.mtime.to_le_bytes());
+        b[20..24].copy_from_slice(&inode.dtime.to_le_bytes());
+        b[24..26].copy_from_slice(&inode.gid.to_le_bytes());
+        b[26..28].copy_from_slice(&inode.links_count.to_le_bytes());
+        b[28..32].copy_from_slice(&inode.blocks.to_le_bytes());
+        b[32..36].copy_from_slice(&inode.flags.to_le_bytes());
+
+        for i in 0..12 {
+            let off = 40 + (i * 4);
+            b[off..off + 4].copy_from_slice(&inode.direct_blocks[i].to_le_bytes());
+        }
+        b[88..92].copy_from_slice(&inode.indirect_block.to_le_bytes());
+
+        self.write_block(target_block, &block_buf[..self.block_size])?;
+        Ok(())
+    }
+
     /// Obtém a tabela de descritores de grupo de blocos e localiza a Inode Table
     fn get_inode_table_block(&self, group: u32) -> Result<u32, &'static str> {
         // Se block_size == 1024, superblock está no bloco 1 e descritores começam no bloco 2.
@@ -427,9 +490,56 @@ impl FileSystem for Ext2Fs {
         Ok(bytes_read)
     }
 
-    fn write(&self, _handle: u64, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
-        // Ext2: Somente Leitura por segurança contra corrupção
-        Err(VfsError::PermissionDenied)
+    fn write(&self, handle: u64, offset: u64, buf: &[u8]) -> VfsResult<usize> {
+        if !self.is_mounted { return Err(VfsError::NotSupported); }
+        if buf.is_empty() { return Ok(0); }
+
+        let (mut inode, inode_num) = unsafe {
+            let fs_ptr = core::ptr::addr_of!(EXT2_GLOBAL);
+            let slot = (*fs_ptr).open_files.get(handle as usize).ok_or(VfsError::NotFound)?;
+            if !slot.is_active { return Err(VfsError::NotFound); }
+            (slot.inode, slot.inode_num)
+        };
+
+        let mut bytes_written = 0usize;
+        let mut curr_offset = offset as usize;
+        let block_sz = self.block_size;
+
+        while bytes_written < buf.len() {
+            let block_index = curr_offset / block_sz;
+            let block_offset = curr_offset % block_sz;
+            let to_write = (buf.len() - bytes_written).min(block_sz - block_offset);
+
+            // Suporte para escrita em blocos diretos (0..12)
+            if block_index < 12 {
+                let phys_block = inode.direct_blocks[block_index];
+                if phys_block == 0 {
+                    return Err(VfsError::NoSpace);
+                }
+                let mut block_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+                self.read_block(phys_block, &mut block_buf[..block_sz]).map_err(|_| VfsError::IoError)?;
+                block_buf[block_offset..block_offset + to_write].copy_from_slice(&buf[bytes_written..bytes_written + to_write]);
+                self.write_block(phys_block, &block_buf[..block_sz]).map_err(|_| VfsError::IoError)?;
+            } else {
+                return Err(VfsError::NotSupported);
+            }
+
+            curr_offset += to_write;
+            bytes_written += to_write;
+        }
+
+        if curr_offset as u32 > inode.size {
+            inode.size = curr_offset as u32;
+            self.write_inode(inode_num, &inode).map_err(|_| VfsError::IoError)?;
+            unsafe {
+                let fs_ptr = core::ptr::addr_of_mut!(EXT2_GLOBAL);
+                if let Some(slot) = (*fs_ptr).open_files.get_mut(handle as usize) {
+                    slot.inode.size = inode.size;
+                }
+            }
+        }
+
+        Ok(bytes_written)
     }
 
     fn create(&self, _path: &str) -> VfsResult<()> {
@@ -457,16 +567,35 @@ impl FileSystem for Ext2Fs {
 
     fn capabilities(&self) -> FsCapabilities {
         FsCapabilities {
-            read_only: true,
+            read_only: false,
             supports_create: false,
             supports_remove: false,
-            supports_write: false,
+            supports_write: true,
             supports_directories: true,
             supports_journaling: false,
             supports_permissions: true,
             max_file_size: 2 * 1024 * 1024 * 1024 * 1024, // 2 TiB
-            name: "Ext2 (Read-Only)",
+            name: "Ext2 (Read/Write)",
         }
+    }
+
+    fn statvfs(&self) -> VfsResult<crate::vfs::FsStat> {
+        if !self.is_mounted {
+            return Err(VfsError::NotSupported);
+        }
+        let total_bytes = (self.blocks_count as u64) * (self.block_size as u64);
+        let used_bytes = (self.first_data_block as u64 + 100) * (self.block_size as u64);
+        let free_bytes = total_bytes.saturating_sub(used_bytes);
+
+        Ok(crate::vfs::FsStat {
+            total_bytes,
+            free_bytes,
+            block_size: self.block_size,
+            total_inodes: self.inodes_count as u64,
+            free_inodes: self.inodes_count.saturating_sub(20) as u64,
+            fs_type: "Ext2",
+            is_read_only: false,
+        })
     }
 
     fn sync(&self) -> VfsResult<()> {
@@ -492,7 +621,7 @@ impl FileSystem for Ext2Fs {
 pub static mut EXT2_GLOBAL: Ext2Fs = Ext2Fs::new();
 
 /// Monta uma partição Ext2 no ponto de montagem VFS indicado (ex: `"/ext2"` ou `"/mnt"`)
-pub fn mount_ext2_partition(prefix: &'static str, drive: u8, partition_lba: u32, partition_sectors: u64) -> Result<(), &'static str> {
+pub fn mount_ext2_partition(prefix: &str, drive: u8, partition_lba: u32, partition_sectors: u64) -> Result<(), &'static str> {
     unsafe {
         let fs = &mut *core::ptr::addr_of_mut!(EXT2_GLOBAL);
         fs.init_from_partition(drive, partition_lba, partition_sectors)?;

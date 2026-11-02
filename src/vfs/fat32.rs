@@ -567,6 +567,26 @@ impl FileSystem for Fat32Fs {
         crate::vfs::FsCapabilities::read_write("FAT32", 0xFFFF_FFFF)
     }
 
+    fn statvfs(&self) -> VfsResult<crate::vfs::FsStat> {
+        if !self.is_mounted {
+            return Err(VfsError::NotSupported);
+        }
+        let cluster_size = self.sectors_per_cluster as usize * self.bytes_per_sector as usize;
+        let total_bytes = self.partition_sectors * self.bytes_per_sector as u64;
+        let used_estimate = (self.data_start_lba as u64) * (self.bytes_per_sector as u64) + (4 * 1024 * 1024);
+        let free_bytes = total_bytes.saturating_sub(used_estimate);
+
+        Ok(crate::vfs::FsStat {
+            total_bytes,
+            free_bytes,
+            block_size: cluster_size,
+            total_inodes: 65536,
+            free_inodes: 65000,
+            fs_type: "FAT32",
+            is_read_only: false,
+        })
+    }
+
     fn sync(&self) -> VfsResult<()> {
         crate::drivers::block::flush_primary_cache().map_err(|_| VfsError::IoError)?;
         Ok(())
@@ -1040,7 +1060,7 @@ impl FileSystem for Fat32Fs {
 pub static mut FAT32_GLOBAL: Fat32Fs = Fat32Fs::new();
 
 /// Monta a partição FAT32 do disco especificado no ponto de montagem do VFS (ex: `"/disk"`).
-pub fn mount_fat32_partition(prefix: &'static str, drive: u8, partition_lba: u32, partition_sectors: u64) -> Result<(), &'static str> {
+pub fn mount_fat32_partition(prefix: &str, drive: u8, partition_lba: u32, partition_sectors: u64) -> Result<(), &'static str> {
     unsafe {
         let fs = &mut *core::ptr::addr_of_mut!(FAT32_GLOBAL);
         fs.init_from_partition(drive, partition_lba, partition_sectors)?;

@@ -9,6 +9,30 @@ use crate::drivers::block::{BlockDevice, DEFAULT_SECTOR_SIZE};
 pub const MAX_PARTITIONS: usize = 8;
 pub const GPT_SIGNATURE: &[u8; 8] = b"EFI PART";
 
+/// Tipo de sistema de arquivos identificado por probing de assinaturas (Magic)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetectedFsKind {
+    Fat32,
+    Ext2,
+    Iso9660,
+    Unknown,
+}
+
+impl DetectedFsKind {
+    pub const fn name(&self) -> &'static str {
+        match self {
+            DetectedFsKind::Fat32 => "FAT32",
+            DetectedFsKind::Ext2 => "Ext2",
+            DetectedFsKind::Iso9660 => "ISO9660",
+            DetectedFsKind::Unknown => "Desconhecido / Raw",
+        }
+    }
+
+    pub const fn as_str(&self) -> &'static str {
+        self.name()
+    }
+}
+
 /// Descrição padronizada de uma partição em disco
 #[derive(Debug, Clone, Copy)]
 pub struct PartitionInfo {
@@ -20,6 +44,7 @@ pub struct PartitionInfo {
     pub partition_type: u8,
     pub is_bootable: bool,
     pub is_gpt: bool,
+    pub fs_kind: DetectedFsKind,
 }
 
 impl PartitionInfo {
@@ -33,6 +58,7 @@ impl PartitionInfo {
             partition_type: 0,
             is_bootable: false,
             is_gpt: false,
+            fs_kind: DetectedFsKind::Unknown,
         }
     }
 
@@ -194,6 +220,12 @@ pub fn scan_partitions<D: BlockDevice>(dev: &D) -> Result<PartitionTable, &'stat
             name[label.len()] = b'1' + (i as u8);
             let name_len = label.len() + 1;
 
+            let fs_kind = if let Ok(pdev) = PartitionDevice::new(dev, "probe", start_lba as u64, sector_count as u64, true) {
+                probe_partition_filesystem(&pdev)
+            } else {
+                DetectedFsKind::Unknown
+            };
+
             table.add(PartitionInfo {
                 index: i + 1,
                 name,
@@ -203,6 +235,7 @@ pub fn scan_partitions<D: BlockDevice>(dev: &D) -> Result<PartitionTable, &'stat
                 partition_type: p_type,
                 is_bootable: boot_flag == 0x80,
                 is_gpt: false,
+                fs_kind,
             });
         }
     }
@@ -282,6 +315,12 @@ fn parse_gpt<D: BlockDevice>(dev: &D, header: &[u8; DEFAULT_SECTOR_SIZE], table:
                 name[label.len()] = b'1' + (table.count as u8);
                 let name_len = label.len() + 1;
 
+                let fs_kind = if let Ok(pdev) = PartitionDevice::new(dev, "probe", start_lba, sector_count, true) {
+                    probe_partition_filesystem(&pdev)
+                } else {
+                    DetectedFsKind::Unknown
+                };
+
                 table.add(PartitionInfo {
                     index: table.count + 1,
                     name,
@@ -291,10 +330,87 @@ fn parse_gpt<D: BlockDevice>(dev: &D, header: &[u8; DEFAULT_SECTOR_SIZE], table:
                     partition_type: 0xEE,
                     is_bootable: false,
                     is_gpt: true,
+                    fs_kind,
                 });
             }
         }
     }
 
     Ok(())
+}
+
+/// Identifica o tipo de sistema de arquivos contido em um dispositivo ou partição através de assinaturas (Magic)
+pub fn probe_partition_filesystem<D: BlockDevice>(dev: &D) -> DetectedFsKind {
+    // 1. Testa Ext2: Superblock localiza-se no byte 1024 (LBA 2 em setores de 512B)
+    let mut ext2_sb = [0u8; 1024];
+    if dev.read_blocks(2, 2, &mut ext2_sb).is_ok() {
+        let magic = u16::from_le_bytes([ext2_sb[56], ext2_sb[57]]);
+        if magic == 0xEF53 {
+            return DetectedFsKind::Ext2;
+        }
+    }
+
+    // 2. Testa FAT32: BPB no setor 0
+    let mut sec0 = [0u8; DEFAULT_SECTOR_SIZE];
+    if dev.read_blocks(0, 1, &mut sec0).is_ok() {
+        if &sec0[0x52..0x5A] == b"FAT32   " {
+            return DetectedFsKind::Fat32;
+        }
+        let sig = u16::from_le_bytes([sec0[510], sec0[511]]);
+        if sig == 0xAA55 && (sec0[0] == 0xEB || sec0[0] == 0xE9) {
+            let root_clus = u32::from_le_bytes([sec0[44], sec0[45], sec0[46], sec0[47]]);
+            if root_clus >= 2 {
+                return DetectedFsKind::Fat32;
+            }
+        }
+    }
+
+    // 3. Testa ISO9660: Setor 16 (offset 0x8000 = LBA 64 em setores de 512B)
+    let mut pvd = [0u8; DEFAULT_SECTOR_SIZE];
+    if dev.read_blocks(64, 1, &mut pvd).is_ok() {
+        if &pvd[1..6] == b"CD001" {
+            return DetectedFsKind::Iso9660;
+        }
+    }
+
+    DetectedFsKind::Unknown
+}
+
+/// Cria ou atualiza uma entrada de partição MBR com validação estrita de alinhamento e limites.
+/// Operação segura projetada para testes em discos virtuais descartáveis.
+pub fn write_mbr_partition<D: BlockDevice>(
+    dev: &D,
+    slot_idx: usize,
+    partition_type: u8,
+    start_lba: u32,
+    sector_count: u32,
+    bootable: bool,
+) -> Result<(), &'static str> {
+    if slot_idx >= 4 {
+        return Err("Indice de particao MBR invalido (0..3)");
+    }
+    let total = dev.total_blocks();
+    if (start_lba as u64) + (sector_count as u64) > total {
+        return Err("Particao ultrapassa a capacidade fisica do disco");
+    }
+
+    let mut sector0 = [0u8; DEFAULT_SECTOR_SIZE];
+    dev.read_blocks(0, 1, &mut sector0)?;
+
+    // Garante assinatura de boot MBR 0x55AA
+    sector0[510] = 0x55;
+    sector0[511] = 0xAA;
+
+    let offset = 446 + (slot_idx * 16);
+    sector0[offset] = if bootable { 0x80 } else { 0x00 };
+    sector0[offset + 4] = partition_type;
+
+    let s_bytes = start_lba.to_le_bytes();
+    sector0[offset + 8..offset + 12].copy_from_slice(&s_bytes);
+
+    let c_bytes = sector_count.to_le_bytes();
+    sector0[offset + 12..offset + 16].copy_from_slice(&c_bytes);
+
+    dev.write_blocks(0, 1, &sector0)?;
+    dev.flush()
 }

@@ -88,7 +88,7 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         "aladdin" | "gui" | "desktop" | "startx" => cmd_gui(w),
 
         // ── Armazenamento / Discos ─────────────────────────────────────────────
-        "disk" | "disks" | "ata" => cmd_disk(w),
+        "disk" | "ata" => cmd_disk(w),
         "bdev" => cmd_bdev(w),
         "storage" | "jsa" => cmd_storage(w, args),
         "sync" | "flush" => cmd_sync(w),
@@ -103,6 +103,7 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         "touch" => cmd_touch(w, args),
         "rm" | "del" => cmd_rm(w, args),
         "df" => cmd_df(w),
+        "disks" | "drives" => cmd_disks(w),
         "mounts" => cmd_mounts(w),
         "fsinfo" => cmd_fsinfo(w, args),
         "mount_fat" => cmd_mount_fat(w, args),
@@ -973,41 +974,140 @@ fn cmd_df(w: &mut Writer) {
     w.set_color(Color::Yellow, Color::Black);
     w.write_line("=== Sistemas de Arquivos e Volumes Montados (VFS) ===");
     w.set_color(Color::LightGray, Color::Black);
-    w.write_line("  Ponto     Tipo    Tamanho    Usado    Livre    Uso%  Estado");
-    w.write_line("  ─────────────────────────────────────────────────────────────");
+    w.write_line("  Ponto     Tipo            Tamanho    Usado    Livre    Estado");
+    w.write_line("  -------------------------------------------------------------");
 
-    crate::vfs::list_mounts(|prefix, fs_name| {
+    crate::vfs::list_mounts(|prefix, _fs_name| {
         w.write_string("  ");
         w.set_color(Color::LightCyan, Color::Black);
         w.write_string(prefix);
         let pad = 10usize.saturating_sub(prefix.len());
         for _ in 0..pad { w.write_byte(b' '); }
 
-        w.set_color(Color::White, Color::Black);
-        w.write_string(fs_name);
-        let pad2 = 8usize.saturating_sub(fs_name.len());
-        for _ in 0..pad2 { w.write_byte(b' '); }
+        if let Ok(st) = crate::vfs::statvfs(prefix) {
+            w.set_color(Color::White, Color::Black);
+            w.write_string(st.fs_type);
+            let pad2 = 16usize.saturating_sub(st.fs_type.len());
+            for _ in 0..pad2 { w.write_byte(b' '); }
 
-        w.set_color(Color::LightGray, Color::Black);
-        match fs_name {
-            "ramfs" => {
-                w.write_line("512 KB     16 KB    496 KB    3%  RW (Memoria)");
+            w.set_color(Color::LightGray, Color::Black);
+            let total_kb = st.total_bytes / 1024;
+            let free_kb = st.free_bytes / 1024;
+            let used_kb = total_kb.saturating_sub(free_kb);
+
+            if total_kb >= 1024 {
+                w.write_decimal((total_kb / 1024) as usize);
+                w.write_string(" MB     ");
+            } else {
+                w.write_decimal(total_kb as usize);
+                w.write_string(" KB     ");
             }
-            "fat32" => {
-                w.write_line("31 MB       2 MB     29 MB    6%  RW (IDE hd0)");
+
+            if used_kb >= 1024 {
+                w.write_decimal((used_kb / 1024) as usize);
+                w.write_string(" MB     ");
+            } else {
+                w.write_decimal(used_kb as usize);
+                w.write_string(" KB     ");
             }
-            "ext2" => {
-                w.write_line("64 MB       4 MB     60 MB    6%  RO (Linux POSIX)");
+
+            if free_kb >= 1024 {
+                w.write_decimal((free_kb / 1024) as usize);
+                w.write_string(" MB    ");
+            } else {
+                w.write_decimal(free_kb as usize);
+                w.write_string(" KB    ");
             }
-            _ => {
-                w.write_line("Desconhecido");
+
+            if st.is_read_only {
+                w.set_color(Color::LightRed, Color::Black);
+                w.write_line("RO");
+            } else {
+                w.set_color(Color::LightGreen, Color::Black);
+                w.write_line("RW");
             }
+        } else {
+            w.set_color(Color::DarkGray, Color::Black);
+            w.write_line("Desconhecido");
         }
     });
 
     w.set_color(Color::LightGray, Color::Black);
 }
 
+/// disks - Lista os dispositivos de armazenamento fisico e particoes detectadas.
+fn cmd_disks(w: &mut Writer) {
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_line("=== Dispositivos de Armazenamento Fisico (StorageManager) ===");
+    w.set_color(Color::LightGray, Color::Black);
+
+    let mgr = crate::drivers::block::STORAGE_MANAGER.lock();
+    if mgr.count == 0 {
+        w.write_line("  Nenhum dispositivo de armazenamento detectado.");
+        return;
+    }
+
+    for i in 0..mgr.count {
+        if let Some(dev) = mgr.get_disk(i) {
+            w.set_color(Color::LightCyan, Color::Black);
+            w.write_string("  [Disco ");
+            w.write_decimal(dev.id);
+            w.write_string("] ");
+            let name_str = core::str::from_utf8(&dev.name[..dev.name_len]).unwrap_or("Desconhecido");
+            w.write_string(name_str);
+            if mgr.boot_disk_idx == Some(i) {
+                w.set_color(Color::LightGreen, Color::Black);
+                w.write_string(" (BOOT)");
+            }
+            w.write_line("");
+
+            w.set_color(Color::LightGray, Color::Black);
+            w.write_string("    Tipo: ");
+            w.write_string(match dev.kind {
+                crate::drivers::block::StorageKind::AtaDisk => "Disco Rigido ATA / IDE",
+                crate::drivers::block::StorageKind::AtapiCdrom => "Unidade Optica ATAPI CD-ROM",
+                crate::drivers::block::StorageKind::VirtioBlk => "VirtIO Block Device",
+                crate::drivers::block::StorageKind::RamDisk => "Disco Virtual RAM",
+                crate::drivers::block::StorageKind::Removable => "Midia Removivel",
+                crate::drivers::block::StorageKind::Unknown => "Desconhecido",
+            });
+            w.write_string(" | Capacidade: ");
+            w.write_decimal(dev.size_mb as usize);
+            w.write_string(" MB (");
+            w.write_decimal(dev.total_sectors as usize);
+            w.write_line(" setores)");
+
+            let model_str = core::str::from_utf8(&dev.model).unwrap_or("").trim();
+            if !model_str.is_empty() {
+                w.write_string("    Modelo: ");
+                w.write_string(model_str);
+                w.write_line("");
+            }
+
+            if let Ok(ide_dev) = crate::drivers::block::IdeBlockDevice::new(i as u8) {
+                if let Ok(table) = crate::drivers::partition::scan_partitions(&ide_dev) {
+                    for p in table.partitions.iter().flatten() {
+                        w.write_string("      - Particao ");
+                        w.write_decimal(p.index);
+                        w.write_string(": LBA ");
+                        w.write_decimal(p.start_lba as usize);
+                        w.write_string("..");
+                        w.write_decimal((p.start_lba + p.sector_count) as usize);
+                        w.write_string(" (");
+                        w.write_decimal(p.size_mb() as usize);
+                        w.write_string(" MB) [");
+                        w.write_string(p.fs_kind.as_str());
+                        w.write_string("]");
+                        if p.is_bootable {
+                            w.write_string(" *Ativa");
+                        }
+                        w.write_line("");
+                    }
+                }
+            }
+        }
+    }
+}
 /// `mounts` — Lista pontos de montagem no VFS.
 fn cmd_mounts(w: &mut Writer) {
     w.set_color(Color::Yellow, Color::Black);
@@ -2439,10 +2539,73 @@ where
             }
         }
         "df" | "mounts" => {
-            output("Sistemas de Arquivos Montados:", 0x0038_BDF8);
+            output("=== Sistemas de Arquivos Montados ===", 0x00F5_9E0B);
             crate::vfs::list_mounts(|pfx, _fs_name| {
-                output(pfx, 0x00F8_FAFC);
+                if let Ok(st) = crate::vfs::statvfs(pfx) {
+                    let total_mb = (st.total_bytes / (1024 * 1024)) as usize;
+                    let free_mb = (st.free_bytes / (1024 * 1024)) as usize;
+                    let used_mb = total_mb.saturating_sub(free_mb);
+                    let mut line_buf = [0u8; 80];
+                    let mut pos = 0;
+                    let p_bytes = pfx.as_bytes();
+                    line_buf[..p_bytes.len()].copy_from_slice(p_bytes);
+                    pos += p_bytes.len();
+                    line_buf[pos] = b' '; pos += 1;
+                    line_buf[pos] = b'('; pos += 1;
+                    let type_b = st.fs_type.as_bytes();
+                    line_buf[pos..pos + type_b.len()].copy_from_slice(type_b);
+                    pos += type_b.len();
+                    line_buf[pos] = b')'; pos += 1;
+                    line_buf[pos] = b' '; pos += 1;
+                    let mut num_b = [0u8; 16];
+                    let l1 = aladdin::compositor::format_num(used_mb, &mut num_b);
+                    line_buf[pos..pos + l1].copy_from_slice(&num_b[..l1]); pos += l1;
+                    line_buf[pos..pos + 4].copy_from_slice(b"M / "); pos += 4;
+                    let l2 = aladdin::compositor::format_num(total_mb, &mut num_b);
+                    line_buf[pos..pos + l2].copy_from_slice(&num_b[..l2]); pos += l2;
+                    line_buf[pos..pos + 5].copy_from_slice(b"M ( "); pos += 5;
+                    let l3 = aladdin::compositor::format_num(free_mb, &mut num_b);
+                    line_buf[pos..pos + l3].copy_from_slice(&num_b[..l3]); pos += l3;
+                    line_buf[pos..pos + 7].copy_from_slice(b"M free)"); pos += 7;
+                    if let Ok(s) = core::str::from_utf8(&line_buf[..pos]) {
+                        output(s, 0x00F8_FAFC);
+                    }
+                } else {
+                    output(pfx, 0x00F8_FAFC);
+                }
             });
+        }
+        "disks" | "drives" => {
+            output("=== Dispositivos de Armazenamento Fisico ===", 0x00F5_9E0B);
+            let mgr = crate::drivers::block::STORAGE_MANAGER.lock();
+            for i in 0..mgr.count {
+                if let Some(dev) = mgr.get_disk(i) {
+                    let name_str = core::str::from_utf8(&dev.name[..dev.name_len]).unwrap_or("Disco");
+                    output(name_str, 0x0038_BDF8);
+                    if let Ok(ide_dev) = crate::drivers::block::IdeBlockDevice::new(i as u8) {
+                        if let Ok(table) = crate::drivers::partition::scan_partitions(&ide_dev) {
+                            for p in table.partitions.iter().flatten() {
+                                let mut p_buf = [0u8; 64];
+                                let mut pos = 0;
+                                p_buf[pos..pos + 9].copy_from_slice(b"  Part.  "); pos += 9;
+                                let mut num_b = [0u8; 8];
+                                let l = aladdin::compositor::format_num(p.index, &mut num_b);
+                                p_buf[pos..pos + l].copy_from_slice(&num_b[..l]); pos += l;
+                                p_buf[pos..pos + 3].copy_from_slice(b": ["); pos += 3;
+                                let fs_b = p.fs_kind.as_str().as_bytes();
+                                p_buf[pos..pos + fs_b.len()].copy_from_slice(fs_b); pos += fs_b.len();
+                                p_buf[pos..pos + 4].copy_from_slice(b"] ( "); pos += 4;
+                                let sz_l = aladdin::compositor::format_num(p.size_mb() as usize, &mut num_b);
+                                p_buf[pos..pos + sz_l].copy_from_slice(&num_b[..sz_l]); pos += sz_l;
+                                p_buf[pos..pos + 4].copy_from_slice(b" MB)"); pos += 4;
+                                if let Ok(s) = core::str::from_utf8(&p_buf[..pos]) {
+                                    output(s, 0x0094_A3B8);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         "pci" | "lspci" => {
             output("Dispositivos PCI Detectados:", 0x0038_BDF8);

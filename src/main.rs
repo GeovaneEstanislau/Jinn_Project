@@ -162,6 +162,7 @@ pub extern "C" fn _start() -> ! {
     w.write_string("[+] IDE / ATA Controller e Cache LRU...");
     drivers::ide::init();
     drivers::block::init_primary_cache();
+    drivers::block::init_storage_manager();
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
@@ -189,26 +190,24 @@ pub extern "C" fn _start() -> ! {
     w.set_color(Color::LightGray, Color::Black);
 
     // Auto-detecta e monta partições FAT32 e Ext2 do disco primário IDE
-    if let Ok(mbr) = drivers::ide::read_mbr(0) {
-        if mbr.is_valid {
+    if let Ok(ide_dev) = drivers::block::IdeBlockDevice::new(0) {
+        if let Ok(table) = drivers::partition::scan_partitions(&ide_dev) {
             let mut fat_mounted = false;
             let mut ext2_mounted = false;
-            for part_opt in mbr.partitions.iter() {
-                if let Some(part) = part_opt {
-                    if !fat_mounted && (part.partition_type == 0x0B || part.partition_type == 0x0C) {
-                        if vfs::fat32::mount_fat32_partition("/disk", 0, part.start_lba, part.sector_count as u64).is_ok() {
-                            w.write_string("    Auto-montado FAT32 em /disk (LBA ");
-                            w.write_decimal(part.start_lba as usize);
-                            w.write_line(")");
-                            fat_mounted = true;
-                        }
-                    } else if !ext2_mounted && part.partition_type == 0x83 {
-                        if vfs::ext2::mount_ext2_partition("/ext2", 0, part.start_lba, part.sector_count as u64).is_ok() {
-                            w.write_string("    Auto-montado Ext2 em /ext2 (LBA ");
-                            w.write_decimal(part.start_lba as usize);
-                            w.write_line(")");
-                            ext2_mounted = true;
-                        }
+            for part in table.partitions.iter().flatten() {
+                if !fat_mounted && (part.fs_kind == drivers::partition::DetectedFsKind::Fat32 || part.partition_type == 0x0B || part.partition_type == 0x0C) {
+                    if vfs::fat32::mount_fat32_partition("/disk", 0, part.start_lba as u32, part.sector_count).is_ok() {
+                        w.write_string("    Auto-montado FAT32 em /disk (LBA ");
+                        w.write_decimal(part.start_lba as usize);
+                        w.write_line(")");
+                        fat_mounted = true;
+                    }
+                } else if !ext2_mounted && (part.fs_kind == drivers::partition::DetectedFsKind::Ext2 || part.partition_type == 0x83) {
+                    if vfs::ext2::mount_ext2_partition("/ext2", 0, part.start_lba as u32, part.sector_count).is_ok() {
+                        w.write_string("    Auto-montado Ext2 em /ext2 (LBA ");
+                        w.write_decimal(part.start_lba as usize);
+                        w.write_line(")");
+                        ext2_mounted = true;
                     }
                 }
             }

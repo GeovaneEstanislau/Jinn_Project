@@ -88,6 +88,49 @@ pub struct FileStat {
     pub ctime: u64,         // Timestamp de criação
 }
 
+// ── Metadados do Sistema de Arquivos e Armazenamento (Syscalls 41..44) ────────
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FsStatUser {
+    pub total_bytes: u64,
+    pub free_bytes: u64,
+    pub block_size: u64,
+    pub total_inodes: u64,
+    pub free_inodes: u64,
+    pub is_read_only: u32,
+    pub fs_type: [u8; 16],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct DiskInfoUser {
+    pub disk_id: u32,
+    pub kind: u32,
+    pub total_sectors: u64,
+    pub sector_size: u32,
+    pub is_read_only: u32,
+    pub is_boot_drive: u32,
+    pub partition_count: u32,
+    pub model: [u8; 40],
+    pub serial: [u8; 20],
+}
+
+impl Default for DiskInfoUser {
+    fn default() -> Self {
+        Self {
+            disk_id: 0,
+            kind: 0,
+            total_sectors: 0,
+            sector_size: 512,
+            is_read_only: 0,
+            is_boot_drive: 0,
+            partition_count: 0,
+            model: [0; 40],
+            serial: [0; 20],
+        }
+    }
+}
+
 // ── JinnWall Firewall Telemetry (jinnwall_ctrl) ──────────────────────────────
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,6 +304,10 @@ pub extern "C" fn syscall_dispatch(
         38 => sys_execve(arg0, arg1, arg2),
         39 => sys_spawn_process(arg0, arg1, arg2),
         40 => sys_dns_resolve(arg0 as *const u8, arg1, arg2 as *mut u8),
+        41 => sys_statvfs(arg0 as *const u8, arg1, arg2 as *mut FsStatUser),
+        42 => sys_disk_info(arg0, arg1 as *mut DiskInfoUser),
+        43 => sys_mount(arg0 as *const u8, arg1, (arg2 >> 16) & 0xFFFF, arg2 & 0xFFFF),
+        44 => sys_unmount(arg0 as *const u8, arg1),
         _  => ENOSYS,
     }
 }
@@ -1784,6 +1831,203 @@ fn sys_spawn_process(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> isize
     match scheduler::get().spawn_user_task_from_vfs(&path, &argv_slices, &envp_slices) {
         Ok(pid) => pid as isize,
         Err(e) => e,
+    }
+}
+
+// ── Syscalls de Armazenamento e Sistema de Arquivos (Syscalls 41..44) ─────────
+
+fn vfs_error_to_errno(err: crate::vfs::VfsError) -> isize {
+    match err {
+        crate::vfs::VfsError::NotFound => ENOENT,
+        crate::vfs::VfsError::PermissionDenied => EPERM,
+        crate::vfs::VfsError::NotADirectory => -20, // ENOTDIR
+        crate::vfs::VfsError::IsADirectory => -21,  // EISDIR
+        crate::vfs::VfsError::AlreadyExists => -17, // EEXIST
+        crate::vfs::VfsError::InvalidPath => EINVAL,
+        crate::vfs::VfsError::NoSpace => -28,       // ENOSPC
+        crate::vfs::VfsError::NotSupported => ENOSYS,
+        crate::vfs::VfsError::IoError => EIO,
+        crate::vfs::VfsError::Busy => -16,          // EBUSY
+    }
+}
+
+/// `sys_statvfs` — Obtém métricas de capacidade e utilização do sistema de arquivos (Syscall 41).
+fn sys_statvfs(path_ptr: *const u8, path_len: usize, out_stat: *mut FsStatUser) -> isize {
+    if path_ptr.is_null() || path_len == 0 || path_len > crate::vfs::MAX_PATH_LEN || out_stat.is_null() {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(path_ptr, path_len, false) {
+            return e;
+        }
+        if let Err(e) = validate_user_buffer(out_stat as *const u8, core::mem::size_of::<FsStatUser>(), true) {
+            return e;
+        }
+    }
+    let mut path_buf = [0u8; crate::vfs::MAX_PATH_LEN];
+    unsafe {
+        core::ptr::copy_nonoverlapping(path_ptr, path_buf.as_mut_ptr(), path_len);
+    }
+    let raw_str = match core::str::from_utf8(&path_buf[..path_len]) {
+        Ok(s) => s,
+        Err(_) => return EINVAL,
+    };
+    let path_str = raw_str.trim_end_matches('\0');
+    if path_str.is_empty() || !path_str.starts_with('/') {
+        return ENOENT;
+    }
+
+    match crate::vfs::statvfs(path_str) {
+        Ok(st) => {
+            let mut user_stat = FsStatUser {
+                total_bytes: st.total_bytes,
+                free_bytes: st.free_bytes,
+                block_size: st.block_size as u64,
+                total_inodes: st.total_inodes,
+                free_inodes: st.free_inodes,
+                is_read_only: if st.is_read_only { 1 } else { 0 },
+                fs_type: [0u8; 16],
+            };
+            let type_bytes = st.fs_type.as_bytes();
+            let copy_len = type_bytes.len().min(15);
+            user_stat.fs_type[..copy_len].copy_from_slice(&type_bytes[..copy_len]);
+            unsafe {
+                core::ptr::write_unaligned(out_stat, user_stat);
+            }
+            0
+        }
+        Err(e) => vfs_error_to_errno(e),
+    }
+}
+
+/// `sys_disk_info` — Obtém metadados de geometria e integridade de disco físico (Syscall 42).
+fn sys_disk_info(disk_idx: usize, out_info: *mut DiskInfoUser) -> isize {
+    if out_info.is_null() {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(out_info as *const u8, core::mem::size_of::<DiskInfoUser>(), true) {
+            return e;
+        }
+    }
+    let mgr = crate::drivers::block::STORAGE_MANAGER.lock();
+    match mgr.get_disk(disk_idx) {
+        Some(dev) => {
+            let mut info = DiskInfoUser {
+                disk_id: dev.id as u32,
+                kind: match dev.kind {
+                    crate::drivers::block::StorageKind::Unknown => 0,
+                    crate::drivers::block::StorageKind::AtaDisk => 1,
+                    crate::drivers::block::StorageKind::AtapiCdrom => 2,
+                    crate::drivers::block::StorageKind::VirtioBlk => 3,
+                    crate::drivers::block::StorageKind::RamDisk => 4,
+                    crate::drivers::block::StorageKind::Removable => 5,
+                },
+                total_sectors: dev.total_sectors,
+                sector_size: dev.sector_size as u32,
+                is_read_only: if dev.is_read_only { 1 } else { 0 },
+                is_boot_drive: if mgr.boot_disk_idx == Some(disk_idx) { 1 } else { 0 },
+                partition_count: 0,
+                model: [0; 40],
+                serial: [0; 20],
+            };
+            info.model.copy_from_slice(&dev.model);
+            info.serial.copy_from_slice(&dev.serial);
+            unsafe {
+                core::ptr::write_unaligned(out_info, info);
+            }
+            0
+        }
+        None => ENOENT,
+    }
+}
+
+/// `sys_mount` — Monta dinamicamente uma partição física com auto-detecção em um ponto de montagem VFS (Syscall 43).
+fn sys_mount(prefix_ptr: *const u8, prefix_len: usize, disk_idx: usize, part_idx: usize) -> isize {
+    if prefix_ptr.is_null() || prefix_len == 0 || prefix_len > 64 {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(prefix_ptr, prefix_len, false) {
+            return e;
+        }
+    }
+    let mut prefix_buf = [0u8; 64];
+    unsafe {
+        core::ptr::copy_nonoverlapping(prefix_ptr, prefix_buf.as_mut_ptr(), prefix_len);
+    }
+    let raw_prefix = match core::str::from_utf8(&prefix_buf[..prefix_len]) {
+        Ok(s) => s,
+        Err(_) => return EINVAL,
+    };
+    let prefix = raw_prefix.trim_end_matches('\0');
+    if prefix.is_empty() || !prefix.starts_with('/') {
+        return EINVAL;
+    }
+
+    if disk_idx >= 2 {
+        return EINVAL;
+    }
+
+    let ide_dev = match crate::drivers::block::IdeBlockDevice::new(disk_idx as u8) {
+        Ok(d) => d,
+        Err(_) => return EIO,
+    };
+
+    let parts = match crate::drivers::partition::scan_partitions(&ide_dev) {
+        Ok(tbl) => tbl,
+        Err(_) => return EIO,
+    };
+
+    let target_part = parts.partitions.iter().flatten().find(|p| p.index == part_idx).copied();
+    let part = match target_part {
+        Some(p) => p,
+        None => return ENOENT,
+    };
+
+    match part.fs_kind {
+        crate::drivers::partition::DetectedFsKind::Fat32 => {
+            match crate::vfs::fat32::mount_fat32_partition(prefix, disk_idx as u8, part.start_lba as u32, part.sector_count) {
+                Ok(()) => 0,
+                Err(_) => EIO,
+            }
+        }
+        crate::drivers::partition::DetectedFsKind::Ext2 => {
+            match crate::vfs::ext2::mount_ext2_partition(prefix, disk_idx as u8, part.start_lba as u32, part.sector_count) {
+                Ok(()) => 0,
+                Err(_) => EIO,
+            }
+        }
+        _ => ENOSYS,
+    }
+}
+
+/// `sys_unmount` — Desmonta um ponto de montagem ativo no VFS (Syscall 44).
+fn sys_unmount(prefix_ptr: *const u8, prefix_len: usize) -> isize {
+    if prefix_ptr.is_null() || prefix_len == 0 || prefix_len > 64 {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(prefix_ptr, prefix_len, false) {
+            return e;
+        }
+    }
+    let mut prefix_buf = [0u8; 64];
+    unsafe {
+        core::ptr::copy_nonoverlapping(prefix_ptr, prefix_buf.as_mut_ptr(), prefix_len);
+    }
+    let raw_prefix = match core::str::from_utf8(&prefix_buf[..prefix_len]) {
+        Ok(s) => s,
+        Err(_) => return EINVAL,
+    };
+    let prefix = raw_prefix.trim_end_matches('\0');
+    if prefix.is_empty() || !prefix.starts_with('/') {
+        return EINVAL;
+    }
+
+    match crate::vfs::unmount(prefix) {
+        Ok(()) => 0,
+        Err(e) => vfs_error_to_errno(e),
     }
 }
 

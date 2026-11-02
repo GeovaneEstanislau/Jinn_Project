@@ -146,6 +146,26 @@ impl FileSystem for RamFs {
         }
     }
 
+    fn statvfs(&self) -> VfsResult<super::FsStat> {
+        let (_used_inodes, free_inodes) = {
+            let inner = self.inner.lock();
+            let mut used = 0;
+            for ino in inner.inodes.iter() {
+                if ino.used { used += 1; }
+            }
+            (used, MAX_INODES.saturating_sub(used))
+        };
+        Ok(super::FsStat {
+            total_bytes: (MAX_INODES * INLINE_BUF) as u64,
+            free_bytes: (free_inodes * INLINE_BUF) as u64,
+            block_size: 4096,
+            total_inodes: MAX_INODES as u64,
+            free_inodes: free_inodes as u64,
+            fs_type: "ramfs",
+            is_read_only: false,
+        })
+    }
+
     fn sync(&self) -> VfsResult<()> {
         Ok(())
     }

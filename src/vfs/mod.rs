@@ -105,6 +105,18 @@ pub struct Stat {
     pub inode:     u64,
 }
 
+/// Métricas de capacidade e utilização do sistema de arquivos (statvfs)
+#[derive(Debug, Clone, Copy)]
+pub struct FsStat {
+    pub total_bytes: u64,
+    pub free_bytes: u64,
+    pub block_size: usize,
+    pub total_inodes: u64,
+    pub free_inodes: u64,
+    pub fs_type: &'static str,
+    pub is_read_only: bool,
+}
+
 // ── Filesystem Trait ──────────────────────────────────────────────────────────
 /// Any filesystem that can be mounted must implement this trait.
 pub trait FileSystem: Send + Sync {
@@ -113,6 +125,9 @@ pub trait FileSystem: Send + Sync {
 
     /// Consulta formal das capacidades operacionais suportadas por este filesystem.
     fn capabilities(&self) -> FsCapabilities;
+
+    /// Retorna estatísticas de capacidade e espaço livre do sistema de arquivos (statvfs)
+    fn statvfs(&self) -> VfsResult<FsStat>;
 
     /// Sincroniza metadados e blocos modificados pendentes para a mídia física subjacente.
     fn sync(&self) -> VfsResult<()>;
@@ -318,6 +333,13 @@ pub fn query_capabilities(path: &str) -> VfsResult<FsCapabilities> {
     let table = MOUNTS.lock();
     let (fs, _) = table.resolve(path).ok_or(VfsError::NotFound)?;
     Ok(fs.capabilities())
+}
+
+/// Consulta estatísticas de capacidade e utilização do sistema de arquivos (statvfs)
+pub fn statvfs(path: &str) -> VfsResult<FsStat> {
+    let table = MOUNTS.lock();
+    let (fs, _) = table.resolve(path).ok_or(VfsError::NotFound)?;
+    fs.statvfs()
 }
 
 /// Lê todo o conteúdo de um arquivo do VFS para o buffer fornecido.
