@@ -151,6 +151,89 @@ impl SystemHost for JinnSystem {
         }
         loop { core::hint::spin_loop(); }
     }
+
+    fn storage_disk_count(&self) -> usize {
+        crate::drivers::block::BLOCK_DEVICE_MANAGER.lock().device_count()
+    }
+
+    fn storage_get_disk(&self, index: usize) -> Option<aladdin::contracts::storage::DiskInfo> {
+        let bdm = crate::drivers::block::BLOCK_DEVICE_MANAGER.lock();
+        let dev_info = bdm.get_device(index)?;
+        let mut d = aladdin::contracts::storage::DiskInfo::empty();
+
+        let n_len = dev_info.name_len.min(31);
+        d.name[..n_len].copy_from_slice(&dev_info.name[..n_len]);
+        d.name_len = n_len;
+
+        let m_len = 40.min(dev_info.model.len());
+        d.model[..m_len].copy_from_slice(&dev_info.model[..m_len]);
+        d.model_len = m_len;
+
+        d.bus = match dev_info.bus_type {
+            crate::drivers::block::BusType::IdeAta => aladdin::contracts::storage::DiskBus::IdeAta,
+            crate::drivers::block::BusType::AhciSata => aladdin::contracts::storage::DiskBus::AhciSata,
+            crate::drivers::block::BusType::NvmePci => aladdin::contracts::storage::DiskBus::NvmePci,
+            crate::drivers::block::BusType::VirtioBlk => aladdin::contracts::storage::DiskBus::VirtioBlk,
+            crate::drivers::block::BusType::RamDisk => aladdin::contracts::storage::DiskBus::RamDisk,
+            crate::drivers::block::BusType::Unknown => aladdin::contracts::storage::DiskBus::Unknown,
+        };
+
+        d.capacity_mb = dev_info.size_mb();
+        d.is_system_disk = dev_info.id == 0;
+        Some(d)
+    }
+
+    fn storage_volume_count(&self) -> usize {
+        crate::vfs::volume::VOLUME_MANAGER.lock().volume_count()
+    }
+
+    fn storage_get_volume(&self, index: usize) -> Option<aladdin::contracts::storage::VolumeDisplayInfo> {
+        let vm = crate::vfs::volume::VOLUME_MANAGER.lock();
+        let vol = vm.get_volume(index)?;
+        let mut v = aladdin::contracts::storage::VolumeDisplayInfo::empty();
+        v.id = vol.id;
+
+        let l_len = vol.label_len.min(31);
+        v.label[..l_len].copy_from_slice(&vol.label[..l_len]);
+        v.label_len = l_len;
+
+        let m_len = vol.mount_point_len.min(31);
+        v.mount_point[..m_len].copy_from_slice(&vol.mount_point[..m_len]);
+        v.mount_point_len = m_len;
+
+        let fs_str = match vol.fs_kind {
+            crate::drivers::partition::DetectedFsKind::Fat32 => "FAT32",
+            crate::drivers::partition::DetectedFsKind::Ext2 => "Ext2",
+            crate::drivers::partition::DetectedFsKind::Iso9660 => "ISO9660",
+            _ => "RAW",
+        };
+        let fs_bytes = fs_str.as_bytes();
+        let fs_len = fs_bytes.len().min(15);
+        v.fs_type[..fs_len].copy_from_slice(&fs_bytes[..fs_len]);
+        v.fs_type_len = fs_len;
+
+        v.total_mb = vol.total_mb as u64;
+        v.used_mb = vol.used_mb as u64;
+        v.free_mb = vol.free_mb as u64;
+        v.is_mounted = vol.is_mounted;
+        v.is_root = vol.is_root;
+        Some(v)
+    }
+
+    fn storage_mount_volume(&self, volume_id: usize, mount_point: &str) -> Result<(), &'static str> {
+        let mut vm = crate::vfs::volume::VOLUME_MANAGER.lock();
+        vm.mount_volume(volume_id, mount_point)
+    }
+
+    fn storage_unmount_volume(&self, volume_id: usize) -> Result<(), &'static str> {
+        let mut vm = crate::vfs::volume::VOLUME_MANAGER.lock();
+        vm.unmount_volume(volume_id)
+    }
+
+    fn storage_format_volume(&self, volume_id: usize, fs_type: &str) -> Result<(), &'static str> {
+        let mut vm = crate::vfs::volume::VOLUME_MANAGER.lock();
+        vm.format_volume(volume_id, fs_type)
+    }
 }
 
 pub struct JinnVfs;

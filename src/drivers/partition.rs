@@ -43,6 +43,7 @@ pub struct PartitionInfo {
     pub sector_count: u64,
     pub partition_type: u8,
     pub is_bootable: bool,
+    pub is_root: bool,
     pub is_gpt: bool,
     pub fs_kind: DetectedFsKind,
 }
@@ -57,6 +58,7 @@ impl PartitionInfo {
             sector_count: 0,
             partition_type: 0,
             is_bootable: false,
+            is_root: false,
             is_gpt: false,
             fs_kind: DetectedFsKind::Unknown,
         }
@@ -64,6 +66,14 @@ impl PartitionInfo {
 
     pub fn size_mb(&self) -> u64 {
         (self.sector_count * DEFAULT_SECTOR_SIZE as u64) / (1024 * 1024)
+    }
+
+    pub fn check_bounds(&self, lba: u64, count: u64) -> Result<(), &'static str> {
+        let end = lba.checked_add(count).ok_or("Overflow aritmetico de LBA na particao")?;
+        if end > self.sector_count {
+            return Err("Acesso fora dos limites da particao");
+        }
+        Ok(())
     }
 
     pub fn type_str(&self) -> &'static str {
@@ -152,20 +162,24 @@ impl<'a, D: BlockDevice> BlockDevice for PartitionDevice<'a, D> {
     }
 
     fn read_blocks(&self, start_block: u64, count: usize, buf: &mut [u8]) -> Result<(), &'static str> {
-        if start_block + (count as u64) > self.sector_count {
+        let end = start_block.checked_add(count as u64).ok_or("Overflow aritmetico em start_block + count")?;
+        if end > self.sector_count {
             return Err("Tentativa de leitura alem dos limites desta particao");
         }
-        self.inner.read_blocks(self.start_lba + start_block, count, buf)
+        let phys_lba = self.start_lba.checked_add(start_block).ok_or("Overflow aritmetico em start_lba + start_block")?;
+        self.inner.read_blocks(phys_lba, count, buf)
     }
 
     fn write_blocks(&self, start_block: u64, count: usize, buf: &[u8]) -> Result<(), &'static str> {
         if self.is_read_only {
             return Err("Operacao negada: Particao configurada como somente-leitura");
         }
-        if start_block + (count as u64) > self.sector_count {
+        let end = start_block.checked_add(count as u64).ok_or("Overflow aritmetico em start_block + count")?;
+        if end > self.sector_count {
             return Err("Tentativa de escrita alem dos limites desta particao (protecao ativada)");
         }
-        self.inner.write_blocks(self.start_lba + start_block, count, buf)
+        let phys_lba = self.start_lba.checked_add(start_block).ok_or("Overflow aritmetico em start_lba + start_block")?;
+        self.inner.write_blocks(phys_lba, count, buf)
     }
 
     fn flush(&self) -> Result<(), &'static str> {
@@ -190,11 +204,36 @@ pub fn scan_partitions<D: BlockDevice>(dev: &D) -> Result<PartitionTable, &'stat
     // 1. Verifica se é um GPT Protective MBR (tipo 0xEE na primeira entrada)
     let p1_type = sector0[446 + 4];
     if p1_type == 0xEE {
-        // Tenta decodificar o cabeçalho GPT no LBA 1
         let mut gpt_header = [0u8; DEFAULT_SECTOR_SIZE];
+        let mut gpt_ok = false;
+
+        // Tenta decodificar o cabeçalho GPT primário no LBA 1
         if dev.read_blocks(1, 1, &mut gpt_header).is_ok() && &gpt_header[..8] == GPT_SIGNATURE {
             table.is_gpt = true;
-            parse_gpt(dev, &gpt_header, &mut table)?;
+            if parse_gpt(dev, &gpt_header, &mut table).is_ok() && table.count > 0 {
+                gpt_ok = true;
+            }
+        }
+
+        // Se o primário falhou ou está corrompido, tenta o cabeçalho secundário de backup no último LBA
+        if !gpt_ok {
+            let total = dev.total_blocks();
+            if total > 2 {
+                let backup_lba = total - 1;
+                let mut backup_header = [0u8; DEFAULT_SECTOR_SIZE];
+                if dev.read_blocks(backup_lba, 1, &mut backup_header).is_ok() && &backup_header[..8] == GPT_SIGNATURE {
+                    table.is_gpt = true;
+                    if parse_gpt(dev, &backup_header, &mut table).is_ok() && table.count > 0 {
+                        gpt_ok = true;
+                    }
+                }
+            }
+        }
+
+        if gpt_ok {
+            if let Some(ref mut p1) = table.partitions[0] {
+                p1.is_root = true;
+            }
             return Ok(table);
         }
     }
@@ -226,6 +265,7 @@ pub fn scan_partitions<D: BlockDevice>(dev: &D) -> Result<PartitionTable, &'stat
                 DetectedFsKind::Unknown
             };
 
+            let is_root = i == 0; // Partição 1 por padrão é a raiz do sistema
             table.add(PartitionInfo {
                 index: i + 1,
                 name,
@@ -234,6 +274,7 @@ pub fn scan_partitions<D: BlockDevice>(dev: &D) -> Result<PartitionTable, &'stat
                 sector_count: sector_count as u64,
                 partition_type: p_type,
                 is_bootable: boot_flag == 0x80,
+                is_root,
                 is_gpt: false,
                 fs_kind,
             });
@@ -321,6 +362,7 @@ fn parse_gpt<D: BlockDevice>(dev: &D, header: &[u8; DEFAULT_SECTOR_SIZE], table:
                     DetectedFsKind::Unknown
                 };
 
+                let is_root = table.count == 0;
                 table.add(PartitionInfo {
                     index: table.count + 1,
                     name,
@@ -329,6 +371,7 @@ fn parse_gpt<D: BlockDevice>(dev: &D, header: &[u8; DEFAULT_SECTOR_SIZE], table:
                     sector_count,
                     partition_type: 0xEE,
                     is_bootable: false,
+                    is_root,
                     is_gpt: true,
                     fs_kind,
                 });

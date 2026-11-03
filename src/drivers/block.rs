@@ -7,6 +7,96 @@ use crate::drivers::ide;
 
 pub const DEFAULT_SECTOR_SIZE: usize = 512;
 
+/// Tipo de barramento físico de conexão do dispositivo de armazenamento
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BusType {
+    IdeAta,
+    AhciSata,
+    NvmePci,
+    VirtioBlk,
+    RamDisk,
+    Unknown,
+}
+
+impl BusType {
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::IdeAta => "IDE / ATA",
+            Self::AhciSata => "SATA (AHCI)",
+            Self::NvmePci => "NVMe (PCIe)",
+            Self::VirtioBlk => "VirtIO Blk",
+            Self::RamDisk => "RAM Disk",
+            Self::Unknown => "Desconhecido",
+        }
+    }
+}
+
+/// Estado operacional do dispositivo de blocos
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceStatus {
+    Uninitialized,
+    Operational,
+    Degraded,
+    Failed,
+    Removed,
+}
+
+impl DeviceStatus {
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Uninitialized => "Nao Inicializado",
+            Self::Operational => "Operacional",
+            Self::Degraded => "Degradado",
+            Self::Failed => "Falha",
+            Self::Removed => "Removido",
+        }
+    }
+}
+
+/// Metadados padronizados para inventário de dispositivos de bloco gerenciados
+#[derive(Debug, Clone, Copy)]
+pub struct BlockDeviceInfo {
+    pub id: usize,
+    pub name: [u8; 32],
+    pub name_len: usize,
+    pub model: [u8; 40],
+    pub serial: [u8; 20],
+    pub vendor: [u8; 32],
+    pub bus_type: BusType,
+    pub status: DeviceStatus,
+    pub capacity_sectors: u64,
+    pub logical_sector_size: usize,
+    pub physical_sector_size: usize,
+    pub is_read_only: bool,
+    pub is_removable: bool,
+    pub dma_capable: bool,
+}
+
+impl BlockDeviceInfo {
+    pub const fn empty() -> Self {
+        Self {
+            id: 0,
+            name: [0; 32],
+            name_len: 0,
+            model: [b' '; 40],
+            serial: [b' '; 20],
+            vendor: [0; 32],
+            bus_type: BusType::Unknown,
+            status: DeviceStatus::Uninitialized,
+            capacity_sectors: 0,
+            logical_sector_size: DEFAULT_SECTOR_SIZE,
+            physical_sector_size: DEFAULT_SECTOR_SIZE,
+            is_read_only: false,
+            is_removable: false,
+            dma_capable: false,
+        }
+    }
+
+    pub fn size_mb(&self) -> u64 {
+        (self.capacity_sectors * self.logical_sector_size as u64) / (1024 * 1024)
+    }
+}
+
 /// Contrato obrigatório para qualquer dispositivo de armazenamento estruturado em blocos.
 pub trait BlockDevice: Send + Sync {
     /// Nome amigável do dispositivo (ex: "ide0", "ramdisk0")
@@ -26,6 +116,20 @@ pub trait BlockDevice: Send + Sync {
 
     /// Força o descarregamento de caches voláteis para mídia não volátil (FLUSH CACHE)
     fn flush(&self) -> Result<(), &'static str>;
+
+    /// Consulta metadados estruturados do dispositivo de blocos
+    fn device_info(&self) -> BlockDeviceInfo {
+        let mut info = BlockDeviceInfo::empty();
+        let n = self.name().as_bytes();
+        let len = n.len().min(31);
+        info.name[..len].copy_from_slice(&n[..len]);
+        info.name_len = len;
+        info.capacity_sectors = self.total_blocks();
+        info.logical_sector_size = self.block_size();
+        info.physical_sector_size = self.block_size();
+        info.status = DeviceStatus::Operational;
+        info
+    }
 }
 
 /// Implementação do `BlockDevice` para o canal primário do controlador IDE/ATA em modo PIO.
@@ -677,4 +781,107 @@ pub static STORAGE_MANAGER: crate::memory::SpinLock<StorageManager> = crate::mem
 pub fn init_storage_manager() {
     let mut mgr = STORAGE_MANAGER.lock();
     mgr.probe_devices();
+    init_block_device_manager();
+}
+
+// ── Block Device Manager Unificado (L1/L2) ───────────────────────────────────
+
+pub const MAX_BLOCK_DEVICES: usize = 16;
+
+/// Gerenciador unificado de dispositivos de bloco de diferentes barramentos (IDE, AHCI, NVMe, RamDisk)
+pub struct BlockDeviceManager {
+    pub devices: [Option<BlockDeviceInfo>; MAX_BLOCK_DEVICES],
+    pub count: usize,
+    pub boot_device_id: Option<usize>,
+}
+
+impl BlockDeviceManager {
+    pub const fn new() -> Self {
+        Self {
+            devices: [None; MAX_BLOCK_DEVICES],
+            count: 0,
+            boot_device_id: None,
+        }
+    }
+
+    /// Registra um novo dispositivo no catálogo gerenciado
+    pub fn register_device(&mut self, mut info: BlockDeviceInfo) -> Result<usize, &'static str> {
+        if self.count >= MAX_BLOCK_DEVICES {
+            return Err("Limite maximo de dispositivos de bloco atingido (MAX_BLOCK_DEVICES)");
+        }
+        let id = self.count;
+        info.id = id;
+        if self.boot_device_id.is_none() && info.status == DeviceStatus::Operational && !info.is_read_only && info.capacity_sectors > 0 {
+            self.boot_device_id = Some(id);
+        }
+        self.devices[id] = Some(info);
+        self.count += 1;
+        Ok(id)
+    }
+
+    /// Atualiza o estado operacional de um dispositivo (ex: falha de hardware ou remocao)
+    pub fn set_device_status(&mut self, id: usize, status: DeviceStatus) -> Result<(), &'static str> {
+        if id < self.count {
+            if let Some(ref mut dev) = self.devices[id] {
+                dev.status = status;
+                return Ok(());
+            }
+        }
+        Err("Dispositivo de bloco nao encontrado")
+    }
+
+    pub fn get_device(&self, id: usize) -> Option<&BlockDeviceInfo> {
+        if id < self.count {
+            self.devices[id].as_ref()
+        } else {
+            None
+        }
+    }
+
+    pub fn device_count(&self) -> usize {
+        self.count
+    }
+
+    pub fn boot_device(&self) -> Option<&BlockDeviceInfo> {
+        self.boot_device_id.and_then(|id| self.get_device(id))
+    }
+
+    /// Realiza a descoberta inicial de todos os dispositivos de bloco nos barramentos suportados
+    pub fn probe_all(&mut self) {
+        self.count = 0;
+        self.boot_device_id = None;
+
+        // 1. Procura discos IDE/ATA
+        for drive_id in 0..2u8 {
+            if let Ok(info) = ide::identify(drive_id) {
+                let mut bdev = BlockDeviceInfo::empty();
+                let name: &[u8] = if drive_id == 0 { b"ide0 (Master)" } else { b"ide1 (Slave)" };
+                bdev.name[..name.len()].copy_from_slice(name);
+                bdev.name_len = name.len();
+                bdev.model = info.model;
+                bdev.serial = info.serial;
+                let v = b"ATA/IDE Generic";
+                bdev.vendor[..v.len()].copy_from_slice(v);
+                bdev.bus_type = BusType::IdeAta;
+                bdev.status = DeviceStatus::Operational;
+                bdev.capacity_sectors = info.sectors_lba28 as u64;
+                bdev.logical_sector_size = DEFAULT_SECTOR_SIZE;
+                bdev.physical_sector_size = DEFAULT_SECTOR_SIZE;
+                bdev.is_read_only = info.is_atapi;
+                bdev.is_removable = info.is_atapi;
+                bdev.dma_capable = false;
+
+                let _ = self.register_device(bdev);
+            }
+        }
+    }
+}
+
+pub static BLOCK_DEVICE_MANAGER: crate::memory::SpinLock<BlockDeviceManager> =
+    crate::memory::SpinLock::new(BlockDeviceManager::new());
+
+/// Inicializa e popula o catalogo global de dispositivos de blocos
+pub fn init_block_device_manager() {
+    let mut mgr = BLOCK_DEVICE_MANAGER.lock();
+    mgr.probe_all();
 }

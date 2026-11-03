@@ -10,6 +10,7 @@
 pub mod ext2;
 pub mod fat32;
 pub mod ramfs;
+pub mod volume;
 
 use crate::memory::SpinLock;
 
@@ -394,4 +395,59 @@ pub fn remove(path: &str) -> VfsResult<()> {
     let table = MOUNTS.lock();
     let (fs, rel) = table.resolve(path).ok_or(VfsError::NotFound)?;
     fs.remove(rel)
+}
+
+/// Remove um link ou arquivo do VFS (alias POSIX compatível para remove)
+pub fn unlink(path: &str) -> VfsResult<()> {
+    remove(path)
+}
+
+/// Renomeia ou move um arquivo no VFS
+pub fn rename(old_path: &str, new_path: &str) -> VfsResult<()> {
+    // 1. Lê os metadados do arquivo de origem
+    let s = stat(old_path)?;
+    if s.node_type == NodeType::Directory {
+        return Err(VfsError::NotSupported);
+    }
+
+    // 2. Cria o novo arquivo e copia o conteúdo em blocos seguros
+    create(new_path)?;
+    let mut chunk = [0u8; 512];
+    let in_h = open(old_path, O_RDONLY)?;
+    let out_h = match open(new_path, O_WRONLY) {
+        Ok(h) => h,
+        Err(e) => {
+            let _ = close(old_path, in_h);
+            let _ = remove(new_path);
+            return Err(e);
+        }
+    };
+
+    let mut offset = 0u64;
+    loop {
+        match read(old_path, in_h, offset, &mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                if let Err(e) = write(new_path, out_h, offset, &chunk[..n]) {
+                    let _ = close(old_path, in_h);
+                    let _ = close(new_path, out_h);
+                    let _ = remove(new_path);
+                    return Err(e);
+                }
+                offset += n as u64;
+            }
+            Err(e) => {
+                let _ = close(old_path, in_h);
+                let _ = close(new_path, out_h);
+                let _ = remove(new_path);
+                return Err(e);
+            }
+        }
+    }
+
+    let _ = close(old_path, in_h);
+    let _ = close(new_path, out_h);
+
+    // 3. Remove o arquivo original após a cópia com sucesso
+    remove(old_path)
 }

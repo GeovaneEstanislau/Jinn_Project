@@ -163,6 +163,8 @@ pub extern "C" fn _start() -> ! {
     drivers::ide::init();
     drivers::block::init_primary_cache();
     drivers::block::init_storage_manager();
+    drivers::ahci::init_ahci();
+    drivers::nvme::init_nvme();
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
@@ -213,6 +215,9 @@ pub extern "C" fn _start() -> ! {
             }
         }
     }
+
+    // Inicializa Gerenciador de Volumes (L1 Volume Manager)
+    vfs::volume::init_volume_manager();
 
     w.write_string("[+] IPC...");
     ipc::register(0);
