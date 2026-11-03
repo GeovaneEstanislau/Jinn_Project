@@ -950,6 +950,99 @@ impl FileSystem for Fat32Fs {
         Err(VfsError::NoSpace)
     }
 
+    fn mkdir(&self, path: &str) -> VfsResult<()> {
+        if !self.is_mounted {
+            return Err(VfsError::NotSupported);
+        }
+
+        let clean_path = path.trim_matches('/');
+        if clean_path.is_empty() || clean_path.contains('/') {
+            return Err(VfsError::NotSupported);
+        }
+
+        // Verifica se já existe
+        if self.find_file(clean_path).is_ok() {
+            return Err(VfsError::AlreadyExists);
+        }
+
+        let name_83 = self.encode_83(clean_path)?;
+        let new_cluster = self.alloc_cluster()?;
+
+        // Inicializa o cluster do novo diretório com "." e ".."
+        let mut cluster_buf = [0u8; 512];
+
+        // Entrada "."
+        cluster_buf[0..11].copy_from_slice(b".          ");
+        cluster_buf[11] = 0x10; // Atributo: Diretório
+        let clus_hi = ((new_cluster >> 16) & 0xFFFF) as u16;
+        cluster_buf[20] = (clus_hi & 0xFF) as u8;
+        cluster_buf[21] = ((clus_hi >> 8) & 0xFF) as u8;
+        let clus_lo = (new_cluster & 0xFFFF) as u16;
+        cluster_buf[26] = (clus_lo & 0xFF) as u8;
+        cluster_buf[27] = ((clus_lo >> 8) & 0xFF) as u8;
+
+        // Entrada ".."
+        cluster_buf[32..43].copy_from_slice(b"..         ");
+        cluster_buf[32 + 11] = 0x10;
+        let parent_cluster = self.root_cluster;
+        let p_hi = ((parent_cluster >> 16) & 0xFFFF) as u16;
+        cluster_buf[32 + 20] = (p_hi & 0xFF) as u8;
+        cluster_buf[32 + 21] = ((p_hi >> 8) & 0xFF) as u8;
+        let p_lo = (parent_cluster & 0xFFFF) as u16;
+        cluster_buf[32 + 26] = (p_lo & 0xFF) as u8;
+        cluster_buf[32 + 27] = ((p_lo >> 8) & 0xFF) as u8;
+
+        let new_lba = self.cluster_to_lba(new_cluster);
+        if self.write_sec(new_lba, &cluster_buf).is_err() {
+            let _ = self.free_cluster_chain(new_cluster);
+            return Err(VfsError::IoError);
+        }
+
+        // Procura slot livre no diretório raiz para registrar a nova pasta
+        let root_lba = self.cluster_to_lba(self.root_cluster);
+        let mut dir_buf = [0u8; 512];
+
+        for sec in 0..self.sectors_per_cluster {
+            let sec_lba = root_lba + sec as u32;
+            if self.read_sec(sec_lba, &mut dir_buf).is_err() {
+                return Err(VfsError::IoError);
+            }
+
+            for entry_idx in 0..(512 / 32) {
+                let offset = entry_idx * 32;
+                let first = dir_buf[offset];
+
+                if first == 0x00 || first == 0xE5 {
+                    dir_buf[offset..offset + 11].copy_from_slice(&name_83);
+                    dir_buf[offset + 11] = 0x10; // Atributo: Diretório
+                    for k in 12..20 { dir_buf[offset + k] = 0; }
+
+                    dir_buf[offset + 20] = (clus_hi & 0xFF) as u8;
+                    dir_buf[offset + 21] = ((clus_hi >> 8) & 0xFF) as u8;
+
+                    for k in 22..26 { dir_buf[offset + k] = 0; }
+
+                    dir_buf[offset + 26] = (clus_lo & 0xFF) as u8;
+                    dir_buf[offset + 27] = ((clus_lo >> 8) & 0xFF) as u8;
+
+                    dir_buf[offset + 28] = 0;
+                    dir_buf[offset + 29] = 0;
+                    dir_buf[offset + 30] = 0;
+                    dir_buf[offset + 31] = 0;
+
+                    if self.write_sec(sec_lba, &dir_buf).is_err() {
+                        return Err(VfsError::IoError);
+                    }
+                    let _ = self.sync();
+
+                    return Ok(());
+                }
+            }
+        }
+
+        Err(VfsError::NoSpace)
+    }
+
     fn remove(&self, path: &str) -> VfsResult<()> {
         if !self.is_mounted {
             return Err(VfsError::NotSupported);

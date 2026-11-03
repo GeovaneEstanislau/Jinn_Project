@@ -154,6 +154,11 @@ pub trait FileSystem: Send + Sync {
     /// Create a file at `path`.
     fn create(&self, path: &str) -> VfsResult<()>;
 
+    /// Create a directory at `path`.
+    fn mkdir(&self, _path: &str) -> VfsResult<()> {
+        Err(VfsError::NotSupported)
+    }
+
     /// Remove a file at `path`.
     fn remove(&self, path: &str) -> VfsResult<()>;
 
@@ -194,8 +199,16 @@ impl MountTable {
     }
 
     fn unmount(&mut self, prefix: &str) -> VfsResult<()> {
+        let is_root_mount = {
+            let vm = crate::vfs::volume::VOLUME_MANAGER.lock();
+            if let Some(root_vol) = vm.root_volume() {
+                root_vol.mount_point_str() == prefix
+            } else {
+                false
+            }
+        };
         // REGRA DE SEGURANÇA INVIOLÁVEL: Raiz do sistema e nós virtuais nunca podem ser desmontados
-        if prefix == "/" || prefix == "/disk" || prefix == "/dev" {
+        if prefix == "/" || prefix == "/disk" || prefix == "/dev" || is_root_mount {
             return Err(VfsError::PermissionDenied);
         }
 
@@ -229,6 +242,11 @@ impl MountTable {
 
     /// Find the filesystem whose mount prefix is the longest match for `path`.
     fn resolve<'a>(&self, path: &'a str) -> Option<(&'static dyn FileSystem, &'a str)> {
+        self.resolve_with_prefix(path).map(|(fs, rel, _)| (fs, rel))
+    }
+
+    /// Encontra o filesystem montado com maior correspondência de prefixo e retorna o prefixo casado
+    fn resolve_with_prefix<'a>(&self, path: &'a str) -> Option<(&'static dyn FileSystem, &'a str, &'a str)> {
         let mut best_len = 0;
         let mut best_fs: Option<&'static dyn FileSystem> = None;
 
@@ -243,7 +261,8 @@ impl MountTable {
         best_fs.map(|fs| {
             let rel = path.get(best_len..).unwrap_or("/");
             let rel = if rel.is_empty() { "/" } else { rel };
-            (fs, rel)
+            let pfx = path.get(..best_len).unwrap_or("");
+            (fs, rel, pfx)
         })
     }
 }
@@ -282,22 +301,52 @@ pub fn stat(path: &str) -> VfsResult<Stat> {
 }
 
 pub fn open(path: &str, flags: u32) -> VfsResult<u64> {
-    let table = MOUNTS.lock();
-    let (fs, rel) = table.resolve(path).ok_or(VfsError::NotFound)?;
+    let (handle, pfx) = {
+        let table = MOUNTS.lock();
+        let (fs, rel, pfx) = table.resolve_with_prefix(path).ok_or(VfsError::NotFound)?;
 
-    // Proteção de Integridade: se o FS for Read-Only, rejeita qualquer flag de escrita precocemente
-    let is_write_intent = (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
-    if is_write_intent && fs.capabilities().read_only {
-        return Err(VfsError::PermissionDenied);
+        // Proteção de Integridade: se o FS for Read-Only, rejeita qualquer flag de escrita precocemente
+        let is_write_intent = (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
+        if is_write_intent && fs.capabilities().read_only {
+            return Err(VfsError::PermissionDenied);
+        }
+
+        let h = fs.open(rel, flags)?;
+        (h, pfx)
+    };
+
+    let mut vm = crate::vfs::volume::VOLUME_MANAGER.lock();
+    for i in 0..vm.count {
+        if let Some(vol) = vm.volumes[i].as_mut() {
+            if vol.mount_point_str() == pfx {
+                vol.open_handles_count = vol.open_handles_count.saturating_add(1);
+                break;
+            }
+        }
     }
 
-    fs.open(rel, flags)
+    Ok(handle)
 }
 
 pub fn close(path: &str, handle: u64) -> VfsResult<()> {
-    let table = MOUNTS.lock();
-    let (fs, _) = table.resolve(path).ok_or(VfsError::NotFound)?;
-    fs.close(handle)
+    let pfx = {
+        let table = MOUNTS.lock();
+        let (fs, _, pfx) = table.resolve_with_prefix(path).ok_or(VfsError::NotFound)?;
+        fs.close(handle)?;
+        pfx
+    };
+
+    let mut vm = crate::vfs::volume::VOLUME_MANAGER.lock();
+    for i in 0..vm.count {
+        if let Some(vol) = vm.volumes[i].as_mut() {
+            if vol.mount_point_str() == pfx {
+                vol.open_handles_count = vol.open_handles_count.saturating_sub(1);
+                break;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 pub fn read(path: &str, handle: u64, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
@@ -455,4 +504,60 @@ pub fn rename(old_path: &str, new_path: &str) -> VfsResult<()> {
 
     // 3. Remove o arquivo original após a cópia com sucesso
     remove(old_path)
+}
+
+/// Cria um novo diretório no VFS.
+pub fn mkdir(path: &str) -> VfsResult<()> {
+    let table = MOUNTS.lock();
+    let (fs, rel) = table.resolve(path).ok_or(VfsError::NotFound)?;
+    fs.mkdir(rel)
+}
+
+/// Copia um arquivo no VFS com integridade garantida bloco a bloco.
+pub fn copy(src_path: &str, dst_path: &str) -> VfsResult<usize> {
+    let s = stat(src_path)?;
+    if s.node_type == NodeType::Directory {
+        return Err(VfsError::NotSupported);
+    }
+
+    create(dst_path)?;
+    let in_h = open(src_path, O_RDONLY)?;
+    let out_h = match open(dst_path, O_WRONLY) {
+        Ok(h) => h,
+        Err(e) => {
+            let _ = close(src_path, in_h);
+            let _ = remove(dst_path);
+            return Err(e);
+        }
+    };
+
+    let mut chunk = [0u8; 512];
+    let mut offset = 0u64;
+    let mut total_copied = 0usize;
+
+    loop {
+        match read(src_path, in_h, offset, &mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                if let Err(e) = write(dst_path, out_h, offset, &chunk[..n]) {
+                    let _ = close(src_path, in_h);
+                    let _ = close(dst_path, out_h);
+                    let _ = remove(dst_path);
+                    return Err(e);
+                }
+                offset += n as u64;
+                total_copied += n;
+            }
+            Err(e) => {
+                let _ = close(src_path, in_h);
+                let _ = close(dst_path, out_h);
+                let _ = remove(dst_path);
+                return Err(e);
+            }
+        }
+    }
+
+    let _ = close(src_path, in_h);
+    let _ = close(dst_path, out_h);
+    Ok(total_copied)
 }

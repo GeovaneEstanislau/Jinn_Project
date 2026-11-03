@@ -179,7 +179,7 @@ impl SystemHost for JinnSystem {
         };
 
         d.capacity_mb = dev_info.size_mb();
-        d.is_system_disk = dev_info.id == 0;
+        d.is_system_disk = dev_info.is_boot_device;
         Some(d)
     }
 
@@ -215,8 +215,19 @@ impl SystemHost for JinnSystem {
         v.total_mb = vol.total_mb as u64;
         v.used_mb = vol.used_mb as u64;
         v.free_mb = vol.free_mb as u64;
+        if vol.is_mounted {
+            let pfx = vol.mount_point_str();
+            if let Ok(st) = crate::vfs::statvfs(pfx) {
+                let total_mb = st.total_bytes / (1024 * 1024);
+                let free_mb = st.free_bytes / (1024 * 1024);
+                v.total_mb = total_mb;
+                v.free_mb = free_mb;
+                v.used_mb = total_mb.saturating_sub(free_mb);
+            }
+        }
         v.is_mounted = vol.is_mounted;
         v.is_root = vol.is_root;
+        v.is_busy = vol.open_handles_count > 0;
         Some(v)
     }
 
@@ -256,8 +267,28 @@ impl VfsHost for JinnVfs {
         crate::vfs::write_file(path, data).map(|_| ()).map_err(|_| ())
     }
 
+    fn create_file(&self, path: &str) -> Result<(), ()> {
+        crate::vfs::create(path).map_err(|_| ())
+    }
+
+    fn create_dir(&self, path: &str) -> Result<(), ()> {
+        crate::vfs::mkdir(path).map_err(|_| ())
+    }
+
     fn remove_file(&self, path: &str) -> Result<(), ()> {
         crate::vfs::remove(path).map_err(|_| ())
+    }
+
+    fn rename_file(&self, old_path: &str, new_path: &str) -> Result<(), ()> {
+        crate::vfs::rename(old_path, new_path).map_err(|_| ())
+    }
+
+    fn copy_file(&self, src_path: &str, dst_path: &str) -> Result<(), ()> {
+        crate::vfs::copy(src_path, dst_path).map(|_| ()).map_err(|_| ())
+    }
+
+    fn file_size(&self, path: &str) -> Result<usize, ()> {
+        crate::vfs::stat(path).map(|s| s.size as usize).map_err(|_| ())
     }
 }
 
@@ -489,6 +520,19 @@ pub fn close_windows_for_pid(pid: usize) {
     }
     if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(pid) {
         task.resources.open_windows = 0;
+    }
+}
+
+pub fn open_window(win_id: usize) {
+    unsafe {
+        if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
+            if let Some(w) = session.wm.windows.get_mut(win_id).and_then(|w| w.as_mut()) {
+                w.is_open = true;
+                w.is_minimized = false;
+                session.wm.bring_to_front(win_id);
+                session.client_damaged = true;
+            }
+        }
     }
 }
 

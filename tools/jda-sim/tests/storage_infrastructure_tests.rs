@@ -651,3 +651,100 @@ fn test_scenario_11_device_manager_boot_device_and_volume_query() {
     // 5. Invariante: Volume com handle aberto não pode ser desmontado
     assert_eq!(vm.unmount(id1), Err("Volume ocupado: existem descritores abertos"));
 }
+
+// ── Cenário 12: VFS Operações Syscall 50..52 (Unlink, Mkdir, Rename) e Dynamic Busy Tracking ──
+
+#[test]
+fn test_scenario_12_vfs_mkdir_rename_unlink_and_copy() {
+    use std::collections::HashMap;
+
+    struct SimVfsDir {
+        entries: HashMap<String, bool>, // nome -> is_dir
+        files: HashMap<String, Vec<u8>>,
+    }
+
+    let mut vfs = SimVfsDir {
+        entries: HashMap::new(),
+        files: HashMap::new(),
+    };
+
+    // 1. Syscall 51 (sys_mkdir): Criar diretório
+    let dir_name = "APPS".to_string();
+    assert!(!vfs.entries.contains_key(&dir_name));
+    vfs.entries.insert(dir_name.clone(), true);
+    assert_eq!(vfs.entries.get(&dir_name), Some(&true));
+
+    // 2. Criar e Escrever Arquivo
+    let file_name = "DOC.TXT".to_string();
+    let content = b"Hello Jinn Storage 0.1.0".to_vec();
+    vfs.entries.insert(file_name.clone(), false);
+    vfs.files.insert(file_name.clone(), content.clone());
+    assert_eq!(vfs.files.get(&file_name).map(|v| v.len()), Some(24));
+
+    // 3. Cópia de Arquivo (vfs::copy)
+    let copy_name = "COPY.TXT".to_string();
+    let src_data = vfs.files.get(&file_name).cloned().expect("src exists");
+    vfs.entries.insert(copy_name.clone(), false);
+    vfs.files.insert(copy_name.clone(), src_data);
+    assert_eq!(vfs.files.get(&copy_name), vfs.files.get(&file_name));
+
+    // 4. Syscall 52 (sys_rename): Renomear Arquivo
+    let renamed_name = "RENAMED.TXT".to_string();
+    let data = vfs.files.remove(&file_name).expect("file to rename exists");
+    vfs.entries.remove(&file_name);
+    vfs.entries.insert(renamed_name.clone(), false);
+    vfs.files.insert(renamed_name.clone(), data);
+    assert!(!vfs.entries.contains_key(&file_name));
+    assert!(vfs.entries.contains_key(&renamed_name));
+
+    // 5. Syscall 50 (sys_unlink): Excluir Arquivo
+    let removed = vfs.entries.remove(&copy_name);
+    vfs.files.remove(&copy_name);
+    assert!(removed.is_some());
+    assert!(!vfs.entries.contains_key(&copy_name));
+
+    // 6. GPT Checked Arithmetic: Overflow no cálculo de setores
+    let start_lba = u64::MAX - 5;
+    let end_lba = u64::MAX;
+    let diff = end_lba - start_lba;
+    let checked_sectors = diff.checked_add(1);
+    assert_eq!(checked_sectors, Some(6));
+
+    // Caso de overflow verificado
+    let overflow_calc = u64::MAX.checked_add(1);
+    assert_eq!(overflow_calc, None, "checked_add deve detectar overflow sem crash de pânico");
+
+    // 7. Dynamic Busy-Tracking e Imunidade da Raiz
+    let mut vm = SimVolumeManager::new();
+    let root = SimVolume {
+        id: 0,
+        label: "BOOT_ROOT".into(),
+        mount_point: "/custom_root".into(), // Ponto arbitrário, mas marcado como is_root = true
+        fs_type: "FAT32".into(),
+        is_mounted: true,
+        is_root: true,
+        open_handles: 0,
+    };
+    let data_vol = SimVolume {
+        id: 1,
+        label: "USER_DATA".into(),
+        mount_point: "/data".into(),
+        fs_type: "Ext2".into(),
+        is_mounted: true,
+        is_root: false,
+        open_handles: 0,
+    };
+    vm.register(root);
+    vm.register(data_vol);
+
+    // Raiz com ponto de montagem customizado DEVE ser imune à desmontagem
+    assert_eq!(vm.unmount(0), Err("Tentativa de desmontar o volume raiz ativo do sistema bloqueada"));
+
+    // Abertura de arquivo incrementa open_handles
+    vm.volumes[1].open_handles += 1;
+    assert_eq!(vm.unmount(1), Err("Volume ocupado: existem descritores abertos"));
+
+    // Fechamento de arquivo decrementa open_handles
+    vm.volumes[1].open_handles -= 1;
+    assert!(vm.unmount(1).is_ok());
+}

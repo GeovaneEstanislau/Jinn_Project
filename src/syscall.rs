@@ -195,6 +195,15 @@ impl Default for VolumeInfoUser {
     }
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct RenameArgs {
+    pub old_ptr: *const u8,
+    pub old_len: usize,
+    pub new_ptr: *const u8,
+    pub new_len: usize,
+}
+
 // ── JinnWall Firewall Telemetry (jinnwall_ctrl) ──────────────────────────────
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -377,6 +386,9 @@ pub extern "C" fn syscall_dispatch(
         47 => sys_partition_info(arg0, arg1, arg2 as *mut PartitionInfoUser),
         48 => sys_volume_info(arg0, arg1 as *mut VolumeInfoUser),
         49 => sys_volume_count(),
+        50 => sys_unlink(arg0 as *const u8, arg1),
+        51 => sys_mkdir(arg0 as *const u8, arg1),
+        52 => sys_rename(arg0 as *const RenameArgs),
         _  => ENOSYS,
     }
 }
@@ -2132,8 +2144,16 @@ fn sys_unmount(prefix_ptr: *const u8, prefix_len: usize) -> isize {
         return EINVAL;
     }
 
-    // Proteção de segurança: raiz do sistema e nós virtuais nunca podem ser desmontados
-    if prefix == "/" || prefix == "/disk" || prefix == "/dev" {
+    // Proteção de segurança: raiz ativa do sistema e nós virtuais nunca podem ser desmontados
+    let is_root_mount = {
+        let vm = crate::vfs::volume::VOLUME_MANAGER.lock();
+        if let Some(root_vol) = vm.root_volume() {
+            root_vol.mount_point_str() == prefix
+        } else {
+            false
+        }
+    };
+    if prefix == "/" || prefix == "/disk" || prefix == "/dev" || is_root_mount {
         return EPERM;
     }
 
@@ -2269,6 +2289,14 @@ fn sys_volume_info(vol_idx: usize, out_info: *mut VolumeInfoUser) -> isize {
     uinfo.total_mb = vol.total_mb as u64;
     uinfo.used_mb = vol.used_mb as u64;
     uinfo.free_mb = vol.free_mb as u64;
+    if vol.is_mounted {
+        let pfx = vol.mount_point_str();
+        if let Ok(st) = crate::vfs::statvfs(pfx) {
+            uinfo.total_mb = st.total_bytes / (1024 * 1024);
+            uinfo.free_mb = st.free_bytes / (1024 * 1024);
+            uinfo.used_mb = uinfo.total_mb.saturating_sub(uinfo.free_mb);
+        }
+    }
     uinfo.label.copy_from_slice(&vol.label);
     uinfo.mount_point.copy_from_slice(&vol.mount_point);
 
@@ -2282,6 +2310,100 @@ fn sys_volume_info(vol_idx: usize, out_info: *mut VolumeInfoUser) -> isize {
 fn sys_volume_count() -> isize {
     let vm = crate::vfs::volume::VOLUME_MANAGER.lock();
     vm.volume_count() as isize
+}
+
+/// `sys_unlink` — Remove um arquivo ou link do VFS (Syscall 50).
+fn sys_unlink(path_ptr: *const u8, path_len: usize) -> isize {
+    if path_ptr.is_null() || path_len == 0 || path_len > 128 {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(path_ptr, path_len, false) {
+            return e;
+        }
+    }
+    let mut path_buf = [0u8; 128];
+    unsafe {
+        core::ptr::copy_nonoverlapping(path_ptr, path_buf.as_mut_ptr(), path_len);
+    }
+    let path = match core::str::from_utf8(&path_buf[..path_len]) {
+        Ok(s) => s.trim_end_matches('\0'),
+        Err(_) => return EINVAL,
+    };
+    if path == "/" || path == "/disk" || path == "/ext2" || path == "/dev" {
+        return EPERM;
+    }
+    match crate::vfs::remove(path) {
+        Ok(()) => 0,
+        Err(e) => vfs_error_to_errno(e),
+    }
+}
+
+/// `sys_mkdir` — Cria um novo diretório no VFS (Syscall 51).
+fn sys_mkdir(path_ptr: *const u8, path_len: usize) -> isize {
+    if path_ptr.is_null() || path_len == 0 || path_len > 128 {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(path_ptr, path_len, false) {
+            return e;
+        }
+    }
+    let mut path_buf = [0u8; 128];
+    unsafe {
+        core::ptr::copy_nonoverlapping(path_ptr, path_buf.as_mut_ptr(), path_len);
+    }
+    let path = match core::str::from_utf8(&path_buf[..path_len]) {
+        Ok(s) => s.trim_end_matches('\0'),
+        Err(_) => return EINVAL,
+    };
+    match crate::vfs::mkdir(path) {
+        Ok(()) => 0,
+        Err(e) => vfs_error_to_errno(e),
+    }
+}
+
+/// `sys_rename` — Move ou renomeia um arquivo no VFS (Syscall 52).
+fn sys_rename(args_ptr: *const RenameArgs) -> isize {
+    if args_ptr.is_null() {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(args_ptr as *const u8, core::mem::size_of::<RenameArgs>(), false) {
+            return e;
+        }
+    }
+    let args = unsafe { core::ptr::read_unaligned(args_ptr) };
+    if args.old_ptr.is_null() || args.old_len == 0 || args.old_len > 128 ||
+       args.new_ptr.is_null() || args.new_len == 0 || args.new_len > 128 {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(args.old_ptr, args.old_len, false) {
+            return e;
+        }
+        if let Err(e) = validate_user_buffer(args.new_ptr, args.new_len, false) {
+            return e;
+        }
+    }
+    let mut old_buf = [0u8; 128];
+    let mut new_buf = [0u8; 128];
+    unsafe {
+        core::ptr::copy_nonoverlapping(args.old_ptr, old_buf.as_mut_ptr(), args.old_len);
+        core::ptr::copy_nonoverlapping(args.new_ptr, new_buf.as_mut_ptr(), args.new_len);
+    }
+    let old_path = match core::str::from_utf8(&old_buf[..args.old_len]) {
+        Ok(s) => s.trim_end_matches('\0'),
+        Err(_) => return EINVAL,
+    };
+    let new_path = match core::str::from_utf8(&new_buf[..args.new_len]) {
+        Ok(s) => s.trim_end_matches('\0'),
+        Err(_) => return EINVAL,
+    };
+    match crate::vfs::rename(old_path, new_path) {
+        Ok(()) => 0,
+        Err(e) => vfs_error_to_errno(e),
+    }
 }
 
 // ── Kernel-internal invoke ────────────────────────────────────────────────────

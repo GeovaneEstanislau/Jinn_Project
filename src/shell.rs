@@ -2626,6 +2626,46 @@ where
                 }
             }
         }
+        "mkdir" => {
+            if args.is_empty() {
+                output("Uso: mkdir <caminho>", 0x00EF_4444);
+            } else {
+                match crate::vfs::mkdir(args) {
+                    Ok(_) => output("Diretorio criado com sucesso", 0x0022_C55E),
+                    Err(_) => output("Falha ao criar diretorio", 0x00EF_4444),
+                }
+            }
+        }
+        "cp" | "copy" => {
+            let mut parts = args.split_whitespace();
+            if let (Some(src), Some(dst)) = (parts.next(), parts.next()) {
+                match crate::vfs::copy(src, dst) {
+                    Ok(_) => output("Arquivo copiado com sucesso", 0x0022_C55E),
+                    Err(_) => output("Falha ao copiar arquivo", 0x00EF_4444),
+                }
+            } else {
+                output("Uso: cp <origem> <destino>", 0x00EF_4444);
+            }
+        }
+        "mv" | "rename" => {
+            let mut parts = args.split_whitespace();
+            if let (Some(old), Some(new)) = (parts.next(), parts.next()) {
+                match crate::vfs::rename(old, new) {
+                    Ok(_) => output("Arquivo renomeado com sucesso", 0x0022_C55E),
+                    Err(_) => output("Falha ao renomear arquivo", 0x00EF_4444),
+                }
+            } else {
+                output("Uso: mv <origem> <destino>", 0x00EF_4444);
+            }
+        }
+        "files" => {
+            crate::gui::open_window(3);
+            output("Aladdin Files aberto no desktop.", 0x0022_C55E);
+        }
+        "diskmanager" => {
+            crate::gui::open_window(5);
+            output("Aladdin Disk Manager aberto no desktop.", 0x0022_C55E);
+        }
         "df" | "mounts" => {
             output("=== Sistemas de Arquivos Montados ===", 0x00F5_9E0B);
             crate::vfs::list_mounts(|pfx, _fs_name| {

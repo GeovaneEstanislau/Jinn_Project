@@ -348,33 +348,35 @@ fn parse_gpt<D: BlockDevice>(dev: &D, header: &[u8; DEFAULT_SECTOR_SIZE], table:
                 | ((entry_buf[offset + 46] as u64) << 48)
                 | ((entry_buf[offset + 47] as u64) << 56);
 
-            if end_lba >= start_lba {
-                let sector_count = end_lba - start_lba + 1;
-                let mut name = [0u8; 36];
-                let label = b"Particao GPT ";
-                name[..label.len()].copy_from_slice(label);
-                name[label.len()] = b'1' + (table.count as u8);
-                let name_len = label.len() + 1;
+            let total_dev_blocks = dev.total_blocks();
+            if end_lba >= start_lba && end_lba < total_dev_blocks {
+                if let Some(sector_count) = (end_lba - start_lba).checked_add(1) {
+                    let mut name = [0u8; 36];
+                    let label = b"Particao GPT ";
+                    name[..label.len()].copy_from_slice(label);
+                    name[label.len()] = b'1' + (table.count as u8);
+                    let name_len = label.len() + 1;
 
-                let fs_kind = if let Ok(pdev) = PartitionDevice::new(dev, "probe", start_lba, sector_count, true) {
-                    probe_partition_filesystem(&pdev)
-                } else {
-                    DetectedFsKind::Unknown
-                };
+                    let fs_kind = if let Ok(pdev) = PartitionDevice::new(dev, "probe", start_lba, sector_count, true) {
+                        probe_partition_filesystem(&pdev)
+                    } else {
+                        DetectedFsKind::Unknown
+                    };
 
-                let is_root = table.count == 0;
-                table.add(PartitionInfo {
-                    index: table.count + 1,
-                    name,
-                    name_len,
-                    start_lba,
-                    sector_count,
-                    partition_type: 0xEE,
-                    is_bootable: false,
-                    is_root,
-                    is_gpt: true,
-                    fs_kind,
-                });
+                    let is_root = table.count == 0;
+                    table.add(PartitionInfo {
+                        index: table.count + 1,
+                        name,
+                        name_len,
+                        start_lba,
+                        sector_count,
+                        partition_type: 0xEE,
+                        is_bootable: false,
+                        is_root,
+                        is_gpt: true,
+                        fs_kind,
+                    });
+                }
             }
         }
     }

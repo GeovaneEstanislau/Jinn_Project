@@ -3312,6 +3312,7 @@ pub extern "C" fn _start() -> ! {
             options(nomem, nostack)
         );
 
+        let mut is_explicit_main = false;
         if argc > 1 && !argv.is_null() {
             let arg1 = *argv.add(1);
             if streq(arg1, b"child_test") {
@@ -3324,6 +3325,8 @@ pub extern "C" fn _start() -> ! {
                 run_worker_task(3);
             } else if streq(arg1, b"periodic") {
                 run_periodic_task(4);
+            } else if streq(arg1, b"main") {
+                is_explicit_main = true;
             }
         }
 
@@ -3334,15 +3337,17 @@ pub extern "C" fn _start() -> ! {
             }
         }
 
-        // Consulta o próprio PID para despachar o papel da tarefa
-        let mut stat: ProcessResourceStat = core::mem::zeroed();
-        let _ = sys_res_stat(0, &mut stat);
-        let pid = stat.pid;
+        // Consulta o próprio PID para despachar o papel da tarefa caso não especificado em argv
+        if !is_explicit_main {
+            let mut stat: ProcessResourceStat = core::mem::zeroed();
+            let _ = sys_res_stat(0, &mut stat);
+            let pid = stat.pid;
 
-        if pid == 3 {
-            run_worker_task(pid);
-        } else if pid == 4 {
-            run_periodic_task(pid);
+            if pid == 4 {
+                run_worker_task(pid);
+            } else if pid == 5 {
+                run_periodic_task(pid);
+            }
         }
 
         // Tarefa Principal (PID 2 ou padrão): Suíte Completa de Validação Adversarial
