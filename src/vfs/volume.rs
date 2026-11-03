@@ -15,6 +15,8 @@ pub struct Volume {
     pub id: usize,
     pub device_id: usize,
     pub partition_index: usize,
+    pub start_lba: u64,
+    pub sector_count: u64,
     pub label: [u8; 32],
     pub label_len: usize,
     pub mount_point: [u8; 32],
@@ -36,6 +38,8 @@ impl Volume {
             id: 0,
             device_id: 0,
             partition_index: 0,
+            start_lba: 0,
+            sector_count: 0,
             label: [0; 32],
             label_len: 0,
             mount_point: [0; 32],
@@ -177,14 +181,28 @@ impl VolumeManager {
 
     /// Monta um volume previamente desmontado ou novo em um ponto de montagem do VFS
     pub fn mount_volume(&mut self, vol_id: usize, mount_point: &str) -> Result<(), &'static str> {
-        let vol = self.get_volume(vol_id).ok_or("Volume nao encontrado")?;
-        if vol.is_mounted {
-            return Err("Volume ja esta montado");
-        }
+        let (device_id, start_lba, sector_count, fs_kind) = {
+            let vol = self.get_volume(vol_id).ok_or("Volume nao encontrado")?;
+            if vol.is_mounted {
+                return Err("Volume ja esta montado");
+            }
+            (vol.device_id, vol.start_lba, vol.sector_count, vol.fs_kind)
+        };
 
         let p_bytes = mount_point.as_bytes();
         if p_bytes.is_empty() || p_bytes.len() >= 32 {
             return Err("Ponto de montagem invalido");
+        }
+
+        // Realiza a montagem no VFS dependendo do tipo do sistema de arquivos
+        match fs_kind {
+            DetectedFsKind::Fat32 => {
+                crate::vfs::fat32::mount_fat32_partition(mount_point, device_id as u8, start_lba as u32, sector_count)?;
+            }
+            DetectedFsKind::Ext2 => {
+                crate::vfs::ext2::mount_ext2_partition(mount_point, device_id as u8, start_lba as u32, sector_count)?;
+            }
+            _ => return Err("Sistema de arquivos desconhecido ou nao suportado para montagem"),
         }
 
         if let Some(v_mut) = self.get_volume_mut(vol_id) {
@@ -242,6 +260,8 @@ impl VolumeManager {
         v0.id = 0;
         v0.device_id = 0;
         v0.partition_index = 1;
+        v0.start_lba = 2048;
+        v0.sector_count = 63488;
         let l0 = b"JINN_SYSTEM";
         v0.label[..l0.len()].copy_from_slice(l0);
         v0.label_len = l0.len();
@@ -263,6 +283,8 @@ impl VolumeManager {
         v1.id = 1;
         v1.device_id = 0;
         v1.partition_index = 2;
+        v1.start_lba = 65536;
+        v1.sector_count = 63488;
         let l1 = b"EXT2_DATA";
         v1.label[..l1.len()].copy_from_slice(l1);
         v1.label_len = l1.len();

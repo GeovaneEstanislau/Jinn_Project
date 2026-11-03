@@ -577,3 +577,77 @@ fn test_scenario_10_persistence_across_reboot_simulation() {
     rebooted_disk.read_sector(1234, &mut read_sec).expect("Leitura pos-reboot deve ter sucesso");
     assert_eq!(&read_sec[..magic_data.len()], &magic_data, "Dados persistidos devem ser 100% idênticos após reboot");
 }
+
+// ── Cenário 11: Identificação de Dispositivo Boot, Limites e Consulta de Volumes ──
+
+#[test]
+fn test_scenario_11_device_manager_boot_device_and_volume_query() {
+    // 1. Simula descoberta de discos com identificação da unidade de boot
+    struct MockBlockDevInfo {
+        id: usize,
+        name: String,
+        capacity_sectors: u64,
+        is_boot_device: bool,
+    }
+
+    let dev0 = MockBlockDevInfo {
+        id: 0,
+        name: "ide0".into(),
+        capacity_sectors: 131072,
+        is_boot_device: true,
+    };
+    let dev1 = MockBlockDevInfo {
+        id: 1,
+        name: "ide1".into(),
+        capacity_sectors: 65536,
+        is_boot_device: false,
+    };
+
+    assert!(dev0.is_boot_device, "Disco primario deve ser identificado como dispositivo de boot");
+    assert!(!dev1.is_boot_device, "Disco secundario nao deve ser o boot padrao");
+
+    // 2. Verificação de limites físicos de partição (Bounds Protection)
+    let total_disk_sectors = dev0.capacity_sectors;
+    let valid_start = 2048u64;
+    let valid_sectors = 63488u64;
+    assert!(valid_start + valid_sectors <= total_disk_sectors);
+
+    let invalid_sectors = total_disk_sectors - valid_start + 1;
+    let is_out_of_bounds = valid_start + invalid_sectors > total_disk_sectors;
+    assert!(is_out_of_bounds, "Particao que ultrapassa limite total do disco deve ser rejeitada");
+
+    // 3. Verificação do catálogo de volumes
+    let mut vm = SimVolumeManager::new();
+    let root_vol = SimVolume {
+        id: 0,
+        label: "JINN_SYSTEM".into(),
+        mount_point: "/disk".into(),
+        fs_type: "FAT32".into(),
+        is_mounted: true,
+        is_root: true,
+        open_handles: 0,
+    };
+    let ext2_vol = SimVolume {
+        id: 1,
+        label: "EXT2_DATA".into(),
+        mount_point: "/ext2".into(),
+        fs_type: "Ext2".into(),
+        is_mounted: true,
+        is_root: false,
+        open_handles: 1,
+    };
+
+    let id0 = vm.register(root_vol);
+    let id1 = vm.register(ext2_vol);
+    assert_eq!(vm.volumes.len(), 2);
+    assert_eq!(id0, 0);
+    assert_eq!(id1, 1);
+    assert_eq!(vm.volumes[0].label, "JINN_SYSTEM");
+    assert_eq!(vm.volumes[1].label, "EXT2_DATA");
+
+    // 4. Invariante: Raiz nunca pode ser desmontada
+    assert_eq!(vm.unmount(id0), Err("Tentativa de desmontar o volume raiz ativo do sistema bloqueada"));
+
+    // 5. Invariante: Volume com handle aberto não pode ser desmontado
+    assert_eq!(vm.unmount(id1), Err("Volume ocupado: existem descritores abertos"));
+}

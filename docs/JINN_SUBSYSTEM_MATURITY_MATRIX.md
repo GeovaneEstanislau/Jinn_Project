@@ -77,3 +77,4 @@ Para assegurar rigor técnico, credibilidade comercial e precisão no desenvolvi
 1. **Rigor nos Relatórios:** O projeto deve divulgar como "totalmente operacional" apenas recursos com testes end-to-end automatizados e evidências de execução reproduzíveis.
 2. **Separação entre Arquitetura e Implementação:** Propostas de design (ex: Alta Disponibilidade, Real-Time Hard, Barramentos Industriais do Ifrit) devem ser expressamente catalogadas como *Especificações Arquiteturais* ou *Metas de Roadmap*, nunca confundidas com código em produção.
 3. **Evolução Contínua da Matriz:** Esta matriz será atualizada a cada ciclo de lançamento (*milestone*), acompanhada dos relatórios de teste do repositório oficial.
+

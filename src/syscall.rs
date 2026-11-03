@@ -131,6 +131,70 @@ impl Default for DiskInfoUser {
     }
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PartitionInfoUser {
+    pub disk_id: u32,
+    pub partition_index: u32,
+    pub start_lba: u64,
+    pub sector_count: u64,
+    pub fs_kind: u32,
+    pub is_bootable: u32,
+    pub is_mounted: u32,
+    pub name: [u8; 32],
+}
+
+impl Default for PartitionInfoUser {
+    fn default() -> Self {
+        Self {
+            disk_id: 0,
+            partition_index: 0,
+            start_lba: 0,
+            sector_count: 0,
+            fs_kind: 0,
+            is_bootable: 0,
+            is_mounted: 0,
+            name: [0; 32],
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct VolumeInfoUser {
+    pub volume_id: u32,
+    pub device_id: u32,
+    pub partition_index: u32,
+    pub fs_kind: u32,
+    pub is_mounted: u32,
+    pub is_root: u32,
+    pub is_boot: u32,
+    pub total_mb: u64,
+    pub used_mb: u64,
+    pub free_mb: u64,
+    pub label: [u8; 32],
+    pub mount_point: [u8; 32],
+}
+
+impl Default for VolumeInfoUser {
+    fn default() -> Self {
+        Self {
+            volume_id: 0,
+            device_id: 0,
+            partition_index: 0,
+            fs_kind: 0,
+            is_mounted: 0,
+            is_root: 0,
+            is_boot: 0,
+            total_mb: 0,
+            used_mb: 0,
+            free_mb: 0,
+            label: [0; 32],
+            mount_point: [0; 32],
+        }
+    }
+}
+
 // ── JinnWall Firewall Telemetry (jinnwall_ctrl) ──────────────────────────────
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -310,6 +374,9 @@ pub extern "C" fn syscall_dispatch(
         44 => sys_unmount(arg0 as *const u8, arg1),
         45 => sys_device_info(arg0, arg1 as *mut crate::drivers::device_manager::DeviceDescriptor),
         46 => sys_device_count(),
+        47 => sys_partition_info(arg0, arg1, arg2 as *mut PartitionInfoUser),
+        48 => sys_volume_info(arg0, arg1 as *mut VolumeInfoUser),
+        49 => sys_volume_count(),
         _  => ENOSYS,
     }
 }
@@ -2025,6 +2092,8 @@ fn sys_mount(prefix_ptr: *const u8, prefix_len: usize, disk_idx: usize, part_idx
             new_vol.id = vm.count;
             new_vol.device_id = disk_idx;
             new_vol.partition_index = part_idx;
+            new_vol.start_lba = part.start_lba;
+            new_vol.sector_count = part.sector_count;
             new_vol.mount_point[..copy_len].copy_from_slice(&p_bytes[..copy_len]);
             new_vol.mount_point_len = copy_len;
             new_vol.fs_kind = part.fs_kind;
@@ -2109,6 +2178,110 @@ fn sys_device_info(index: usize, out_desc: *mut crate::drivers::device_manager::
 /// `sys_device_count` — Retorna o número de dispositivos gerenciados ativos (Syscall 46).
 fn sys_device_count() -> isize {
     crate::drivers::device_manager::device_count() as isize
+}
+
+/// `sys_partition_info` — Obtém metadados de uma partição física (Syscall 47).
+fn sys_partition_info(disk_idx: usize, part_idx: usize, out_info: *mut PartitionInfoUser) -> isize {
+    if out_info.is_null() {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(out_info as *const u8, core::mem::size_of::<PartitionInfoUser>(), true) {
+            return e;
+        }
+    }
+    if disk_idx >= 2 {
+        return EINVAL;
+    }
+    let ide_dev = match crate::drivers::block::IdeBlockDevice::new(disk_idx as u8) {
+        Ok(d) => d,
+        Err(_) => return EIO,
+    };
+    let tbl = match crate::drivers::partition::scan_partitions(&ide_dev) {
+        Ok(t) => t,
+        Err(_) => return EIO,
+    };
+    let part = match tbl.partitions.iter().flatten().find(|p| p.index == part_idx) {
+        Some(p) => p,
+        None => return ENOENT,
+    };
+
+    let mut uinfo = PartitionInfoUser::default();
+    uinfo.disk_id = disk_idx as u32;
+    uinfo.partition_index = part.index as u32;
+    uinfo.start_lba = part.start_lba;
+    uinfo.sector_count = part.sector_count;
+    uinfo.fs_kind = match part.fs_kind {
+        crate::drivers::partition::DetectedFsKind::Fat32 => 1,
+        crate::drivers::partition::DetectedFsKind::Ext2 => 2,
+        crate::drivers::partition::DetectedFsKind::Iso9660 => 3,
+        _ => 0,
+    };
+    uinfo.is_bootable = if part.is_bootable { 1 } else { 0 };
+    let copy_len = part.name_len.min(32);
+    uinfo.name[..copy_len].copy_from_slice(&part.name[..copy_len]);
+
+    let vm = crate::vfs::volume::VOLUME_MANAGER.lock();
+    for i in 0..vm.count {
+        if let Some(vol) = vm.volumes[i].as_ref() {
+            if vol.device_id == disk_idx && vol.partition_index == part_idx && vol.is_mounted {
+                uinfo.is_mounted = 1;
+                break;
+            }
+        }
+    }
+
+    unsafe {
+        core::ptr::write_unaligned(out_info, uinfo);
+    }
+    0
+}
+
+/// `sys_volume_info` — Obtém metadados de um volume gerenciado (Syscall 48).
+fn sys_volume_info(vol_idx: usize, out_info: *mut VolumeInfoUser) -> isize {
+    if out_info.is_null() {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(out_info as *const u8, core::mem::size_of::<VolumeInfoUser>(), true) {
+            return e;
+        }
+    }
+    let vm = crate::vfs::volume::VOLUME_MANAGER.lock();
+    let vol = match vm.get_volume(vol_idx) {
+        Some(v) => v,
+        None => return ENOENT,
+    };
+
+    let mut uinfo = VolumeInfoUser::default();
+    uinfo.volume_id = vol.id as u32;
+    uinfo.device_id = vol.device_id as u32;
+    uinfo.partition_index = vol.partition_index as u32;
+    uinfo.fs_kind = match vol.fs_kind {
+        crate::drivers::partition::DetectedFsKind::Fat32 => 1,
+        crate::drivers::partition::DetectedFsKind::Ext2 => 2,
+        crate::drivers::partition::DetectedFsKind::Iso9660 => 3,
+        _ => 0,
+    };
+    uinfo.is_mounted = if vol.is_mounted { 1 } else { 0 };
+    uinfo.is_root = if vol.is_root { 1 } else { 0 };
+    uinfo.is_boot = if vol.is_boot { 1 } else { 0 };
+    uinfo.total_mb = vol.total_mb as u64;
+    uinfo.used_mb = vol.used_mb as u64;
+    uinfo.free_mb = vol.free_mb as u64;
+    uinfo.label.copy_from_slice(&vol.label);
+    uinfo.mount_point.copy_from_slice(&vol.mount_point);
+
+    unsafe {
+        core::ptr::write_unaligned(out_info, uinfo);
+    }
+    0
+}
+
+/// `sys_volume_count` — Retorna a quantidade total de volumes catalogados (Syscall 49).
+fn sys_volume_count() -> isize {
+    let vm = crate::vfs::volume::VOLUME_MANAGER.lock();
+    vm.volume_count() as isize
 }
 
 // ── Kernel-internal invoke ────────────────────────────────────────────────────

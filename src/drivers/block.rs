@@ -69,6 +69,7 @@ pub struct BlockDeviceInfo {
     pub physical_sector_size: usize,
     pub is_read_only: bool,
     pub is_removable: bool,
+    pub is_boot_device: bool,
     pub dma_capable: bool,
 }
 
@@ -88,12 +89,29 @@ impl BlockDeviceInfo {
             physical_sector_size: DEFAULT_SECTOR_SIZE,
             is_read_only: false,
             is_removable: false,
+            is_boot_device: false,
             dma_capable: false,
         }
     }
 
     pub fn size_mb(&self) -> u64 {
         (self.capacity_sectors * self.logical_sector_size as u64) / (1024 * 1024)
+    }
+
+    pub fn name_str(&self) -> &str {
+        if self.name_len == 0 { "desconhecido" } else { core::str::from_utf8(&self.name[..self.name_len]).unwrap_or("desconhecido") }
+    }
+
+    pub fn model_str(&self) -> &str {
+        core::str::from_utf8(&self.model).unwrap_or("").trim()
+    }
+
+    pub fn vendor_str(&self) -> &str {
+        core::str::from_utf8(&self.vendor).unwrap_or("").trim_matches('\0').trim()
+    }
+
+    pub fn serial_str(&self) -> &str {
+        core::str::from_utf8(&self.serial).unwrap_or("").trim()
     }
 }
 
@@ -813,6 +831,7 @@ impl BlockDeviceManager {
         info.id = id;
         if self.boot_device_id.is_none() && info.status == DeviceStatus::Operational && !info.is_read_only && info.capacity_sectors > 0 {
             self.boot_device_id = Some(id);
+            info.is_boot_device = true;
         }
         self.devices[id] = Some(info);
         self.count += 1;
@@ -869,6 +888,7 @@ impl BlockDeviceManager {
                 bdev.physical_sector_size = DEFAULT_SECTOR_SIZE;
                 bdev.is_read_only = info.is_atapi;
                 bdev.is_removable = info.is_atapi;
+                bdev.is_boot_device = drive_id == 0;
                 bdev.dma_capable = false;
 
                 let _ = self.register_device(bdev);
