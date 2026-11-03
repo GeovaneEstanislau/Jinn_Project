@@ -292,8 +292,11 @@ impl BlockDevice for NvmeBlockDevice {
 
 /// Inicializa o subsistema de controladores NVMe e registra dispositivos no catálogo
 pub fn init_nvme() {
-    let mut ctrl = NVME_CONTROLLER.lock();
-    if ctrl.init().is_ok() {
+    let ok = {
+        let mut ctrl = NVME_CONTROLLER.lock();
+        ctrl.init().is_ok()
+    };
+    if ok {
         if let Ok(dev) = NvmeBlockDevice::new() {
             let mut mgr = crate::drivers::block::BLOCK_DEVICE_MANAGER.lock();
             let _ = mgr.register_device(dev.device_info());

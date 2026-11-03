@@ -344,8 +344,11 @@ impl BlockDevice for AhciBlockDevice {
 
 /// Inicializa o subsistema de controladores AHCI e registra dispositivos no catálogo
 pub fn init_ahci() {
-    let mut ctrl = AHCI_CONTROLLER.lock();
-    if ctrl.init().is_ok() {
+    let ok = {
+        let mut ctrl = AHCI_CONTROLLER.lock();
+        ctrl.init().is_ok()
+    };
+    if ok {
         if let Ok(dev) = AhciBlockDevice::new(0) {
             let mut mgr = crate::drivers::block::BLOCK_DEVICE_MANAGER.lock();
             let _ = mgr.register_device(dev.device_info());
