@@ -629,7 +629,7 @@ pub fn send_socket(pid: usize, sockfd: usize, data: &[u8]) -> Result<usize, isiz
 
         // UDP (SOCK_DGRAM)
         let our_ip = crate::net::dhcp::DHCP_CLIENT.ip;
-        let our_mac = crate::drivers::net::virtio::get_device()
+        let our_mac = crate::drivers::net::get_device()
             .map(|d| d.mac_address())
             .unwrap_or([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
 
@@ -659,7 +659,7 @@ pub fn send_socket(pid: usize, sockfd: usize, data: &[u8]) -> Result<usize, isiz
         eth_buf[42..(42 + payload_len)].copy_from_slice(&data[..payload_len]);
 
         let total_frame_len = 14 + 20 + transport_len;
-        if let Some(dev) = crate::drivers::net::virtio::get_device() {
+        if let Some(dev) = crate::drivers::net::get_device() {
             let _ = dev.transmit(&eth_buf[..total_frame_len]);
         }
         Ok(payload_len)

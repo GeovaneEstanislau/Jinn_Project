@@ -254,11 +254,15 @@ pub extern "C" fn _start() -> ! {
     w.set_color(Color::LightGreen, Color::Black);
     w.write_string(" OK ");
     w.set_color(Color::LightCyan, Color::Black);
-    if let Some(dev) = drivers::net::virtio::get_device() {
-        if dev.is_available {
-            w.write_string("(VirtIO-Net @ 0x");
-            w.write_hex_u16(dev.io_base);
-            w.write_line(")");
+    if let Some(dev) = drivers::net::get_device() {
+        if dev.is_available() {
+            unsafe {
+                match drivers::net::DETECTED_NIC_TYPE {
+                    drivers::net::NicType::Virtio => w.write_line("(VirtIO-Net ativo)"),
+                    drivers::net::NicType::E1000 => w.write_line("(Intel e1000 ativo)"),
+                    _ => w.write_line("(NIC ativa)"),
+                }
+            }
         } else {
             w.write_line("(Loopback Virtual)");
         }

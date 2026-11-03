@@ -71,10 +71,9 @@ impl ArpTable {
         None
     }
 
-    /// Inicializa mapeamentos ARP estáticos para gateway e servidor DNS no ambiente virtual QEMU / KVM
+    /// Inicializa a tabela de cache ARP com estado limpo
     pub fn init_defaults(&mut self) {
-        self.insert([10, 0, 2, 2], DEFAULT_GATEWAY_MAC, 0);
-        self.insert([10, 0, 2, 3], DEFAULT_DNS_MAC, 0);
+        *self = Self::new();
     }
 }
 
@@ -151,10 +150,13 @@ pub fn build_arp_request(
 }
 
 pub fn send_arp_request(target_ip: [u8; 4]) -> bool {
-    let dev = match crate::drivers::net::virtio::get_device() {
+    let dev = match crate::drivers::net::get_device() {
         Some(d) => d,
         None => return false,
     };
+    if !dev.is_available() {
+        return false;
+    }
     let our_mac = dev.mac_address();
     let our_ip = unsafe { crate::net::dhcp::DHCP_CLIENT.ip };
 
@@ -169,21 +171,57 @@ pub fn send_arp_request(target_ip: [u8; 4]) -> bool {
     dev.transmit(&frame[..(14 + arp_len)]).is_ok()
 }
 
-/// Resolve o endereço MAC para o próximo salto de um pacote com destino a `dst_ip`.
-/// Se `dst_ip` for externo, busca o MAC do gateway padrão configurado no sistema.
-pub fn resolve_mac_for_ip(dst_ip: [u8; 4]) -> [u8; 6] {
+/// Resolve o endereço MAC para o próximo salto com espera ativa e retransmissão ARP.
+pub fn resolve_mac_for_ip_blocking(dst_ip: [u8; 4], timeout_ticks: u64) -> Option<[u8; 6]> {
     let next_hop = crate::net::ipv4::get_next_hop_ip(dst_ip);
+    let start = crate::timer::ticks();
+
+    // 1. Se já está no cache, retorna imediatamente sem bloquear
     if let Some(mac) = unsafe { ARP_CACHE.lookup(next_hop) } {
+        return Some(mac);
+    }
+
+    // 2. Dispara requisição ARP real para o próximo salto
+    send_arp_request(next_hop);
+    let mut last_send = start;
+
+    while crate::timer::ticks().saturating_sub(start) < timeout_ticks {
+        crate::net::poll();
+        if let Some(mac) = unsafe { ARP_CACHE.lookup(next_hop) } {
+            return Some(mac);
+        }
+        // Retransmite a cada 15 ticks (150ms)
+        if crate::timer::ticks().saturating_sub(last_send) >= 15 {
+            last_send = crate::timer::ticks();
+            send_arp_request(next_hop);
+        }
+        crate::scheduler::yield_now();
+    }
+
+    // 3. Fallback inteligente para ambientes virtuais (VirtualBox / QEMU NAT):
+    // Se conhecemos o MAC do gateway (aprendido via DHCP), e next_hop é o DNS da sub-rede local,
+    // associa o MAC do gateway a esse host
+    let gateway = unsafe { crate::net::dhcp::DHCP_CLIENT.gateway };
+    if let Some(gw_mac) = unsafe { ARP_CACHE.lookup(gateway) } {
+        unsafe { ARP_CACHE.insert(next_hop, gw_mac, crate::timer::ticks()); }
+        return Some(gw_mac);
+    }
+
+    // Fallback de emergência caso nenhum pacote ARP ou DHCP tenha sido recebido
+    if next_hop == [10, 0, 2, 3] {
+        Some(DEFAULT_DNS_MAC)
+    } else if next_hop == [10, 0, 2, 2] {
+        Some(DEFAULT_GATEWAY_MAC)
+    } else {
+        None
+    }
+}
+
+/// Resolve o endereço MAC para o próximo salto de um pacote com destino a `dst_ip`.
+pub fn resolve_mac_for_ip(dst_ip: [u8; 4]) -> [u8; 6] {
+    if let Some(mac) = resolve_mac_for_ip_blocking(dst_ip, 30) {
         mac
     } else {
-        // Envia requisição ARP para o próximo salto (host local ou gateway)
-        send_arp_request(next_hop);
-        // Em vez de retornar BROADCAST_MAC para unicast (o que faz roteadores virtuais descartarem pacotes IP),
-        // usa o MAC padrão do gateway ou DNS como fallback determinístico de L2
-        if next_hop == [10, 0, 2, 3] {
-            DEFAULT_DNS_MAC
-        } else {
-            DEFAULT_GATEWAY_MAC
-        }
+        DEFAULT_GATEWAY_MAC
     }
 }

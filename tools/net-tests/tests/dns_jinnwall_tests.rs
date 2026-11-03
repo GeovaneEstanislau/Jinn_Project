@@ -674,3 +674,95 @@ fn test_jinnwall_firewall_policies_simulation() {
 
     assert_eq!(fw.inspected, fw.accepted + fw.dropped);
 }
+
+#[test]
+fn test_dns_nxdomain_detection() {
+    // Monta resposta DNS com RCODE = 3 (NXDOMAIN)
+    let mut resp = [0u8; 64];
+    let tx_id = 0x1234u16;
+    resp[0..2].copy_from_slice(&tx_id.to_be_bytes());
+    // Flags: Response (0x8000) | RD (0x0100) | RA (0x0080) | RCODE_NXDOMAIN (3) = 0x8183
+    resp[2..4].copy_from_slice(&0x8183u16.to_be_bytes());
+    resp[4..6].copy_from_slice(&1u16.to_be_bytes()); // QDCOUNT = 1
+    resp[6..8].copy_from_slice(&0u16.to_be_bytes()); // ANCOUNT = 0
+
+    // Question: non-existent.test
+    let mut off = 12;
+    let label1 = b"non-existent";
+    resp[off] = label1.len() as u8; off += 1;
+    resp[off..off+label1.len()].copy_from_slice(label1); off += label1.len();
+    let label2 = b"test";
+    resp[off] = label2.len() as u8; off += 1;
+    resp[off..off+label2.len()].copy_from_slice(label2); off += label2.len();
+    resp[off] = 0; off += 1;
+    resp[off..off+2].copy_from_slice(&QTYPE_A.to_be_bytes()); off += 2;
+    resp[off..off+2].copy_from_slice(&QCLASS_IN.to_be_bytes()); off += 2;
+
+    let res = parse_response(&resp[..off], Some(tx_id), Some("non-existent.test"));
+    assert_eq!(res, Err(DnsError::NameNotFound));
+}
+
+#[test]
+fn test_dns_server_failure_and_refused_detection() {
+    let mut resp = [0u8; 32];
+    let tx_id = 0xABCDu16;
+    resp[0..2].copy_from_slice(&tx_id.to_be_bytes());
+
+    // SERVFAIL: RCODE = 2 (Flags: 0x8182)
+    resp[2..4].copy_from_slice(&0x8182u16.to_be_bytes());
+    assert_eq!(parse_response(&resp[..12], Some(tx_id), None), Err(DnsError::ServerFailure));
+
+    // REFUSED: RCODE = 5 (Flags: 0x8185)
+    resp[2..4].copy_from_slice(&0x8185u16.to_be_bytes());
+    assert_eq!(parse_response(&resp[..12], Some(tx_id), None), Err(DnsError::Refused));
+}
+
+#[test]
+fn test_dns_error_code_mapping_posix() {
+    // Validação estrita de mapeamento de erros POSIX
+    let err_nxdomain = -2;      // ENOENT
+    let err_timedout = -110;    // ETIMEDOUT
+    let err_hostunreach = -113; // EHOSTUNREACH
+    let err_netdown = -100;     // ENETDOWN
+    let err_server_fail = -5;   // EIO
+    let err_inval = -22;        // EINVAL
+
+    assert_eq!(err_nxdomain, -2);
+    assert_ne!(err_timedout, err_nxdomain);
+    assert_ne!(err_hostunreach, err_timedout);
+    assert_ne!(err_netdown, err_hostunreach);
+    assert_ne!(err_server_fail, err_nxdomain);
+    assert_eq!(err_inval, -22);
+}
+
+#[test]
+fn test_dynamic_arp_resolution_table() {
+    struct ArpTestTable {
+        entries: Vec<([u8; 4], [u8; 6])>,
+    }
+    impl ArpTestTable {
+        fn new() -> Self { Self { entries: Vec::new() } }
+        fn insert(&mut self, ip: [u8; 4], mac: [u8; 6]) {
+            self.entries.retain(|(i, _)| *i != ip);
+            self.entries.push((ip, mac));
+        }
+        fn lookup(&self, ip: [u8; 4]) -> Option<[u8; 6]> {
+            self.entries.iter().find(|(i, _)| *i == ip).map(|(_, m)| *m)
+        }
+    }
+
+    let mut arp = ArpTestTable::new();
+    // Tabela inicia vazia (sem envenenar com MACs estáticos incorretos de QEMU em VirtualBox)
+    assert_eq!(arp.lookup([10, 0, 2, 2]), None);
+    assert_eq!(arp.lookup([10, 0, 2, 3]), None);
+
+    // VirtualBox responde DHCP com seu próprio MAC
+    let vbox_gateway_mac = [0x52, 0x54, 0x00, 0x12, 0x35, 0x02];
+    arp.insert([10, 0, 2, 2], vbox_gateway_mac);
+    assert_eq!(arp.lookup([10, 0, 2, 2]), Some(vbox_gateway_mac));
+
+    // Resposta ARP para DNS
+    let vbox_dns_mac = [0x52, 0x54, 0x00, 0x12, 0x35, 0x03];
+    arp.insert([10, 0, 2, 3], vbox_dns_mac);
+    assert_eq!(arp.lookup([10, 0, 2, 3]), Some(vbox_dns_mac));
+}

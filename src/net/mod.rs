@@ -17,9 +17,9 @@ use jinnwall::{FilterVerdict, JINNWALL};
 
 /// Inicializa a pilha de rede e descobre controladores NIC.
 pub fn init() {
-    let has_virtio = crate::drivers::net::virtio::init();
+    let has_virtio = crate::drivers::net::init();
     if has_virtio {
-        if let Some(dev) = crate::drivers::net::virtio::get_device() {
+        if let Some(dev) = crate::drivers::net::get_device() {
             let mac = dev.mac_address();
             // Dispara DHCP Discover na inicialização
             let mut discover_buf = [0u8; 1536];
@@ -73,7 +73,7 @@ pub fn poll() {
     }
     let _guard = NetPollGuard;
 
-    let dev = match crate::drivers::net::virtio::get_device() {
+    let dev = match crate::drivers::net::get_device() {
         Some(d) => d,
         None => return,
     };

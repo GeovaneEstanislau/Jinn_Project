@@ -2246,7 +2246,7 @@ fn cmd_dns(w: &mut Writer, args: &str) {
     w.set_color(Color::LightGray, Color::Black);
 
     match crate::net::dns::resolve(args) {
-        Some(ip) => {
+        Ok(ip) => {
             w.set_color(Color::LightGreen, Color::Black);
             w.write_string("  [OK] Endereco IP: ");
             w.write_decimal(ip[0] as usize);
@@ -2259,9 +2259,18 @@ fn cmd_dns(w: &mut Writer, args: &str) {
             w.write_line("");
             w.set_color(Color::LightGray, Color::Black);
         }
-        None => {
+        Err(e) => {
             w.set_color(Color::LightRed, Color::Black);
-            w.write_line("  [FALHA] Nao foi possivel resolver o nome (timeout ou inexistente).");
+            w.write_string("  [FALHA] Nao foi possivel resolver o nome (");
+            match e {
+                crate::net::dns::DnsResolveError::NxDomain => w.write_string("NXDOMAIN"),
+                crate::net::dns::DnsResolveError::Timeout => w.write_string("ETIMEDOUT"),
+                crate::net::dns::DnsResolveError::ArpFailed => w.write_string("EHOSTUNREACH"),
+                crate::net::dns::DnsResolveError::InterfaceDown => w.write_string("ENETDOWN"),
+                crate::net::dns::DnsResolveError::ServerFailure => w.write_string("SERVFAIL"),
+                crate::net::dns::DnsResolveError::InvalidName => w.write_string("EINVAL"),
+            }
+            w.write_line(").");
             w.set_color(Color::LightGray, Color::Black);
         }
     }
@@ -2323,9 +2332,18 @@ fn cmd_netinfo(w: &mut Writer) {
     w.write_line("=== Configuracao de Rede & VirtIO ===");
     w.set_color(Color::LightGray, Color::Black);
 
-    if let Some(dev) = crate::drivers::net::virtio::get_device() {
+    if let Some(dev) = crate::drivers::net::get_device() {
         let mac = dev.mac_address();
-        w.write_string("  Placa de Rede : VirtIO-Net (MAC: ");
+        let nic_name = unsafe {
+            match crate::drivers::net::DETECTED_NIC_TYPE {
+                crate::drivers::net::NicType::Virtio => "VirtIO-Net",
+                crate::drivers::net::NicType::E1000 => "Intel PRO/1000 (e1000)",
+                crate::drivers::net::NicType::None => "Loopback Virtual",
+            }
+        };
+        w.write_string("  Placa de Rede : ");
+        w.write_string(nic_name);
+        w.write_string(" (MAC: ");
         w.write_hex_u8(mac[0]); w.write_string(":");
         w.write_hex_u8(mac[1]); w.write_string(":");
         w.write_hex_u8(mac[2]); w.write_string(":");
@@ -2639,7 +2657,7 @@ where
             } else {
                 output("Resolvendo DNS...", 0x0094_A3B8);
                 match crate::net::dns::resolve(args) {
-                    Some(ip) => {
+                    Ok(ip) => {
                         let mut buf = [0u8; 32];
                         let mut len = 0;
                         for (idx, oct) in ip.iter().enumerate() {
@@ -2651,8 +2669,20 @@ where
                         }
                         if let Ok(s) = core::str::from_utf8(&buf[..len]) { output(s, 0x0022_C55E); }
                     }
-                    None => {
-                        output("Falha ao resolver nome (timeout/NXDOMAIN)", 0x00EF_4444);
+                    Err(crate::net::dns::DnsResolveError::NxDomain) => {
+                        output("Falha: Dominio inexistente (NXDOMAIN)", 0x00EF_4444);
+                    }
+                    Err(crate::net::dns::DnsResolveError::Timeout) => {
+                        output("Falha: Servidor DNS inacessivel (ETIMEDOUT)", 0x00EF_4444);
+                    }
+                    Err(crate::net::dns::DnsResolveError::ArpFailed) => {
+                        output("Falha: Roteamento L2/ARP indisponivel", 0x00EF_4444);
+                    }
+                    Err(crate::net::dns::DnsResolveError::InterfaceDown) => {
+                        output("Falha: Adaptador de rede desconectado", 0x00EF_4444);
+                    }
+                    Err(_) => {
+                        output("Falha ao resolver nome", 0x00EF_4444);
                     }
                 }
             }

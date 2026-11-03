@@ -71,6 +71,22 @@ pub fn pci_read_u8(bus: u8, slot: u8, func: u8, offset: u8) -> u8 {
     ((dword >> shift) & 0xFF) as u8
 }
 
+/// Escreve uma palavra de 16 bits no espaço de configuração PCI.
+pub fn pci_write_u16(bus: u8, slot: u8, func: u8, offset: u8, value: u16) {
+    let dword = pci_read_u32(bus, slot, func, offset);
+    let shift = (offset & 2) * 8;
+    let mask = !(0xFFFFu32 << shift);
+    let new_dword = (dword & mask) | ((value as u32) << shift);
+    pci_write_u32(bus, slot, func, offset, new_dword);
+}
+
+/// Habilita Bus Master (DMA), Espaço de Memória (MMIO) e Espaço de E/S no registrador PCI Command (offset 0x04)
+pub fn enable_bus_mastering(bus: u8, slot: u8, func: u8) {
+    let cmd = pci_read_u16(bus, slot, func, 0x04);
+    // Bit 0: I/O Space Enable, Bit 1: Memory Space Enable, Bit 2: Bus Master Enable
+    pci_write_u16(bus, slot, func, 0x04, cmd | 0x0007);
+}
+
 // ── Estruturas de Dados ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy)]

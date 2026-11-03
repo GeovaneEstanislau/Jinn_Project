@@ -273,7 +273,7 @@ pub fn send_tcp_packet(
     payload: &[u8],
 ) -> bool {
     let our_ip = unsafe { crate::net::dhcp::DHCP_CLIENT.ip };
-    let our_mac = crate::drivers::net::virtio::get_device()
+    let our_mac = crate::drivers::net::get_device()
         .map(|d| d.mac_address())
         .unwrap_or([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
 
@@ -323,7 +323,7 @@ pub fn send_tcp_packet(
     }
 
     let total_frame_len = 14 + 20 + written;
-    if let Some(dev) = crate::drivers::net::virtio::get_device() {
+    if let Some(dev) = crate::drivers::net::get_device() {
         dev.transmit(&eth_buf[..total_frame_len]).is_ok()
     } else {
         false

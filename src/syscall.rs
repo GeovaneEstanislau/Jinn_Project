@@ -1673,13 +1673,18 @@ fn sys_dns_resolve(name_ptr: *const u8, name_len: usize, out_ip_ptr: *mut u8) ->
     };
 
     match crate::net::dns::resolve(name_str) {
-        Some(ip) => {
+        Ok(ip) => {
             unsafe {
                 core::ptr::copy_nonoverlapping(ip.as_ptr(), out_ip_ptr, 4);
             }
             0
         }
-        None => -2, // ENOENT (Host nao encontrado / NXDOMAIN)
+        Err(crate::net::dns::DnsResolveError::NxDomain) => -2, // ENOENT (Host nao encontrado / NXDOMAIN)
+        Err(crate::net::dns::DnsResolveError::Timeout) => -110, // ETIMEDOUT (Servidor DNS upstream nao respondeu)
+        Err(crate::net::dns::DnsResolveError::ArpFailed) => -113, // EHOSTUNREACH (Falha de resolucao ARP L2)
+        Err(crate::net::dns::DnsResolveError::InterfaceDown) => -100, // ENETDOWN (Interface de rede inoperante)
+        Err(crate::net::dns::DnsResolveError::ServerFailure) => -5, // EIO (Erro reportado pelo servidor DNS / SERVFAIL)
+        Err(crate::net::dns::DnsResolveError::InvalidName) => EINVAL, // -22
     }
 }
 

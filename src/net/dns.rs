@@ -31,6 +31,25 @@ pub const RCODE_NXDOMAIN: u16 = 3;
 pub const RCODE_NOT_IMPLEMENTED: u16 = 4;
 pub const RCODE_REFUSED: u16 = 5;
 
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DnsResolveError {
+    InterfaceDown,
+    ArpFailed,
+    Timeout,
+    NxDomain,
+    ServerFailure,
+    InvalidName,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DnsQueryStatus {
+    Pending,
+    Resolved([u8; 4], u32),
+    NxDomain,
+    ServerError,
+}
+
 pub const DNS_CACHE_CAPACITY: usize = 16;
 pub const MAX_NAME_LEN: usize = 64;
 pub const MAX_LABEL_LEN: usize = 63;
@@ -222,6 +241,7 @@ pub struct PendingDnsQuery {
     pub name: [u8; MAX_NAME_LEN],
     pub name_len: u8,
     pub start_tick: u64,
+    pub status: DnsQueryStatus,
 }
 
 impl PendingDnsQuery {
@@ -232,6 +252,7 @@ impl PendingDnsQuery {
             name: [0u8; MAX_NAME_LEN],
             name_len: 0,
             start_tick: 0,
+            status: DnsQueryStatus::Pending,
         }
     }
 }
@@ -281,6 +302,28 @@ impl PendingDnsTable {
                 }
             }
         }
+    }
+
+    pub fn update_status(&mut self, tx_id: u16, status: DnsQueryStatus) {
+        for slot in self.slots.iter_mut() {
+            if let Some(q) = slot {
+                if q.tx_id == tx_id && q.active {
+                    q.status = status;
+                    return;
+                }
+            }
+        }
+    }
+
+    pub fn get_status(&self, tx_id: u16) -> Option<DnsQueryStatus> {
+        for slot in self.slots.iter() {
+            if let Some(q) = slot {
+                if q.tx_id == tx_id && q.active {
+                    return Some(q.status);
+                }
+            }
+        }
+        None
     }
 }
 
@@ -594,27 +637,52 @@ pub fn handle_dns_reply(payload: &[u8]) {
     let rx_tx_id = u16::from_be_bytes([payload[0], payload[1]]);
 
     unsafe {
-        let pending = if let Some(p) = PENDING_DNS_TABLE.match_and_remove(rx_tx_id) {
-            p
-        } else if let Some(p) = PENDING_QUERY {
-            if p.active && p.tx_id == rx_tx_id {
-                PENDING_QUERY = None;
-                p
-            } else {
-                return;
-            }
-        } else {
-            return;
-        };
+        let mut found_name = [0u8; MAX_NAME_LEN];
+        let mut found_len = 0usize;
+        let mut found_id = 0u16;
+        let mut found = false;
 
-        let pending_name_str = match core::str::from_utf8(&pending.name[..pending.name_len as usize]) {
+        for slot in PENDING_DNS_TABLE.slots.iter() {
+            if let Some(q) = slot {
+                if q.tx_id == rx_tx_id && q.active {
+                    found_len = (q.name_len as usize).min(MAX_NAME_LEN);
+                    found_name[..found_len].copy_from_slice(&q.name[..found_len]);
+                    found_id = q.tx_id;
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if !found {
+            if let Some(p) = &PENDING_QUERY {
+                if p.active && p.tx_id == rx_tx_id {
+                    found_len = (p.name_len as usize).min(MAX_NAME_LEN);
+                    found_name[..found_len].copy_from_slice(&p.name[..found_len]);
+                    found_id = p.tx_id;
+                    found = true;
+                }
+            }
+        }
+        if !found { return; }
+
+        let pending_name_str = match core::str::from_utf8(&found_name[..found_len]) {
             Ok(s) => s,
             Err(_) => return,
         };
 
-        if let Ok(answer) = parse_response(payload, Some(pending.tx_id), Some(pending_name_str)) {
-            let current_tick = crate::timer::ticks();
-            DNS_CACHE.insert(pending_name_str, answer.ip, answer.ttl_secs, current_tick);
+        match parse_response(payload, Some(found_id), Some(pending_name_str)) {
+            Ok(answer) => {
+                let current_tick = crate::timer::ticks();
+                DNS_CACHE.insert(pending_name_str, answer.ip, answer.ttl_secs, current_tick);
+                PENDING_DNS_TABLE.update_status(found_id, DnsQueryStatus::Resolved(answer.ip, answer.ttl_secs));
+            }
+            Err(DnsError::NameNotFound) => {
+                PENDING_DNS_TABLE.update_status(found_id, DnsQueryStatus::NxDomain);
+            }
+            Err(DnsError::ServerFailure) | Err(DnsError::Refused) | Err(DnsError::FormatError) => {
+                PENDING_DNS_TABLE.update_status(found_id, DnsQueryStatus::ServerError);
+            }
+            _ => {}
         }
     }
 }
@@ -628,7 +696,7 @@ pub fn send_query_to(name: &str, tx_id: u16, server_override: Option<[u8; 4]>) -
     let mut dns_payload = [0u8; 512];
     let payload_len = build_query(name, tx_id, &mut dns_payload)?;
 
-    let dev = match crate::drivers::net::virtio::get_device() {
+    let dev = match crate::drivers::net::get_device() {
         Some(d) => d,
         None => return Err(DnsError::ServerFailure),
     };
@@ -676,23 +744,29 @@ pub fn send_query_to(name: &str, tx_id: u16, server_override: Option<[u8; 4]>) -
 }
 
 /// Resolve nome de domínio consultando cache ou transmitindo query
-pub fn resolve(name: &str) -> Option<[u8; 4]> {
+pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
     let ticks = crate::timer::ticks();
 
     // 1. Tenta interpretar como literal IPv4 (ex: "10.0.2.2")
     if let Some(ip) = parse_ipv4_literal(name) {
-        return Some(ip);
+        return Ok(ip);
     }
 
     // 2. Consulta cache local
     if let Some(cached_ip) = unsafe { DNS_CACHE.lookup(name, ticks) } {
-        return Some(cached_ip);
+        return Ok(cached_ip);
     }
 
-    // 3. Registra consulta em trânsito
+    // 3. Verifica disponibilidade de interface de rede
+    let dev_available = crate::drivers::net::get_device().map(|d| d.is_available()).unwrap_or(false);
+    if !dev_available {
+        return Err(DnsResolveError::InterfaceDown);
+    }
+
+    // 4. Registra consulta em trânsito
     let name_bytes = name.as_bytes();
     if name_bytes.is_empty() || name_bytes.len() > MAX_NAME_LEN {
-        return None;
+        return Err(DnsResolveError::InvalidName);
     }
     let mut name_buf = [0u8; MAX_NAME_LEN];
     name_buf[..name_bytes.len()].copy_from_slice(name_bytes);
@@ -704,46 +778,83 @@ pub fn resolve(name: &str) -> Option<[u8; 4]> {
         name: name_buf,
         name_len: name_bytes.len() as u8,
         start_tick: ticks,
+        status: DnsQueryStatus::Pending,
     };
     unsafe {
         PENDING_QUERY = Some(query_entry);
         PENDING_DNS_TABLE.insert(query_entry);
     }
 
-    // 4. Transmite consulta pela rede (primária + fallback secundário)
-    if send_query(name, tx_id).is_ok() {
-        let start_tick = crate::timer::ticks();
-        let mut last_tx = start_tick;
-        let mut tried_fallback = false;
-
-        // Aguarda até 400 ticks (4,0s a 100 Hz APIC) com retransmissão a cada 80 ticks (800ms)
-        while crate::timer::ticks().saturating_sub(start_tick) < 400 {
-            crate::net::poll();
-            if let Some(ip) = unsafe { DNS_CACHE.lookup(name, crate::timer::ticks()) } {
-                unsafe {
-                    PENDING_QUERY = None;
-                    PENDING_DNS_TABLE.remove(tx_id);
-                }
-                return Some(ip);
-            }
-            if crate::timer::ticks().saturating_sub(last_tx) >= 80 {
-                last_tx = crate::timer::ticks();
-                if crate::timer::ticks().saturating_sub(start_tick) >= 160 && !tried_fallback {
-                    tried_fallback = true;
-                    let _ = send_query_to(name, tx_id, Some([8, 8, 8, 8]));
-                } else {
-                    let _ = send_query(name, tx_id);
-                }
-            }
-            crate::scheduler::yield_now();
+    // 5. Transmite consulta pela rede (primária + fallback secundário)
+    if send_query(name, tx_id).is_err() {
+        unsafe {
+            PENDING_QUERY = None;
+            PENDING_DNS_TABLE.remove(tx_id);
         }
+        return Err(DnsResolveError::ArpFailed);
+    }
+
+    let start_tick = crate::timer::ticks();
+    let mut last_tx = start_tick;
+    let mut tried_fallback = false;
+
+    // Aguarda até 350 ticks (3,5s a 100 Hz APIC) com polling e retransmissão
+    while crate::timer::ticks().saturating_sub(start_tick) < 350 {
+        crate::net::poll();
+
+        // Verifica status da consulta pendente
+        if let Some(status) = unsafe { PENDING_DNS_TABLE.get_status(tx_id) } {
+            match status {
+                DnsQueryStatus::Resolved(ip, _) => {
+                    unsafe {
+                        PENDING_QUERY = None;
+                        PENDING_DNS_TABLE.remove(tx_id);
+                    }
+                    return Ok(ip);
+                }
+                DnsQueryStatus::NxDomain => {
+                    unsafe {
+                        PENDING_QUERY = None;
+                        PENDING_DNS_TABLE.remove(tx_id);
+                    }
+                    return Err(DnsResolveError::NxDomain);
+                }
+                DnsQueryStatus::ServerError => {
+                    unsafe {
+                        PENDING_QUERY = None;
+                        PENDING_DNS_TABLE.remove(tx_id);
+                    }
+                    return Err(DnsResolveError::ServerFailure);
+                }
+                DnsQueryStatus::Pending => {}
+            }
+        }
+
+        if let Some(cached_ip) = unsafe { DNS_CACHE.lookup(name, crate::timer::ticks()) } {
+            unsafe {
+                PENDING_QUERY = None;
+                PENDING_DNS_TABLE.remove(tx_id);
+            }
+            return Ok(cached_ip);
+        }
+
+        if crate::timer::ticks().saturating_sub(last_tx) >= 80 {
+            last_tx = crate::timer::ticks();
+            if crate::timer::ticks().saturating_sub(start_tick) >= 160 && !tried_fallback {
+                tried_fallback = true;
+                let _ = send_query_to(name, tx_id, Some([8, 8, 8, 8]));
+            } else {
+                let _ = send_query(name, tx_id);
+            }
+        }
+        crate::scheduler::yield_now();
     }
 
     unsafe {
         PENDING_QUERY = None;
         PENDING_DNS_TABLE.remove(tx_id);
     }
-    None
+    Err(DnsResolveError::Timeout)
 }
 
 /// Helper para converter literais IPv4 ("A.B.C.D") sem alocador dinâmico

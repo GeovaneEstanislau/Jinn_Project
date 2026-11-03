@@ -65,7 +65,7 @@ pub fn handle_icmp_packet(
         icmp_dest[3] = chk_bytes[1];
 
         // 4. Envia pelo driver VirtIO-Net
-        if let Some(dev) = crate::drivers::net::virtio::get_device() {
+        if let Some(dev) = crate::drivers::net::get_device() {
             let _ = dev.transmit(&reply_buf[..total_eth_len]);
         }
     }

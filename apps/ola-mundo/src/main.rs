@@ -1444,6 +1444,11 @@ unsafe fn read_html_file(path: &[u8]) -> Option<usize> {
 
 #[derive(Debug, Clone, Copy)]
 enum FetchError {
+    DnsNxDomain,
+    DnsTimeout,
+    DnsArpFailed,
+    DnsNetDown,
+    DnsServerFailure,
     DnsFailed,
     SocketFailed,
     ConnectFailed(i64),
@@ -1481,8 +1486,27 @@ unsafe fn fetch_http_document(
         let mut ip = [0u8; 4];
         let dns_res = sys_dns_resolve(parsed.host.as_ptr(), parsed.host_len, ip.as_mut_ptr());
         if dns_res < 0 {
-            print_str(b"[DIAG-FLOW] DNS: ERRO: Falha ao resolver DNS (-ENOENT / Timeout)!\n");
-            return Err(FetchError::DnsFailed);
+            if dns_res == -2 {
+                print_str(b"[DIAG-FLOW] DNS: ERRO: Dominio inexistente (NXDOMAIN)!\n");
+                return Err(FetchError::DnsNxDomain);
+            } else if dns_res == -110 {
+                print_str(b"[DIAG-FLOW] DNS: ERRO: Timeout do servidor DNS upstream!\n");
+                return Err(FetchError::DnsTimeout);
+            } else if dns_res == -113 {
+                print_str(b"[DIAG-FLOW] DNS: ERRO: Falha de resolucao ARP na rede local!\n");
+                return Err(FetchError::DnsArpFailed);
+            } else if dns_res == -100 {
+                print_str(b"[DIAG-FLOW] DNS: ERRO: Interface de rede inoperante!\n");
+                return Err(FetchError::DnsNetDown);
+            } else if dns_res == -5 {
+                print_str(b"[DIAG-FLOW] DNS: ERRO: Falha reportada pelo servidor DNS (SERVFAIL)!\n");
+                return Err(FetchError::DnsServerFailure);
+            } else {
+                print_str(b"[DIAG-FLOW] DNS: ERRO: Falha ao resolver DNS com codigo: ");
+                print_i64(dns_res);
+                print_str(b"\n");
+                return Err(FetchError::DnsFailed);
+            }
         }
 
         print_str(b"[DIAG-FLOW] IP: ");
@@ -1712,10 +1736,35 @@ unsafe fn browser_load_and_display(
             }
             Err(err) => {
                 let (err_title, err_msg, err_detail): (&[u8], &[u8], &[u8]) = match err {
+                    FetchError::DnsNxDomain => (
+                        b"Dominio Inexistente",
+                        b"Nao foi possivel encontrar o servidor. Verifique o dominio digitado.",
+                        b"NXDOMAIN: O servidor DNS confirmou que o dominio informado nao existe (RFC 1035 RCODE 3)",
+                    ),
+                    FetchError::DnsTimeout => (
+                        b"Servidor DNS Inacessivel",
+                        b"O servidor DNS upstream nao respondeu dentro do limite de tempo.",
+                        b"ETIMEDOUT: Nenhuma resposta do servidor DNS (10.0.2.3 / 8.8.8.8)",
+                    ),
+                    FetchError::DnsArpFailed => (
+                        b"Falha de Resolucao ARP",
+                        b"Nao foi possivel localizar o endereco fisico (MAC) do gateway na rede local.",
+                        b"EHOSTUNREACH: O gateway ou servidor DNS nao respondeu a requisicoes ARP L2",
+                    ),
+                    FetchError::DnsNetDown => (
+                        b"Interface de Rede Inoperante",
+                        b"Nenhum adaptador de rede ativo foi detectado no sistema operacional.",
+                        b"ENETDOWN: Placa de rede VirtIO ou Intel e1000 indisponivel ou cabo desconectado",
+                    ),
+                    FetchError::DnsServerFailure => (
+                        b"Falha no Servidor DNS",
+                        b"O servidor DNS upstream reportou uma falha ao processar a consulta.",
+                        b"SERVFAIL / Refused: O servidor encontrou um erro interno (RFC 1035 RCODE 2 / 5)",
+                    ),
                     FetchError::DnsFailed => (
                         b"Erro de Resolucao DNS",
-                        b"Nao foi possivel encontrar o servidor. Verifique o dominio digitado.",
-                        b"sys_dns_resolve retornou -ENOENT / Servidor DNS upstream inacessivel",
+                        b"Falha desconhecida durante a resolucao do nome de dominio.",
+                        b"sys_dns_resolve falhou com codigo generico",
                     ),
                     FetchError::SocketFailed => (
                         b"Erro de Rede Interno",
@@ -2148,7 +2197,7 @@ fn get_cstr_len(s: &[u8]) -> usize {
 
 unsafe fn run_browser_interactive() -> ! {
     print_str(b"\n==================================================================\n");
-    print_str(b"  JINN BROWSER 0.3.0 - SESSAO INTERATIVA NATIVA (RING 3)\n");
+    print_str(b"  JINN BROWSER 0.5.0 - SESSAO INTERATIVA NATIVA (RING 3)\n");
     print_str(b"==================================================================\n");
 
     let mut session = browser::BrowserSession::new();
@@ -2171,7 +2220,7 @@ unsafe fn run_browser_interactive() -> ! {
     session.load_document_bytes(raw_bytes, b"file:///disk/INDEX.HTM");
 
     // 2. Cria janela nativa no Aladdin Desktop
-    let win_id = sys_window_create(b"Jinn Browser v0.3.0", browser::WIN_W, browser::WIN_H);
+    let win_id = sys_window_create(b"Jinn Browser v0.5.0", browser::WIN_W, browser::WIN_H);
     if win_id < 0 {
         print_str(b"[BROWSER] sys_window_create falhou para Jinn Browser!\n");
         sys_exit(1);

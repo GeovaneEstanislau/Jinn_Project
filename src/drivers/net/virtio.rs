@@ -260,6 +260,9 @@ pub fn init() -> bool {
 
     let io_base = (pci_dev.bar0 & !0x3) as u16;
     unsafe {
+        // Habilita PCI Bus Master (DMA) e decodificação de portas I/O (essencial para VirtualBox e Bare Metal)
+        pci::enable_bus_mastering(pci_dev.bus, pci_dev.slot, pci_dev.func);
+
         // 1. Reset do dispositivo
         outb(io_base + VIRTIO_PCI_STATUS, 0);
 
