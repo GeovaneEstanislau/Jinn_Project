@@ -58,7 +58,7 @@ impl Url {
         // 1. Detect and parse "about:" scheme
         if let Some(rest) = input.strip_prefix("about:") {
             let path = rest.split('?').next().unwrap_or("").trim().to_string();
-            if path != "blank" && path != "version" && path != "help" {
+            if path != "blank" && path != "version" && path != "help" && path != "tls" && path != "offline" && path != "blocked" {
                 return Err(EngineError::InvalidUrl(format!(
                     "Unknown about: target '{}'",
                     path
@@ -147,6 +147,24 @@ impl Url {
                 path: normalize_path(path_part)?,
                 query,
             });
+        }
+
+        // 6. Naked domain input (e.g. "example.com", "google.com", "10.0.2.2:8080")
+        // Interpreted strictly as an external HTTP target according to Jinn OS URL specification
+        let is_naked_domain = !input.contains("://")
+            && !input.contains(' ')
+            && (input.starts_with("www.")
+                || (input.contains('.') && (
+                    input.ends_with(".com") || input.ends_with(".org") || input.ends_with(".net")
+                    || input.ends_with(".io") || input.ends_with(".gov") || input.ends_with(".edu")
+                    || input.ends_with(".br") || input.ends_with(".xyz") || input.ends_with(".info")
+                    || input.contains(".com/") || input.contains(".org/") || input.contains(".net/")
+                    || input.contains(':')
+                )));
+
+        if is_naked_domain {
+            let http_url = format!("http://{}", input);
+            return Self::parse(&http_url);
         }
 
         Err(EngineError::InvalidUrl(format!(
@@ -415,5 +433,38 @@ mod tests {
             Url::parse("data:text/html,<b>hi</b>").unwrap_err(),
             EngineError::UnsupportedScheme(_)
         ));
+    }
+
+    #[test]
+    fn test_naked_domain_classification_as_http() {
+        let u1 = Url::parse("google.com").unwrap();
+        assert_eq!(u1.scheme, UrlScheme::Http);
+        assert_eq!(u1.host.as_deref(), Some("google.com"));
+        assert_eq!(u1.as_str(), "http://google.com/");
+
+        let u2 = Url::parse("example.com/test.html").unwrap();
+        assert_eq!(u2.scheme, UrlScheme::Http);
+        assert_eq!(u2.host.as_deref(), Some("example.com"));
+        assert_eq!(u2.path, "/test.html");
+
+        let u3 = Url::parse("10.0.2.2:8080/index.html").unwrap();
+        assert_eq!(u3.scheme, UrlScheme::Http);
+        assert_eq!(u3.host.as_deref(), Some("10.0.2.2"));
+        assert_eq!(u3.port, Some(8080));
+    }
+
+    #[test]
+    fn test_expanded_about_pages() {
+        let u_tls = Url::parse("about:tls").unwrap();
+        assert_eq!(u_tls.scheme, UrlScheme::About);
+        assert_eq!(u_tls.path, "tls");
+
+        let u_offline = Url::parse("about:offline").unwrap();
+        assert_eq!(u_offline.scheme, UrlScheme::About);
+        assert_eq!(u_offline.path, "offline");
+
+        let u_blocked = Url::parse("about:blocked").unwrap();
+        assert_eq!(u_blocked.scheme, UrlScheme::About);
+        assert_eq!(u_blocked.path, "blocked");
     }
 }

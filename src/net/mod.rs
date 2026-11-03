@@ -51,6 +51,7 @@ pub fn init() {
     }
 
     unsafe {
+        arp::ARP_CACHE.init_defaults();
         dns::DNS_CACHE.init_defaults();
     }
 }

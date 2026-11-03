@@ -978,6 +978,45 @@ pub fn parse_http_url(url: &[u8]) -> Option<ParsedHttpUrl> {
     Some(parsed)
 }
 
+/// Verifica se uma referência textual representa um domínio web ou endereço externo (ex: "google.com", "example.com/foo", "10.0.2.2:8080")
+pub fn is_web_domain(s: &[u8]) -> bool {
+    if s.is_empty() { return false; }
+    let host_part = match s.iter().position(|&b| b == b'/') {
+        Some(pos) => &s[..pos],
+        None => s,
+    };
+    if host_part.eq_ignore_ascii_case(b"index.htm")
+        || host_part.eq_ignore_ascii_case(b"about.htm")
+        || host_part.eq_ignore_ascii_case(b"readme.txt")
+        || host_part.ends_with(b".htm")
+        || host_part.ends_with(b".html")
+        || host_part.ends_with(b".txt")
+        || host_part.ends_with(b".elf")
+        || host_part.ends_with(b".ppm")
+    {
+        return false;
+    }
+    if host_part.starts_with(b"www.") { return true; }
+    if host_part.contains(&b'.') || host_part.contains(&b':') {
+        return true;
+    }
+    false
+}
+
+/// Verifica se o payload contém o terminador de chunked transfer ("0\r\n\r\n" ou "\r\n0\r\n\r\n")
+pub fn has_chunked_terminator(body: &[u8]) -> bool {
+    if body.len() < 5 { return false; }
+    if body.starts_with(b"0\r\n\r\n") || body.ends_with(b"0\r\n\r\n") {
+        return true;
+    }
+    for w in body.windows(5) {
+        if w == b"\r\n0\r\n" {
+            return true;
+        }
+    }
+    false
+}
+
 /// Resolve URL relativa ou absoluta contra uma URL base existente
 pub fn resolve_relative_url(base: &[u8], target: &[u8], out: &mut [u8; 128]) -> usize {
     let mut clean_target = target;
@@ -1009,6 +1048,19 @@ pub fn resolve_relative_url(base: &[u8], target: &[u8], out: &mut [u8; 128]) -> 
     // Se começar com // (protocol-relative)
     if clean_target.starts_with(b"//") {
         let prefix = b"http:";
+        let p_len = prefix.len();
+        out[..p_len].copy_from_slice(prefix);
+        let c_len = clean_target.len().min(127 - p_len);
+        out[p_len..p_len + c_len].copy_from_slice(&clean_target[..c_len]);
+        let total = p_len + c_len;
+        out[total] = 0;
+        return total;
+    }
+
+    // Se for domínio web sem esquema (ex: google.com, example.com, 10.0.2.2:8080)
+    // NUNCA envia para o VFS local (/disk/)!
+    if is_web_domain(clean_target) {
+        let prefix = b"http://";
         let p_len = prefix.len();
         out[..p_len].copy_from_slice(prefix);
         let c_len = clean_target.len().min(127 - p_len);

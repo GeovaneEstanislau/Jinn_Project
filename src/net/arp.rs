@@ -3,6 +3,9 @@
 pub const ARP_OP_REQUEST: u16 = 1;
 pub const ARP_OP_REPLY:   u16 = 2;
 
+pub const DEFAULT_GATEWAY_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x02];
+pub const DEFAULT_DNS_MAC: [u8; 6]     = [0x52, 0x54, 0x00, 0x12, 0x34, 0x03];
+
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct ArpPacket {
@@ -66,6 +69,12 @@ impl ArpTable {
             }
         }
         None
+    }
+
+    /// Inicializa mapeamentos ARP estáticos para gateway e servidor DNS no ambiente virtual QEMU / KVM
+    pub fn init_defaults(&mut self) {
+        self.insert([10, 0, 2, 2], DEFAULT_GATEWAY_MAC, 0);
+        self.insert([10, 0, 2, 3], DEFAULT_DNS_MAC, 0);
     }
 }
 
@@ -169,6 +178,12 @@ pub fn resolve_mac_for_ip(dst_ip: [u8; 4]) -> [u8; 6] {
     } else {
         // Envia requisição ARP para o próximo salto (host local ou gateway)
         send_arp_request(next_hop);
-        crate::net::ethernet::BROADCAST_MAC
+        // Em vez de retornar BROADCAST_MAC para unicast (o que faz roteadores virtuais descartarem pacotes IP),
+        // usa o MAC padrão do gateway ou DNS como fallback determinístico de L2
+        if next_hop == [10, 0, 2, 3] {
+            DEFAULT_DNS_MAC
+        } else {
+            DEFAULT_GATEWAY_MAC
+        }
     }
 }

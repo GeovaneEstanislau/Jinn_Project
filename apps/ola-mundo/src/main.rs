@@ -1549,6 +1549,11 @@ unsafe fn fetch_http_document(
                         if rx_total >= hdr.header_len + cl {
                             break;
                         }
+                    } else if hdr.is_chunked {
+                        let body_part = &rx_slice[hdr.header_len..];
+                        if browser::has_chunked_terminator(body_part) {
+                            break;
+                        }
                     }
                 }
             } else if n == 0 {
@@ -1658,6 +1663,10 @@ unsafe fn browser_load_and_display(
             let s = b"<html><head><title>Modo Offline</title></head><body><h1>Modo Offline</h1><p>Conexoes externas de rede estao desabilitadas nesta versao.</p><hr/><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>";
             out_buf[..s.len()].copy_from_slice(s);
             s.len()
+        } else if path == b"about:unsupported" {
+            let s = b"<html><head><title>Esquema Nao Suportado</title></head><body><h1>Esquema Nao Suportado</h1><p>O Jinn Browser suporta atualmente os protocolos http://, file:/// e about:.</p><p>Esquemas como https://, ftp:// e mailto: requerem servicos especializados adicionais em desenvolvimento.</p><hr/><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>";
+            out_buf[..s.len()].copy_from_slice(s);
+            s.len()
         } else {
             let s = b"<html><head><title>Sobre</title></head><body><h1>Jinn Browser v0.4.0</h1><p>Navegador nativo Ring 3.</p><hr/><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>";
             out_buf[..s.len()].copy_from_slice(s);
@@ -1759,30 +1768,50 @@ unsafe fn browser_load_and_display(
                 false
             }
         }
-    } else if let Some(len) = read_html_file(path) {
-        let doc_slice = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, len);
-        session.load_document_bytes(doc_slice, path);
-        session.render(buf_slice);
-        let _ = sys_window_update(win_id, buf_slice);
-        print_str(b"[BROWSER-INTERACTION] PAGE_LOADED target=");
-        print_str(path);
-        print_str(b"\n");
-        true
+    } else if path.starts_with(b"/disk/") || path.starts_with(b"/ext2/") {
+        if let Some(len) = read_html_file(path) {
+            let doc_slice = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, len);
+            session.load_document_bytes(doc_slice, path);
+            session.render(buf_slice);
+            let _ = sys_window_update(win_id, buf_slice);
+            print_str(b"[BROWSER-INTERACTION] PAGE_LOADED target=");
+            print_str(path);
+            print_str(b"\n");
+            true
+        } else {
+            let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
+            let out_buf = core::slice::from_raw_parts_mut(f_ptr, 32768);
+            let err_len = browser::format_net_error_html(
+                path,
+                b"404 - Documento Nao Encontrado",
+                b"O documento solicitado nao foi localizado no disco local (/disk).",
+                b"VfsError::NotFound / Arquivo inexistente",
+                out_buf,
+            );
+            let doc_slice = &out_buf[..err_len];
+            session.load_document_bytes(doc_slice, path);
+            session.render(buf_slice);
+            let _ = sys_window_update(win_id, buf_slice);
+            print_str(b"[BROWSER-INTERACTION] PAGE_404 target=");
+            print_str(path);
+            print_str(b"\n");
+            false
+        }
     } else {
         let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
         let out_buf = core::slice::from_raw_parts_mut(f_ptr, 32768);
         let err_len = browser::format_net_error_html(
             path,
-            b"404 - Documento Nao Encontrado",
-            b"O documento solicitado nao foi localizado no disco local (/disk).",
-            b"VfsError::NotFound / Arquivo inexistente",
+            b"URL Invalida ou Esquema Nao Suportado",
+            b"O endereco fornecido nao pode ser processado pelo navegador.",
+            b"InvalidUrl / Esquema desconhecido",
             out_buf,
         );
         let doc_slice = &out_buf[..err_len];
         session.load_document_bytes(doc_slice, path);
         session.render(buf_slice);
         let _ = sys_window_update(win_id, buf_slice);
-        print_str(b"[BROWSER-INTERACTION] PAGE_404 target=");
+        print_str(b"[BROWSER-INTERACTION] PAGE_INVALID_URL target=");
         print_str(path);
         print_str(b"\n");
         false
@@ -2004,6 +2033,14 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
     }
     let mut clean = &target[start..end];
 
+    if clean.is_empty() {
+        let b = b"about:blank";
+        buf[..b.len()].copy_from_slice(b);
+        buf[b.len()] = 0;
+        return &buf[..b.len()];
+    }
+
+    // 1. Esquema interno about:
     if clean.starts_with(b"about:") {
         let len = clean.len().min(127);
         buf[..len].copy_from_slice(&clean[..len]);
@@ -2011,6 +2048,7 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
         return &buf[..len];
     }
 
+    // 2. HTTPS: redireciona para painel informativo seguro (TLS em desenvolvimento)
     if clean.starts_with(b"https://") {
         let tls = b"about:tls";
         buf[..tls.len()].copy_from_slice(tls);
@@ -2018,6 +2056,7 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
         return &buf[..tls.len()];
     }
 
+    // 3. HTTP: navegacao remota real na internet
     if clean.starts_with(b"http://") {
         let len = clean.len().min(127);
         buf[..len].copy_from_slice(&clean[..len]);
@@ -2025,6 +2064,7 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
         return &buf[..len];
     }
 
+    // 4. file:/// -> remove prefixo de protocolo local
     if clean.starts_with(b"file://") {
         clean = &clean[7..];
     }
@@ -2044,56 +2084,57 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
         return &buf[..blk.len()];
     }
 
-    if clean.starts_with(b"/disk/") {
+    // 5. Caminhos absolutos do VFS local (/disk/ ou /ext2/)
+    if clean.starts_with(b"/disk/") || clean.starts_with(b"/ext2/") {
         let len = clean.len().min(127);
         buf[..len].copy_from_slice(&clean[..len]);
         buf[len] = 0;
         return &buf[..len];
-    } else if clean.starts_with(b"/") {
+    }
+
+    // 6. Esquemas explicitamente nao suportados
+    if clean.starts_with(b"ftp://") || clean.starts_with(b"mailto:") || clean.starts_with(b"gopher://") {
+        let blk = b"about:unsupported";
+        buf[..blk.len()].copy_from_slice(blk);
+        buf[blk.len()] = 0;
+        return &buf[..blk.len()];
+    }
+
+    // 7. Arquivos locais raiz conhecidos do VFS (/disk/INDEX.HTM, /disk/about.htm, /disk/readme.txt)
+    let is_exact_local_file = clean.eq_ignore_ascii_case(b"index.htm")
+        || clean.eq_ignore_ascii_case(b"about.htm")
+        || clean.eq_ignore_ascii_case(b"readme.txt");
+
+    if is_exact_local_file {
+        let prefix = b"/disk/";
+        let p_len = prefix.len();
+        buf[..p_len].copy_from_slice(prefix);
+        let c_len = clean.len().min(127 - p_len);
+        buf[p_len..p_len + c_len].copy_from_slice(&clean[..c_len]);
+        let total = p_len + c_len;
+        buf[total] = 0;
+        return &buf[..total];
+    }
+
+    // Se comecar com barra absoluta mas nao pertencer a volumes autorizados (/disk/ ou /ext2/)
+    if clean.starts_with(b"/") {
         let blk = b"about:blocked";
         buf[..blk.len()].copy_from_slice(blk);
         buf[blk.len()] = 0;
         return &buf[..blk.len()];
     }
 
-    // Identifica arquivos locais conhecidos ou extensoes tipicas de arquivos locais sem host
-    let is_local_file = clean.eq_ignore_ascii_case(b"index.htm")
-        || clean.eq_ignore_ascii_case(b"about.htm")
-        || clean.eq_ignore_ascii_case(b"readme.txt")
-        || clean.ends_with(b".htm")
-        || clean.ends_with(b".html")
-        || clean.ends_with(b".txt")
-        || clean.ends_with(b".elf");
-
-    if is_local_file && !clean.contains(&b':') && !clean.contains(&b'.') {
-        let prefix = b"/disk/";
-        let p_len = prefix.len();
-        buf[..p_len].copy_from_slice(prefix);
-        let c_len = clean.len().min(127 - p_len);
-        buf[p_len..p_len + c_len].copy_from_slice(&clean[..c_len]);
-        let total = p_len + c_len;
-        buf[total] = 0;
-        &buf[..total]
-    } else if clean.eq_ignore_ascii_case(b"index.htm") || clean.eq_ignore_ascii_case(b"about.htm") || clean.eq_ignore_ascii_case(b"readme.txt") {
-        let prefix = b"/disk/";
-        let p_len = prefix.len();
-        buf[..p_len].copy_from_slice(prefix);
-        let c_len = clean.len().min(127 - p_len);
-        buf[p_len..p_len + c_len].copy_from_slice(&clean[..c_len]);
-        let total = p_len + c_len;
-        buf[total] = 0;
-        &buf[..total]
-    } else {
-        // Assume URL na internet (ex: example.com, neverssl.com, 10.0.2.2:8080)
-        let prefix = b"http://";
-        let p_len = prefix.len();
-        buf[..p_len].copy_from_slice(prefix);
-        let c_len = clean.len().min(127 - p_len);
-        buf[p_len..p_len + c_len].copy_from_slice(&clean[..c_len]);
-        let total = p_len + c_len;
-        buf[total] = 0;
-        &buf[..total]
-    }
+    // 8. Dominio sem esquema (ex: "google.com", "example.com", "neverssl.com", "10.0.2.2:8080")
+    // ESTRITAMENTE interpretado como endereco web e prefixado com http://!
+    // NUNCA e enviado diretamente ao VFS local (/disk/)!
+    let prefix = b"http://";
+    let p_len = prefix.len();
+    buf[..p_len].copy_from_slice(prefix);
+    let c_len = clean.len().min(127 - p_len);
+    buf[p_len..p_len + c_len].copy_from_slice(&clean[..c_len]);
+    let total = p_len + c_len;
+    buf[total] = 0;
+    &buf[..total]
 }
 
 #[allow(dead_code)]
