@@ -268,4 +268,21 @@ pub fn init_dev() {
     DEV_FS.mknod("stdin",  NodeType::CharDevice).ok();
     DEV_FS.mknod("stdout", NodeType::CharDevice).ok();
     DEV_FS.mknod("stderr", NodeType::CharDevice).ok();
+    DEV_FS.mknod("pci",    NodeType::CharDevice).ok();
+    DEV_FS.mknod("disk0",  NodeType::BlockDevice).ok();
+    DEV_FS.mknod("net0",   NodeType::CharDevice).ok();
+    DEV_FS.mknod("fb0",    NodeType::CharDevice).ok();
+    DEV_FS.mknod("kbd",    NodeType::CharDevice).ok();
+    DEV_FS.mknod("mouse",  NodeType::CharDevice).ok();
+}
+
+/// Popula o nó `/dev/devices` com a listagem gerada pelo Unified Device Manager
+pub fn populate_device_nodes() {
+    DEV_FS.create("devices").ok();
+    let mut buf = [0u8; 2048];
+    let len = crate::drivers::device_manager::generate_device_summary(&mut buf);
+    if let Ok(handle) = DEV_FS.open("devices", 0) {
+        DEV_FS.write(handle, 0, &buf[..len]).ok();
+        DEV_FS.close(handle).ok();
+    }
 }

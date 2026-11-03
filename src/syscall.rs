@@ -308,6 +308,8 @@ pub extern "C" fn syscall_dispatch(
         42 => sys_disk_info(arg0, arg1 as *mut DiskInfoUser),
         43 => sys_mount(arg0 as *const u8, arg1, (arg2 >> 16) & 0xFFFF, arg2 & 0xFFFF),
         44 => sys_unmount(arg0 as *const u8, arg1),
+        45 => sys_device_info(arg0, arg1 as *mut crate::drivers::device_manager::DeviceDescriptor),
+        46 => sys_device_count(),
         _  => ENOSYS,
     }
 }
@@ -2034,6 +2036,32 @@ fn sys_unmount(prefix_ptr: *const u8, prefix_len: usize) -> isize {
         Ok(()) => 0,
         Err(e) => vfs_error_to_errno(e),
     }
+}
+
+/// `sys_device_info` — Obtém metadados do dispositivo gerenciado pelo índice (Syscall 45).
+fn sys_device_info(index: usize, out_desc: *mut crate::drivers::device_manager::DeviceDescriptor) -> isize {
+    if out_desc.is_null() {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(out_desc as *const u8, core::mem::size_of::<crate::drivers::device_manager::DeviceDescriptor>(), true) {
+            return e;
+        }
+    }
+    match crate::drivers::device_manager::get_device(index) {
+        Some(dev) => {
+            unsafe {
+                core::ptr::write_unaligned(out_desc, dev);
+            }
+            0
+        }
+        None => ENOENT,
+    }
+}
+
+/// `sys_device_count` — Retorna o número de dispositivos gerenciados ativos (Syscall 46).
+fn sys_device_count() -> isize {
+    crate::drivers::device_manager::device_count() as isize
 }
 
 // ── Kernel-internal invoke ────────────────────────────────────────────────────

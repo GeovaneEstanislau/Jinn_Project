@@ -300,3 +300,9 @@ pub fn init_nvme() {
         }
     }
 }
+
+/// Verifica se há um controlador NVMe operacional inicializado
+pub fn has_nvme_controller() -> bool {
+    NVME_CONTROLLER.lock().is_initialized
+}
+

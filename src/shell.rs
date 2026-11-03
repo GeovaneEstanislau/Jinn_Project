@@ -95,6 +95,7 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
 
         // ── Barramento de Hardware ─────────────────────────────────────────────
         "lspci" | "pci" => cmd_lspci(w),
+        "devs" | "devices" | "dm" => cmd_devices(w),
 
         // ── Sistema de Arquivos (VFS, FAT32 & Ext2) ────────────────────────────
         "ls" | "dir" => cmd_ls(w, args),
@@ -757,6 +758,75 @@ fn cmd_lspci(w: &mut Writer) {
 }
 
 /// `ls` — Lista o conteúdo de um diretório no VFS.
+/// `devices` / `dm` — Lista o inventário unificado de dispositivos do sistema operacional.
+fn cmd_devices(w: &mut Writer) {
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_line("=== Jinn OS Unified Device Manager (L1 / L2) ===");
+    w.set_color(Color::LightGray, Color::Black);
+
+    let count = crate::drivers::device_manager::device_count();
+    if count == 0 {
+        w.write_line("Nenhum dispositivo registrado no Device Manager.");
+        return;
+    }
+
+    w.set_color(Color::DarkGray, Color::Black);
+    w.write_line("ID  CATEGORIA        NOME            ESTADO       BARRAMENTO / LOCAL");
+    w.write_line("----------------------------------------------------------------------");
+    w.set_color(Color::LightGray, Color::Black);
+
+    for i in 0..count {
+        if let Some(dev) = crate::drivers::device_manager::get_device(i) {
+            // ID
+            w.set_color(Color::Yellow, Color::Black);
+            if dev.id < 10 { w.write_string(" "); }
+            w.write_decimal(dev.id as usize);
+            w.write_string("  ");
+
+            // Categoria
+            w.set_color(Color::LightCyan, Color::Black);
+            let cat = dev.category.name();
+            w.write_string(cat);
+            for _ in 0..17usize.saturating_sub(cat.len()) {
+                w.write_string(" ");
+            }
+
+            // Nome
+            w.set_color(Color::White, Color::Black);
+            let name = dev.name_str();
+            w.write_string(name);
+            for _ in 0..16usize.saturating_sub(name.len()) {
+                w.write_string(" ");
+            }
+
+            // Estado
+            match dev.state {
+                crate::drivers::device_manager::DeviceState::Operational => {
+                    w.set_color(Color::LightGreen, Color::Black);
+                }
+                crate::drivers::device_manager::DeviceState::Initialized => {
+                    w.set_color(Color::LightCyan, Color::Black);
+                }
+                crate::drivers::device_manager::DeviceState::Discovered => {
+                    w.set_color(Color::Yellow, Color::Black);
+                }
+                _ => {
+                    w.set_color(Color::LightRed, Color::Black);
+                }
+            }
+            let state_str = dev.state.name();
+            w.write_string(state_str);
+            for _ in 0..13usize.saturating_sub(state_str.len()) {
+                w.write_string(" ");
+            }
+
+            // Barramento
+            w.set_color(Color::LightGray, Color::Black);
+            w.write_line(dev.bus_info_str());
+        }
+    }
+}
+
 fn cmd_ls(w: &mut Writer, args: &str) {
     let path = if args.is_empty() { "/" } else { args };
     w.set_color(Color::Yellow, Color::Black);

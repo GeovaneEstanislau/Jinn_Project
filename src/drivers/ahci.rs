@@ -352,3 +352,9 @@ pub fn init_ahci() {
         }
     }
 }
+
+/// Verifica se há um controlador AHCI operacional inicializado
+pub fn has_ahci_controller() -> bool {
+    AHCI_CONTROLLER.lock().is_initialized
+}
+

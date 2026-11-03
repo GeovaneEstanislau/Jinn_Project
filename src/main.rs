@@ -165,6 +165,7 @@ pub extern "C" fn _start() -> ! {
     drivers::block::init_storage_manager();
     drivers::ahci::init_ahci();
     drivers::nvme::init_nvme();
+    drivers::virtio_blk::init_virtio_blk();
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
@@ -269,6 +270,15 @@ pub extern "C" fn _start() -> ! {
     } else {
         w.write_line("(Inativo)");
     }
+    w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string("[+] Unified Device Manager (L1)...");
+    drivers::device_manager::init();
+    vfs::ramfs::populate_device_nodes();
+    w.set_color(Color::LightGreen, Color::Black);
+    w.write_string(" OK (");
+    w.write_decimal(drivers::device_manager::device_count());
+    w.write_line(" dispositivos ativos)");
     w.set_color(Color::LightGray, Color::Black);
 
     w.write_string("[+] Testes de Seguranca do ELF Loader...");
