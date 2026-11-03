@@ -96,3 +96,23 @@ O desktop Aladdin e qualquer outro SO da família (Simbad / Ifrit) interagem com
 1. **Suporte de Escrita em Ext2:** O driver Ext2 atualmente opera em modo estritamente Somente-Leitura (`read-only`), garantindo integridade absoluta para partições de serviço e rescue. Na versão 0.2.0, planeja-se a adição do alocador de blocos e criação de inodes para escrita segura em Ext2.
 2. **Cache com Write-Back Coalescido:** O cache atual utiliza LRU com flush síncrono nas chamadas explícitas de sync e unmount. Uma thread de kernel flusher periódica (bdflush / kswapd) está recomendada para cargas intensas de I/O em servidores Simbad.
 3. **Paginação de Diretórios Grandes:** O cache do Aladdin File Manager aloca slots estáticos em buffer no stack para até 16 arquivos por diretório. Recomenda-se paginação com barra de rolagem dinâmica para diretórios com centenas de arquivos.
+
+---
+
+## 6. Matriz Oficial de Compatibilidade e Validação
+
+| Recurso | Implementado | Testado | Validado | Notas Técnicas |
+| :--- | :---: | :---: | :---: | :--- |
+| **IDE/ATA** | Sim | Sim | Sim | Driver PIO 28/48-bit com cache LRU em `src/drivers/block.rs`; validado em hardware QEMU. |
+| **AHCI** | Parcial | Sim | Parcial | Controladores HBA/ABAR e estruturas FIS em `src/drivers/ahci.rs`; comandos básicos testados. |
+| **NVMe** | Parcial | Sim | Parcial | Estruturas PCI BAR0, Admin Queue e I/O Queue em `src/drivers/nvme.rs`; testado no JDA-Sim. |
+| **VirtIO-Blk** | Sim | Sim | Sim | Anel vring e requisições VirtIO em `src/drivers/virtio_blk.rs`; validado em testes unitários. |
+| **MBR** | Sim | Sim | Sim | Tabela MBR com 4 partições primárias em `src/drivers/partition.rs`; validado em disco dual-partition. |
+| **GPT** | Sim | Sim | Sim | Protective MBR, EFI PART, GUIDs, fallback de backup e `checked_add`; validado no JDA-Sim. |
+| **FAT32** | Sim | Sim | Sim | Leitura, escrita multi-cluster, LFN, subdiretórios (`mkdir`) e persistência física cold-reboot comprovada. |
+| **Ext2** | Sim | Sim | Sim | Superblock, Block Groups, Inodes e Inode Table (somente-leitura com proteção estrita de integridade). |
+| **VFS** | Sim | Sim | Sim | Camada de abstração VFS com `open`, `close`, `read`, `write`, `mkdir`, `remove`, `rename`, `copy`, `stat`, `statvfs`. |
+| **Ring 3 Storage API** | Sim | Sim | Sim | Syscalls 46..52 implementadas com validação de ponteiros, alinhamento ABI e contratos `VfsHost`/`StorageHost`. |
+| **Aladdin File Manager** | Sim | Sim | Sim | Aplicação Ring 3 completa com sidebar de volumes, toolbar, breadcrumbs, modal dialogs e live screenshot. |
+
+
