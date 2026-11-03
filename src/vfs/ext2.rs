@@ -604,13 +604,16 @@ impl FileSystem for Ext2Fs {
     }
 
     fn unmount(&self) -> VfsResult<()> {
-        let _ = self.sync();
         unsafe {
             let fs_ptr = core::ptr::addr_of_mut!(EXT2_GLOBAL);
-            (*fs_ptr).is_mounted = false;
-            for slot in (*fs_ptr).open_files.iter_mut() {
-                slot.is_active = false;
+            // Verificação de ocupação (Busy-checking): impede desmontagem se houver arquivos abertos
+            for slot in (*fs_ptr).open_files.iter() {
+                if slot.is_active {
+                    return Err(VfsError::Busy);
+                }
             }
+            let _ = self.sync();
+            (*fs_ptr).is_mounted = false;
         }
         Ok(())
     }

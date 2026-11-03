@@ -1992,20 +1992,51 @@ fn sys_mount(prefix_ptr: *const u8, prefix_len: usize, disk_idx: usize, part_idx
         None => return ENOENT,
     };
 
-    match part.fs_kind {
+    let res = match part.fs_kind {
         crate::drivers::partition::DetectedFsKind::Fat32 => {
-            match crate::vfs::fat32::mount_fat32_partition(prefix, disk_idx as u8, part.start_lba as u32, part.sector_count) {
-                Ok(()) => 0,
-                Err(_) => EIO,
-            }
+            crate::vfs::fat32::mount_fat32_partition(prefix, disk_idx as u8, part.start_lba as u32, part.sector_count)
         }
         crate::drivers::partition::DetectedFsKind::Ext2 => {
-            match crate::vfs::ext2::mount_ext2_partition(prefix, disk_idx as u8, part.start_lba as u32, part.sector_count) {
-                Ok(()) => 0,
-                Err(_) => EIO,
+            crate::vfs::ext2::mount_ext2_partition(prefix, disk_idx as u8, part.start_lba as u32, part.sector_count)
+        }
+        _ => return ENOSYS,
+    };
+
+    if res.is_ok() {
+        // Atualiza ou registra o volume montado no VolumeManager
+        let mut vm = crate::vfs::volume::VOLUME_MANAGER.lock();
+        let p_bytes = prefix.as_bytes();
+        let copy_len = p_bytes.len().min(31);
+        let mut found = false;
+        for i in 0..vm.count {
+            if let Some(vol) = vm.volumes[i].as_mut() {
+                if vol.device_id == disk_idx && vol.partition_index == part_idx {
+                    vol.mount_point = [0; 32];
+                    vol.mount_point[..copy_len].copy_from_slice(&p_bytes[..copy_len]);
+                    vol.mount_point_len = copy_len;
+                    vol.is_mounted = true;
+                    found = true;
+                    break;
+                }
             }
         }
-        _ => ENOSYS,
+        if !found && vm.count < crate::vfs::volume::MAX_VOLUMES {
+            let mut new_vol = crate::vfs::volume::Volume::empty();
+            new_vol.id = vm.count;
+            new_vol.device_id = disk_idx;
+            new_vol.partition_index = part_idx;
+            new_vol.mount_point[..copy_len].copy_from_slice(&p_bytes[..copy_len]);
+            new_vol.mount_point_len = copy_len;
+            new_vol.fs_kind = part.fs_kind;
+            new_vol.is_mounted = true;
+            new_vol.is_root = false;
+            new_vol.is_boot = false;
+            new_vol.total_mb = part.size_mb() as usize;
+            let _ = vm.register_volume(new_vol);
+        }
+        0
+    } else {
+        EIO
     }
 }
 
@@ -2032,8 +2063,24 @@ fn sys_unmount(prefix_ptr: *const u8, prefix_len: usize) -> isize {
         return EINVAL;
     }
 
+    // Proteção de segurança: raiz do sistema e nós virtuais nunca podem ser desmontados
+    if prefix == "/" || prefix == "/disk" || prefix == "/dev" {
+        return EPERM;
+    }
+
     match crate::vfs::unmount(prefix) {
-        Ok(()) => 0,
+        Ok(()) => {
+            // Sincroniza o status no VolumeManager se houver volume correspondente
+            let mut vm = crate::vfs::volume::VOLUME_MANAGER.lock();
+            for i in 0..vm.count {
+                if let Some(vol) = vm.volumes[i].as_mut() {
+                    if vol.mount_point_str() == prefix {
+                        vol.is_mounted = false;
+                    }
+                }
+            }
+            0
+        }
         Err(e) => vfs_error_to_errno(e),
     }
 }

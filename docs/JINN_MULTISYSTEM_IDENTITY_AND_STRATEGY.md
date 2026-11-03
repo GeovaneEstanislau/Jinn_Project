@@ -386,3 +386,4 @@ O Jinn Project estabelece uma visão de engenharia e produto única:
 > **Jinn é o núcleo. Os sistemas operacionais são suas manifestações especializadas.**
 
 Com essa diretriz, garantimos um núcleo de altíssimo desempenho, seguro e unificado, capaz de impulsionar desde computadores pessoais de uso doméstico até centros de dados de alta densidade e controladores industriais críticos.
+

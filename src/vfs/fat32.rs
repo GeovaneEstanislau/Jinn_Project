@@ -593,12 +593,15 @@ impl FileSystem for Fat32Fs {
     }
 
     fn unmount(&self) -> VfsResult<()> {
-        self.sync()?;
         unsafe {
             let fs_ptr = core::ptr::addr_of_mut!(FAT32_GLOBAL);
-            for slot in (*fs_ptr).open_files.iter_mut() {
-                slot.is_active = false;
+            // Verificação de ocupação (Busy-checking): impede desmontagem se houver arquivos abertos
+            for slot in (*fs_ptr).open_files.iter() {
+                if slot.is_active {
+                    return Err(VfsError::Busy);
+                }
             }
+            self.sync()?;
             (*fs_ptr).is_mounted = false;
         }
         Ok(())

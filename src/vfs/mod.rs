@@ -194,6 +194,11 @@ impl MountTable {
     }
 
     fn unmount(&mut self, prefix: &str) -> VfsResult<()> {
+        // REGRA DE SEGURANÇA INVIOLÁVEL: Raiz do sistema e nós virtuais nunca podem ser desmontados
+        if prefix == "/" || prefix == "/disk" || prefix == "/dev" {
+            return Err(VfsError::PermissionDenied);
+        }
+
         let mut found_idx = None;
         for (i, e) in self.entries.iter().enumerate().take(self.count) {
             if let Some(entry) = e {
