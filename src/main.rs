@@ -10,6 +10,10 @@ pub mod cpu;
 pub mod drivers;
 pub mod elf;
 pub mod font;
+pub mod flusher;
+pub mod httpd;
+pub mod profile;
+pub mod supervisor;
 pub mod elf_tests;
 pub mod gdt;
 pub mod gui;
@@ -274,6 +278,7 @@ pub extern "C" fn _start() -> ! {
 
     w.write_string("[+] Unified Device Manager (L1)...");
     drivers::device_manager::init();
+    supervisor::get_supervisor().init_canonical_services();
     vfs::ramfs::populate_device_nodes();
     w.set_color(Color::LightGreen, Color::Black);
     w.write_string(" OK (");

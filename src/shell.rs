@@ -125,6 +125,11 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         "dnscache" => cmd_dnscache(w),
         "jinnwall" | "firewall" => cmd_jinnwall(w, args),
 
+        // ── Simbad Server & CLI Administrativa ─────────────────────────────────
+        "jinnctl" => cmd_jinnctl(w, args),
+        "profile" => cmd_profile(w, args),
+        "services" => cmd_jinnctl(w, "services"),
+
         // ── Sistema ───────────────────────────────────────────────────────────
         "reboot" => cmd_reboot(w),
 
@@ -1565,6 +1570,313 @@ fn cmd_selftest(w: &mut Writer) {
     w.set_color(Color::LightGray, Color::Black);
 }
 
+fn cmd_jinnctl(w: &mut Writer, args: &str) {
+    let trimmed = args.trim();
+    let (subcmd, subargs) = match trimmed.find(' ') {
+        Some(i) => (&trimmed[..i], trimmed[i + 1..].trim()),
+        None => (trimmed, ""),
+    };
+
+    match subcmd {
+        "" | "status" => {
+            w.set_color(Color::Yellow, Color::Black);
+            w.write_line("================================================================================");
+            w.write_line("  jinnctl: Estado Geral do Servidor Simbad / Jinn OS");
+            w.write_line("================================================================================");
+            w.set_color(Color::LightGray, Color::Black);
+
+            let prof = crate::profile::get_system_profile();
+            w.write_string("  Perfil Ativo       : ");
+            w.set_color(Color::LightCyan, Color::Black);
+            w.write_line(prof.name());
+            w.set_color(Color::LightGray, Color::Black);
+
+            w.write_string("  Modo Operacional   : ");
+            if prof.is_headless() {
+                w.set_color(Color::LightGreen, Color::Black);
+                w.write_line("Headless (Servidor / Sem GUI)");
+            } else {
+                w.set_color(Color::LightCyan, Color::Black);
+                w.write_line("Desktop Grafico (Aladdin Desktop)");
+            }
+            w.set_color(Color::LightGray, Color::Black);
+
+            w.write_string("  Scheduler Quantum  : ");
+            w.set_color(Color::White, Color::Black);
+            w.write_decimal(prof.scheduler_quantum_ticks() * 10);
+            w.write_line(" ms / timeslice");
+            w.set_color(Color::LightGray, Color::Black);
+
+            w.write_string("  Tempo de Atividade : ");
+            let ticks = crate::timer::ticks();
+            let secs = (ticks * 10) / 1000;
+            w.set_color(Color::White, Color::Black);
+            w.write_decimal(secs as usize);
+            w.write_string(" s (");
+            w.write_decimal(ticks as usize);
+            w.write_line(" ticks)");
+            w.set_color(Color::LightGray, Color::Black);
+
+            w.write_string("  Nucleos Online     : ");
+            w.set_color(Color::White, Color::Black);
+            w.write_decimal(crate::smp::online_cpus());
+            w.write_line(" cpus");
+            w.set_color(Color::LightGray, Color::Black);
+
+            let supervisor = crate::supervisor::get_supervisor();
+            w.write_string("  Servicos Ativos    : ");
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_decimal(supervisor.running_count());
+            w.set_color(Color::LightGray, Color::Black);
+            w.write_string(" em execucao, ");
+            w.set_color(if supervisor.failed_count() > 0 { Color::LightRed } else { Color::DarkGray }, Color::Black);
+            w.write_decimal(supervisor.failed_count());
+            w.set_color(Color::LightGray, Color::Black);
+            w.write_string(" falhas (Total: ");
+            w.write_decimal(supervisor.service_count);
+            w.write_line(")");
+
+            w.write_string("  Perfil Storage JSA : ");
+            w.set_color(Color::LightCyan, Color::Black);
+            w.write_line(crate::drivers::block::get_storage_profile().name());
+            w.set_color(Color::LightGray, Color::Black);
+
+            w.write_string("  Firewall JinnWall  : ");
+            let jw_prof = unsafe { crate::net::jinnwall::JINNWALL.profile() };
+            w.set_color(Color::LightGreen, Color::Black);
+            match jw_prof {
+                crate::net::jinnwall::FirewallProfile::PublicSecure => w.write_line("PublicSecure (SPI Ativo)"),
+                crate::net::jinnwall::FirewallProfile::Development => w.write_line("Development (Permissivo)"),
+            }
+            w.set_color(Color::LightGray, Color::Black);
+        }
+
+        "services" => {
+            let supervisor = crate::supervisor::get_supervisor();
+            w.set_color(Color::Yellow, Color::Black);
+            w.write_line("SERVICO        ESTADO       PID    RESTARTS  POLITICA    DESCRICAO");
+            w.write_line("--------------------------------------------------------------------------------");
+            for i in 0..supervisor.service_count {
+                if let Some(s) = &supervisor.services[i] {
+                    w.set_color(Color::LightCyan, Color::Black);
+                    w.write_string(s.name);
+                    for _ in s.name.len()..15 { w.write_byte(b' '); }
+
+                    match s.state {
+                        crate::supervisor::ServiceState::Running => {
+                            w.set_color(Color::LightGreen, Color::Black);
+                        }
+                        crate::supervisor::ServiceState::Starting | crate::supervisor::ServiceState::Restarting => {
+                            w.set_color(Color::Yellow, Color::Black);
+                        }
+                        crate::supervisor::ServiceState::Stopping | crate::supervisor::ServiceState::Stopped => {
+                            w.set_color(Color::DarkGray, Color::Black);
+                        }
+                        crate::supervisor::ServiceState::Failed => {
+                            w.set_color(Color::LightRed, Color::Black);
+                        }
+                    }
+                    w.write_string(s.state.as_str());
+                    for _ in s.state.as_str().len()..13 { w.write_byte(b' '); }
+
+                    w.set_color(Color::White, Color::Black);
+                    if let Some(pid) = s.pid {
+                        w.write_decimal(pid);
+                        let mut digits = 1;
+                        let mut p = pid;
+                        while p >= 10 { p /= 10; digits += 1; }
+                        for _ in digits..7 { w.write_byte(b' '); }
+                    } else {
+                        w.write_string("-      ");
+                    }
+
+                    w.write_decimal(s.restart_count as usize);
+                    let mut r_digits = 1;
+                    let mut rc = s.restart_count;
+                    while rc >= 10 { rc /= 10; r_digits += 1; }
+                    for _ in r_digits..10 { w.write_byte(b' '); }
+
+                    w.set_color(Color::LightGray, Color::Black);
+                    w.write_string(s.restart_policy.as_str());
+                    for _ in s.restart_policy.as_str().len()..12 { w.write_byte(b' '); }
+
+                    w.set_color(Color::DarkGray, Color::Black);
+                    w.write_line(s.description);
+                }
+            }
+            w.set_color(Color::LightGray, Color::Black);
+        }
+
+        "start" => {
+            if subargs.is_empty() {
+                w.set_color(Color::LightRed, Color::Black);
+                w.write_line("Uso: jinnctl start <nome-do-servico>");
+                return;
+            }
+            let supervisor = crate::supervisor::get_supervisor();
+            match supervisor.start_service(subargs) {
+                Ok(()) => {
+                    w.set_color(Color::LightGreen, Color::Black);
+                    w.write_string("[OK] Servico '");
+                    w.write_string(subargs);
+                    w.write_line("' iniciado com sucesso.");
+                }
+                Err(e) => {
+                    w.set_color(Color::LightRed, Color::Black);
+                    w.write_string("[ERRO] ");
+                    w.write_line(e);
+                }
+            }
+            w.set_color(Color::LightGray, Color::Black);
+        }
+
+        "stop" => {
+            if subargs.is_empty() {
+                w.set_color(Color::LightRed, Color::Black);
+                w.write_line("Uso: jinnctl stop <nome-do-servico>");
+                return;
+            }
+            let supervisor = crate::supervisor::get_supervisor();
+            match supervisor.stop_service(subargs) {
+                Ok(()) => {
+                    w.set_color(Color::LightGreen, Color::Black);
+                    w.write_string("[OK] Servico '");
+                    w.write_string(subargs);
+                    w.write_line("' interrompido.");
+                }
+                Err(e) => {
+                    w.set_color(Color::LightRed, Color::Black);
+                    w.write_string("[ERRO] ");
+                    w.write_line(e);
+                }
+            }
+            w.set_color(Color::LightGray, Color::Black);
+        }
+
+        "restart" => {
+            if subargs.is_empty() {
+                w.set_color(Color::LightRed, Color::Black);
+                w.write_line("Uso: jinnctl restart <nome-do-servico>");
+                return;
+            }
+            let supervisor = crate::supervisor::get_supervisor();
+            match supervisor.restart_service(subargs) {
+                Ok(()) => {
+                    w.set_color(Color::LightGreen, Color::Black);
+                    w.write_string("[OK] Servico '");
+                    w.write_string(subargs);
+                    w.write_line("' reiniciado.");
+                }
+                Err(e) => {
+                    w.set_color(Color::LightRed, Color::Black);
+                    w.write_string("[ERRO] ");
+                    w.write_line(e);
+                }
+            }
+            w.set_color(Color::LightGray, Color::Black);
+        }
+
+        "logs" => {
+            let supervisor = crate::supervisor::get_supervisor();
+            w.set_color(Color::Yellow, Color::Black);
+            w.write_line("REGISTRO DE EVENTOS E TELEMETRIA DO SERVIDOR");
+            w.write_line("--------------------------------------------------------------------------------");
+            w.set_color(Color::LightGray, Color::Black);
+            let start = if supervisor.log_count < 32 { 0 } else { supervisor.log_head };
+            for i in 0..supervisor.log_count {
+                let idx = (start + i) % 32;
+                let entry = &supervisor.logs[idx];
+                w.set_color(Color::DarkGray, Color::Black);
+                w.write_string("[");
+                w.write_decimal((entry.timestamp_ms / 1000) as usize);
+                w.write_string("s] ");
+                match entry.level {
+                    "INFO" => w.set_color(Color::LightGreen, Color::Black),
+                    "WARN" => w.set_color(Color::Yellow, Color::Black),
+                    "CRIT" | "FAIL" => w.set_color(Color::LightRed, Color::Black),
+                    _ => w.set_color(Color::LightCyan, Color::Black),
+                }
+                w.write_string(entry.level);
+                w.write_string(" [");
+                w.write_string(entry.subsys);
+                w.write_string("] ");
+                w.set_color(Color::White, Color::Black);
+                if let Ok(m) = core::str::from_utf8(&entry.message[..entry.msg_len]) {
+                    w.write_line(m);
+                } else {
+                    w.write_line("");
+                }
+            }
+            w.set_color(Color::LightGray, Color::Black);
+        }
+
+        "memory" => {
+            cmd_meminfo(w);
+        }
+
+        "storage" => {
+            cmd_storage(w, subargs);
+        }
+
+        "network" => {
+            cmd_netinfo(w);
+        }
+
+        "profile" => {
+            cmd_profile(w, subargs);
+        }
+
+        _ => {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_string("Subcomando jinnctl desconhecido: ");
+            w.write_line(subcmd);
+            w.set_color(Color::DarkGray, Color::Black);
+            w.write_line("Comandos validos: status, services, start, stop, restart, logs, memory, storage, network, profile");
+            w.set_color(Color::LightGray, Color::Black);
+        }
+    }
+}
+
+fn cmd_profile(w: &mut Writer, args: &str) {
+    let trimmed = args.trim();
+    if trimmed.is_empty() {
+        w.set_color(Color::LightCyan, Color::Black);
+        w.write_string("Perfil atual: ");
+        w.write_line(crate::profile::get_system_profile().name());
+        w.set_color(Color::DarkGray, Color::Black);
+        w.write_line("Uso: profile [simbad | aladdin | ifrit]");
+        w.set_color(Color::LightGray, Color::Black);
+        return;
+    }
+
+    match trimmed {
+        "simbad" | "server" | "servidor" => {
+            crate::profile::set_system_profile(crate::profile::SystemProfile::SimbadServer);
+            crate::supervisor::get_supervisor().start_all_target_server();
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_line("[OK] Perfil ativado: SIMBAD SERVER (Headless, 50ms quantum, WriteBack, PublicSecure)");
+        }
+        "aladdin" | "desktop" | "domestico" => {
+            crate::profile::set_system_profile(crate::profile::SystemProfile::AladdinDesktop);
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_line("[OK] Perfil ativado: ALADDIN DESKTOP (10ms quantum, WriteThrough, GUI ativavel)");
+        }
+        "ifrit" | "industrial" | "realtime" => {
+            crate::profile::set_system_profile(crate::profile::SystemProfile::IfritIndustrial);
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_line("[OK] Perfil ativado: IFRIT INDUSTRIAL (Headless, Deterministic 10ms, TerminalPos storage)");
+        }
+        _ => {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_string("Perfil invalido: ");
+            w.write_line(trimmed);
+            w.set_color(Color::DarkGray, Color::Black);
+            w.write_line("Opcoes: simbad, aladdin, ifrit");
+        }
+    }
+    w.set_color(Color::LightGray, Color::Black);
+}
+
 /// `reboot` — Reinicia via triple fault (técnica de debug em bare-metal).
 fn cmd_reboot(w: &mut Writer) -> ! {
     w.set_color(Color::LightRed, Color::Black);
@@ -1586,9 +1898,12 @@ fn cmd_reboot(w: &mut Writer) -> ! {
 pub fn task_entry() {
     let mut w = Writer::new();
     w.set_position(21, 0);
-    // Inicializacao direta no Aladdin Desktop (padrao moderno)
-    if crate::gui::is_available() {
+    let prof = crate::profile::get_system_profile();
+    if !prof.is_headless() && crate::gui::is_available() {
         crate::gui::run_desktop();
+    } else {
+        // Inicializacao dos servicos de infraestrutura do Simbad Server
+        crate::supervisor::get_supervisor().start_all_target_server();
     }
     run(&mut w);
 }
@@ -3024,6 +3339,42 @@ where
                     }
                 }
             }
+        }
+        "jinnctl" | "services" => {
+            let supervisor = crate::supervisor::get_supervisor();
+            output("=== Simbad Service Supervisor (jinnctl) ===", 0x00F5_9E0B);
+            let prof = crate::profile::get_system_profile();
+            output(prof.name(), 0x0038_BDF8);
+
+            for i in 0..supervisor.service_count {
+                if let Some(s) = &supervisor.services[i] {
+                    let mut line_b = [0u8; 80];
+                    let mut off = 0;
+                    let n = s.name.as_bytes();
+                    line_b[off..off + n.len()].copy_from_slice(n);
+                    off += n.len();
+                    while off < 15 { line_b[off] = b' '; off += 1; }
+
+                    let st = s.state.as_str().as_bytes();
+                    line_b[off..off + st.len()].copy_from_slice(st);
+                    off += st.len();
+                    while off < 27 { line_b[off] = b' '; off += 1; }
+
+                    let color = match s.state {
+                        crate::supervisor::ServiceState::Running => 0x0022_C55E,
+                        crate::supervisor::ServiceState::Failed => 0x00EF_4444,
+                        _ => 0x00F5_9E0B,
+                    };
+                    if let Ok(l) = core::str::from_utf8(&line_b[..off]) {
+                        output(l, color);
+                    }
+                }
+            }
+        }
+        "profile" => {
+            let prof = crate::profile::get_system_profile();
+            output("Perfil de Sistema Atual:", 0x00F5_9E0B);
+            output(prof.name(), 0x0022_C55E);
         }
         "reboot" => {
             unsafe {
