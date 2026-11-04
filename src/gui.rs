@@ -74,6 +74,9 @@ impl SystemHost for JinnSystem {
     fn stats(&self) -> SystemStats {
         let ticks = crate::timer::ticks();
         let net_ip = unsafe { crate::net::dhcp::DHCP_CLIENT.ip };
+        let net_adapter = crate::drivers::net::active_nic_name();
+        let net_state = crate::drivers::net::audit_network_state();
+        let net_state_desc = net_state.description();
         let jinnwall_active_conns = unsafe { crate::net::jinnwall::JINNWALL.active_connections() };
         let jinnwall_drops = unsafe { crate::net::jinnwall::JINNWALL.drops() };
         let jinnwall_inspected = unsafe { crate::net::jinnwall::JINNWALL.inspected() };
@@ -91,6 +94,8 @@ impl SystemHost for JinnSystem {
             total_ram_mb: crate::memory::total_bytes() / (1024 * 1024),
             current_tick: ticks,
             net_ip,
+            net_adapter,
+            net_state_desc,
             jinnwall_active_conns,
             jinnwall_drops,
             jinnwall_inspected,

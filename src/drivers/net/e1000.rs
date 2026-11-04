@@ -185,7 +185,7 @@ impl E1000Device {
 /// Descobre e inicializa dispositivo Intel PRO/1000 compatível no barramento PCI.
 pub fn init() -> bool {
     // Lista de Device IDs suportados para Intel 82540EM / 82545EM / e1000
-    let supported_ids = [0x100E, 0x1004, 0x100F, 0x1019, 0x101E];
+    let supported_ids = [0x100E, 0x1004, 0x100F, 0x1019, 0x101E, 0x10D3, 0x1079, 0x107D];
     let mut target_dev: Option<PciDevice> = None;
 
     for &dev_id in &supported_ids {

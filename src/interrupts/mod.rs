@@ -39,9 +39,9 @@ pub extern "C" fn irq_dispatch(vector: u64, _frame: *mut usize) -> usize {
                     timer::tick();
                     pic::send_eoi(0);
                 }
-                // Envia EOI para o Local APIC em todos os núcleos
-                apic::send_eoi();
             }
+            // Envia EOI para o Local APIC em todos os núcleos
+            apic::send_eoi();
             
             crate::scheduler::get().preempt_core(cpu_id, _frame as usize)
         }
