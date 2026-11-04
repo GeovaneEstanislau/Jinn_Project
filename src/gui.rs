@@ -561,6 +561,8 @@ pub fn run_desktop() {
         let total_pixels = jinn_fb.width * jinn_fb.height;
         let backbuffer_slice = core::slice::from_raw_parts_mut(bb_ptr, total_pixels);
 
+        crate::interrupts::ps2_mouse::init();
+
         let mut poll_keyboard = || -> Option<u8> {
             let status: u8;
             core::arch::asm!("in al, dx", out("al") status, in("dx") 0x64u16, options(nomem, nostack));
@@ -576,6 +578,7 @@ pub fn run_desktop() {
         };
 
         let mut poll_mouse = || -> (usize, usize, u8) {
+            crate::interrupts::ps2_mouse::poll();
             crate::interrupts::ps2_mouse::get_state()
         };
 
