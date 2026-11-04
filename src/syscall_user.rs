@@ -441,3 +441,73 @@ pub unsafe fn sys_mount(prefix_ptr: *const u8, prefix_len: usize, disk_idx: usiz
 pub unsafe fn sys_unmount(prefix_ptr: *const u8, prefix_len: usize) -> i64 {
     syscall3(44, prefix_ptr as u64, prefix_len as u64, 0)
 }
+
+// ── Syscall 45 — device_info ──────────────────────────────────────────────────
+
+/// Obtém metadados e descritor de um dispositivo gerenciado pelo Unified Device Manager.
+#[inline(always)]
+pub unsafe fn sys_device_info(idx: usize, out_desc: *mut crate::drivers::device_manager::DeviceDescriptor) -> i64 {
+    syscall3(45, idx as u64, out_desc as u64, 0)
+}
+
+// ── Syscall 46 — device_count ─────────────────────────────────────────────────
+
+/// Retorna a quantidade total de dispositivos registrados no Unified Device Manager.
+#[inline(always)]
+pub unsafe fn sys_device_count() -> i64 {
+    syscall3(46, 0, 0, 0)
+}
+
+// ── Syscall 47 — partition_info ───────────────────────────────────────────────
+
+/// Obtém informações sobre a partição `part_idx` do disco `disk_idx`.
+#[inline(always)]
+pub unsafe fn sys_partition_info(disk_idx: usize, part_idx: usize, out_info: *mut crate::syscall::PartitionInfoUser) -> i64 {
+    syscall3(47, disk_idx as u64, part_idx as u64, out_info as u64)
+}
+
+// ── Syscall 48 — volume_info ──────────────────────────────────────────────────
+
+/// Obtém informações sobre o volume gerenciado indexado por `vol_idx`.
+#[inline(always)]
+pub unsafe fn sys_volume_info(vol_idx: usize, out_info: *mut crate::syscall::VolumeInfoUser) -> i64 {
+    syscall3(48, vol_idx as u64, out_info as u64, 0)
+}
+
+// ── Syscall 49 — volume_count ─────────────────────────────────────────────────
+
+/// Retorna a quantidade total de volumes catalogados no Volume Manager.
+#[inline(always)]
+pub unsafe fn sys_volume_count() -> i64 {
+    syscall3(49, 0, 0, 0)
+}
+
+// ── Syscall 50 — unlink ───────────────────────────────────────────────────────
+
+/// Remove um arquivo ou link do VFS.
+#[inline(always)]
+pub unsafe fn sys_unlink(path: &str) -> i64 {
+    syscall3(50, path.as_ptr() as u64, path.len() as u64, 0)
+}
+
+// ── Syscall 51 — mkdir ────────────────────────────────────────────────────────
+
+/// Cria um novo diretório no VFS.
+#[inline(always)]
+pub unsafe fn sys_mkdir(path: &str) -> i64 {
+    syscall3(51, path.as_ptr() as u64, path.len() as u64, 0)
+}
+
+// ── Syscall 52 — rename ───────────────────────────────────────────────────────
+
+/// Move ou renomeia um arquivo de forma atômica no VFS.
+#[inline(always)]
+pub unsafe fn sys_rename(old_path: &str, new_path: &str) -> i64 {
+    let args = crate::syscall::RenameArgs {
+        old_ptr: old_path.as_ptr(),
+        old_len: old_path.len(),
+        new_ptr: new_path.as_ptr(),
+        new_len: new_path.len(),
+    };
+    syscall3(52, &args as *const _ as u64, 0, 0)
+}

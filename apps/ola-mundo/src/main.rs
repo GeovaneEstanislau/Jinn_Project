@@ -2625,9 +2625,9 @@ unsafe fn test_sched_preemption_and_cpu_quota() {
     sys_sleep(120);
 
     let mut stat: ProcessResourceStat = core::mem::zeroed();
-    let ret = sys_res_stat(3, &mut stat);
+    let ret = sys_res_stat(4, &mut stat);
     if ret == 0 {
-        print_str(b"  Telemetria da Tarefa CPU-Hog (PID 3) capturada via Syscall 25:\n");
+        print_str(b"  Telemetria da Tarefa CPU-Hog (PID 4) capturada via Syscall 25:\n");
         print_str(b"    CPU Ticks Consumidos: ");
         print_u64(stat.cpu_ticks);
         print_str(b"\n    Trocas de Contexto Totais: ");
@@ -2654,9 +2654,9 @@ unsafe fn test_sched_preemption_and_cpu_quota() {
     sys_sleep(180);
 
     let mut stat_after: ProcessResourceStat = core::mem::zeroed();
-    let ret_after = sys_res_stat(3, &mut stat_after);
+    let ret_after = sys_res_stat(4, &mut stat_after);
     if ret_after == 0 {
-        print_str(b"  Telemetria pos-cota PID 3: Estado=");
+        print_str(b"  Telemetria pos-cota PID 4: Estado=");
         print_u64(stat_after.state as u64);
         print_str(b", Violacoes=");
         print_u64(stat_after.limit_violations as u64);

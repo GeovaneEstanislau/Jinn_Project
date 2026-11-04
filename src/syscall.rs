@@ -19,6 +19,11 @@
 ///   7  — alloc_page()             Allocate a physical frame (returns phys addr)
 ///   8  — free_page(phys)          Free a physical frame
 ///   9  — spawn(fn_ptr, name_ptr)  Spawn a new kernel task
+///   10 — waitpid(pid)             Wait for child process to terminate
+///   11 — sleep(ms)                Sleep task for duration
+///   12 — jda_shm_alloc(ro)        Allocate shared JDA buffer
+///   13 — jda_shm_release(handle)  Release shared JDA buffer
+///   14 — jda_submit(job, handle, len) Submit JDA job
 ///   15 — open(path, len, flags)   Open file and return per-task FD (3..=7)
 ///   16 — close(fd)                Close file descriptor
 ///   17 — stat(path, len, stat_ptr) Query file or directory metadata
@@ -30,6 +35,10 @@
 ///   23 — sync()                        Flush filesystem caches and sync storage
 ///   24 — window_poll_event(id, ptr, f) Poll Aladdin window client input events
 ///   25 — res_stat(pid, stat_ptr, len)  Query process resource limits & telemetry
+///   26 — jda_shm_share(handle, pid, ro) Share JDA memory with another task
+///   27 — jda_ring_submit(sqe, count)   Submit io_uring SQEs
+///   28 — jda_ring_poll(cqe, max)       Poll io_uring CQEs
+///   29 — jda_shm_get_vaddr(handle)     Get virtual address of shared buffer
 ///   30 — socket(domain, type, proto)   Create network socket endpoint
 ///   31 — connect(fd, addr, len)        Connect to remote network peer
 ///   32 — bind(fd, addr, len)           Bind socket to local port
@@ -38,6 +47,21 @@
 ///   35 — send(fd, buf, len, flags)     Send data over socket
 ///   36 — recv(fd, buf, len, flags)     Receive data from socket
 ///   37 — jinnwall_ctrl(cmd, arg0, arg1) Firewall JinnWall control & telemetry
+///   38 — execve(path, argv, envp)      Replace current process image with ELF
+///   39 — spawn_process(path, argv, envp) Spawn independent child process from ELF
+///   40 — dns_resolve(name, len, out_ip) Resolve DNS hostname to IPv4
+///   41 — statvfs(path, len, out_stat)  Query mounted filesystem statistics
+///   42 — disk_info(disk_idx, out_info) Query storage block device information
+///   43 — mount(prefix, len, disk_and_part) Mount partition to VFS prefix
+///   44 — unmount(prefix, len)          Unmount VFS mount point
+///   45 — device_info(idx, out_desc)    Query unified device manager descriptor
+///   46 — device_count()                Return count of registered devices
+///   47 — partition_info(disk, part, out) Query partition information
+///   48 — volume_info(vol_idx, out)     Query volume manager volume information
+///   49 — volume_count()                Return count of cataloged volumes
+///   50 — unlink(path, len)             Unlink and delete a file from VFS
+///   51 — mkdir(path, len)              Create a directory in VFS
+///   52 — rename(args_ptr)              Atomic rename/move file in VFS
 
 use crate::ipc::{self, Message};
 use crate::memory;
