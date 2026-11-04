@@ -1,122 +1,62 @@
-# Jinn OS
+# Jinn OS — Microkernel x86_64 Minimalista e Preemptivo em Rust
 
-> **Um microkernel x86_64 minimalista e preemptivo escrito em Rust.**
-> Construído do zero. Sem abstrações que desperdiçam recursos. Sem concessões.
-
----
-
-## Filosofia
-
-O Jinn OS é construído sobre três pilares principais:
-
-1. **Preempção sem desperdício** — O kernel nunca permite que uma tarefa monopolize a CPU. O timer do APIC dispara a 100 Hz e o escalonador age a cada ciclo.
-2. **Explícito ao invés de implícito** — Sem alocações ocultas, sem surpresas em tempo de execução. Toda aquisição de recursos é intencional e transparente.
-3. **Kernel mínimo, capacidade máxima** — O kernel faz o mínimo necessário: escalonamento, IPC (Comunicação Inter-Processos), memória e chamadas de sistema (syscalls). Todo o resto roda no espaço do usuário (Ring 3).
+> **Status:** Em desenvolvimento ativo 🚀  
+> **Arquitetura:** `x86_64` | **Linguagem:** Rust (`#![no_std]`, bare-metal)  
+> **Bootloader:** Limine Boot Protocol v2 (Higher-Half)  
+> **Comunidade:** Desenvolvido no Brasil 🇧🇷 com foco em segurança, previsibilidade e simplicidade.
 
 ---
 
-## Funcionalidades
+## Sobre o Projeto
 
-| Funcionalidade | Status |
-|---|---|
-| Bootloader Limine (BIOS + UEFI) | ✅ |
-| Renderizador de texto Framebuffer (fonte customizada) | ✅ |
-| Primitivas Gráficas 2D & Janelas (`gui.rs`) | 🚧 Em Andamento |
-| x86_64 IDT (48 vetores) | ✅ |
-| Local APIC + Timer (100 Hz) | ✅ |
-| Escalonador Preemptivo Round-Robin com Prioridades | ✅ |
-| Alocador de Frames Físicos (Bitmap) | ✅ |
-| Paginação de 4 Níveis (PML4) | ✅ |
-| Kernel Heap Próprio (Bump + Free List) | ✅ |
-| Driver de Teclado PS/2 | ✅ |
-| Driver de Mouse PS/2 | 🚧 Em Andamento |
-| Shell Interativo | ✅ |
-| IPC (Filas de mensagens lock-free) | ✅ |
-| Interface de Syscalls (10 chamadas via `int 0x80`) | ✅ |
-| VFS + ramfs (`/dev/`) | ✅ |
-| Carregador ELF64 & Isolamento Ring 3 | ✅ |
-| Pilha de Rede (TCP/UDP, DNS, DHCP, Sockets) | ✅ |
-| Driver Ext2 / FAT32 / AHCI | 🔜 Planejado ([Issue #30](https://github.com/GeovaneEstanislau/Jinn_Project/issues/30)) |
+O **Jinn OS** é um sistema operacional microkernel escrito do zero em Rust moderno. O projeto nasceu da necessidade de construir uma base de computação confiável, minimalista e verificável, onde apenas o estritamente essencial reside no espaço mais privilegiado do processador (Ring 0).
 
-> 🗺️ **Consulte o nosso plano de desenvolvimento detalhado em [ROADMAP.md](ROADMAP.md).**
+Drivers de dispositivo, sistemas de arquivos, servidores de rede e ambientes gráficos rodam como servidores isolados no espaço de usuário (Ring 3), comunicando-se por meio de passagem de mensagens rápida e sem bloqueio (IPC).
 
 ---
 
-## Arquitetura
+## Pilares Arquiteturais
 
-```
-┌────────────────────────────────────────────────────────────┐
-│                  Espaço do Usuário (Ring 3)                │
-│                  ┌─────────┐  ┌─────────┐  ┌───────────┐   │
-│                  │App (ELF)│  │  App B  │  │  Shell    │   │
-│                  └────┬────┘  └────┬────┘  └─────┬─────┘   │
-└───────────────────────┼────────────┼─────────────┼─────────┘
-                        │  int 0x80  │             │
-┌───────────────────────▼────────────▼─────────────▼─────────┐
-│              Camada de Syscalls (syscall.rs)               │
-│  exit │ write │ read │ yield │ getpid │ ipc_send │ spawn   │
-├────────────────────────────────────────────────────────────┤
-│                  IPC (ipc.rs) — Filas lock-free            │
-├──────────────────┬─────────────────────┬───────────────────┤
-│  Escalonador     │  Gerenciador Mem.   │   VFS             │
-│  (scheduler.rs)  │  (memory/)          │   (vfs/)          │
-│  Round-Robin     │  Alocador Físico    │   ramfs / devfs   │
-│  Preemptivo      │  Paginação (PML4)   │                   │
-│  Prioridades     │  Heap Customizado   │                   │
-├──────────────────┴─────────────────────┴───────────────────┤
-│         Subsistema Gráfico & GUI (gui.rs, vga.rs, font.rs) │
-│      Janelas  │  Retângulos  │  Fontes  │  Linear Framebuffer │
-├────────────────────────────────────────────────────────────┤
-│           Subsistema de Interrupções (interrupts/)         │
-│      IDT  │  Local APIC  │  Teclado PS/2   │  Mouse (IRQ12)│
-├────────────────────────────────────────────────────────────┤
-│         Abstração de Hardware (limine.rs, cpu.rs, elf.rs)  │
-└────────────────────────────────────────────────────────────┘
-```
+1. **Preempção Real:** Escalonador Round-Robin preemptivo guiado pelo Timer PIT (100 Hz / quantum de 10ms), garantindo que nenhuma tarefa monopolize o processador.
+2. **Isolamento de Memória (Paging x86_64):** Paginação em 4 níveis (PML4) gerenciada de forma estrita. Código de Ring 3 não acessa memória física do kernel.
+3. **Privilégios Estritos:** Ring 0 dedicado à troca de contexto, paginação básica e despacho de chamadas de sistema (`int 0x80` / `syscall`). O microkernel nunca manipula chaves privadas de ativos criptográficos.
+4. **Comunicação por Mensagens (IPC):** Fila de mensagens lock-free por processo, sem alocações dinâmicas no caminho crítico de execução.
+5. **JDA (Jinn Directed Acyclic Graph) — Aceleração Assíncrona Zero-Copy:** Subsistema avançado de I/O de disco e computação in-kernel com anéis de submissão/conclusão lock-free inspirados em `io_uring`.
+6. **Gráficos e Janelas Nativos no Aladdin Desktop:** Suporte completo a Linear Framebuffer, mouse PS/2 em tempo real, compositor de janelas com foco e terminal dinâmico.
 
 ---
 
-## Como Compilar
+## Estrutura do Repositório
 
-Requisitos: Rust nightly com `rust-src`, `xorriso` (ou `mkisofs`/`oscdimg`) para gerar a ISO e QEMU ou VirtualBox para executá-la. O launcher baixa os binários oficiais do Limine quando necessário.
-
-```powershell
-rustup toolchain install nightly --component rust-src --component llvm-tools-preview
-rustup target add x86_64-unknown-none --toolchain nightly
+```text
+jinn/
+├── Cargo.toml            # Manifest da crate principal do microkernel
+├── limine.conf           # Configuração de bootloader do Limine
+├── build.rs              # Script de compilação e linkagem do kernel
+├── apps/                 # Aplicações nativas de espaço de usuário (Ring 3)
+│   └── ola-mundo/        # Navegador nativo (browser.rs) e Carteira Aladdin (wallet.rs)
+├── contracts/            # Contratos inteligentes BEP-20 / EVM e suíte Hardhat
+│   ├── contracts/        # JinnToken.sol, JinnVesting.sol, JinnRewardDistributor.sol
+│   ├── test/             # Testes unitários e invariantes de segurança na EVM
+│   └── scripts/          # Automação de deploy para BSC Testnet/Mainnet
+├── tools/                # Utilitários auxiliares do ecossistema
+│   ├── jinn-web3/        # jinn-web3 (CLI) e jinn-web3d (Daemon em Ring 3)
+│   └── jda-sim/          # Simulador de pipelines DAG e benchmarks SMP
+├── docs/                 # Documentação técnica, especificações e relatórios de auditoria
+│   ├── adr/              # Architecture Decision Records (ADRs 001 a 006)
+│   └── ...               # Whitepapers, PoUC, DePIN e relatórios
+└── src/                  # Código-fonte principal do microkernel
+    ├── main.rs           # Ponto de entrada (_start) e inicialização
+    ├── gdt.rs            # Global Descriptor Table e TSS (Ring 0 / Ring 3)
+    ├── idt.rs            # Interrupt Descriptor Table e tratadores
+    ├── syscall.rs        # Interface canônica de chamadas de sistema (Syscalls 0..52)
+    ├── scheduler.rs      # Escalonador preemptivo de processos
+    ├── ipc.rs            # Mensageria IPC estática e lock-free
+    ├── memory/           # Gerenciamento de quadros físicos e paginação
+    ├── drivers/          # Drivers (PIT, Teclado, Mouse PS/2, IDE, PCI, E1000, NVMe)
+    ├── net/              # Pilha de rede nativa IPv4/TCP/UDP/DHCP/DNS e firewall JinnWall
+    └── vfs/              # Virtual File System com suporte a FAT32 e Ext2
 ```
-
-Compile e gere a ISO sem iniciar uma VM:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run.ps1 -NoRun
-```
-
-O comando gera `jinn.iso`; sem `-NoRun`, o launcher inicia o QEMU. Para escolher outra saída, use `-IsoPath nome.iso`.
-
-Para compilar sem gerar a ISO:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
-```
-
----
-
-## Comandos do Shell
-
-Uma vez iniciado, o shell interativo (`jinn>`) suporta:
-
-| Comando | Descrição |
-|---|---|
-| `help` | Lista os comandos disponíveis |
-| `uname` | Mostra o nome, versão e arquitetura do kernel |
-| `meminfo` | Mostra estatísticas da memória física e heap do kernel |
-| `ps` / `tasks` | Lista todas as tarefas em execução no escalonador |
-| `spawn <nome>` | Inicia um processo em Ring 3 a partir do ELF carregado |
-| `kill <pid>` | Finaliza uma tarefa pelo seu PID |
-| `sched` | Estatísticas detalhadas do escalonador preemptivo |
-| `uptime` | Tempo de atividade em ticks do APIC Timer |
-| `reboot` | Reinicia a máquina de forma segura |
-| `clear` / `cls` | Limpa o console de texto |
 
 ---
 
@@ -127,9 +67,12 @@ Para garantir a sustentabilidade econômica soberana, financiar pesquisa de sist
 > ⚠️ **Isolamento Inviolável:** O microkernel Jinn (Ring 0) não armazena, processa ou recebe chaves privadas ou sementes mnemônicas. Todas as operações criptográficas residem estritamente em userspace (Ring 3) e na aplicação **Aladdin Wallet**.
 
 - 📄 **Proposta e Whitepaper Econômico:** [`JINN_TOKEN_PROPOSAL.md`](JINN_TOKEN_PROPOSAL.md)
+- 🛡️ **Relatório de Validação EVM & Auditoria Fase II:** [`docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md`](docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md)
 - 🏛️ **Governança e Tesouraria Multi-Sig:** [`docs/JINN_OPEN_ECONOMY_GOVERNANCE.md`](docs/JINN_OPEN_ECONOMY_GOVERNANCE.md)
 - 🏆 **Especificação do PoUC (Bounties):** [`docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md`](docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md)
 - 🖥️ **Arquitetura da Carteira (Ring 3):** [`docs/JINN_WALLET_ARCHITECTURE.md`](docs/JINN_WALLET_ARCHITECTURE.md)
+- 💼 **Aladdin Wallet (Código Ring 3 UI):** [`apps/ola-mundo/src/wallet.rs`](apps/ola-mundo/src/wallet.rs)
+- ⚙️ **Daemon Userspace `jinn-web3d`:** [`tools/jinn-web3/src/daemon.rs`](tools/jinn-web3/src/daemon.rs)
 - ⚡ **Economia Computacional e DePIN (JDA):** [`docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md`](docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md)
 - 🔍 **Auditoria Interna dos Smart Contracts:** [`docs/SMART_CONTRACTS_AUDIT_REPORT.md`](docs/SMART_CONTRACTS_AUDIT_REPORT.md)
 - 🚀 **Guia de Implantação em Testnet:** [`docs/TESTNET_DEPLOYMENT_GUIDE.md`](docs/TESTNET_DEPLOYMENT_GUIDE.md)

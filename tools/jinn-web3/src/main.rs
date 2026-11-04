@@ -4,6 +4,7 @@
 #![allow(unused_imports)]
 
 mod bep20;
+mod daemon;
 mod invariants;
 mod keccak;
 mod keystore;
@@ -11,6 +12,7 @@ mod merkle;
 mod rpc;
 
 use bep20::*;
+use daemon::*;
 use invariants::*;
 use keccak::*;
 use keystore::*;
@@ -27,6 +29,8 @@ fn main() {
         "rpc" => run_rpc_demo(),
         "pouc" => run_pouc_demo(),
         "invariants" => run_invariants_check(),
+        "keystore" => run_keystore_demo(),
+        "daemon" => run_daemon_demo(),
         _ => print_help(),
     }
 }
@@ -42,6 +46,8 @@ fn print_help() {
     println!("  rpc         Demonstra geração de envelopes JSON-RPC para nó BSC");
     println!("  pouc        Simula uma campanha PoUC com Merkle Tree e provas");
     println!("  invariants  Executa a verificação dos 6 invariantes de segurança");
+    println!("  keystore    Demonstra geração, derivação Argon2id e criptografia AES-GCM");
+    println!("  daemon      Demonstra o ciclo de vida e despacho IPC do jinn-web3d");
     println!("  help        Exibe esta mensagem de ajuda");
     println!("========================================================");
 }
@@ -181,4 +187,72 @@ fn run_invariants_check() {
     println!("      -> OK: Encerramento de uma campanha não afeta as demais.");
 
     println!("\n✅ Todos os 6 invariantes foram validados com 100% de conformidade!");
+}
+
+fn run_keystore_demo() {
+    println!("--- Demonstração de Segurança do Keystore Aladdin (Ring 3) ---");
+    let key = generate_random_key();
+    let address = derive_address_from_key(&key);
+    let address_hex = to_hex_string(&address);
+    println!("1. Nova chave secp256k1 gerada em memória volátil de userspace.");
+    println!("   Endereço derivado: {}", address_hex);
+
+    let password = "AladdinSecurePassword!2026";
+    println!("\n2. Cifrando chave privada com Argon2id (KDF) e AES-256-GCM (Cipher)...");
+    let envelope = encrypt_keystore(&key, password, 97, None).expect("Cifragem com sucesso");
+    let json_envelope = serde_json::to_string_pretty(&envelope).expect("JSON format");
+    println!("   Envelope Criptográfico Gerado:\n{}", json_envelope);
+
+    println!("\n3. Decifrando envelope com a senha fornecida...");
+    let decrypted_key = decrypt_keystore(&envelope, password).expect("Decifragem com sucesso");
+    assert_eq!(key.to_bytes(), decrypted_key.to_bytes());
+    println!("   -> Chaves correspondem perfeitamente.");
+
+    println!("\n4. Testando resistência a senha incorreta...");
+    let failed = decrypt_keystore(&envelope, "senha_incorreta");
+    assert!(failed.is_err());
+    println!("   -> Rejeição segura confirmada: {:?}", failed.unwrap_err());
+
+    println!("\n5. Verificando isolamento Ring 3 / Microkernel...");
+    assert!(envelope.verify_ring3_isolation());
+    println!("   -> Isolamento de privilégios validado: chaves privadas nunca tocam o Ring 0.");
+
+    println!("\n✅ Demonstração do Keystore Seguro concluída com êxito!");
+}
+
+fn run_daemon_demo() {
+    println!("--- Demonstração do Daemon Web3 jinn-web3d (Ring 3) ---");
+    let mut daemon = Web3Daemon::new(DaemonConfig::default());
+    println!("1. Daemon inicializado com sucesso para BSC Chapel (ID {}).", daemon.config.chain_id);
+    assert!(daemon.verify_ring3_isolation());
+    println!("   -> Isolamento de privilégios verificado.");
+
+    let client_pid = 4096;
+    println!("\n2. Processando solicitacao IPC GetStatus (PID {})...", client_pid);
+    let (code, resp) = daemon.handle_ipc_request(client_pid, Web3IpcOpcode::GetStatus as u32, &[]);
+    println!("   -> Retorno IPC: Status={}, PayloadBytes={}", code, resp.len());
+
+    println!("\n3. Processando solicitacao IPC PrepareTransfer (PID {})...", client_pid);
+    let recipient = [0x99; 20];
+    let amount_wei = u128_to_u256_be(100 * 1_000_000_000_000_000_000u128); // 100 $JINN
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&recipient);
+    payload.extend_from_slice(&amount_wei);
+    let (code, resp) = daemon.handle_ipc_request(client_pid, Web3IpcOpcode::PrepareTransfer as u32, &payload);
+    let tx_id = u64::from_be_bytes(resp[..8].try_into().unwrap());
+    println!("   -> Retorno IPC: Status={}, TxID={}, CalldataLen={}", code, tx_id, resp.len() - 8);
+
+    println!("\n4. Processando solicitacao IPC SignAndSend (PID {})...", client_pid);
+    let signed_tx = b"sample_signed_tx_for_bsc_testnet";
+    let (code, resp) = daemon.handle_ipc_request(client_pid, Web3IpcOpcode::SignAndSend as u32, signed_tx);
+    let mut hash_bytes = [0u8; 32];
+    hash_bytes.copy_from_slice(&resp);
+    println!("   -> Retorno IPC: Status={}, TxHash={}", code, to_hex_string(&hash_bytes));
+
+    println!("\n5. Inspecionando logs de eventos seguros (sem vazamento de chaves)...");
+    for (i, log) in daemon.event_logs.iter().enumerate() {
+        println!("   Log #{}: Acao={}, PID={}, Status={}", i + 1, log.action, log.client_pid, log.status_code);
+    }
+
+    println!("\n✅ Demonstração do Daemon jinn-web3d concluída com êxito!");
 }

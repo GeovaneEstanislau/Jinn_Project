@@ -198,6 +198,25 @@ Motor de navegação estático nativo ("in-house") e desacoplado, escrito em Rus
 
 ---
 
+## 💎 Linha de Produto: Jinn Web3 & Open Economy ($JINN — Fases I e II Concluídas ✅)
+
+Infraestrutura econômica descentralizada para soberania financeira, incentivo à pesquisa em sistemas operacionais e recompensas a desenvolvedores de código aberto via *Proof of Useful Contribution* (PoUC), preservando 100% o isolamento do microkernel Ring 0.
+
+- [x] **Fase I — Fundação Web3, Contratos BEP-20 & Governança**:
+  - Contrato `JinnToken.sol`: BEP-20 na BNB Smart Chain com Hard Cap fixo de 1 Bilhão, sem mint pós-deploy, burn deflacionário, EIP-2612 Permit e Circuit Breaker Pausable.
+  - Contrato `JinnVesting.sol`: Cofre de liberação linear com cliff e prevenção contra saques antecipados ou duplicados.
+  - Contrato `JinnRewardDistributor.sol`: Distribuição de bounties PoUC por árvore Merkle com isolamento entre épocas e controle de validade.
+  - Whitepaper econômico (`JINN_TOKEN_PROPOSAL.md`), arquitetura da carteira (`docs/JINN_WALLET_ARCHITECTURE.md`), modelo de governança multi-sig 3/5 com timelock de 48h (`docs/JINN_OPEN_ECONOMY_GOVERNANCE.md`).
+- [x] **Fase II — Validação EVM, Auditoria Criptográfica, Keystore & Aladdin Wallet**:
+  - Compilação e execução de 15 testes na EVM com Hardhat (Cancun target, Solidity 0.8.24) e cobertura Istanbul (~74% de linhas).
+  - Auditoria criptográfica de `keccak.rs`: comprovação de padding `0x01` (Ethereum) vs `0x06` (NIST SHA3-256), vetores canônicos, seletores ABI e prova cruzada com oráculo `sha3::Keccak256`.
+  - Keystore seguro em Ring 3 (`keystore.rs`): derivação de chaves via Argon2id (64 MiB, 3 passes), cifra autenticada AES-256-GCM com MAC e zeroização com o trait `Zeroize`.
+  - Daemon userspace `jinn-web3d` (`daemon.rs` & `daemon_main.rs`): processo em Ring 3 desacoplado com protocolo IPC tipado (`Web3IpcOpcode`), gerenciamento de transações e logs sem segredos.
+  - Interface nativa Aladdin Wallet (`apps/ola-mundo/src/wallet.rs`): tela nativa de 320x220 pixels integrada ao compositor Aladdin, modais de confirmação explícita de transferência e consulta de bounties PoUC.
+  - Relatório técnico publicado: [`docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md`](docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md).
+
+---
+
 ## 🤝 Como Participar e Ajudar
 
 Nós valorizamos cada pessoa interessada em sistemas operacionais, Rust e computação de baixo nível!

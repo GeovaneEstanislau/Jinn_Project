@@ -3,7 +3,6 @@
 
 #![allow(dead_code)]
 
-use crate::bep20::*;
 use crate::merkle::*;
 
 pub const HARD_CAP_WEI: u128 = 1_000_000_000 * 1_000_000_000_000_000_000u128; // 1 Billion * 10^18

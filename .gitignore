@@ -51,5 +51,7 @@ __pycache__/
 node_modules/
 /contracts/artifacts/
 /contracts/cache/
+/contracts/coverage/
+/contracts/coverage.json
 /contracts/typechain/
 /contracts/typechain-types/

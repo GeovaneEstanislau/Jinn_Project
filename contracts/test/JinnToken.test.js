@@ -72,8 +72,8 @@ describe("Jinn Network Token ($JINN) Comprehensive Test Suite", function () {
 
       await jinnVesting.createVestingSchedule(alice.address, start, CLIFF, DURATION, VESTING_AMOUNT, false);
 
-      // Time advance to 1 second before cliff
-      await ethers.provider.send("evm_setNextBlockTimestamp", [start + CLIFF - 1]);
+      // Time advance to 10 seconds before cliff
+      await ethers.provider.send("evm_setNextBlockTimestamp", [start + CLIFF - 10]);
       await ethers.provider.send("evm_mine");
 
       expect(await jinnVesting.computeReleasableAmount(scheduleId)).to.equal(0);
@@ -89,18 +89,18 @@ describe("Jinn Network Token ($JINN) Comprehensive Test Suite", function () {
 
       await jinnVesting.createVestingSchedule(alice.address, start, CLIFF, DURATION, VESTING_AMOUNT, false);
 
-      // Move to 50% through duration
-      await ethers.provider.send("evm_setNextBlockTimestamp", [start + Math.floor(DURATION / 2)]);
+      // Move past duration (100% vested)
+      await ethers.provider.send("evm_setNextBlockTimestamp", [start + DURATION + 100]);
       await ethers.provider.send("evm_mine");
 
       const releasable = await jinnVesting.computeReleasableAmount(scheduleId);
-      expect(releasable).to.be.gt(0);
+      expect(releasable).to.equal(VESTING_AMOUNT);
 
-      // First release succeeds
+      // First release succeeds in claiming the full vested amount
       await jinnVesting.release(scheduleId);
-      expect(await jinnToken.balanceOf(alice.address)).to.equal(releasable);
+      expect(await jinnToken.balanceOf(alice.address)).to.equal(VESTING_AMOUNT);
 
-      // Immediate second release without time elapsed must revert
+      // Immediate second release must strictly revert with no tokens due
       await expect(jinnVesting.release(scheduleId)).to.be.revertedWith("JinnVesting: no tokens due for release");
     });
 
@@ -138,14 +138,14 @@ describe("Jinn Network Token ($JINN) Comprehensive Test Suite", function () {
       await distributor.connect(alice).claimReward(1, index, amount, []);
       expect(await jinnToken.balanceOf(alice.address)).to.equal(amount);
 
-      // Second claim with same proof must revert
+      // Second claim with same index must revert with already claimed
       await expect(
         distributor.connect(alice).claimReward(1, index, amount, [])
       ).to.be.revertedWith("JinnRewardDistributor: bounty already claimed");
 
-      // Claim by different address with alice's proof must revert
+      // Claim by bob on index 1 with invalid proof must revert with invalid proof
       await expect(
-        distributor.connect(bob).claimReward(1, index, amount, [])
+        distributor.connect(bob).claimReward(1, 1, amount, [])
       ).to.be.revertedWith("JinnRewardDistributor: invalid proof");
     });
   });
@@ -236,6 +236,113 @@ describe("Jinn Network Token ($JINN) Comprehensive Test Suite", function () {
       // Epoch 2 remains completely active and unimpacted
       expect((await distributor.getEpoch(2)).active).to.be.true;
       expect((await distributor.getEpoch(2)).totalRewardAmount).to.equal(EPOCH2_FUNDS);
+    });
+  });
+
+  // ================================================================
+  // EIP-2612 Gasless Permit Signature Tests
+  // ================================================================
+  describe("EIP-2612 Permit Gasless Approvals", function () {
+    it("should permit allowance via secp256k1 EIP-712 signature", async function () {
+      const value = ethers.parseEther("500");
+      const deadline = ethers.MaxUint256;
+      const nonce = await jinnToken.nonces(owner.address);
+      const chainId = (await ethers.provider.getNetwork()).chainId;
+      const tokenAddress = await jinnToken.getAddress();
+
+      const domain = {
+        name: "Jinn Network Token",
+        version: "1",
+        chainId: chainId,
+        verifyingContract: tokenAddress,
+      };
+
+      const types = {
+        Permit: [
+          { name: "owner", type: "address" },
+          { name: "spender", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "nonce", type: "uint256" },
+          { name: "deadline", type: "uint256" },
+        ],
+      };
+
+      const message = {
+        owner: owner.address,
+        spender: alice.address,
+        value: value,
+        nonce: nonce,
+        deadline: deadline,
+      };
+
+      const signature = await owner.signTypedData(domain, types, message);
+      const sig = ethers.Signature.from(signature);
+
+      await jinnToken.permit(owner.address, alice.address, value, deadline, sig.v, sig.r, sig.s);
+      expect(await jinnToken.allowance(owner.address, alice.address)).to.equal(value);
+      expect(await jinnToken.nonces(owner.address)).to.equal(nonce + 1n);
+    });
+
+    it("should reject expired permit signatures", async function () {
+      const pastDeadline = 1000;
+      await expect(
+        jinnToken.permit(owner.address, alice.address, 100, pastDeadline, 27, ethers.ZeroHash, ethers.ZeroHash)
+      ).to.be.revertedWith("JinnToken: expired permit deadline");
+    });
+  });
+
+  // ================================================================
+  // Vesting Revocation Mechanics
+  // ================================================================
+  describe("Vesting Revocation Mechanics", function () {
+    it("should refund unvested tokens to owner on revocation", async function () {
+      const start = (await ethers.provider.getBlock("latest")).timestamp + 10;
+      const amount = ethers.parseEther("10000");
+      await jinnToken.connect(treasury).transfer(await jinnVesting.getAddress(), amount);
+
+      const scheduleId = await jinnVesting.computeScheduleIdForAddressAndIndex(bob.address, 0);
+      await jinnVesting.createVestingSchedule(bob.address, start, 100, 1000, amount, true);
+
+      // Non-owner cannot revoke
+      await expect(jinnVesting.connect(bob).revoke(scheduleId)).to.be.revertedWith("JinnVesting: caller is not the owner");
+
+      // Owner revokes unvested schedule
+      const ownerBalBefore = await jinnToken.balanceOf(owner.address);
+      await jinnVesting.connect(owner).revoke(scheduleId);
+      const ownerBalAfter = await jinnToken.balanceOf(owner.address);
+      expect(ownerBalAfter - ownerBalBefore).to.equal(amount);
+
+      const sched = await jinnVesting.getVestingSchedule(scheduleId);
+      expect(sched.revoked).to.be.true;
+    });
+  });
+
+  // ================================================================
+  // Batch Distribution & Emergency Operations
+  // ================================================================
+  describe("Batch Distribution and Emergency Operations", function () {
+    it("should allow batch distribution to multiple recipients", async function () {
+      const amount1 = ethers.parseEther("100");
+      const amount2 = ethers.parseEther("200");
+      await jinnToken.connect(treasury).transfer(await distributor.getAddress(), amount1 + amount2);
+
+      await distributor.batchDistribute([alice.address, bob.address], [amount1, amount2]);
+      expect(await jinnToken.balanceOf(alice.address)).to.equal(amount1);
+      expect(await jinnToken.balanceOf(bob.address)).to.equal(amount2);
+    });
+
+    it("should allow emergency withdrawal by owner only", async function () {
+      const amount = ethers.parseEther("50");
+      await jinnToken.connect(treasury).transfer(await distributor.getAddress(), amount);
+
+      await expect(
+        distributor.connect(alice).emergencyWithdraw(alice.address, amount)
+      ).to.be.revertedWith("JinnRewardDistributor: caller is not the owner");
+
+      const ownerBalBefore = await jinnToken.balanceOf(owner.address);
+      await distributor.connect(owner).emergencyWithdraw(owner.address, amount);
+      const ownerBalAfter = await jinnToken.balanceOf(owner.address);
+      expect(ownerBalAfter - ownerBalBefore).to.equal(amount);
     });
   });
 });

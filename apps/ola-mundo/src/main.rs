@@ -3,6 +3,7 @@
 
 mod font;
 mod browser;
+pub mod wallet;
 
 use core::{arch::asm, panic::PanicInfo};
 

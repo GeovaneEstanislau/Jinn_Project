@@ -4,6 +4,14 @@ version = "0.1.0"
 edition = "2021"
 description = "Lightweight Web3 & BEP-20 RPC Client and ABI Encoder for Jinn OS & Aladdin Desktop"
 
+[[bin]]
+name = "jinn-web3"
+path = "src/main.rs"
+
+[[bin]]
+name = "jinn-web3d"
+path = "src/daemon_main.rs"
+
 [dependencies]
 argon2 = "0.5"
 aes-gcm = "0.10"
