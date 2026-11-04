@@ -260,9 +260,19 @@ $indexHtmlText = @"
 <html>
 <head><title>Jinn OS Portal</title></head>
 <body>
-  <h1>Jinn Browser 0.3.0</h1>
+  <h1>Jinn Browser 0.5.0</h1>
   <p>Bem-vindo ao Jinn Browser rodando nativamente sobre o microkernel Jinn OS e Aladdin Desktop Compositor.</p>
-  <p><a href="about.htm">Sobre o Sistema</a></p>
+  <hr/>
+  <p><b>Acessos Rapidos na Internet (HTTP Puro):</b></p>
+  <p>- <a href="http://neverssl.com">Testar Internet Real (neverssl.com)</a></p>
+  <p>- <a href="http://example.com">Dominio de Teste RFC 2606 (example.com)</a></p>
+  <p>- <a href="http://info.cern.ch">Primeiro Site da Web (info.cern.ch)</a></p>
+  <p>- <a href="http://10.0.2.2:8080">Servidor Web do Host Local (10.0.2.2:8080)</a></p>
+  <hr/>
+  <p><b>Documentos Locais:</b></p>
+  <p>- <a href="about.htm">Sobre o Jinn Microkernel</a></p>
+  <hr/>
+  <p><i>Nota: Sites que forcam HTTPS/TLS 1.3 redirecionam para a tela informativa correspondente.</i></p>
 </body>
 </html>
 "@

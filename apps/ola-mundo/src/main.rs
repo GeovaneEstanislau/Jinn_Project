@@ -1458,6 +1458,7 @@ enum FetchError {
     InvalidHttp,
     TooManyRedirects,
     HttpStatus(u16),
+    HttpsRedirect,
 }
 
 unsafe fn fetch_http_document(
@@ -1618,8 +1619,14 @@ unsafe fn fetch_http_document(
             print_str(&hdr.location[..hdr.location_len]);
             print_str(b")\n");
             let loc = &hdr.location[..hdr.location_len];
+            if loc.starts_with(b"https://") {
+                return Err(FetchError::HttpsRedirect);
+            }
             let mut resolved_loc = [0u8; 128];
             let res_len = browser::resolve_relative_url(target_slice, loc, &mut resolved_loc);
+            if resolved_loc[..res_len].starts_with(b"https://") {
+                return Err(FetchError::HttpsRedirect);
+            }
             current_target[..res_len].copy_from_slice(&resolved_loc[..res_len]);
             current_target_len = res_len;
             continue;
@@ -1805,6 +1812,12 @@ unsafe fn browser_load_and_display(
                         if code == 404 { b"HTTP 404 Not Found" }
                         else if code == 500 { b"HTTP 500 Internal Server Error" }
                         else { b"Status HTTP de erro retornado pelo host" },
+                    ),
+                    FetchError::HttpsRedirect => (
+                        b"Redirecionamento para HTTPS",
+                        b"O servidor remoto redirecionou a conexao para uma conexao segura (HTTPS).",
+                        b"O suporte a TLS 1.3 esta em desenvolvimento. Para testar navegacao externa, use sites HTTP puro como neverssl.com ou example.com",
+                    
                     ),
                 };
 
