@@ -35,7 +35,7 @@ O Jinn OS é construído sobre três pilares principais:
 | Interface de Syscalls (10 chamadas via `int 0x80`) | ✅ |
 | VFS + ramfs (`/dev/`) | ✅ |
 | Carregador ELF64 & Isolamento Ring 3 | ✅ |
-| Pilha de Rede | 🔜 Planejado |
+| Pilha de Rede (TCP/UDP, DNS, DHCP, Sockets) | ✅ |
 | Driver Ext2 / FAT32 / AHCI | 🔜 Planejado ([Issue #30](https://github.com/GeovaneEstanislau/Jinn_Project/issues/30)) |
 
 > 🗺️ **Consulte o nosso plano de desenvolvimento detalhado em [ROADMAP.md](ROADMAP.md).**
@@ -117,6 +117,23 @@ Uma vez iniciado, o shell interativo (`jinn>`) suporta:
 | `uptime` | Tempo de atividade em ticks do APIC Timer |
 | `reboot` | Reinicia a máquina de forma segura |
 | `clear` / `cls` | Limpa o console de texto |
+
+---
+
+## Ecossistema Web3 e Jinn Open Economy ($JINN)
+
+Para garantir a sustentabilidade econômica soberana, financiar pesquisa de sistemas operacionais e recompensar contribuidores de código aberto via *Proof of Useful Contribution* (PoUC), o projeto desenvolve a infraestrutura do token nativo **$JINN** na BNB Smart Chain (BSC).
+
+> ⚠️ **Isolamento Inviolável:** O microkernel Jinn (Ring 0) não armazena, processa ou recebe chaves privadas ou sementes mnemônicas. Todas as operações criptográficas residem estritamente em userspace (Ring 3) e na aplicação **Aladdin Wallet**.
+
+- 📄 **Proposta e Whitepaper Econômico:** [`JINN_TOKEN_PROPOSAL.md`](JINN_TOKEN_PROPOSAL.md)
+- 🏛️ **Governança e Tesouraria Multi-Sig:** [`docs/JINN_OPEN_ECONOMY_GOVERNANCE.md`](docs/JINN_OPEN_ECONOMY_GOVERNANCE.md)
+- 🏆 **Especificação do PoUC (Bounties):** [`docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md`](docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md)
+- 🖥️ **Arquitetura da Carteira (Ring 3):** [`docs/JINN_WALLET_ARCHITECTURE.md`](docs/JINN_WALLET_ARCHITECTURE.md)
+- ⚡ **Economia Computacional e DePIN (JDA):** [`docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md`](docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md)
+- 🔍 **Auditoria Interna dos Smart Contracts:** [`docs/SMART_CONTRACTS_AUDIT_REPORT.md`](docs/SMART_CONTRACTS_AUDIT_REPORT.md)
+- 🚀 **Guia de Implantação em Testnet:** [`docs/TESTNET_DEPLOYMENT_GUIDE.md`](docs/TESTNET_DEPLOYMENT_GUIDE.md)
+- 🛠️ **Utilitário e Codificador em Rust:** [`tools/jinn-web3/`](tools/jinn-web3/)
 
 ---
 

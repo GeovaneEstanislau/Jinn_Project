@@ -1,0 +1,7 @@
+[package]
+name = "jinn-web3"
+version = "0.1.0"
+edition = "2021"
+description = "Lightweight Web3 & BEP-20 RPC Client and ABI Encoder for Jinn OS & Aladdin Desktop"
+
+[dependencies]

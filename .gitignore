@@ -42,3 +42,14 @@ iso_root/EFI/
 *.pcap
 __pycache__/
 *.pyc
+
+
+# Web3 / Node environment and secrets
+.env
+.env.local
+.env.*.local
+node_modules/
+/contracts/artifacts/
+/contracts/cache/
+/contracts/typechain/
+/contracts/typechain-types/
