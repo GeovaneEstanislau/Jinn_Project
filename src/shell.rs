@@ -1776,6 +1776,29 @@ fn cmd_jinnctl(w: &mut Writer, args: &str) {
             w.set_color(Color::LightGray, Color::Black);
         }
 
+        "reset" => {
+            if subargs.is_empty() {
+                w.set_color(Color::LightRed, Color::Black);
+                w.write_line("Uso: jinnctl reset <nome-do-servico>");
+                return;
+            }
+            let supervisor = crate::supervisor::get_supervisor();
+            match supervisor.reset_circuit_breaker(subargs) {
+                Ok(()) => {
+                    w.set_color(Color::LightGreen, Color::Black);
+                    w.write_string("[OK] Circuit breaker do servico '");
+                    w.write_string(subargs);
+                    w.write_line("' resetado para STOPPED.");
+                }
+                Err(e) => {
+                    w.set_color(Color::LightRed, Color::Black);
+                    w.write_string("[ERRO] ");
+                    w.write_line(e);
+                }
+            }
+            w.set_color(Color::LightGray, Color::Black);
+        }
+
         "logs" => {
             let supervisor = crate::supervisor::get_supervisor();
             w.set_color(Color::Yellow, Color::Black);

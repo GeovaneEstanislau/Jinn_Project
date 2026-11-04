@@ -157,8 +157,8 @@ impl JinnWall {
         }
 
         // 5. Se perfil for Development e porta for autorizada explicitamente (8080 ou 3000):
-        if self.profile() == FirewallProfile::Development {
-            if dst_port == 8080 || dst_port == 3000 {
+        if self.profile() == FirewallProfile::Development || crate::profile::get_system_profile().is_headless() {
+            if dst_port == 80 || dst_port == 8080 || dst_port == 3000 {
                 self.packets_accepted.fetch_add(1, Ordering::Relaxed);
                 return FilterVerdict::Accept;
             }
