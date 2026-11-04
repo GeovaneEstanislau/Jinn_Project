@@ -99,3 +99,4 @@ Sob ciclos repetidos de alocação e liberação intercalada (churn de memória)
    - **Aprovado para todas as manifestações básicas.** Aladdin opera confortavelmente com até 3 janelas abertas simultaneamente.
 3. **256 MB e 512 MB (Compact e Standard Server):**
    - **Aprovado com ampla folga operacional.** Permite cache de disco agressivo, buffers de rede de alto rendimento e execução multitarefa irrestrita.
+

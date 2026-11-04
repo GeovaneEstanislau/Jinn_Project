@@ -87,3 +87,4 @@ A tabela a seguir consolida os 13 dispositivos e controladores avaliados no Jinn
 ## 5. Conclusão do Inventário
 
 O ecossistema Jinn possui uma base sólida e comprovada para dispositivos de armazenamento legados (IDE) e virtualizados de alto desempenho (VirtIO-Blk), adaptadores de rede padrão de datacenter (Intel PRO/1000 e VirtIO-Net), entrada clássica de baixa latência (PS/2) e saída de vídeo com aceleração de framebuffer linear (Limine GOP). Dispositivos periféricos de rede legada (PCnet) e barramento USB permanecem formalmente sem suporte de driver, exigindo emulação compatível na camada de hypervisor.
+

@@ -75,3 +75,4 @@ A manifestação industrial **Ifrit** baseia-se em determinismo temporal e conte
 ## 5. Conclusão do Relatório Embarcado
 
 O Perfil B (128 MB / 1 vCPU) consolida-se como o patamar padrão de entrada para o ecossistema Jinn quando há necessidade de interface gráfica básica (Aladdin Kiosk), servidores de borda (Simbad Edge) ou automação de processos industriais em tempo real (Ifrit Industrial).
+

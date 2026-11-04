@@ -99,3 +99,4 @@ A integridade do Aladdin foi confirmada pela suíte oficial `tests/aladdin_tests
 ## 5. Conclusão do Benchmark Aladdin
 
 O Aladdin Desktop demonstra alta eficiência gráfica em modo acelerado por software. O dimensionamento de memória comprova que o sistema exige ao menos **128 MB** de RAM para multitarefa estável, operando de forma ideal a partir de **256 MB**. O compartilhamento integral do kernel Jinn permite que o Aladdin se beneficie imediatamente das melhorias de preempção, estabilidade de armazenamento e isolamento de recursos desenvolvidas para todo o ecossistema.
+

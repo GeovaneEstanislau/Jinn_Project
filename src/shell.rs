@@ -2746,6 +2746,7 @@ fn cmd_netinfo(w: &mut Writer) {
             match crate::drivers::net::DETECTED_NIC_TYPE {
                 crate::drivers::net::NicType::Virtio => "VirtIO-Net",
                 crate::drivers::net::NicType::E1000 => "Intel PRO/1000 (e1000)",
+                crate::drivers::net::NicType::Pcnet => "AMD PCnet-FAST III",
                 crate::drivers::net::NicType::None => "Loopback Virtual",
             }
         };

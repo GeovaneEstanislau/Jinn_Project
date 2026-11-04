@@ -92,3 +92,4 @@ A avaliação da concorrência entre perfis revelou o seguinte comportamento de 
 ## 4. Conclusão sobre a Compatibilidade de CPU
 
 O Jinn Microkernel demonstra total aderência às exigências da arquitetura x86_64, suportando comutação preemptiva estável, tratamento rigoroso de tarefas em loop infinito e aplicação determinística de cotas de tempo de CPU. A capacidade de operar de modo eficiente tanto em 1 vCPU (cenários legados e industriais) quanto em múltiplos núcleos (servidores Simbad) comprova a viabilidade da arquitetura de kernel unificado.
+

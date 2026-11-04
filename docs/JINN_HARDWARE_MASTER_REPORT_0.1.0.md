@@ -94,3 +94,4 @@ Os seguintes 10 documentos técnicos integram a documentação oficial do marco 
 ## 5. Conclusão e Próximos Passos
 
 O marco **Jinn Hardware Compatibility & Resource Benchmark 0.1.0** conclui com sucesso a caracterização técnica do microkernel Jinn e de seus produtos derivados. Ficou comprovada a flexibilidade da arquitetura compartilhada, capaz de atender desde nós embarcados de altíssima restrição física até servidores de rede em nuvem. As bases técnicas estão consolidadas para os próximos passos de evolução do armazenamento AHCI/NVMe e drivers de entrada modernos.
+

@@ -66,3 +66,4 @@
 4. **Configurações a Evitar:**
    - Evitar configurar adaptadores de rede `pcnet` no QEMU, uma vez que a ausência de driver força a placa a operar exclusivamente em Loopback interno.
    - Evitar operar o Aladdin Desktop com menos de 128 MB de RAM para prevenir saturação do buffer de composição gráfica.
+

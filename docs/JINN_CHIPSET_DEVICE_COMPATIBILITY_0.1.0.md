@@ -110,3 +110,4 @@ O chipset moderno ICH9 é a base da máquina virtual Q35 do QEMU (`-M q35`).
 | **AMD PCnet** | `1022:2000` | Sim | Não | **Não Suportado** | Evitar no QEMU; usar e1000 ou virtio |
 | **USB UHCI/EHCI** | `8086:7020` | Sim | Sim | **Não Suportado** | Utilizar emulação PS/2 |
 | **PS/2 8042** | I/O Legado | Sim | Sim (leg.) | **Operacional** | Dispositivo de entrada padrão |
+

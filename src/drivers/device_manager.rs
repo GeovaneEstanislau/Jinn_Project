@@ -319,6 +319,18 @@ pub fn init() {
                 0x0007,
             )).ok();
         }
+        crate::drivers::net::NicType::Pcnet => {
+            reg.register(DeviceDescriptor::new(
+                0,
+                DeviceCategory::Network,
+                DeviceState::Operational,
+                0x1022,
+                0x2000,
+                "net0_pcnet",
+                "AMD PCnet-FAST III (100 Mbps)",
+                0x0005,
+            )).ok();
+        }
         crate::drivers::net::NicType::None => {
             reg.register(DeviceDescriptor::new(
                 0,

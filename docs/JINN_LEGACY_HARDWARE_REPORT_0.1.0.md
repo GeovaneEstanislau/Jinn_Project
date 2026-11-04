@@ -98,3 +98,4 @@ A controladora IDE (`src/drivers/ide.rs`) foi submetida a ciclos de leitura e es
 ## 6. Conclusão do Relatório de Hardware Legado
 
 O Jinn Microkernel 0.1.0 valida categoricamente sua aptidão para operar em hardware legado ou ambientes virtuais de recursos mínimos (64 MB RAM, 1 vCPU, BIOS e IDE). A manifestação de servidor Simbad e o perfil industrial Ifrit demonstram estabilidade exemplar nesse patamar, estabelecendo uma linha de base robusta e de baixo consumo de recursos para o ecossistema.
+

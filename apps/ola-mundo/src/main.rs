@@ -1762,7 +1762,7 @@ unsafe fn browser_load_and_display(
                     FetchError::DnsNetDown => (
                         b"Interface de Rede Inoperante",
                         b"Nenhum adaptador de rede ativo foi detectado no sistema operacional.",
-                        b"ENETDOWN: Placa de rede VirtIO ou Intel e1000 indisponivel ou cabo desconectado",
+                        b"ENETDOWN: Placa de rede (VirtIO, Intel e1000 ou AMD PCnet) indisponivel ou cabo desconectado",
                     ),
                     FetchError::DnsServerFailure => (
                         b"Falha no Servidor DNS",

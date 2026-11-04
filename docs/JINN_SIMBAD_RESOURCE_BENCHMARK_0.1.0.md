@@ -92,3 +92,4 @@ Os testes contratuais confirmaram o isolamento estrito por processo:
 ## 6. Conclusão do Benchmark Simbad
 
 A manifestação Simbad atinge excelente eficiência de recursos, consumindo apenas 16.1 MiB em operação básica e escalando previsivelmente de 64 MB (1 vCPU) até 512 MB (4 vCPUs). A combinação de supervisor resiliente, disjuntor de falhas, servidor HTTP embutido e isolamento determinístico de cotas consolida o Simbad como uma plataforma de servidor pronta e estável sobre o Jinn Microkernel.
+
