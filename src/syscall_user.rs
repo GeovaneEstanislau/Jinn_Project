@@ -547,3 +547,11 @@ pub unsafe fn sys_rename(old_path: &str, new_path: &str) -> i64 {
     };
     syscall3(52, &args as *const _ as u64, 0, 0)
 }
+
+// ── Syscall 53 — task_set_state ───────────────────────────────────────────────
+
+/// Modifica o estado de agendamento de uma tarefa (1 = Ready, 3 = Blocked)
+#[inline(always)]
+pub unsafe fn sys_task_set_state(target_pid: usize, state: u32) -> i64 {
+    syscall3(53, target_pid as u64, state as u64, 0)
+}

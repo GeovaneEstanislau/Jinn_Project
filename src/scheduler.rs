@@ -40,7 +40,8 @@ pub const MAX_TASKS: usize = 32;
 pub const MAX_TASK_FDS: usize = 8;
 
 /// Número máximo de páginas dinâmicas que uma tarefa pode alocar via sys_alloc_page.
-pub const MAX_DYNAMIC_PAGES: usize = 32;
+/// Quantidade máxima de páginas dinâmicas rastreadas por processo de usuário (4 MiB).
+pub const MAX_DYNAMIC_PAGES: usize = 1024;
 
 /// Faixa de endereçamento virtual reservada para o heap de usuário.
 pub const USER_HEAP_BASE: u64 = 0x0000_1000_0000;

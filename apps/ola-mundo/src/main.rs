@@ -1427,7 +1427,138 @@ unsafe fn test_observer_app() {
 
 pub const MAX_WIN_W: usize = 1024;
 pub const MAX_WIN_H: usize = 768;
-static mut WIN_BUF: [u32; MAX_WIN_W * MAX_WIN_H] = [0; MAX_WIN_W * MAX_WIN_H];
+pub const BASE_WIN_W: usize = 300;
+pub const BASE_WIN_H: usize = 180;
+pub const BASE_WIN_PIXELS: usize = BASE_WIN_W * BASE_WIN_H; // 54.000 pixels = 216 KiB
+
+static mut BASE_WIN_BUF: [u32; BASE_WIN_PIXELS] = [0x0018_1825; BASE_WIN_PIXELS];
+
+/// Gerenciador dinâmico de superfícies gráficas sob demanda para modo janela e tela cheia
+pub struct DynamicSurfaceBuffer {
+    pub ptr: *mut u32,
+    pub width: usize,
+    pub height: usize,
+    pub capacity_pixels: usize,
+    pub is_heap_allocated: bool,
+    pub allocated_pages: usize,
+    pub dynamic_base_vaddr: u64,
+}
+
+impl DynamicSurfaceBuffer {
+    pub const fn new() -> Self {
+        Self {
+            ptr: core::ptr::null_mut(),
+            width: BASE_WIN_W,
+            height: BASE_WIN_H,
+            capacity_pixels: BASE_WIN_PIXELS,
+            is_heap_allocated: false,
+            allocated_pages: 0,
+            dynamic_base_vaddr: 0,
+        }
+    }
+
+    pub unsafe fn init(&mut self) {
+        self.ptr = core::ptr::addr_of_mut!(BASE_WIN_BUF) as *mut u32;
+        self.width = BASE_WIN_W;
+        self.height = BASE_WIN_H;
+        self.capacity_pixels = BASE_WIN_PIXELS;
+        self.is_heap_allocated = false;
+        self.allocated_pages = 0;
+        self.dynamic_base_vaddr = 0;
+    }
+
+    pub fn slice_mut(&mut self) -> &mut [u32] {
+        let len = self.width * self.height;
+        unsafe { core::slice::from_raw_parts_mut(self.ptr, len) }
+    }
+
+    /// Realoca com segurança a superfície gráfica sob demanda:
+    /// - Em modo janela (300x180): utiliza buffer base compacto de 216 KiB.
+    /// - Em modo tela cheia: aloca páginas físicas de 4 KiB sob demanda.
+    /// - Ao retornar para modo janela: libera páginas físicas imediatamente via `sys_free_page`.
+    pub unsafe fn resize(&mut self, new_w: usize, new_h: usize) -> Result<(), ()> {
+        if new_w < 100 || new_w > MAX_WIN_W || new_h < 60 || new_h > MAX_WIN_H {
+            return Err(());
+        }
+
+        let needed_pixels = match new_w.checked_mul(new_h) {
+            Some(p) => p,
+            None => return Err(()),
+        };
+
+        if needed_pixels <= BASE_WIN_PIXELS {
+            if self.is_heap_allocated && self.allocated_pages > 0 {
+                for i in 0..self.allocated_pages {
+                    let addr = self.dynamic_base_vaddr + (i as u64 * 4096);
+                    let _ = sys_free_page(addr);
+                }
+                self.is_heap_allocated = false;
+                self.allocated_pages = 0;
+                self.dynamic_base_vaddr = 0;
+            }
+            self.ptr = core::ptr::addr_of_mut!(BASE_WIN_BUF) as *mut u32;
+            self.width = new_w;
+            self.height = new_h;
+            self.capacity_pixels = BASE_WIN_PIXELS;
+            return Ok(());
+        }
+
+        if self.is_heap_allocated && self.capacity_pixels >= needed_pixels {
+            self.width = new_w;
+            self.height = new_h;
+            return Ok(());
+        }
+
+        let needed_bytes = needed_pixels * 4;
+        let pages_needed = (needed_bytes + 4095) / 4096;
+
+        let mut first_vaddr: u64 = 0;
+        let mut allocated = 0;
+        let mut alloc_failed = false;
+
+        for i in 0..pages_needed {
+            let res = sys_alloc_page();
+            if res <= 0 {
+                alloc_failed = true;
+                break;
+            }
+            let vaddr = res as u64;
+            if i == 0 {
+                first_vaddr = vaddr;
+            }
+            allocated += 1;
+        }
+
+        if alloc_failed {
+            for i in 0..allocated {
+                let addr = first_vaddr + (i as u64 * 4096);
+                let _ = sys_free_page(addr);
+            }
+            return Err(());
+        }
+
+        let new_ptr = first_vaddr as *mut u32;
+        let new_slice = core::slice::from_raw_parts_mut(new_ptr, needed_pixels);
+        new_slice.fill(0x0018_1825);
+
+        if self.is_heap_allocated && self.allocated_pages > 0 {
+            for i in 0..self.allocated_pages {
+                let addr = self.dynamic_base_vaddr + (i as u64 * 4096);
+                let _ = sys_free_page(addr);
+            }
+        }
+
+        self.ptr = new_ptr;
+        self.width = new_w;
+        self.height = new_h;
+        self.capacity_pixels = pages_needed * (4096 / 4);
+        self.is_heap_allocated = true;
+        self.allocated_pages = pages_needed;
+        self.dynamic_base_vaddr = first_vaddr;
+
+        Ok(())
+    }
+}
 static mut HTML_FILE_BUF: [u8; 32768] = [0; 32768];
 static mut HTTP_RX_BUF: [u8; 32768] = [0; 32768];
 
@@ -1890,9 +2021,9 @@ unsafe fn run_gui_demo() {
     print_str(b"==================================================================\n");
 
     let mut session = browser::BrowserSession::new();
-    let win_buf_ptr = core::ptr::addr_of_mut!(WIN_BUF) as *mut u32;
-    let cur_len = session.viewport_w * session.viewport_h;
-    let buf_slice = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len);
+    let mut surface = DynamicSurfaceBuffer::new();
+    unsafe { surface.init(); }
+    let buf_slice = surface.slice_mut();
 
     // 1. Carrega documento inicial do VFS (/disk/INDEX.HTM)
     print_str(b"[BROWSER] 1. Lendo arquivo HTML local do VFS (/disk/INDEX.HTM)...\n");
@@ -2219,9 +2350,9 @@ unsafe fn run_browser_interactive() -> ! {
     print_str(b"==================================================================\n");
 
     let mut session = browser::BrowserSession::new();
-    let win_buf_ptr = core::ptr::addr_of_mut!(WIN_BUF) as *mut u32;
-    let cur_len = session.viewport_w * session.viewport_h;
-    let buf_slice = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len);
+    let mut surface = DynamicSurfaceBuffer::new();
+    unsafe { surface.init(); }
+    let buf_slice = surface.slice_mut();
 
     // 1. Carrega documento inicial do VFS (/disk/INDEX.HTM)
     print_str(b"[BROWSER] Carregando /disk/INDEX.HTM...\n");
@@ -2277,8 +2408,8 @@ unsafe fn run_browser_interactive() -> ! {
                     print_str(b"\n");
                     if new_w >= 100 && new_h >= 60 && new_w <= MAX_WIN_W && new_h <= MAX_WIN_H {
                         session.resize(new_w, new_h);
-                        let cur_len = session.viewport_w * session.viewport_h;
-                        let buf_cur = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len);
+                        let _ = unsafe { surface.resize(session.viewport_w, session.viewport_h) };
+                        let buf_cur = surface.slice_mut();
                         session.render(buf_cur);
                         let _ = sys_window_update(win_id, buf_cur);
                     }
@@ -2293,8 +2424,7 @@ unsafe fn run_browser_interactive() -> ! {
                     print_str(b"\n");
                     let action = session.handle_click(click_x, click_y);
 
-                    let cur_len = session.viewport_w * session.viewport_h;
-                    let buf_cur = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len);
+                    let buf_cur = surface.slice_mut();
 
                     match action {
                         browser::BrowserAction::ToggleFullscreen => {
@@ -2306,8 +2436,8 @@ unsafe fn run_browser_interactive() -> ! {
                                 browser::FullscreenState::Windowed => print_str(b"WINDOWED (300x180)\n"),
                                 _ => print_str(b"OUTRO\n"),
                             }
-                            let cur_len = session.viewport_w * session.viewport_h;
-                            let buf_cur = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len);
+                            let _ = unsafe { surface.resize(session.viewport_w, session.viewport_h) };
+                            let buf_cur = surface.slice_mut();
                             session.render(buf_cur);
                             let _ = sys_window_update(win_id, buf_cur);
                         }
@@ -2315,8 +2445,8 @@ unsafe fn run_browser_interactive() -> ! {
                             print_str(b"[BROWSER-INTERACTION] ACTION ExitFullscreen\n");
                             if session.fullscreen_state == browser::FullscreenState::Fullscreen {
                                 session.toggle_fullscreen();
-                                let cur_len = session.viewport_w * session.viewport_h;
-                                let buf_cur = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len);
+                                let _ = unsafe { surface.resize(session.viewport_w, session.viewport_h) };
+                                let buf_cur = surface.slice_mut();
                                 session.render(buf_cur);
                                 let _ = sys_window_update(win_id, buf_cur);
                             }
@@ -2378,8 +2508,7 @@ unsafe fn run_browser_interactive() -> ! {
                     print_str(b" focused=");
                     if session.is_address_focused { print_str(b"1\n"); } else { print_str(b"0\n"); }
 
-                    let cur_len = session.viewport_w * session.viewport_h;
-                    let buf_cur = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len);
+                    let buf_cur = surface.slice_mut();
 
                     if session.is_address_focused {
                         let action = session.address_key(key);
@@ -2408,8 +2537,8 @@ unsafe fn run_browser_interactive() -> ! {
                                     browser::FullscreenState::Windowed => print_str(b"WINDOWED (300x180)\n"),
                                     _ => print_str(b"OUTRO\n"),
                                 }
-                                let cur_len2 = session.viewport_w * session.viewport_h;
-                                let buf_cur2 = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len2);
+                                let _ = unsafe { surface.resize(session.viewport_w, session.viewport_h) };
+                                let buf_cur2 = surface.slice_mut();
                                 session.render(buf_cur2);
                                 let _ = sys_window_update(win_id, buf_cur2);
                             }
@@ -2467,8 +2596,8 @@ unsafe fn run_browser_interactive() -> ! {
                                 if session.fullscreen_state == browser::FullscreenState::Fullscreen {
                                     print_str(b"[BROWSER-INTERACTION] KEY Esc -> Sair de Tela Cheia\n");
                                     session.toggle_fullscreen();
-                                    let cur_len2 = session.viewport_w * session.viewport_h;
-                                    let buf_cur2 = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len2);
+                                    let _ = unsafe { surface.resize(session.viewport_w, session.viewport_h) };
+                                    let buf_cur2 = surface.slice_mut();
                                     session.render(buf_cur2);
                                     let _ = sys_window_update(win_id, buf_cur2);
                                 } else {

@@ -8,7 +8,7 @@ pub use fullscreen::{
 };
 
 pub use tab::{
-    AudioFocusManager, AudioPlaybackState, BrowserResourceManager, KernelTaskStateMapping,
+    AudioFocusManager, AudioPlaybackState, BrcrMetricsBreakdown, BrowserResourceManager, KernelTaskStateMapping,
     LogicalTabFootprint, MediaPipeline, MemoryBreakdown, MemoryProfile, PhysicalMemoryFootprint,
     ProfileQuotas, Tab, TabManager, TabMetrics, TabSnapshot, TabState, TabTaskContext,
     TabTelemetry, TabTransitionError, TaskExecutionState,

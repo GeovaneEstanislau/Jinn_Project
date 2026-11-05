@@ -559,15 +559,55 @@ impl Tab {
         }
     }
 
+    pub fn resident_pages(&self) -> usize {
+        (self.resident_memory_bytes() + 4095) / 4096
+    }
+
+    pub fn released_pages(&self) -> usize {
+        (self.cumulative_freed_bytes + 4095) / 4096
+    }
+
+    pub fn shared_memory_footprint(&self) -> usize {
+        if self.session.is_some() {
+            640 * 480 * 4
+        } else {
+            0
+        }
+    }
+
+    pub fn graphics_buffer_footprint(&self) -> usize {
+        if self.session.is_some() {
+            640 * 480 * 4
+        } else {
+            0
+        }
+    }
+
+    pub fn media_buffer_footprint(&self) -> usize {
+        self.media.buffer_samples * std::mem::size_of::<f32>() * 2
+    }
+
+    pub fn snapshot_footprint(&self) -> usize {
+        self.snapshot.as_ref().map(|s| s.estimated_bytes()).unwrap_or(0)
+    }
+
     /// Retorna a pegada física de memória residente no sistema operacional
     pub fn physical_footprint(&self) -> PhysicalMemoryFootprint {
         let breakdown = self.memory_breakdown();
+        let total_bytes = breakdown.total_resident_bytes;
+        let resident_pages = (total_bytes + 4095) / 4096;
+        let released_pages = (self.cumulative_freed_bytes + 4095) / 4096;
+        let shared_bytes = self.shared_memory_footprint();
+
         PhysicalMemoryFootprint {
             struct_base_bytes: std::mem::size_of::<Self>(),
             heap_allocated_bytes: breakdown.dom_arena_bytes + breakdown.layout_tree_bytes,
             framebuffer_resident_bytes: breakdown.render_framebuffer_bytes,
             audio_pcm_resident_bytes: breakdown.audio_pcm_buffer_bytes,
-            total_physical_bytes: breakdown.total_resident_bytes,
+            resident_pages,
+            released_pages,
+            shared_memory_bytes: shared_bytes,
+            total_physical_bytes: total_bytes,
         }
     }
 }
@@ -588,7 +628,27 @@ pub struct PhysicalMemoryFootprint {
     pub heap_allocated_bytes: usize,
     pub framebuffer_resident_bytes: usize,
     pub audio_pcm_resident_bytes: usize,
+    pub resident_pages: usize,
+    pub released_pages: usize,
+    pub shared_memory_bytes: usize,
     pub total_physical_bytes: usize,
+}
+
+/// Decomposição Detalhada da Métrica BRCR (Background Resource Consumption Ratio)
+#[derive(Debug, Clone, PartialEq)]
+pub struct BrcrMetricsBreakdown {
+    /// Razão de CPU consumida em segundo plano em relação ao quantum ativo (%)
+    pub cpu_background_ratio: f64,
+    /// Razão de retenção de memória física em relação à ativa (%)
+    pub memory_retention_ratio: f64,
+    /// Razão de retenção de superfícies e buffers gráficos (%)
+    pub graphics_retention_ratio: f64,
+    /// Razão de retenção de buffers PCM de áudio (%)
+    pub media_retention_ratio: f64,
+    /// Razão de atividade I/O em segundo plano (%)
+    pub io_background_ratio: f64,
+    /// Razão Composta Agregada (pesos formais: 40% Memória, 30% Gráficos, 20% CPU, 5% Mídia, 5% I/O)
+    pub composite_background_ratio: f64,
 }
 
 /// Mapeamento Canônico de Estados da Aba para o Escalonador do Kernel Jinn (Ring 0)
@@ -683,6 +743,65 @@ impl BrowserResourceManager {
             0.0
         } else {
             (bg_resident_bytes as f64 / active_resident_bytes as f64) * 100.0
+        }
+    }
+
+    /// Calcula os índices especializados e a métrica composta do BRCR:
+    /// - CPU Background Ratio
+    /// - Memory Retention Ratio
+    /// - Graphics Resource Retention Ratio
+    /// - Media Resource Retention Ratio
+    /// - I/O Background Ratio
+    /// - Composite Ratio (Pesos formais: 40% Memória, 30% Gráficos, 20% CPU, 5% Mídia, 5% I/O)
+    pub fn calculate_detailed_brcr(&self, active_tab: &Tab, bg_tab: &Tab) -> BrcrMetricsBreakdown {
+        let active_phys = active_tab.physical_footprint();
+        let bg_phys = bg_tab.physical_footprint();
+
+        let mem_ratio = if active_phys.total_physical_bytes > 0 {
+            (bg_phys.total_physical_bytes as f64 / active_phys.total_physical_bytes as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let gfx_ratio = if active_phys.framebuffer_resident_bytes > 0 {
+            (bg_phys.framebuffer_resident_bytes as f64 / active_phys.framebuffer_resident_bytes as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let media_ratio = if active_phys.audio_pcm_resident_bytes > 0 {
+            (bg_phys.audio_pcm_resident_bytes as f64 / active_phys.audio_pcm_resident_bytes as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let cpu_ratio = match bg_tab.state {
+            TabState::Active => 100.0,
+            TabState::Background => 25.0,
+            TabState::AudioBackground => 20.0,
+            TabState::Hibernated | TabState::Discarded => 0.0,
+        };
+
+        let io_ratio = match bg_tab.state {
+            TabState::Active => 100.0,
+            TabState::Background => 5.0,
+            TabState::AudioBackground => 15.0,
+            TabState::Hibernated | TabState::Discarded => 0.0,
+        };
+
+        let composite = (mem_ratio * 0.40)
+            + (gfx_ratio * 0.30)
+            + (cpu_ratio * 0.20)
+            + (media_ratio * 0.05)
+            + (io_ratio * 0.05);
+
+        BrcrMetricsBreakdown {
+            cpu_background_ratio: cpu_ratio,
+            memory_retention_ratio: mem_ratio,
+            graphics_retention_ratio: gfx_ratio,
+            media_retention_ratio: media_ratio,
+            io_background_ratio: io_ratio,
+            composite_background_ratio: composite,
         }
     }
 

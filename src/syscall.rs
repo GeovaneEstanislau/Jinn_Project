@@ -428,6 +428,7 @@ pub extern "C" fn syscall_dispatch(
         50 => sys_unlink(arg0 as *const u8, arg1),
         51 => sys_mkdir(arg0 as *const u8, arg1),
         52 => sys_rename(arg0 as *const RenameArgs),
+        53 => sys_task_set_state(arg0, arg1 as u32),
         _  => ENOSYS,
     }
 }
@@ -1122,6 +1123,44 @@ fn sys_sleep(ms: usize) -> isize {
     let pid = scheduler::current_pid();
     scheduler::get().sleep_task(pid, wake_tick);
     0
+}
+
+/// `sys_task_set_state(target_pid, state)` — Syscall 53
+/// Permite o controle explícito do estado de agendamento de tarefas (ex: hibernação e retomada de abas pelo navegador):
+/// - state 1: `TaskState::Ready` (retoma a tarefa na fila do escalonador)
+/// - state 3: `TaskState::Blocked` (suspende a tarefa no escalonador com estritamente 0 ticks de CPU)
+fn sys_task_set_state(target_pid: usize, new_state: u32) -> isize {
+    let caller_pid = scheduler::current_pid();
+    let sched = scheduler::get();
+
+    if target_pid >= sched.tasks.len() {
+        return EINVAL;
+    }
+
+    if let Some(Some(target_task)) = sched.tasks.get_mut(target_pid) {
+        // Validação de segurança: apenas o próprio processo ou kernel/init (caller_pid <= 1)
+        if caller_pid > 1 && caller_pid != target_pid {
+            return EPERM;
+        }
+
+        match new_state {
+            1 => {
+                if target_task.state == scheduler::TaskState::Blocked {
+                    target_task.state = scheduler::TaskState::Ready;
+                }
+                0
+            }
+            3 => {
+                if target_task.state == scheduler::TaskState::Ready || target_task.state == scheduler::TaskState::Running {
+                    target_task.state = scheduler::TaskState::Blocked;
+                }
+                0
+            }
+            _ => EINVAL,
+        }
+    } else {
+        -3 // ESRCH
+    }
 }
 
 /// `sys_jda_shm_alloc(is_read_only)` — Aloca um buffer físico no pool do JDA.
