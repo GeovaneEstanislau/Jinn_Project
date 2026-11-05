@@ -150,12 +150,16 @@ impl VirtioNetDevice {
 
         // 1. Zera cabeçalho VirtIO
         let hdr_size = core::mem::size_of::<VirtioNetHdr>();
+        let send_len = frame.len().max(60);
         unsafe {
             core::ptr::write_bytes(buf_virt, 0, hdr_size);
             // 2. Copia o frame Ethernet
             core::ptr::copy_nonoverlapping(frame.as_ptr(), buf_virt.add(hdr_size), frame.len());
+            if send_len > frame.len() {
+                core::ptr::write_bytes(buf_virt.add(hdr_size + frame.len()), 0, send_len - frame.len());
+            }
         }
-        let total_len = (hdr_size + frame.len()) as u32;
+        let total_len = (hdr_size + send_len) as u32;
 
         let tx_virt = crate::memory::paging::phys_to_virt(self.tx_queue_phys);
         let desc_table = tx_virt as *mut VRingDesc;

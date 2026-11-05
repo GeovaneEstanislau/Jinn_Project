@@ -168,12 +168,16 @@ impl PcnetDevice {
                 return Err(());
             }
 
+            let send_len = frame.len().max(60);
             let buf_phys = self.tx_buffers_phys[desc_idx];
             let buf_virt = crate::memory::paging::phys_to_virt(buf_phys) as *mut u8;
             core::ptr::copy_nonoverlapping(frame.as_ptr(), buf_virt, frame.len());
+            if send_len > frame.len() {
+                core::ptr::write_bytes(buf_virt.add(frame.len()), 0, send_len - frame.len());
+            }
 
             desc.base_addr = buf_phys as u32;
-            desc.buf_len = (-(frame.len() as i16) as u16) | 0xF000;
+            desc.buf_len = (-(send_len as i16) as u16) | 0xF000;
             desc.misc = 0;
             desc.reserved = 0;
             core::arch::asm!("sfence", options(nostack, preserves_flags));

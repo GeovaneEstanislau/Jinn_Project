@@ -1,4 +1,4 @@
-# Jinn Token Smart Contracts ($JINN)
+﻿# Jinn Token Smart Contracts ($JINN)
 
 Repositório de contratos inteligentes do ecossistema **Jinn OS**, projetados para a rede **BNB Smart Chain (BSC)** compatível com EVM.
 
@@ -60,3 +60,4 @@ npm run deploy:testnet
 ```bash
 npx hardhat verify --network bscTestnet <ENDEREÇO_DO_CONTRATO> <ARGUMENTOS_CONSTRUTOR>
 ```
+

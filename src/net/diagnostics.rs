@@ -221,3 +221,4 @@ mod tests {
         assert_eq!(diag.tcp_established.load(Ordering::Relaxed), 1);
     }
 }
+

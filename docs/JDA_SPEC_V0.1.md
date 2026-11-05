@@ -1,4 +1,4 @@
-# 🏛️ Jinn Dataflow Architecture (JDA) — Especificação Técnica v0.1
+﻿# 🏛️ Jinn Dataflow Architecture (JDA) — Especificação Técnica v0.1
 
 > **Status**: Especificação Formal v0.1 (Fase 1)  
 > **Sistema**: Jinn Microkernel x86_64 (`no_std`, Bare-Metal)  
@@ -149,3 +149,4 @@ O JDA adota o trait `JdaPolicy` (`src/jda/policy.rs`), permitindo a substituiç�
 
 ---
 *Fim da Especificação JDA v0.1.*
+

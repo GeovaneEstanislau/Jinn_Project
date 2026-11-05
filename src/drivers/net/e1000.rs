@@ -128,7 +128,11 @@ impl E1000Device {
             let tx_virt = crate::memory::paging::phys_to_virt(self.tx_ring_phys) as *mut E1000TxDesc;
             let desc = &mut *tx_virt.add(desc_idx);
             desc.addr = buf_phys;
-            desc.length = frame.len() as u16;
+            let send_len = frame.len().max(60);
+            if send_len > frame.len() {
+                core::ptr::write_bytes(buf_virt.add(frame.len()), 0, send_len - frame.len());
+            }
+            desc.length = send_len as u16;
             desc.cso = 0;
             desc.cmd = CMD_EOP | CMD_IFCS | CMD_RS;
             desc.status = 0;

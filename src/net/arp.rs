@@ -5,6 +5,26 @@ pub const ARP_OP_REPLY:   u16 = 2;
 
 pub const DEFAULT_GATEWAY_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x02];
 pub const DEFAULT_DNS_MAC: [u8; 6]     = [0x52, 0x54, 0x00, 0x12, 0x34, 0x03];
+pub const DEFAULT_GATEWAY_MAC_VBOX: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x35, 0x02];
+pub const DEFAULT_DNS_MAC_VBOX: [u8; 6]     = [0x52, 0x54, 0x00, 0x12, 0x35, 0x03];
+
+pub fn default_gateway_mac() -> [u8; 6] {
+    unsafe {
+        match crate::drivers::net::DETECTED_NIC_TYPE {
+            crate::drivers::net::NicType::Pcnet | crate::drivers::net::NicType::E1000 => DEFAULT_GATEWAY_MAC_VBOX,
+            _ => DEFAULT_GATEWAY_MAC,
+        }
+    }
+}
+
+pub fn default_dns_mac() -> [u8; 6] {
+    unsafe {
+        match crate::drivers::net::DETECTED_NIC_TYPE {
+            crate::drivers::net::NicType::Pcnet | crate::drivers::net::NicType::E1000 => DEFAULT_DNS_MAC_VBOX,
+            _ => DEFAULT_DNS_MAC,
+        }
+    }
+}
 
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
@@ -216,9 +236,9 @@ pub fn resolve_mac_for_ip_blocking(dst_ip: [u8; 4], timeout_ticks: u64) -> Optio
 
     // Fallback de emergência caso nenhum pacote ARP ou DHCP tenha sido recebido
     if next_hop == [10, 0, 2, 3] {
-        Some(DEFAULT_DNS_MAC)
+        Some(default_dns_mac())
     } else if next_hop == [10, 0, 2, 2] {
-        Some(DEFAULT_GATEWAY_MAC)
+        Some(default_gateway_mac())
     } else {
         None
     }
@@ -231,6 +251,6 @@ pub fn resolve_mac_for_ip(dst_ip: [u8; 4]) -> [u8; 6] {
     } else if let Some(dns_mac) = unsafe { ARP_CACHE.lookup(crate::net::dhcp::DHCP_CLIENT.dns) } {
         dns_mac
     } else {
-        DEFAULT_GATEWAY_MAC
+        default_gateway_mac()
     }
 }

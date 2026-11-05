@@ -1,4 +1,4 @@
-# 🗺️ Mapa de Desenvolvimento (Roadmap) — Jinn OS
+﻿# Mapa de Desenvolvimento (Roadmap) — Jinn OS
 
 > **Jinn OS**: Microkernel preemptivo x86_64 minimalista escrito em Rust.
 > Focado em alto desempenho, baixo overhead, controle explícito de recursos e isolamento rigoroso entre Kernel e Usuário.
@@ -7,17 +7,17 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
 
 ---
 
-## 📌 Visão Geral das Fases
+## Visão Geral das Fases
 
 * **Fase 1 (Concluída ✅)**: Fundação do Microkernel, Paginação PML4, Preempção com APIC Timer, Syscalls via `int 0x80`, IPC lock-free, Carregador ELF64 e Isolamento Real em Ring 3.
 * **Fase 2 (Concluída ✅)**: Primitivas 2D, Driver de Mouse PS/2, Renderização de Cursor, Double Buffering, Compositor de Janelas e Terminal Interativo ([Issue #32](https://github.com/GeovaneEstanislau/Jinn_Project/issues/32)).
-* **Fase 3 (Em Andamento 🚧)**: Driver de Disco (IDE/ATA PIO Mode), MBR, Sistema de Arquivos (Ext2/FAT32) e montagem VFS ([Issue #30](https://github.com/GeovaneEstanislau/Jinn_Project/issues/30)).
+* **Fase 3 (Em Andamento )**: Driver de Disco (IDE/ATA PIO Mode), MBR, Sistema de Arquivos (Ext2/FAT32) e montagem VFS ([Issue #30](https://github.com/GeovaneEstanislau/Jinn_Project/issues/30)).
 * **Fase 4 (Concluída ✅)**: Melhorias de DX, scripts de build multiplataforma (Makefile/PS1) e CI no GitHub Actions ([Issue #31](https://github.com/GeovaneEstanislau/Jinn_Project/issues/31) e [Issue #33](https://github.com/GeovaneEstanislau/Jinn_Project/issues/33)).
-* **Fase 5 (Em Andamento 🚧)**: Suporte a SMP (Multiprocessamento Simétrico Concluído ✅), Driver de Rede VirtIO-Net e Stack TCP/IP RFC 793 ([Issue #34](https://github.com/GeovaneEstanislau/Jinn_Project/issues/34) e [Issue #35](https://github.com/GeovaneEstanislau/Jinn_Project/issues/35)).
+* **Fase 5 (Em Andamento )**: Suporte a SMP (Multiprocessamento Simétrico Concluído ✅), Driver de Rede VirtIO-Net e Stack TCP/IP RFC 793 ([Issue #34](https://github.com/GeovaneEstanislau/Jinn_Project/issues/34) e [Issue #35](https://github.com/GeovaneEstanislau/Jinn_Project/issues/35)).
 
 ---
 
-## 🚀 Fase 1: Fundação do Microkernel & Isolamento de Memória (Concluída ✅)
+## Fase 1: Fundação do Microkernel & Isolamento de Memória (Concluída ✅)
 
 - [x] **Bootloader Moderno**: Inicialização via Limine Bootloader v12 (suporte completo a UEFI e BIOS).
 - [x] **Gerenciamento de Memória Física (PMM)**: Alocador de frames físicos baseado em bitmap de alta performance (`src/memory/mod.rs`).
@@ -38,9 +38,9 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
 
 ---
 
-## 🎨 Fase 2: Interface Gráfica (GUI) & Subsistema de Entrada (Concluída ✅)
+## Fase 2: Interface Gráfica (GUI) & Subsistema de Entrada (Concluída ✅)
 
-> 📌 **Discussão e Colaboração:** Concluída na [Issue #32: Criar Interface Gráfica (GUI) e Compositor](https://github.com/GeovaneEstanislau/Jinn_Project/issues/32).
+> **Discussão e Colaboração:** Concluída na [Issue #32: Criar Interface Gráfica (GUI) e Compositor](https://github.com/GeovaneEstanislau/Jinn_Project/issues/32).
 
 - [x] **Primitivas Gráficas 2D (`src/gui.rs`)**:
   - `draw_pixel(x, y, color)` e `read_pixel(x, y)`.
@@ -76,9 +76,9 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
 
 ---
 
-## 💽 Fase 3: Armazenamento & Sistema de Arquivos Real (Em Andamento 🚧)
+## Fase 3: Armazenamento & Sistema de Arquivos Real (Em Andamento )
 
-> 📌 **Discussão e Colaboração:** Participe na [Issue #30: Implementar Filesystem Real e Drivers de Disco](https://github.com/GeovaneEstanislau/Jinn_Project/issues/30).
+> **Discussão e Colaboração:** Participe na [Issue #30: Implementar Filesystem Real e Drivers de Disco](https://github.com/GeovaneEstanislau/Jinn_Project/issues/30).
 
 - [x] **Driver de Armazenamento IDE/ATA (Primary Bus)**:
   - Driver em modo PIO (Portas 0x1F0-0x1F7 / 0x3F6) para discos IDE/ATA e dispositivos ATAPI (`src/drivers/ide.rs`).
@@ -108,9 +108,9 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
 
 ---
 
-## 🛠️ Fase 4: Experiência de Desenvolvimento (DX) & Automação (Concluída ✅)
+## Fase 4: Experiência de Desenvolvimento (DX) & Automação (Concluída ✅)
 
-> 📌 **Discussão e Colaboração:** Concluída nas issues:
+> **Discussão e Colaboração:** Concluída nas issues:
 > - [Issue #31: Padronizar o sistema de build (Scripts vs Make/Cargo-make)](https://github.com/GeovaneEstanislau/Jinn_Project/issues/31)
 > - [Issue #33: Configurar GitHub Actions para CI e geração da ISO](https://github.com/GeovaneEstanislau/Jinn_Project/issues/33)
 
@@ -124,9 +124,9 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
 
 ---
 
-## 🌐 Fase 5: Expansão de Hardware, Rede & SMP (Em Andamento 🚧)
+## Fase 5: Expansão de Hardware, Rede & SMP (Em Andamento )
 
-> 📌 **Discussão e Colaboração:** Participe nas issues:
+> **Discussão e Colaboração:** Participe nas issues:
 > - [Issue #34: Suporte a SMP: Inicialização de núcleos secundários (APs)](https://github.com/GeovaneEstanislau/Jinn_Project/issues/34)
 > - [Issue #35: Implementar Pilha de Rede TCP/IP no Espaço de Usuário](https://github.com/GeovaneEstanislau/Jinn_Project/issues/35)
 
@@ -150,7 +150,7 @@ Este documento detalha o planejamento arquitetural, os marcos já alcançados e 
 
 ---
 
-## 🧬 Linha de Pesquisa: Jinn Dataflow Architecture (JDA — Em Andamento 🚧)
+## Linha de Pesquisa: Jinn Dataflow Architecture (JDA — Em Andamento )
 
 Investigação experimental para eliminar movimentação desnecessária de dados, contenção de recursos e ociosidade da CPU por meio de grafos dirigidos por dados, transferências zero-copy e observabilidade de ciclos de clock.
 
@@ -176,7 +176,7 @@ Investigação experimental para eliminar movimentação desnecessária de dados
 
 ---
 
-## 🌐 Linha de Produto: Jinn Browser Engine (v0.1.0, v0.2.0 e v0.2.1 Concluídas ✅)
+## Linha de Produto: Jinn Browser Engine (v0.1.0, v0.2.0 e v0.2.1 Concluídas ✅)
 
 Motor de navegação estático nativo ("in-house") e desacoplado, escrito em Rust sem dependências externas, projetado para o ecossistema Jinn OS e Aladdin Desktop Compositor.
 
@@ -198,7 +198,7 @@ Motor de navegação estático nativo ("in-house") e desacoplado, escrito em Rus
 
 ---
 
-## 💎 Linha de Produto: Jinn Web3 & Open Economy ($JINN — Fases I e II Concluídas ✅)
+## Linha de Produto: Jinn Web3 & Open Economy ($JINN — Fases I e II Concluídas ✅)
 
 Infraestrutura econômica descentralizada para soberania financeira, incentivo à pesquisa em sistemas operacionais e recompensas a desenvolvedores de código aberto via *Proof of Useful Contribution* (PoUC), preservando 100% o isolamento do microkernel Ring 0.
 
@@ -217,10 +217,11 @@ Infraestrutura econômica descentralizada para soberania financeira, incentivo �
 
 ---
 
-## 🤝 Como Participar e Ajudar
+## Como Participar e Ajudar
 
 Nós valorizamos cada pessoa interessada em sistemas operacionais, Rust e computação de baixo nível!
 Para começar:
 1. Veja a lista completa de tarefas no [GitHub Issues](https://github.com/GeovaneEstanislau/Jinn_Project/issues).
 2. Deixe um comentário na issue que deseja trabalhar para que possamos alinhar e ajudá-lo(a).
 3. Leia nosso guia de contribuição em [CONTRIBUTING.md](CONTRIBUTING.md).
+
