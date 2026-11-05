@@ -1,4 +1,4 @@
-﻿/// Jinn OS — Driver de Sistema de Arquivos FAT32
+/// Jinn OS — Driver de Sistema de Arquivos FAT32
 ///
 /// Implementa a leitura de volumes formatados em FAT32 diretamente a partir
 /// de discos IDE/ATA ou partições MBR.
@@ -332,29 +332,41 @@ impl Fat32Fs {
         found_entry.ok_or(VfsError::NotFound)
     }
 
-    /// Codifica uma string de caminho simples para o formato FAT 8.3 (11 bytes em caixa alta preenchidos com espaços).
+    /// Codifica uma string de caminho para o formato FAT 8.3 (11 bytes em caixa alta preenchidos com espaços).
+    /// Clampa nomes de base longos para até 8 caracteres e extensões para até 3 caracteres de forma resiliente.
     fn encode_83(&self, name_str: &str) -> Result<[u8; 11], VfsError> {
         let mut res = [b' '; 11];
         let mut parts = name_str.splitn(2, '.');
         let base = parts.next().unwrap_or("");
         let ext = parts.next().unwrap_or("");
 
-        if base.is_empty() || base.len() > 8 || ext.len() > 3 {
+        if base.is_empty() {
             return Err(VfsError::InvalidPath);
         }
 
-        for (i, b) in base.bytes().enumerate() {
-            if !b.is_ascii_alphanumeric() && b != b'_' && b != b'-' {
-                return Err(VfsError::InvalidPath);
+        let mut b_idx = 0;
+        for b in base.bytes() {
+            if b_idx >= 8 {
+                break;
             }
-            res[i] = b.to_ascii_uppercase();
+            if b.is_ascii_alphanumeric() || b == b'_' || b == b'-' {
+                res[b_idx] = b.to_ascii_uppercase();
+                b_idx += 1;
+            }
+        }
+        if b_idx == 0 {
+            return Err(VfsError::InvalidPath);
         }
 
-        for (i, b) in ext.bytes().enumerate() {
-            if !b.is_ascii_alphanumeric() && b != b'_' && b != b'-' {
-                return Err(VfsError::InvalidPath);
+        let mut e_idx = 0;
+        for b in ext.bytes() {
+            if e_idx >= 3 {
+                break;
             }
-            res[8 + i] = b.to_ascii_uppercase();
+            if b.is_ascii_alphanumeric() || b == b'_' || b == b'-' {
+                res[8 + e_idx] = b.to_ascii_uppercase();
+                e_idx += 1;
+            }
         }
 
         Ok(res)
@@ -953,36 +965,33 @@ impl FileSystem for Fat32Fs {
             return Err(VfsError::InvalidPath);
         }
 
-        // Verifica se o arquivo ou pasta com este nome jÃ¡ existe
+        // Verifica se o arquivo ou pasta com este nome já existe
         if self.find_file(clean_path).is_ok() {
             return Err(VfsError::AlreadyExists);
         }
 
         let (parent_cluster, leaf_name) = self.resolve_parent_and_leaf(clean_path)?;
         let name_83 = self.encode_83(leaf_name)?;
-        let new_cluster = self.alloc_cluster()?;
 
         let (sec_lba, offset) = self.find_free_dir_slot(parent_cluster)?;
         let mut dir_buf = [0u8; 512];
         if self.read_sec(sec_lba, &mut dir_buf).is_err() {
-            let _ = self.free_cluster_chain(new_cluster);
             return Err(VfsError::IoError);
         }
 
-        // Preenche a entrada de diretÃ³rio de 32 bytes (formato FAT32)
+        // Preenche a entrada de diretório de 32 bytes (formato FAT32)
         dir_buf[offset..offset + 11].copy_from_slice(&name_83);
         dir_buf[offset + 11] = 0x20; // Atributo: Arquivo Normal (Archive)
         for k in 12..20 { dir_buf[offset + k] = 0; }
 
-        let clus_hi = ((new_cluster >> 16) & 0xFFFF) as u16;
-        dir_buf[offset + 20] = (clus_hi & 0xFF) as u8;
-        dir_buf[offset + 21] = ((clus_hi >> 8) & 0xFF) as u8;
+        // Arquivo inicial de 0 bytes tem cluster inicial 0 (alocação ocorre na primeira escrita)
+        dir_buf[offset + 20] = 0;
+        dir_buf[offset + 21] = 0;
 
         for k in 22..26 { dir_buf[offset + k] = 0; }
 
-        let clus_lo = (new_cluster & 0xFFFF) as u16;
-        dir_buf[offset + 26] = (clus_lo & 0xFF) as u8;
-        dir_buf[offset + 27] = ((clus_lo >> 8) & 0xFF) as u8;
+        dir_buf[offset + 26] = 0;
+        dir_buf[offset + 27] = 0;
 
         // Tamanho inicial = 0 bytes
         dir_buf[offset + 28] = 0;
@@ -991,7 +1000,6 @@ impl FileSystem for Fat32Fs {
         dir_buf[offset + 31] = 0;
 
         if self.write_sec(sec_lba, &dir_buf).is_err() {
-            let _ = self.free_cluster_chain(new_cluster);
             return Err(VfsError::IoError);
         }
         let _ = self.sync();

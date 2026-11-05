@@ -25,6 +25,28 @@ const IDE_DRIVE_HEAD:   u16 = 0x1F6;
 const IDE_STATUS_CMD:   u16 = 0x1F7;
 const IDE_CONTROL:      u16 = 0x3F6;
 
+// Offsets relativos à porta base do canal IDE
+pub const REG_DATA:         u16 = 0;
+pub const REG_FEATURES:     u16 = 1;
+pub const REG_SECTOR_COUNT: u16 = 2;
+pub const REG_LBA_LOW:      u16 = 3;
+pub const REG_LBA_MID:      u16 = 4;
+pub const REG_LBA_HIGH:     u16 = 5;
+pub const REG_DRIVE_HEAD:   u16 = 6;
+pub const REG_STATUS_CMD:   u16 = 7;
+
+/// Retorna as portas de I/O (Base, Control) correspondentes ao drive (0..=3).
+/// - Drives 0 e 1: Canal Primário   (Base 0x1F0, Control 0x3F6)
+/// - Drives 2 e 3: Canal Secundário (Base 0x170, Control 0x376)
+#[inline]
+pub fn get_ide_ports(drive: u8) -> (u16, u16) {
+    if drive < 2 {
+        (0x1F0, 0x3F6)
+    } else {
+        (0x170, 0x376)
+    }
+}
+
 // Bits de Status (porta 0x1F7)
 const STATUS_ERR: u8 = 1 << 0; // Erro na operação
 const STATUS_DRQ: u8 = 1 << 3; // Data Request (pronto para transferência)
@@ -99,18 +121,18 @@ unsafe fn outw(port: u16, val: u16) {
 /// Aguarda aproximadamente 400ns lendo 4 vezes a porta de status alternativo.
 /// Obrigatório pelo padrão ATA após selecionar o drive.
 #[inline]
-unsafe fn ide_delay() {
-    inb(IDE_CONTROL);
-    inb(IDE_CONTROL);
-    inb(IDE_CONTROL);
-    inb(IDE_CONTROL);
+unsafe fn ide_delay(ctrl: u16) {
+    inb(ctrl);
+    inb(ctrl);
+    inb(ctrl);
+    inb(ctrl);
 }
 
 /// Aguarda o drive desocupar (BSY = 0) com timeout.
-unsafe fn wait_not_busy() -> Result<u8, &'static str> {
+unsafe fn wait_not_busy(base: u16) -> Result<u8, &'static str> {
     let mut timeout = 100_000usize;
     while timeout > 0 {
-        let status = inb(IDE_STATUS_CMD);
+        let status = inb(base + REG_STATUS_CMD);
         if (status & STATUS_BSY) == 0 {
             return Ok(status);
         }
@@ -121,10 +143,10 @@ unsafe fn wait_not_busy() -> Result<u8, &'static str> {
 }
 
 /// Aguarda o drive solicitar dados (DRQ = 1) com timeout.
-unsafe fn wait_drq() -> Result<u8, &'static str> {
+unsafe fn wait_drq(base: u16) -> Result<u8, &'static str> {
     let mut timeout = 100_000usize;
     while timeout > 0 {
-        let status = inb(IDE_STATUS_CMD);
+        let status = inb(base + REG_STATUS_CMD);
         if (status & STATUS_ERR) != 0 {
             return Err("Erro reportado pelo controlador de disco (STATUS_ERR)");
         }
@@ -169,54 +191,55 @@ pub struct MbrInfo {
 
 // ── Operações Principais do Driver ───────────────────────────────────────────
 
-/// Identifica um disco no barramento primário (0 = Master, 1 = Slave).
+/// Identifica um disco no barramento primário (0 = Master, 1 = Slave) ou secundário (2 = Master, 3 = Slave).
 pub fn identify(drive: u8) -> Result<DriveInfo, &'static str> {
     let _guard = lock_ide();
+    let (base, ctrl) = get_ide_ports(drive);
     unsafe {
         // Seleciona o drive (Master = 0xA0, Slave = 0xB0)
         let drive_sel = 0xA0 | ((drive & 1) << 4);
-        outb(IDE_DRIVE_HEAD, drive_sel);
-        ide_delay();
+        outb(base + REG_DRIVE_HEAD, drive_sel);
+        ide_delay(ctrl);
 
         // Zera registros LBA e Sector Count
-        outb(IDE_SECTOR_COUNT, 0);
-        outb(IDE_LBA_LOW, 0);
-        outb(IDE_LBA_MID, 0);
-        outb(IDE_LBA_HIGH, 0);
+        outb(base + REG_SECTOR_COUNT, 0);
+        outb(base + REG_LBA_LOW, 0);
+        outb(base + REG_LBA_MID, 0);
+        outb(base + REG_LBA_HIGH, 0);
 
         // Envia comando IDENTIFY (0xEC)
-        outb(IDE_STATUS_CMD, CMD_IDENTIFY);
-        ide_delay();
+        outb(base + REG_STATUS_CMD, CMD_IDENTIFY);
+        ide_delay(ctrl);
 
-        let status = inb(IDE_STATUS_CMD);
-        if status == 0 {
+        let status = inb(base + REG_STATUS_CMD);
+        if status == 0 || status == 0xFF {
             return Err("Nenhum dispositivo presente na porta IDE");
         }
 
         // Aguarda BSY=0
-        let status = wait_not_busy()?;
+        let status = wait_not_busy(base)?;
 
         // Verifica se é um dispositivo ATAPI (CD-ROM/DVD)
-        let mid = inb(IDE_LBA_MID);
-        let high = inb(IDE_LBA_HIGH);
+        let mid = inb(base + REG_LBA_MID);
+        let high = inb(base + REG_LBA_HIGH);
         let is_atapi = (mid == 0x14 && high == 0xEB) || (mid == 0x69 && high == 0x96);
 
         if is_atapi {
             // Para dispositivos ATAPI, usa o comando IDENTIFY_PACKET (0xA1)
-            outb(IDE_STATUS_CMD, CMD_IDENTIFY_PACKET);
-            ide_delay();
-            wait_not_busy()?;
+            outb(base + REG_STATUS_CMD, CMD_IDENTIFY_PACKET);
+            ide_delay(ctrl);
+            wait_not_busy(base)?;
         } else if (status & STATUS_ERR) != 0 {
             return Err("Erro no comando IDENTIFY ATA");
         }
 
         // Aguarda o buffer de dados estar pronto (DRQ)
-        wait_drq()?;
+        wait_drq(base)?;
 
         // Lê 256 palavras de 16 bits (512 bytes)
         let mut id_buf = [0u16; 256];
         for word in id_buf.iter_mut() {
-            *word = inw(IDE_DATA);
+            *word = inw(base + REG_DATA);
         }
 
         // Extrai número serial (palavras 10..=19, com bytes invertidos)
@@ -236,7 +259,11 @@ pub fn identify(drive: u8) -> Result<DriveInfo, &'static str> {
         }
 
         // Setores totais LBA28 (palavras 60 e 61)
-        let sectors_lba28 = (id_buf[60] as u32) | ((id_buf[61] as u32) << 16);
+        let sectors_lba28 = if is_atapi {
+            0
+        } else {
+            (id_buf[60] as u32) | ((id_buf[61] as u32) << 16)
+        };
         let size_mb = sectors_lba28 / 2048; // 512 bytes por setor => 2048 setores = 1 MB
 
         Ok(DriveInfo {
@@ -257,30 +284,31 @@ pub fn read_sector(drive: u8, lba: u32, buf: &mut [u8; 512]) -> Result<(), &'sta
     }
 
     let _guard = lock_ide();
+    let (base, ctrl) = get_ide_ports(drive);
     unsafe {
-        wait_not_busy()?;
+        wait_not_busy(base)?;
 
         // Configura modo LBA (bit 6 = 1) + bits 24..27 do LBA
         let drive_head = 0xE0 | ((drive & 1) << 4) | (((lba >> 24) & 0x0F) as u8);
-        outb(IDE_DRIVE_HEAD, drive_head);
-        ide_delay();
+        outb(base + REG_DRIVE_HEAD, drive_head);
+        ide_delay(ctrl);
 
-        outb(IDE_FEATURES, 0);      // Sem features extras
-        outb(IDE_SECTOR_COUNT, 1);  // Lê exatamente 1 setor
-        outb(IDE_LBA_LOW,  (lba & 0xFF) as u8);
-        outb(IDE_LBA_MID,  ((lba >> 8) & 0xFF) as u8);
-        outb(IDE_LBA_HIGH, ((lba >> 16) & 0xFF) as u8);
+        outb(base + REG_FEATURES, 0);      // Sem features extras
+        outb(base + REG_SECTOR_COUNT, 1);  // Lê exatamente 1 setor
+        outb(base + REG_LBA_LOW,  (lba & 0xFF) as u8);
+        outb(base + REG_LBA_MID,  ((lba >> 8) & 0xFF) as u8);
+        outb(base + REG_LBA_HIGH, ((lba >> 16) & 0xFF) as u8);
 
         // Dispara comando READ SECTORS (0x20)
-        outb(IDE_STATUS_CMD, CMD_READ_SECTORS);
-        ide_delay();
+        outb(base + REG_STATUS_CMD, CMD_READ_SECTORS);
+        ide_delay(ctrl);
 
         // Aguarda transferência de dados
-        wait_drq()?;
+        wait_drq(base)?;
 
         // Transfere 256 palavras (512 bytes) da porta de dados
         for i in 0..256 {
-            let word = inw(IDE_DATA);
+            let word = inw(base + REG_DATA);
             buf[i * 2]     = (word & 0xFF) as u8;
             buf[i * 2 + 1] = (word >> 8) as u8;
         }
@@ -296,40 +324,41 @@ pub fn write_sector(drive: u8, lba: u32, buf: &[u8; 512]) -> Result<(), &'static
     }
 
     let _guard = lock_ide();
+    let (base, ctrl) = get_ide_ports(drive);
     unsafe {
-        wait_not_busy()?;
+        wait_not_busy(base)?;
 
         // Configura modo LBA (bit 6 = 1) + bits 24..27 do LBA
         let drive_head = 0xE0 | ((drive & 1) << 4) | (((lba >> 24) & 0x0F) as u8);
-        outb(IDE_DRIVE_HEAD, drive_head);
-        ide_delay();
+        outb(base + REG_DRIVE_HEAD, drive_head);
+        ide_delay(ctrl);
 
-        outb(IDE_FEATURES, 0);      // Sem features extras
-        outb(IDE_SECTOR_COUNT, 1);  // Escreve exatamente 1 setor
-        outb(IDE_LBA_LOW,  (lba & 0xFF) as u8);
-        outb(IDE_LBA_MID,  ((lba >> 8) & 0xFF) as u8);
-        outb(IDE_LBA_HIGH, ((lba >> 16) & 0xFF) as u8);
+        outb(base + REG_FEATURES, 0);      // Sem features extras
+        outb(base + REG_SECTOR_COUNT, 1);  // Escreve exatamente 1 setor
+        outb(base + REG_LBA_LOW,  (lba & 0xFF) as u8);
+        outb(base + REG_LBA_MID,  ((lba >> 8) & 0xFF) as u8);
+        outb(base + REG_LBA_HIGH, ((lba >> 16) & 0xFF) as u8);
 
         // Dispara comando WRITE SECTORS (0x30)
-        outb(IDE_STATUS_CMD, CMD_WRITE_SECTORS);
-        ide_delay();
+        outb(base + REG_STATUS_CMD, CMD_WRITE_SECTORS);
+        ide_delay(ctrl);
 
         // Aguarda a controladora solicitar os dados (DRQ = 1)
-        wait_drq()?;
+        wait_drq(base)?;
 
         // Transfere 256 palavras de 16 bits (512 bytes) para a porta de dados
         for i in 0..256 {
             let low = buf[i * 2] as u16;
             let high = buf[i * 2 + 1] as u16;
             let word = low | (high << 8);
-            outw(IDE_DATA, word);
+            outw(base + REG_DATA, word);
         }
 
         // Aguarda a gravação física na mídia (BSY = 0)
-        wait_not_busy()?;
+        wait_not_busy(base)?;
 
         // Valida se houve erro na controladora
-        let status = inb(IDE_STATUS_CMD);
+        let status = inb(base + REG_STATUS_CMD);
         if (status & STATUS_ERR) != 0 || (status & STATUS_DF) != 0 {
             return Err("Falha reportada pela controladora ao gravar setor no disco IDE");
         }
@@ -402,11 +431,12 @@ pub fn partition_type_name(ptype: u8) -> &'static str {
     }
 }
 
-/// Inicializa o subsistema IDE/ATA e verifica a integridade do barramento.
+/// Inicializa o subsistema IDE/ATA e verifica a integridade do barramento nos dois canais.
 pub fn init() {
     let _guard = lock_ide();
     unsafe {
-        // Habilita interrupções e desativa software reset no controlador
-        outb(IDE_CONTROL, 0x00);
+        // Habilita interrupções e desativa software reset nos controladores Primário e Secundário
+        outb(0x3F6, 0x00);
+        outb(0x376, 0x00);
     }
 }

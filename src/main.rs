@@ -196,29 +196,46 @@ pub extern "C" fn _start() -> ! {
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
 
-    // Auto-detecta e monta partições FAT32 e Ext2 do disco primário IDE
-    if let Ok(ide_dev) = drivers::block::IdeBlockDevice::new(0) {
-        if let Ok(table) = drivers::partition::scan_partitions(&ide_dev) {
-            let mut fat_mounted = false;
-            let mut ext2_mounted = false;
-            for part in table.partitions.iter().flatten() {
-                if !fat_mounted && (part.fs_kind == drivers::partition::DetectedFsKind::Fat32 || part.partition_type == 0x0B || part.partition_type == 0x0C) {
-                    if vfs::fat32::mount_fat32_partition("/disk", 0, part.start_lba as u32, part.sector_count).is_ok() {
-                        w.write_string("    Auto-montado FAT32 em /disk (LBA ");
-                        w.write_decimal(part.start_lba as usize);
-                        w.write_line(")");
-                        fat_mounted = true;
+    // Auto-detecta e monta partições FAT32 e Ext2 do primeiro disco rígido ATA válido (0..=3)
+    let mut mounted_hdd_drive = None;
+    for drive_id in 0..4u8 {
+        if let Ok(ide_dev) = drivers::block::IdeBlockDevice::new(drive_id) {
+            if ide_dev.sectors_total > 0 {
+                if let Ok(table) = drivers::partition::scan_partitions(&ide_dev) {
+                    let mut fat_mounted = false;
+                    let mut ext2_mounted = false;
+                    for part in table.partitions.iter().flatten() {
+                        if !fat_mounted && (part.fs_kind == drivers::partition::DetectedFsKind::Fat32 || part.partition_type == 0x0B || part.partition_type == 0x0C) {
+                            if vfs::fat32::mount_fat32_partition("/disk", drive_id, part.start_lba as u32, part.sector_count).is_ok() {
+                                w.write_string("    Auto-montado FAT32 em /disk (Drive ");
+                                w.write_decimal(drive_id as usize);
+                                w.write_string(", LBA ");
+                                w.write_decimal(part.start_lba as usize);
+                                w.write_line(")");
+                                fat_mounted = true;
+                                mounted_hdd_drive = Some(drive_id);
+                            }
+                        } else if !ext2_mounted && (part.fs_kind == drivers::partition::DetectedFsKind::Ext2 || part.partition_type == 0x83) {
+                            if vfs::ext2::mount_ext2_partition("/ext2", drive_id, part.start_lba as u32, part.sector_count).is_ok() {
+                                w.write_string("    Auto-montado Ext2 em /ext2 (Drive ");
+                                w.write_decimal(drive_id as usize);
+                                w.write_string(", LBA ");
+                                w.write_decimal(part.start_lba as usize);
+                                w.write_line(")");
+                                ext2_mounted = true;
+                                mounted_hdd_drive = Some(drive_id);
+                            }
+                        }
                     }
-                } else if !ext2_mounted && (part.fs_kind == drivers::partition::DetectedFsKind::Ext2 || part.partition_type == 0x83) {
-                    if vfs::ext2::mount_ext2_partition("/ext2", 0, part.start_lba as u32, part.sector_count).is_ok() {
-                        w.write_string("    Auto-montado Ext2 em /ext2 (LBA ");
-                        w.write_decimal(part.start_lba as usize);
-                        w.write_line(")");
-                        ext2_mounted = true;
+                    if fat_mounted || ext2_mounted {
+                        break;
                     }
                 }
             }
         }
+    }
+    if let Some(drv) = mounted_hdd_drive {
+        drivers::block::init_primary_cache_for_drive(drv);
     }
 
     // Inicializa Gerenciador de Volumes (L1 Volume Manager)

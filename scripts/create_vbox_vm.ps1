@@ -44,9 +44,6 @@ Write-Host "Configurando hardware (1024MB RAM, 2 vCPUs, I/O APIC, VBoxSVGA, Mous
 Write-Host "Adicionando controladora de armazenamento IDE..."
 & $vbox storagectl $vmName --name "IDE Controller" --add ide --controller PIIX4
 
-Write-Host "Conectando jinn.iso no leitor óptico..."
-& $vbox storageattach $vmName --storagectl "IDE Controller" --port 0 --device 0 --type dvddrive --medium $isoPath
-
 $imgPath = Join-Path $projectRoot "disk.img"
 if (Test-Path $imgPath) {
     if (Test-Path $vdiPath) {
@@ -57,9 +54,12 @@ if (Test-Path $imgPath) {
 }
 
 if (Test-Path $vdiPath) {
-    Write-Host "Conectando disk.vdi (FAT32 + Ext2) como disco primário..."
-    & $vbox storageattach $vmName --storagectl "IDE Controller" --port 1 --device 0 --type hdd --medium $vdiPath
+    Write-Host "Conectando disk.vdi (FAT32 + Ext2) na Porta 0 (Primary Master)..."
+    & $vbox storageattach $vmName --storagectl "IDE Controller" --port 0 --device 0 --type hdd --medium $vdiPath
 }
+
+Write-Host "Conectando jinn.iso na Porta 1 (Secondary Master)..."
+& $vbox storageattach $vmName --storagectl "IDE Controller" --port 1 --device 0 --type dvddrive --medium $isoPath
 
 Write-Host ""
 Write-Host "================================================================" -ForegroundColor Green

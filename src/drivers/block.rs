@@ -159,6 +159,12 @@ pub struct IdeBlockDevice {
 impl IdeBlockDevice {
     pub fn new(drive: u8) -> Result<Self, &'static str> {
         let info = ide::identify(drive)?;
+        if info.is_atapi {
+            return Err("Dispositivo e um drive ATAPI/CD-ROM, nao um disco rigido ATA");
+        }
+        if info.sectors_lba28 == 0 {
+            return Err("Disco sem capacidade reportada");
+        }
         Ok(Self {
             drive,
             sectors_total: info.sectors_lba28 as u64,
@@ -171,6 +177,8 @@ impl BlockDevice for IdeBlockDevice {
         match self.drive {
             0 => "ide0 (Primary Master)",
             1 => "ide1 (Primary Slave)",
+            2 => "ide2 (Secondary Master)",
+            3 => "ide3 (Secondary Slave)",
             _ => "ide-unknown",
         }
     }
@@ -598,15 +606,31 @@ impl<D: BlockDevice> BlockDevice for CachedBlockDevice<D> {
 
 // ── Instância Global do Dispositivo Primário com Cache e Flusher Periódico ────
 
+/// ID do disco primário atualmente associado ao cache global
+pub static PRIMARY_DRIVE_ID: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
 /// Dispositivo de blocos IDE com cache LRU primário compartilhado globalmente
 pub static PRIMARY_CACHED_DEV: crate::memory::SpinLock<Option<CachedBlockDevice<IdeBlockDevice>>> =
     crate::memory::SpinLock::new(None);
 
-/// Inicializa o dispositivo de blocos primário com cache LRU
-pub fn init_primary_cache() {
-    if let Ok(dev) = IdeBlockDevice::new(0) {
+/// Inicializa o dispositivo de blocos primário com cache LRU para um drive específico
+pub fn init_primary_cache_for_drive(drive: u8) {
+    if let Ok(dev) = IdeBlockDevice::new(drive) {
+        PRIMARY_DRIVE_ID.store(drive, core::sync::atomic::Ordering::Relaxed);
         let mut lock = PRIMARY_CACHED_DEV.lock();
         *lock = Some(CachedBlockDevice::new(dev));
+    }
+}
+
+/// Inicializa o dispositivo de blocos primário com cache LRU (busca o primeiro disco ATA válido)
+pub fn init_primary_cache() {
+    for drive in 0..4u8 {
+        if let Ok(dev) = IdeBlockDevice::new(drive) {
+            if dev.sectors_total > 0 {
+                init_primary_cache_for_drive(drive);
+                return;
+            }
+        }
     }
 }
 
@@ -616,7 +640,7 @@ pub fn cached_read_sector(lba: u64, buf: &mut [u8; DEFAULT_SECTOR_SIZE]) -> Resu
     if let Some(ref mut cdev) = *dev_opt {
         cdev.read_blocks(lba, 1, buf)
     } else {
-        crate::drivers::ide::read_sector(0, lba as u32, buf)
+        crate::drivers::ide::read_sector(PRIMARY_DRIVE_ID.load(core::sync::atomic::Ordering::Relaxed), lba as u32, buf)
     }
 }
 
@@ -626,7 +650,7 @@ pub fn cached_write_sector(lba: u64, buf: &[u8; DEFAULT_SECTOR_SIZE]) -> Result<
     if let Some(ref mut cdev) = *dev_opt {
         cdev.write_blocks(lba, 1, buf)
     } else {
-        crate::drivers::ide::write_sector(0, lba as u32, buf)
+        crate::drivers::ide::write_sector(PRIMARY_DRIVE_ID.load(core::sync::atomic::Ordering::Relaxed), lba as u32, buf)
     }
 }
 
