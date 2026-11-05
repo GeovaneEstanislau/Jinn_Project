@@ -242,6 +242,7 @@ pub const EVENT_KEY_DOWN: u32 = 4;
 pub const EVENT_KEY_UP: u32 = 5;
 pub const EVENT_SCROLL: u32 = 6;
 pub const EVENT_WINDOW_CLOSE: u32 = 7;
+pub const EVENT_WINDOW_RESIZE: u32 = 8;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -1424,7 +1425,9 @@ unsafe fn test_observer_app() {
 
 // ── Aladdin Desktop Jinn Browser v0.2.0 Native Integration ───────────────────
 
-static mut WIN_BUF: [u32; browser::WIN_W * browser::WIN_H] = [0; browser::WIN_W * browser::WIN_H];
+pub const MAX_WIN_W: usize = 1024;
+pub const MAX_WIN_H: usize = 768;
+static mut WIN_BUF: [u32; MAX_WIN_W * MAX_WIN_H] = [0; MAX_WIN_W * MAX_WIN_H];
 static mut HTML_FILE_BUF: [u8; 32768] = [0; 32768];
 static mut HTTP_RX_BUF: [u8; 32768] = [0; 32768];
 
@@ -1888,7 +1891,8 @@ unsafe fn run_gui_demo() {
 
     let mut session = browser::BrowserSession::new();
     let win_buf_ptr = core::ptr::addr_of_mut!(WIN_BUF) as *mut u32;
-    let buf_slice = core::slice::from_raw_parts_mut(win_buf_ptr, browser::WIN_W * browser::WIN_H);
+    let cur_len = session.viewport_w * session.viewport_h;
+    let buf_slice = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len);
 
     // 1. Carrega documento inicial do VFS (/disk/INDEX.HTM)
     print_str(b"[BROWSER] 1. Lendo arquivo HTML local do VFS (/disk/INDEX.HTM)...\n");
@@ -2216,7 +2220,8 @@ unsafe fn run_browser_interactive() -> ! {
 
     let mut session = browser::BrowserSession::new();
     let win_buf_ptr = core::ptr::addr_of_mut!(WIN_BUF) as *mut u32;
-    let buf_slice = core::slice::from_raw_parts_mut(win_buf_ptr, browser::WIN_W * browser::WIN_H);
+    let cur_len = session.viewport_w * session.viewport_h;
+    let buf_slice = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len);
 
     // 1. Carrega documento inicial do VFS (/disk/INDEX.HTM)
     print_str(b"[BROWSER] Carregando /disk/INDEX.HTM...\n");
@@ -2262,6 +2267,22 @@ unsafe fn run_browser_interactive() -> ! {
                     let _ = sys_window_close(win_id);
                     sys_exit(0);
                 }
+                EVENT_WINDOW_RESIZE => {
+                    let new_w = ev.x as usize;
+                    let new_h = ev.y as usize;
+                    print_str(b"[BROWSER-INTERACTION] EVENT_WINDOW_RESIZE new_w=");
+                    print_u64(new_w as u64);
+                    print_str(b" new_h=");
+                    print_u64(new_h as u64);
+                    print_str(b"\n");
+                    if new_w >= 100 && new_h >= 60 && new_w <= MAX_WIN_W && new_h <= MAX_WIN_H {
+                        session.resize(new_w, new_h);
+                        let cur_len = session.viewport_w * session.viewport_h;
+                        let buf_cur = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len);
+                        session.render(buf_cur);
+                        let _ = sys_window_update(win_id, buf_cur);
+                    }
+                }
                 EVENT_MOUSE_DOWN => {
                     let click_x = ev.x as usize;
                     let click_y = ev.y as usize;
@@ -2272,17 +2293,44 @@ unsafe fn run_browser_interactive() -> ! {
                     print_str(b"\n");
                     let action = session.handle_click(click_x, click_y);
 
+                    let cur_len = session.viewport_w * session.viewport_h;
+                    let buf_cur = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len);
+
                     match action {
+                        browser::BrowserAction::ToggleFullscreen => {
+                            print_str(b"[BROWSER-INTERACTION] ACTION ToggleFullscreen\n");
+                            let st = session.toggle_fullscreen();
+                            print_str(b"  Novo estado: ");
+                            match st {
+                                browser::FullscreenState::Fullscreen => print_str(b"FULLSCREEN (1024x768)\n"),
+                                browser::FullscreenState::Windowed => print_str(b"WINDOWED (300x180)\n"),
+                                _ => print_str(b"OUTRO\n"),
+                            }
+                            let cur_len = session.viewport_w * session.viewport_h;
+                            let buf_cur = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len);
+                            session.render(buf_cur);
+                            let _ = sys_window_update(win_id, buf_cur);
+                        }
+                        browser::BrowserAction::ExitFullscreen => {
+                            print_str(b"[BROWSER-INTERACTION] ACTION ExitFullscreen\n");
+                            if session.fullscreen_state == browser::FullscreenState::Fullscreen {
+                                session.toggle_fullscreen();
+                                let cur_len = session.viewport_w * session.viewport_h;
+                                let buf_cur = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len);
+                                session.render(buf_cur);
+                                let _ = sys_window_update(win_id, buf_cur);
+                            }
+                        }
                         browser::BrowserAction::Back => {
                             print_str(b"[BROWSER-INTERACTION] ACTION Back\n");
                             if let Some((target, len)) = session.go_back() {
-                                browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
+                                browser_load_and_display(&mut session, &target[..len], win_id, buf_cur);
                             }
                         }
                         browser::BrowserAction::Forward => {
                             print_str(b"[BROWSER-INTERACTION] ACTION Forward\n");
                             if let Some((target, len)) = session.go_forward() {
-                                browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
+                                browser_load_and_display(&mut session, &target[..len], win_id, buf_cur);
                             }
                         }
                         browser::BrowserAction::Reload => {
@@ -2290,7 +2338,7 @@ unsafe fn run_browser_interactive() -> ! {
                             let curr = session.current_url;
                             let len = session.current_url_len;
                             if len > 0 {
-                                browser_load_and_display(&mut session, &curr[..len], win_id, buf_slice);
+                                browser_load_and_display(&mut session, &curr[..len], win_id, buf_cur);
                             }
                         }
                         browser::BrowserAction::NavigateTarget(target, len) => {
@@ -2302,24 +2350,24 @@ unsafe fn run_browser_interactive() -> ! {
                             let res_len = browser::resolve_relative_url(curr_url, &target[..len], &mut resolved);
                             session.push_back_current();
                             session.history_fwd_count = 0;
-                            browser_load_and_display(&mut session, &resolved[..res_len], win_id, buf_slice);
+                            browser_load_and_display(&mut session, &resolved[..res_len], win_id, buf_cur);
                         }
                         browser::BrowserAction::FocusAddress => {
                             print_str(b"[BROWSER-INTERACTION] ACTION FocusAddress\n");
-                            session.render(buf_slice);
-                            let _ = sys_window_update(win_id, buf_slice);
+                            session.render(buf_cur);
+                            let _ = sys_window_update(win_id, buf_cur);
                         }
                         browser::BrowserAction::Scroll(delta) => {
                             print_str(b"[BROWSER-INTERACTION] ACTION Scroll delta=");
                             print_i64(delta as i64);
                             print_str(b"\n");
                             session.scroll_by(delta);
-                            session.render(buf_slice);
-                            let _ = sys_window_update(win_id, buf_slice);
+                            session.render(buf_cur);
+                            let _ = sys_window_update(win_id, buf_cur);
                         }
                         browser::BrowserAction::None => {
-                            session.render(buf_slice);
-                            let _ = sys_window_update(win_id, buf_slice);
+                            session.render(buf_cur);
+                            let _ = sys_window_update(win_id, buf_cur);
                         }
                     }
                 }
@@ -2329,6 +2377,10 @@ unsafe fn run_browser_interactive() -> ! {
                     print_u64(key as u64);
                     print_str(b" focused=");
                     if session.is_address_focused { print_str(b"1\n"); } else { print_str(b"0\n"); }
+
+                    let cur_len = session.viewport_w * session.viewport_h;
+                    let buf_cur = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len);
+
                     if session.is_address_focused {
                         let action = session.address_key(key);
                         match action {
@@ -2338,49 +2390,63 @@ unsafe fn run_browser_interactive() -> ! {
                                 print_str(b"\n");
                                 session.push_back_current();
                                 session.history_fwd_count = 0;
-                                browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
+                                browser_load_and_display(&mut session, &target[..len], win_id, buf_cur);
                             }
                             _ => {
-                                session.render(buf_slice);
-                                let _ = sys_window_update(win_id, buf_slice);
+                                session.render(buf_cur);
+                                let _ = sys_window_update(win_id, buf_cur);
                             }
                         }
                     } else {
                         match key {
+                            0x57 => { // F11: Alternar Tela Cheia
+                                print_str(b"[BROWSER-INTERACTION] KEY F11 -> Toggle Fullscreen\n");
+                                let st = session.toggle_fullscreen();
+                                print_str(b"  Novo estado: ");
+                                match st {
+                                    browser::FullscreenState::Fullscreen => print_str(b"FULLSCREEN (1024x768)\n"),
+                                    browser::FullscreenState::Windowed => print_str(b"WINDOWED (300x180)\n"),
+                                    _ => print_str(b"OUTRO\n"),
+                                }
+                                let cur_len2 = session.viewport_w * session.viewport_h;
+                                let buf_cur2 = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len2);
+                                session.render(buf_cur2);
+                                let _ = sys_window_update(win_id, buf_cur2);
+                            }
                             0x50 | 0x6A | 0x4A => { // Seta para Baixo (0x50) / 'j' / 'J' (Scroll +20px)
                                 print_str(b"[BROWSER-INTERACTION] ACTION ScrollDown\n");
                                 session.scroll_by(20);
-                                session.render(buf_slice);
-                                let _ = sys_window_update(win_id, buf_slice);
+                                session.render(buf_cur);
+                                let _ = sys_window_update(win_id, buf_cur);
                             }
                             0x48 | 0x6B | 0x4B => { // Seta para Cima (0x48) / 'k' / 'K' (Scroll -20px)
                                 print_str(b"[BROWSER-INTERACTION] ACTION ScrollUp\n");
                                 session.scroll_by(-20);
-                                session.render(buf_slice);
-                                let _ = sys_window_update(win_id, buf_slice);
+                                session.render(buf_cur);
+                                let _ = sys_window_update(win_id, buf_cur);
                             }
                             0x51 | 0x20 => { // Page Down (0x51) / Space (0x20) (Scroll +80px)
                                 print_str(b"[BROWSER-INTERACTION] ACTION PageDown\n");
                                 session.scroll_by(80);
-                                session.render(buf_slice);
-                                let _ = sys_window_update(win_id, buf_slice);
+                                session.render(buf_cur);
+                                let _ = sys_window_update(win_id, buf_cur);
                             }
                             0x49 => { // Page Up (0x49) (Scroll -80px)
                                 print_str(b"[BROWSER-INTERACTION] ACTION PageUp\n");
                                 session.scroll_by(-80);
-                                session.render(buf_slice);
-                                let _ = sys_window_update(win_id, buf_slice);
+                                session.render(buf_cur);
+                                let _ = sys_window_update(win_id, buf_cur);
                             }
                             0x0E | 0x08 | 0x62 | 0x68 => { // Backspace (0x0E / 0x08) ou 'b'/'h' (Voltar)
                                 print_str(b"[BROWSER-INTERACTION] ACTION KeyBack\n");
                                 if let Some((target, len)) = session.go_back() {
-                                    browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
+                                    browser_load_and_display(&mut session, &target[..len], win_id, buf_cur);
                                 }
                             }
                             0x66 | 0x6C => { // 'f' / 'l' (Avançar)
                                 print_str(b"[BROWSER-INTERACTION] ACTION KeyForward\n");
                                 if let Some((target, len)) = session.go_forward() {
-                                    browser_load_and_display(&mut session, &target[..len], win_id, buf_slice);
+                                    browser_load_and_display(&mut session, &target[..len], win_id, buf_cur);
                                 }
                             }
                             0x72 | 0x52 => { // 'r' / 'R' (Recarregar)
@@ -2388,17 +2454,31 @@ unsafe fn run_browser_interactive() -> ! {
                                 let curr = session.current_url;
                                 let len = session.current_url_len;
                                 if len > 0 {
-                                    browser_load_and_display(&mut session, &curr[..len], win_id, buf_slice);
+                                    browser_load_and_display(&mut session, &curr[..len], win_id, buf_cur);
                                 }
                             }
                             0x2F | 0x09 => { // '/' ou Tab: focar barra de endereço
                                 print_str(b"[BROWSER-INTERACTION] ACTION KeyFocusAddress\n");
                                 session.focus_address();
-                                session.render(buf_slice);
-                                let _ = sys_window_update(win_id, buf_slice);
+                                session.render(buf_cur);
+                                let _ = sys_window_update(win_id, buf_cur);
                             }
-                            0x01 | 0x1B | 0x71 => { // Escape (0x01 / 0x1B) ou 'q' (Fechar Janela)
-                                print_str(b"[BROWSER-INTERACTION] ACTION KeyClose\n");
+                            0x01 | 0x1B => { // Escape (0x01 / 0x1B)
+                                if session.fullscreen_state == browser::FullscreenState::Fullscreen {
+                                    print_str(b"[BROWSER-INTERACTION] KEY Esc -> Sair de Tela Cheia\n");
+                                    session.toggle_fullscreen();
+                                    let cur_len2 = session.viewport_w * session.viewport_h;
+                                    let buf_cur2 = core::slice::from_raw_parts_mut(win_buf_ptr, cur_len2);
+                                    session.render(buf_cur2);
+                                    let _ = sys_window_update(win_id, buf_cur2);
+                                } else {
+                                    print_str(b"[BROWSER-INTERACTION] ACTION KeyClose (Esc)\n");
+                                    let _ = sys_window_close(win_id);
+                                    sys_exit(0);
+                                }
+                            }
+                            0x71 => { // 'q' (Fechar Janela)
+                                print_str(b"[BROWSER-INTERACTION] ACTION KeyClose (q)\n");
                                 let _ = sys_window_close(win_id);
                                 sys_exit(0);
                             }

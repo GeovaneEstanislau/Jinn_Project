@@ -23,11 +23,13 @@ use crate::BrowserSession;
 pub enum TabState {
     /// Aba aberta e em primeiro plano. Prioridade máxima e orçamento de execução pleno.
     Active,
+    /// Aba aberta em segundo plano não selecionada. Animações e timers restritos, renderização desativada.
+    Background,
     /// Aba em segundo plano autorizada a reproduzir áudio.
     /// O pipeline de mídia continua operando; scripts, timers e renderização são suspensos.
     AudioBackground,
     /// Aba inativa hibernada. DOM e buffers de layout descartados.
-    /// Snapshot de navegação compacto preservado em memória. CPU = 0.
+    /// Snapshot de navegação compacto preservado em memória. CPU = 0 ticks.
     Hibernated,
     /// Aba descartada sob pressão de memória. Todos os buffers liberados.
     /// Apenas metadados de histórico são mantidos para recarga fria sob demanda.
@@ -46,6 +48,7 @@ pub enum TabTransitionError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskExecutionState {
     Running,
+    ThrottledBackground,
     ThrottledAudioOnly,
     Suspended,
     Terminated,
@@ -56,7 +59,7 @@ pub enum TaskExecutionState {
 pub struct TabTaskContext {
     pub task_id: u64,
     pub execution_state: TaskExecutionState,
-    pub priority: u8, // 3: Normal/High (Active), 1: Throttled (Audio), 0: Suspended
+    pub priority: u8, // 3: Normal/High (Active), 2: Background, 1: Throttled (Audio), 0: Suspended
     pub page_timers_active: bool,
     pub animations_active: bool,
     pub pending_async_jobs: usize,
@@ -83,6 +86,14 @@ impl TabTaskContext {
         self.page_timers_active = false;
         self.animations_active = false;
         self.pending_async_jobs = 0;
+    }
+
+    /// Reduz a prioridade para segundo plano não áudio
+    pub fn throttle_to_background(&mut self) {
+        self.execution_state = TaskExecutionState::ThrottledBackground;
+        self.priority = 2;
+        self.page_timers_active = false;
+        self.animations_active = false;
     }
 
     /// Reduz a prioridade mantendo ativo estritamente o pipeline de áudio
@@ -114,13 +125,18 @@ impl TabTaskContext {
                 self.accumulated_cpu_ticks += 1;
                 1
             }
+            TaskExecutionState::ThrottledBackground => {
+                // Background tab: execução extremamente reduzida para timers lentos
+                self.accumulated_cpu_ticks += 1;
+                1
+            }
             TaskExecutionState::ThrottledAudioOnly => {
                 // Apenas processamento leve de streaming de áudio
                 self.accumulated_cpu_ticks += 1;
                 1
             }
             TaskExecutionState::Suspended | TaskExecutionState::Terminated => {
-                // Invariante de Near-Zero CPU: 0 ticks consumidos
+                // Invariante de Near-Zero CPU: rigorosamente 0 ticks consumidos
                 0
             }
         }
@@ -310,7 +326,37 @@ impl Tab {
                 self.hibernate();
                 Ok(())
             }
-            // 2. ACTIVE -> AUDIO_BACKGROUND
+            // 2. ACTIVE -> BACKGROUND
+            (TabState::Active, TabState::Background) => {
+                self.to_background();
+                Ok(())
+            }
+            // 3. BACKGROUND -> ACTIVE
+            (TabState::Background, TabState::Active) => {
+                self.state = TabState::Active;
+                self.task_context.resume();
+                Ok(())
+            }
+            // 4. BACKGROUND -> HIBERNATED
+            (TabState::Background, TabState::Hibernated) => {
+                self.hibernate();
+                Ok(())
+            }
+            // 5. BACKGROUND -> AUDIO_BACKGROUND
+            (TabState::Background, TabState::AudioBackground) => {
+                if !self.is_pinned_audio && !self.media.is_playing() {
+                    return Err(TabTransitionError::AudioUnauthorized);
+                }
+                self.state = TabState::AudioBackground;
+                self.task_context.throttle_to_audio_only();
+                Ok(())
+            }
+            // 6. BACKGROUND -> DISCARDED
+            (TabState::Background, TabState::Discarded) => {
+                self.discard();
+                Ok(())
+            }
+            // 7. ACTIVE -> AUDIO_BACKGROUND
             (TabState::Active, TabState::AudioBackground) => {
                 if !self.is_pinned_audio && !self.media.is_playing() {
                     return Err(TabTransitionError::AudioUnauthorized);
@@ -319,23 +365,34 @@ impl Tab {
                 self.task_context.throttle_to_audio_only();
                 Ok(())
             }
-            // 3. AUDIO_BACKGROUND -> HIBERNATED
+            // 8. AUDIO_BACKGROUND -> ACTIVE
+            (TabState::AudioBackground, TabState::Active) => {
+                self.state = TabState::Active;
+                self.task_context.resume();
+                Ok(())
+            }
+            // 9. AUDIO_BACKGROUND -> BACKGROUND
+            (TabState::AudioBackground, TabState::Background) => {
+                self.to_background();
+                Ok(())
+            }
+            // 10. AUDIO_BACKGROUND -> HIBERNATED
             (TabState::AudioBackground, TabState::Hibernated) => {
                 self.hibernate();
                 Ok(())
             }
-            // 4. HIBERNATED -> ACTIVE (requer restore)
+            // 11. HIBERNATED -> ACTIVE (requer restore)
             (TabState::Hibernated, TabState::Active) => {
                 self.state = TabState::Active;
                 self.task_context.resume();
                 Ok(())
             }
-            // 5. HIBERNATED -> DISCARDED
+            // 12. HIBERNATED -> DISCARDED
             (TabState::Hibernated, TabState::Discarded) => {
                 self.discard();
                 Ok(())
             }
-            // 6. DISCARDED -> ACTIVE (requer restore via cold-reload)
+            // 13. DISCARDED -> ACTIVE (requer restore via cold-reload)
             (TabState::Discarded, TabState::Active) => {
                 self.state = TabState::Active;
                 self.task_context.resume();
@@ -343,6 +400,14 @@ impl Tab {
             }
             // Transições proibidas
             (from, to) => Err(TabTransitionError::InvalidTransition { from, to }),
+        }
+    }
+
+    /// Transita a aba para o estado BACKGROUND (sem foco imediato)
+    pub fn to_background(&mut self) {
+        if self.state == TabState::Active || self.state == TabState::AudioBackground {
+            self.state = TabState::Background;
+            self.task_context.throttle_to_background();
         }
     }
 
@@ -475,6 +540,184 @@ impl Tab {
 
         base_struct + media_bytes + snapshot_bytes + session_bytes
     }
+
+    /// Retorna a pegada lógica compacta da aba (para verificação de snapshots e estado)
+    pub fn logical_footprint(&self) -> LogicalTabFootprint {
+        let snap_bytes = self.snapshot.as_ref().map(|s| s.estimated_bytes()).unwrap_or(0);
+        let (dom_nodes, sess_meta) = if let Some(session) = &self.session {
+            let nodes = session.current_dom.as_ref().map(|d| d.node_count()).unwrap_or(0);
+            let meta = session.history.len() * 64 + 128;
+            (nodes, meta)
+        } else {
+            (0, 0)
+        };
+        LogicalTabFootprint {
+            snapshot_bytes: snap_bytes,
+            session_metadata_bytes: sess_meta,
+            dom_nodes_count: dom_nodes,
+            total_logical_bytes: snap_bytes + sess_meta,
+        }
+    }
+
+    /// Retorna a pegada física de memória residente no sistema operacional
+    pub fn physical_footprint(&self) -> PhysicalMemoryFootprint {
+        let breakdown = self.memory_breakdown();
+        PhysicalMemoryFootprint {
+            struct_base_bytes: std::mem::size_of::<Self>(),
+            heap_allocated_bytes: breakdown.dom_arena_bytes + breakdown.layout_tree_bytes,
+            framebuffer_resident_bytes: breakdown.render_framebuffer_bytes,
+            audio_pcm_resident_bytes: breakdown.audio_pcm_buffer_bytes,
+            total_physical_bytes: breakdown.total_resident_bytes,
+        }
+    }
+}
+
+/// Pegada Lógica da Aba (metadados e estruturas de documento preservadas)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogicalTabFootprint {
+    pub snapshot_bytes: usize,
+    pub session_metadata_bytes: usize,
+    pub dom_nodes_count: usize,
+    pub total_logical_bytes: usize,
+}
+
+/// Pegada de Memória Física Residente da Aba no Sistema Operacional
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhysicalMemoryFootprint {
+    pub struct_base_bytes: usize,
+    pub heap_allocated_bytes: usize,
+    pub framebuffer_resident_bytes: usize,
+    pub audio_pcm_resident_bytes: usize,
+    pub total_physical_bytes: usize,
+}
+
+/// Mapeamento Canônico de Estados da Aba para o Escalonador do Kernel Jinn (Ring 0)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KernelTaskStateMapping {
+    /// Mapeado para TaskState::Running / Ready (Prioridade Normal/Alta)
+    Running,
+    /// Mapeado para TaskState::Ready (Prioridade Reduzida/Throttled)
+    Throttled,
+    /// Mapeado para TaskState::Blocked (Zero Ticks no Escalonador do Jinn)
+    BlockedZeroCpu,
+    /// Mapeado para TaskState::Completed / Zombie (Finalizado)
+    Terminated,
+}
+
+/// Perfis de Hardware e Orçamento de Recursos (Resource Governance Profiles)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryProfile {
+    /// Cenário experimental extremamente restrito (16 MB orçamento global do browser)
+    Profile64MB,
+    /// Cenário de baixo recurso (32 MB orçamento global do browser)
+    Profile128MB,
+    /// Cenário compacto de desktop (64 MB orçamento global do browser)
+    Profile256MB,
+    /// Cenário de referência ampliado (128 MB orçamento global do browser)
+    Profile512MB,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileQuotas {
+    pub profile: MemoryProfile,
+    pub max_browser_ram_bytes: usize,
+    pub max_tab_footprint_bytes: usize,
+    pub max_active_tabs: usize,
+    pub discard_threshold_bytes: usize,
+}
+
+impl MemoryProfile {
+    pub fn quotas(&self) -> ProfileQuotas {
+        match self {
+            MemoryProfile::Profile64MB => ProfileQuotas {
+                profile: *self,
+                max_browser_ram_bytes: 16 * 1024 * 1024,
+                max_tab_footprint_bytes: 2 * 1024 * 1024,
+                max_active_tabs: 2,
+                discard_threshold_bytes: 12 * 1024 * 1024,
+            },
+            MemoryProfile::Profile128MB => ProfileQuotas {
+                profile: *self,
+                max_browser_ram_bytes: 32 * 1024 * 1024,
+                max_tab_footprint_bytes: 4 * 1024 * 1024,
+                max_active_tabs: 4,
+                discard_threshold_bytes: 24 * 1024 * 1024,
+            },
+            MemoryProfile::Profile256MB => ProfileQuotas {
+                profile: *self,
+                max_browser_ram_bytes: 64 * 1024 * 1024,
+                max_tab_footprint_bytes: 8 * 1024 * 1024,
+                max_active_tabs: 8,
+                discard_threshold_bytes: 48 * 1024 * 1024,
+            },
+            MemoryProfile::Profile512MB => ProfileQuotas {
+                profile: *self,
+                max_browser_ram_bytes: 128 * 1024 * 1024,
+                max_tab_footprint_bytes: 16 * 1024 * 1024,
+                max_active_tabs: 16,
+                discard_threshold_bytes: 96 * 1024 * 1024,
+            },
+        }
+    }
+}
+
+/// Gerenciador Global de Recursos e Imposição de Políticas do Navegador
+#[derive(Debug, Clone)]
+pub struct BrowserResourceManager {
+    pub quotas: ProfileQuotas,
+    pub last_enforce_tick: u64,
+}
+
+impl BrowserResourceManager {
+    pub fn new(profile: MemoryProfile) -> Self {
+        Self {
+            quotas: profile.quotas(),
+            last_enforce_tick: 0,
+        }
+    }
+
+    /// Calcula o Background Resource Consumption Ratio (BRCR):
+    /// BRCR = (resident_bg_bytes / active_tab_bytes) * 100.0
+    pub fn calculate_brcr(&self, bg_resident_bytes: usize, active_resident_bytes: usize) -> f64 {
+        if active_resident_bytes == 0 {
+            0.0
+        } else {
+            (bg_resident_bytes as f64 / active_resident_bytes as f64) * 100.0
+        }
+    }
+
+    /// Mapeia e sincroniza o estado da aba com a semântica do Escalonador do Kernel Jinn
+    pub fn sync_with_kernel_scheduler(&self, tab: &Tab) -> KernelTaskStateMapping {
+        match tab.state {
+            TabState::Active => KernelTaskStateMapping::Running,
+            TabState::Background => KernelTaskStateMapping::Throttled,
+            TabState::AudioBackground => KernelTaskStateMapping::Throttled,
+            TabState::Hibernated => KernelTaskStateMapping::BlockedZeroCpu,
+            TabState::Discarded => KernelTaskStateMapping::Terminated,
+        }
+    }
+
+    /// Avalia a pressão de memória e descarta ou hiberna abas conforme o perfil ativo
+    pub fn evaluate_and_enforce(&mut self, tabs: &mut [Tab], active_id: usize) -> usize {
+        let mut total_resident: usize = tabs.iter().map(|t| t.resident_memory_bytes()).sum();
+        let mut discarded_count = 0;
+
+        if total_resident > self.quotas.discard_threshold_bytes {
+            for tab in tabs.iter_mut() {
+                if total_resident <= self.quotas.discard_threshold_bytes {
+                    break;
+                }
+                if tab.id != active_id && tab.state == TabState::Hibernated {
+                    let before = tab.resident_memory_bytes();
+                    tab.discard();
+                    let after = tab.resident_memory_bytes();
+                    total_resident = total_resident.saturating_sub(before.saturating_sub(after));
+                    discarded_count += 1;
+                }
+            }
+        }
+        discarded_count
+    }
 }
 
 /// Gerenciador de Foco Exclusivo de Áudio (Audio Focus Manager)
@@ -521,6 +764,7 @@ impl AudioFocusManager {
 pub struct TabTelemetry {
     pub total_tabs: usize,
     pub active_count: usize,
+    pub background_count: usize,
     pub audio_background_count: usize,
     pub hibernated_count: usize,
     pub discarded_count: usize,
@@ -700,6 +944,9 @@ impl TabManager {
                 TabState::Active => {
                     tab.media.tick(delta_ms);
                 }
+                TabState::Background => {
+                    self.background_cpu_ticks_counter += task_ticks;
+                }
                 TabState::AudioBackground => {
                     tab.media.tick(delta_ms);
                     self.background_cpu_ticks_counter += task_ticks;
@@ -759,6 +1006,7 @@ impl TabManager {
     /// Retorna telemetria detalhada para aferição das metas arquiteturais
     pub fn telemetry(&self) -> TabTelemetry {
         let mut active_count = 0;
+        let mut background_count = 0;
         let mut audio_background_count = 0;
         let mut hibernated_count = 0;
         let mut discarded_count = 0;
@@ -768,6 +1016,7 @@ impl TabManager {
             cumulative_freed += tab.cumulative_freed_bytes;
             match tab.state {
                 TabState::Active => active_count += 1,
+                TabState::Background => background_count += 1,
                 TabState::AudioBackground => audio_background_count += 1,
                 TabState::Hibernated => hibernated_count += 1,
                 TabState::Discarded => discarded_count += 1,
@@ -781,6 +1030,7 @@ impl TabManager {
         TabTelemetry {
             total_tabs: self.tabs.len(),
             active_count,
+            background_count,
             audio_background_count,
             hibernated_count,
             discarded_count,

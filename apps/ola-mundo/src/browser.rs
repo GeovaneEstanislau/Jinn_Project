@@ -13,6 +13,7 @@ use crate::font;
 pub const WIN_W: usize = 300;
 pub const WIN_H: usize = 180;
 pub const CLIP_TOP: usize = 27;
+#[allow(dead_code)]
 pub const CLIP_BOTTOM: usize = WIN_H - 1;
 
 // ── Cores do Tema (Catppuccin Mocha) ──────────────────────────────────────────
@@ -469,6 +470,18 @@ impl DocumentLayout {
 
 // ── Ações Interativas do Navegador ──────────────────────────────────────────
 
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FullscreenState {
+    Windowed,
+    EnteringFullscreen,
+    Fullscreen,
+    ExitingFullscreen,
+    ResizePending,
+    Recovery,
+}
+
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BrowserAction {
     None,
@@ -478,6 +491,8 @@ pub enum BrowserAction {
     NavigateTarget([u8; 128], usize),
     FocusAddress,
     Scroll(i32),
+    ToggleFullscreen,
+    ExitFullscreen,
 }
 
 // ── Sessão Interativa do Navegador ────────────────────────────────────────────
@@ -499,6 +514,11 @@ pub struct BrowserSession {
     pub address_edit_len: usize,
     pub scroll_y: usize,
     pub max_scroll: usize,
+    pub viewport_w: usize,
+    pub viewport_h: usize,
+    pub saved_w: usize,
+    pub saved_h: usize,
+    pub fullscreen_state: FullscreenState,
     pub page: ParsedPage,
     pub layout: DocumentLayout,
 }
@@ -520,9 +540,70 @@ impl BrowserSession {
             address_edit_len: 0,
             scroll_y: 0,
             max_scroll: 0,
+            viewport_w: WIN_W,
+            viewport_h: WIN_H,
+            saved_w: WIN_W,
+            saved_h: WIN_H,
+            fullscreen_state: FullscreenState::Windowed,
             page: ParsedPage::new(),
             layout: DocumentLayout::new(),
         }
+    }
+
+    pub fn resize(&mut self, new_w: usize, new_h: usize) {
+        if new_w >= 100 && new_h >= 60 && new_w <= 1024 && new_h <= 768 {
+            self.viewport_w = new_w;
+            self.viewport_h = new_h;
+            self.recompute_layout();
+        }
+    }
+
+    pub fn recompute_layout(&mut self) {
+        let content_w = self.viewport_w.saturating_sub(24);
+        self.layout.compute(&self.page, content_w);
+        let clip_top = CLIP_TOP;
+        let clip_bottom = self.viewport_h.saturating_sub(1);
+        let v_h = clip_bottom.saturating_sub(clip_top);
+        if self.layout.total_height > v_h {
+            self.max_scroll = self.layout.total_height - v_h;
+        } else {
+            self.max_scroll = 0;
+        }
+        self.scroll_y = self.scroll_y.min(self.max_scroll);
+    }
+
+    pub fn toggle_fullscreen(&mut self) -> FullscreenState {
+        match self.fullscreen_state {
+            FullscreenState::Windowed => {
+                self.fullscreen_state = FullscreenState::EnteringFullscreen;
+                self.saved_w = self.viewport_w;
+                self.saved_h = self.viewport_h;
+                self.viewport_w = 1024;
+                self.viewport_h = 768;
+                self.recompute_layout();
+                self.fullscreen_state = FullscreenState::Fullscreen;
+                FullscreenState::Fullscreen
+            }
+            FullscreenState::Fullscreen => {
+                self.fullscreen_state = FullscreenState::ExitingFullscreen;
+                self.viewport_w = if self.saved_w > 0 { self.saved_w } else { WIN_W };
+                self.viewport_h = if self.saved_h > 0 { self.saved_h } else { WIN_H };
+                self.recompute_layout();
+                self.fullscreen_state = FullscreenState::Windowed;
+                FullscreenState::Windowed
+            }
+            _ => {
+                self.recover();
+                FullscreenState::Windowed
+            }
+        }
+    }
+
+    pub fn recover(&mut self) {
+        self.viewport_w = WIN_W;
+        self.viewport_h = WIN_H;
+        self.recompute_layout();
+        self.fullscreen_state = FullscreenState::Windowed;
     }
 
     pub fn can_go_back(&self) -> bool {
@@ -679,14 +760,7 @@ impl BrowserSession {
         self.is_address_focused = false;
         self.address_selected = false;
         parse_html(html, &mut self.page);
-        self.layout.compute(&self.page, WIN_W - 24);
-
-        let viewport_h = CLIP_BOTTOM - CLIP_TOP;
-        if self.layout.total_height > viewport_h {
-            self.max_scroll = self.layout.total_height - viewport_h;
-        } else {
-            self.max_scroll = 0;
-        }
+        self.recompute_layout();
     }
 
     pub fn scroll_by(&mut self, delta: i32) {
@@ -701,6 +775,11 @@ impl BrowserSession {
 
     /// Hit-testing para cliques do mouse: despacha botões do chrome, barra de endereço, rolagem e links
     pub fn handle_click(&mut self, click_x: usize, click_y: usize) -> BrowserAction {
+        let w = self.viewport_w;
+        let h = self.viewport_h;
+        let clip_top = CLIP_TOP;
+        let clip_bottom = h.saturating_sub(1);
+
         // 1. Barra de ferramentas / Chrome (y: 3..24)
         if click_y >= 3 && click_y <= 24 {
             // Botão Back [<] em (4..16)
@@ -724,26 +803,31 @@ impl BrowserSession {
                 return BrowserAction::Reload;
             }
 
-            // Barra de Endereço em (44..282)
-            if click_x >= 44 && click_x <= 282 {
+            // Botão Fullscreen [F] no canto direito (w - 24 .. w - 4)
+            let fs_x = w.saturating_sub(24);
+            if click_x >= fs_x && click_x <= w.saturating_sub(4) {
+                return BrowserAction::ToggleFullscreen;
+            }
+
+            // Barra de Endereço em (44 .. w - 28)
+            if click_x >= 44 && click_x <= w.saturating_sub(28) {
                 self.focus_address();
                 return BrowserAction::FocusAddress;
             }
         }
 
         // 2. Viewport de Conteúdo: aplica deslocamento de scroll_y
-        if click_y >= CLIP_TOP && click_y <= CLIP_BOTTOM {
-            // Clicar fora da barra de endereços cancela o foco
+        if click_y >= clip_top && click_y <= clip_bottom {
             if self.is_address_focused {
                 self.unfocus_address();
             }
 
-            // Se clicou na barra de rolagem (track_x = 286..294)
-            if click_x >= WIN_W - 14 {
-                let track_y = CLIP_TOP;
-                let track_h = WIN_H - CLIP_TOP - 1;
+            // Barra de rolagem (track_x = w - 14 .. w)
+            if click_x >= w.saturating_sub(14) {
+                let track_y = clip_top;
+                let track_h = h.saturating_sub(clip_top + 1);
                 if self.max_scroll > 0 {
-                    let thumb_h = 24usize.max(track_h * (CLIP_BOTTOM - CLIP_TOP) / self.layout.total_height.max(1));
+                    let thumb_h = 24usize.max(track_h * (clip_bottom - clip_top) / self.layout.total_height.max(1));
                     let thumb_travel = track_h.saturating_sub(thumb_h);
                     let thumb_y = track_y + (self.scroll_y * thumb_travel / self.max_scroll.max(1));
 
@@ -757,7 +841,7 @@ impl BrowserSession {
             }
 
             // Hit-test em links do documento
-            let doc_y = (click_y - CLIP_TOP) + self.scroll_y;
+            let doc_y = (click_y - clip_top) + self.scroll_y;
             for i in 0..self.layout.click_count {
                 let r = &self.layout.click_regions[i];
                 if click_x >= r.x && click_x <= r.x + r.w && doc_y >= r.y && doc_y <= r.y + r.h {
@@ -772,45 +856,57 @@ impl BrowserSession {
     }
 
     pub fn render(&self, buf: &mut [u32]) {
+        let w = self.viewport_w;
+        let h = self.viewport_h;
+        let clip_top = CLIP_TOP;
+        let clip_bottom = h.saturating_sub(1);
+
         // 1. Fundo Geral
-        fill_rect(buf, 0, 0, WIN_W, WIN_H, COLOR_BG);
+        fill_rect(buf, w, h, 0, 0, w, h, COLOR_BG);
 
         // 2. Barra Superior de Navegação (Chrome)
-        fill_rect(buf, 0, 0, WIN_W, 26, COLOR_CHROME);
-        draw_rect_border(buf, 0, 0, WIN_W, 26, COLOR_BORDER);
+        fill_rect(buf, w, h, 0, 0, w, 26, COLOR_CHROME);
+        draw_rect_border(buf, w, h, 0, 0, w, 26, COLOR_BORDER);
 
         // Botões: [<] [>] [R]
         let back_col = if self.can_go_back() { COLOR_BTN_TEXT } else { 0x0058_5B70 };
         let fwd_col = if self.can_go_forward() { COLOR_BTN_TEXT } else { 0x0058_5B70 };
         let reload_col = COLOR_URL_TEXT;
 
-        font::draw_text(buf, WIN_W, WIN_H, 6, 9, b"<", back_col, None);
-        font::draw_text(buf, WIN_W, WIN_H, 18, 9, b">", fwd_col, None);
-        font::draw_text(buf, WIN_W, WIN_H, 30, 9, b"R", reload_col, None);
+        font::draw_text(buf, w, h, 6, 9, b"<", back_col, None);
+        font::draw_text(buf, w, h, 18, 9, b">", fwd_col, None);
+        font::draw_text(buf, w, h, 30, 9, b"R", reload_col, None);
+
+        // Botão de Tela Cheia [F]
+        let fs_btn_x = w.saturating_sub(20);
+        let fs_col = if self.fullscreen_state == FullscreenState::Fullscreen { COLOR_H1 } else { COLOR_BTN_TEXT };
+        font::draw_text(buf, w, h, fs_btn_x, 9, b"F", fs_col, None);
 
         // Campo de URL (Barra de Endereço)
+        let url_x = 44;
+        let url_w = w.saturating_sub(70);
         let border_col = if self.is_address_focused { COLOR_H1 } else { COLOR_URL_BORDER };
-        fill_rect(buf, 44, 4, 238, 18, COLOR_URL_BG);
-        draw_rect_border(buf, 44, 4, 238, 18, border_col);
+        fill_rect(buf, w, h, url_x, 4, url_w, 18, COLOR_URL_BG);
+        draw_rect_border(buf, w, h, url_x, 4, url_w, 18, border_col);
 
         if self.is_address_focused {
             if self.address_selected && self.address_edit_len > 0 {
-                let sel_w = (self.address_edit_len * font::FONT_WIDTH).min(234);
-                fill_rect(buf, 46, 6, sel_w + 2, 14, 0x0045_475A);
+                let sel_w = (self.address_edit_len * font::FONT_WIDTH).min(url_w.saturating_sub(4));
+                fill_rect(buf, w, h, url_x + 2, 6, sel_w + 2, 14, 0x0045_475A);
                 let edit_slice = &self.address_edit[..self.address_edit_len];
-                font::draw_text_clipped(buf, WIN_W, WIN_H, 48, 9, edit_slice, 0x00CD_D6F4, None, 4, 22);
+                font::draw_text_clipped(buf, w, h, url_x + 4, 9, edit_slice, 0x00CD_D6F4, None, 4, 22);
             } else {
                 let edit_slice = &self.address_edit[..self.address_edit_len];
-                font::draw_text_clipped(buf, WIN_W, WIN_H, 48, 9, edit_slice, COLOR_H1, None, 4, 22);
-                // Desenha cursor sublinhado '_'
-                let cursor_x = 48 + self.address_edit_len * font::FONT_WIDTH;
-                if cursor_x + font::FONT_WIDTH <= 280 {
-                    font::draw_text_clipped(buf, WIN_W, WIN_H, cursor_x, 9, b"_", COLOR_H1, None, 4, 22);
+                font::draw_text_clipped(buf, w, h, url_x + 4, 9, edit_slice, COLOR_H1, None, 4, 22);
+                // Cursor '_'
+                let cursor_x = url_x + 4 + self.address_edit_len * font::FONT_WIDTH;
+                if cursor_x + font::FONT_WIDTH <= url_x + url_w {
+                    font::draw_text_clipped(buf, w, h, cursor_x, 9, b"_", COLOR_H1, None, 4, 22);
                 }
             }
         } else {
             let url_slice = &self.current_url[..self.current_url_len];
-            font::draw_text_clipped(buf, WIN_W, WIN_H, 48, 9, url_slice, COLOR_URL_TEXT, None, 4, 22);
+            font::draw_text_clipped(buf, w, h, url_x + 4, 9, url_slice, COLOR_URL_TEXT, None, 4, 22);
         }
 
         // 3. Documento no Viewport (com scroll_y aplicado e clipping)
@@ -819,35 +915,34 @@ impl BrowserSession {
 
             if line.is_hr {
                 if line.y >= self.scroll_y {
-                    let actual_y = (line.y - self.scroll_y) + CLIP_TOP;
-                    if actual_y >= CLIP_TOP && actual_y <= CLIP_BOTTOM {
-                        fill_rect(buf, line.x, actual_y, WIN_W - 24, 1, COLOR_HR);
+                    let actual_y = (line.y - self.scroll_y) + clip_top;
+                    if actual_y >= clip_top && actual_y <= clip_bottom {
+                        fill_rect(buf, w, h, line.x, actual_y, w.saturating_sub(24), 1, COLOR_HR);
                     }
                 }
             } else {
                 if line.y >= self.scroll_y {
-                    let actual_y = (line.y - self.scroll_y) + CLIP_TOP;
-                    if actual_y + font::FONT_HEIGHT <= CLIP_BOTTOM {
+                    let actual_y = (line.y - self.scroll_y) + clip_top;
+                    if actual_y + font::FONT_HEIGHT <= clip_bottom {
                         let text_slice = &line.text[..line.text_len];
                         font::draw_text_clipped(
                             buf,
-                            WIN_W,
-                            WIN_H,
+                            w,
+                            h,
                             line.x,
                             actual_y,
                             text_slice,
                             line.color,
                             None,
-                            CLIP_TOP,
-                            CLIP_BOTTOM,
+                            clip_top,
+                            clip_bottom,
                         );
 
-                        // Se for link, desenha sublinhado decorativo
                         if line.is_link {
                             let underline_y = actual_y + font::FONT_HEIGHT;
-                            if underline_y <= CLIP_BOTTOM {
+                            if underline_y <= clip_bottom {
                                 let link_w = line.text_len * font::FONT_WIDTH;
-                                fill_rect(buf, line.x, underline_y, link_w, 1, line.color);
+                                fill_rect(buf, w, h, line.x, underline_y, link_w, 1, line.color);
                             }
                         }
                     }
@@ -856,46 +951,50 @@ impl BrowserSession {
         }
 
         // 4. Barra de Rolagem Vertical (Scrollbar Track & Thumb)
-        let track_x = WIN_W - 14;
+        let track_x = w.saturating_sub(14);
         let track_w = 8;
-        let track_y = CLIP_TOP;
-        let track_h = WIN_H - CLIP_TOP - 1;
-        fill_rect(buf, track_x, track_y, track_w, track_h, COLOR_SCROLL_TRACK);
-        draw_rect_border(buf, track_x, track_y, track_w, track_h, COLOR_BORDER);
+        let track_y = clip_top;
+        let track_h = h.saturating_sub(clip_top + 1);
+        fill_rect(buf, w, h, track_x, track_y, track_w, track_h, COLOR_SCROLL_TRACK);
+        draw_rect_border(buf, w, h, track_x, track_y, track_w, track_h, COLOR_BORDER);
 
         if self.max_scroll > 0 {
-            let thumb_h = 24usize.max(track_h * (CLIP_BOTTOM - CLIP_TOP) / self.layout.total_height.max(1));
+            let thumb_h = 24usize.max(track_h * (clip_bottom - clip_top) / self.layout.total_height.max(1));
             let thumb_travel = track_h.saturating_sub(thumb_h);
             let thumb_y = track_y + (self.scroll_y * thumb_travel / self.max_scroll.max(1));
-            fill_rect(buf, track_x + 1, thumb_y, track_w - 2, thumb_h, COLOR_SCROLL_THUMB);
-            draw_rect_border(buf, track_x + 1, thumb_y, track_w - 2, thumb_h, COLOR_SCROLL_THUMB_BORDER);
+            fill_rect(buf, w, h, track_x + 1, thumb_y, track_w - 2, thumb_h, COLOR_SCROLL_THUMB);
+            draw_rect_border(buf, w, h, track_x + 1, thumb_y, track_w - 2, thumb_h, COLOR_SCROLL_THUMB_BORDER);
         }
     }
 }
+
 // ── Primitivas Gráficas Locais ────────────────────────────────────────────────
 
-fn fill_rect(buf: &mut [u32], rx: usize, ry: usize, rw: usize, rh: usize, color: u32) {
-    let x_end = (rx + rw).min(WIN_W);
-    let y_end = (ry + rh).min(WIN_H);
+fn fill_rect(buf: &mut [u32], stride_w: usize, max_h: usize, rx: usize, ry: usize, rw: usize, rh: usize, color: u32) {
+    let x_end = (rx + rw).min(stride_w);
+    let y_end = (ry + rh).min(max_h);
     for y in ry..y_end {
-        let row = y * WIN_W;
+        let row = y * stride_w;
         for x in rx..x_end {
-            buf[row + x] = color;
+            let idx = row + x;
+            if idx < buf.len() {
+                buf[idx] = color;
+            }
         }
     }
 }
 
-fn draw_rect_border(buf: &mut [u32], rx: usize, ry: usize, rw: usize, rh: usize, color: u32) {
+fn draw_rect_border(buf: &mut [u32], stride_w: usize, max_h: usize, rx: usize, ry: usize, rw: usize, rh: usize, color: u32) {
     if rw == 0 || rh == 0 { return; }
     let x_end = rx + rw - 1;
     let y_end = ry + rh - 1;
-    for x in rx..=x_end.min(WIN_W - 1) {
-        if ry < WIN_H { buf[ry * WIN_W + x] = color; }
-        if y_end < WIN_H { buf[y_end * WIN_W + x] = color; }
+    for x in rx..=x_end.min(stride_w.saturating_sub(1)) {
+        if ry < max_h && ry * stride_w + x < buf.len() { buf[ry * stride_w + x] = color; }
+        if y_end < max_h && y_end * stride_w + x < buf.len() { buf[y_end * stride_w + x] = color; }
     }
-    for y in ry..=y_end.min(WIN_H - 1) {
-        if rx < WIN_W { buf[y * WIN_W + rx] = color; }
-        if x_end < WIN_W { buf[y * WIN_W + x_end] = color; }
+    for y in ry..=y_end.min(max_h.saturating_sub(1)) {
+        if rx < stride_w && y * stride_w + rx < buf.len() { buf[y * stride_w + rx] = color; }
+        if x_end < stride_w && y * stride_w + x_end < buf.len() { buf[y * stride_w + x_end] = color; }
     }
 }
 

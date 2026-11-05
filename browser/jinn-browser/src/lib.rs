@@ -1,11 +1,17 @@
 //! Jinn Browser Engine - Reference Implementation and Session Manager
 
 pub mod tab;
+pub mod fullscreen;
+
+pub use fullscreen::{
+    FullscreenController, FullscreenState, FullscreenTransitionError, WindowGeometry,
+};
 
 pub use tab::{
-    AudioFocusManager, AudioPlaybackState, MediaPipeline, MemoryBreakdown, Tab, TabManager,
-    TabMetrics, TabSnapshot, TabState, TabTaskContext, TabTelemetry, TabTransitionError,
-    TaskExecutionState,
+    AudioFocusManager, AudioPlaybackState, BrowserResourceManager, KernelTaskStateMapping,
+    LogicalTabFootprint, MediaPipeline, MemoryBreakdown, MemoryProfile, PhysicalMemoryFootprint,
+    ProfileQuotas, Tab, TabManager, TabMetrics, TabSnapshot, TabState, TabTaskContext,
+    TabTelemetry, TabTransitionError, TaskExecutionState,
 };
 
 use jbe_core::{EngineError, EngineLimits, Point};
