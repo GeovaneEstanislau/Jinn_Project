@@ -1,9 +1,9 @@
 # Jinn OS — Microkernel x86_64 Minimalista e Preemptivo em Rust
 
-> **Status:** Em desenvolvimento ativo 🚀  
+> **Status:** Em desenvolvimento ativo  
 > **Arquitetura:** `x86_64` | **Linguagem:** Rust (`#![no_std]`, bare-metal)  
 > **Bootloader:** Limine Boot Protocol v2 (Higher-Half)  
-> **Comunidade:** Desenvolvido no Brasil 🇧🇷 com foco em segurança, previsibilidade e simplicidade.
+> **Comunidade:** Desenvolvido no Brasil com foco em seguranca, previsibilidade e simplicidade.
 
 ---
 
@@ -64,19 +64,19 @@ jinn/
 
 Para garantir a sustentabilidade econômica soberana, financiar pesquisa de sistemas operacionais e recompensar contribuidores de código aberto via *Proof of Useful Contribution* (PoUC), o projeto desenvolve a infraestrutura do token nativo **$JINN** na BNB Smart Chain (BSC).
 
-> ⚠️ **Isolamento Inviolável:** O microkernel Jinn (Ring 0) não armazena, processa ou recebe chaves privadas ou sementes mnemônicas. Todas as operações criptográficas residem estritamente em userspace (Ring 3) e na aplicação **Aladdin Wallet**.
+> [!] **Isolamento Inviolavel:** O microkernel Jinn (Ring 0) nao armazena, processa ou recebe chaves privadas ou sementes mnenonicas. Todas as operacoes criptograficas residem estritamente em userspace (Ring 3) e na aplicacao **Aladdin Wallet**.
 
-- 📄 **Proposta e Whitepaper Econômico:** [`JINN_TOKEN_PROPOSAL.md`](JINN_TOKEN_PROPOSAL.md)
-- 🛡️ **Relatório de Validação EVM & Auditoria Fase II:** [`docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md`](docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md)
-- 🏛️ **Governança e Tesouraria Multi-Sig:** [`docs/JINN_OPEN_ECONOMY_GOVERNANCE.md`](docs/JINN_OPEN_ECONOMY_GOVERNANCE.md)
-- 🏆 **Especificação do PoUC (Bounties):** [`docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md`](docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md)
-- 🖥️ **Arquitetura da Carteira (Ring 3):** [`docs/JINN_WALLET_ARCHITECTURE.md`](docs/JINN_WALLET_ARCHITECTURE.md)
-- 💼 **Aladdin Wallet (Código Ring 3 UI):** [`apps/ola-mundo/src/wallet.rs`](apps/ola-mundo/src/wallet.rs)
-- ⚙️ **Daemon Userspace `jinn-web3d`:** [`tools/jinn-web3/src/daemon.rs`](tools/jinn-web3/src/daemon.rs)
-- ⚡ **Economia Computacional e DePIN (JDA):** [`docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md`](docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md)
-- 🔍 **Auditoria Interna dos Smart Contracts:** [`docs/SMART_CONTRACTS_AUDIT_REPORT.md`](docs/SMART_CONTRACTS_AUDIT_REPORT.md)
-- 🚀 **Guia de Implantação em Testnet:** [`docs/TESTNET_DEPLOYMENT_GUIDE.md`](docs/TESTNET_DEPLOYMENT_GUIDE.md)
-- 🛠️ **Utilitário e Codificador em Rust:** [`tools/jinn-web3/`](tools/jinn-web3/)
+- **Proposta e Whitepaper Economico:** [`JINN_TOKEN_PROPOSAL.md`](JINN_TOKEN_PROPOSAL.md)
+- **Relatorio de Validacao EVM & Auditoria Fase II:** [`docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md`](docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md)
+- **Governanca e Tesouraria Multi-Sig:** [`docs/JINN_OPEN_ECONOMY_GOVERNANCE.md`](docs/JINN_OPEN_ECONOMY_GOVERNANCE.md)
+- **Especificacao do PoUC (Bounties):** [`docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md`](docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md)
+- **Arquitetura da Carteira (Ring 3):** [`docs/JINN_WALLET_ARCHITECTURE.md`](docs/JINN_WALLET_ARCHITECTURE.md)
+- **Aladdin Wallet (Codigo Ring 3 UI):** [`apps/ola-mundo/src/wallet.rs`](apps/ola-mundo/src/wallet.rs)
+- **Daemon Userspace `jinn-web3d`:** [`tools/jinn-web3/src/daemon.rs`](tools/jinn-web3/src/daemon.rs)
+- **Economia Computacional e DePIN (JDA):** [`docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md`](docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md)
+- **Auditoria Interna dos Smart Contracts:** [`docs/SMART_CONTRACTS_AUDIT_REPORT.md`](docs/SMART_CONTRACTS_AUDIT_REPORT.md)
+- **Guia de Implantacao em Testnet:** [`docs/TESTNET_DEPLOYMENT_GUIDE.md`](docs/TESTNET_DEPLOYMENT_GUIDE.md)
+- **Utilitario e Codificador em Rust:** [`tools/jinn-web3/`](tools/jinn-web3/)
 
 ---
 

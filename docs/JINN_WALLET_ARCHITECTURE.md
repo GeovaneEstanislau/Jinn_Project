@@ -100,7 +100,7 @@ Projetada com base no **Aladdin Design System** ([`docs/ALADDIN_DESKTOP_SPEC.md`
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ ✦ Aladdin Wallet — Jinn OS Network                  [—][□][X]│
+│ Aladdin Wallet — Jinn OS Network                     [—][□][X]│
 ├─────────────────────────────────────────────────────────────┤
 │  Rede Ativa: ● BSC Testnet (Chapel)   Chain ID: 97          │
 │                                                             │

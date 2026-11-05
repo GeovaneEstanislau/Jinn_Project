@@ -151,7 +151,7 @@ A integridade do sistema operacional e a proteção das chaves dos usuários sã
 │  │ - Pilha TCP/IP (src/net/tcp.rs, socket.rs)     │                    │
 │  │ - Firewall JinnWall (filtragem de portas)      │                    │
 │  │ - Isolamento de Memória PML4 (Ring 0 / Ring 3) │                    │
-│  │ ⚠️  REGRA DE OURO: ZERO SEED PHRASES OU CHAVES │                    │
+│  │ [!] REGRA DE OURO: ZERO SEED PHRASES OU CHAVES  │                    │
 │  │    PRIVADAS TOCAM O KERNEL RING 0!             │                    │
 │  └────────────────────────────────────────────────┘                    │
 └────────────────────────────────────────────────────────────────────────┘

@@ -33,7 +33,7 @@ Para evitar fraudes de "nós fantasmas" ou nós que apenas fingem disponibilidad
 │ Quantidade de núcleos    │ Ciclos de CPU e RAM   │ Resultado conferido │
 │ SMP, VRAM e NVMe livres  │ efetivamente alocados │ criptograficamente  │
 │ declarados pelo nó.      │ durante a execução.   │ por desafio/quórum. │
-│ ⚠️ NÃO GERA RECOMPENSA!  │ ⚠️ MÉTRICA DE MEDIÇÃO │ ✅ GERA RECOMPENSA! │
+│ ❌ NÃO GERA RECOMPENSA!  │ [!] MÉTRICA DE MEDIÇÃO │ ✅ GERA RECOMPENSA! │
 └──────────────────────────┴───────────────────────┴─────────────────────┘
 ```
 
