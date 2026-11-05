@@ -307,6 +307,10 @@ pub extern "C" fn syscall_dispatch_framed(frame: *mut usize) -> usize {
     let arg0 = unsafe { *frame.add(8) };  // saved RDI
     let arg1 = unsafe { *frame.add(9) };  // saved RSI
     let arg2 = unsafe { *frame.add(12) }; // saved RDX
+    let arg3 = unsafe {
+        let r10 = *frame.add(5); // saved R10 (padrão x86-64 Linux/Syscall ABI)
+        if r10 != 0 { r10 } else { *frame.add(13) } // fallback para saved RCX
+    };
 
     match nr {
         0 => {
@@ -343,7 +347,7 @@ pub extern "C" fn syscall_dispatch_framed(frame: *mut usize) -> usize {
             0
         }
         _ => {
-            let ret = syscall_dispatch(nr, arg0, arg1, arg2);
+            let ret = syscall_dispatch(nr, arg0, arg1, arg2, arg3);
             unsafe { *frame.add(14) = ret as usize; } // atualiza o RAX salvo com o código de retorno
             0 // 0 indica para o stub continuar na mesma tarefa
         }
@@ -361,6 +365,7 @@ pub extern "C" fn syscall_dispatch(
     arg0: usize,  // RDI
     arg1: usize,  // RSI
     arg2: usize,  // RDX
+    arg3: usize,  // R10 / RCX
 ) -> isize {
     match nr {
         0  => sys_exit(arg0 as i32),
@@ -383,8 +388,8 @@ pub extern "C" fn syscall_dispatch(
         17 => sys_stat(arg0 as *const u8, arg1, arg2 as *mut FileStat),
         18 => sys_fstat(arg0, arg1 as *mut FileStat),
         19 => sys_lseek(arg0, arg1 as i64, arg2),
-        20 => sys_window_create(arg0 as *const u8, arg1, arg2),
-        21 => sys_window_update(arg0, arg1 as *const u32, arg2),
+        20 => sys_window_create(arg0 as *const u8, arg1, arg2, arg3),
+        21 => sys_window_update(arg0, arg1 as *const u32, arg2), // sys_window_blit (win_id, buffer, size_bytes)
         22 => sys_window_close(arg0),
         23 => sys_sync(),
         24 => sys_window_poll_event(arg0, arg1 as *mut crate::gui::ClientWindowEvent, arg2),
@@ -1278,10 +1283,11 @@ fn sys_jda_ring_poll(cqe_ptr: *mut crate::jda::ring::JdaCqe, max_count: usize) -
 
 // ── Aladdin Graphics Syscalls ─────────────────────────────────────────────────
 
-/// `sys_window_create(title_ptr, title_len, packed_dim)` — Cria uma janela no Aladdin Desktop.
-/// `packed_dim`: `(width << 16) | (height & 0xFFFF)`.
+/// `sys_window_create(title_ptr, title_len, width_or_packed, height_opt)` — Cria uma janela no Aladdin Desktop.
+/// Suporta tanto passagem direta de 4 argumentos `(title, len, width, height)` quanto
+/// o empacotamento legado `packed_dim: (width << 16) | (height & 0xFFFF)`.
 /// Retorna o ID da janela (>= 0) em caso de sucesso, ou código de erro negativo.
-fn sys_window_create(title_ptr: *const u8, title_len: usize, packed_dim: usize) -> isize {
+fn sys_window_create(title_ptr: *const u8, title_len: usize, width_or_packed: usize, height_opt: usize) -> isize {
     let pid = scheduler::current_pid();
     if is_current_task_user() {
         if let Err(e) = validate_user_buffer(title_ptr, title_len, false) {
@@ -1296,8 +1302,11 @@ fn sys_window_create(title_ptr: *const u8, title_len: usize, packed_dim: usize) 
         Ok(s) => s,
         Err(_) => return EINVAL,
     };
-    let width = (packed_dim >> 16) & 0xFFFF;
-    let height = packed_dim & 0xFFFF;
+    let (width, height) = if height_opt > 0 {
+        (width_or_packed, height_opt)
+    } else {
+        ((width_or_packed >> 16) & 0xFFFF, width_or_packed & 0xFFFF)
+    };
     if width == 0 || height == 0 || width > 1024 || height > 768 {
         return EINVAL;
     }
@@ -2438,5 +2447,11 @@ fn sys_rename(args_ptr: *const RenameArgs) -> isize {
 /// Invoke a syscall directly from kernel code (no `int 0x80`).
 #[inline]
 pub fn invoke(nr: usize, arg0: usize, arg1: usize, arg2: usize) -> isize {
-    syscall_dispatch(nr, arg0, arg1, arg2)
+    syscall_dispatch(nr, arg0, arg1, arg2, 0)
+}
+
+/// Invoke a syscall with 4 arguments directly from kernel code (no `int 0x80`).
+#[inline]
+pub fn invoke4(nr: usize, arg0: usize, arg1: usize, arg2: usize, arg3: usize) -> isize {
+    syscall_dispatch(nr, arg0, arg1, arg2, arg3)
 }

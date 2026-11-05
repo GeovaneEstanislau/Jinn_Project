@@ -1,0 +1,8 @@
+[package]
+name = "aladdin-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "SDK no_std para desenvolvimento de aplicacoes de usuario Ring 3 no Jinn OS / Aladdin Desktop"
+authors = ["Jinn OS Engineering Team"]
+
+[dependencies]

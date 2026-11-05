@@ -52,6 +52,22 @@ unsafe fn syscall3(nr: u64, arg0: u64, arg1: u64, arg2: u64) -> i64 {
     ret
 }
 
+/// Emite `int 0x80` com quatro argumentos e retorna o valor em RAX.
+#[inline(always)]
+unsafe fn syscall4(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> i64 {
+    let ret: i64;
+    core::arch::asm!(
+        "int 0x80",
+        inout("rax") nr => ret,
+        in("rdi") arg0,
+        in("rsi") arg1,
+        in("rdx") arg2,
+        in("r10") arg3,
+        options(nostack)
+    );
+    ret
+}
+
 /// Emite `int 0x80` sem argumentos.
 #[inline(always)]
 unsafe fn syscall0(nr: u64) -> i64 {
@@ -327,11 +343,16 @@ pub unsafe fn sys_close(fd: u64) -> i64 {
 /// Retorna o ID da janela (>= 0), ou código de erro negativo.
 #[inline(always)]
 pub unsafe fn sys_window_create(title: &str, client_w: usize, client_h: usize) -> i64 {
-    let packed = (((client_w & 0xFFFF) as u64) << 16) | ((client_h & 0xFFFF) as u64);
-    syscall3(20, title.as_ptr() as u64, title.len() as u64, packed)
+    syscall4(20, title.as_ptr() as u64, title.len() as u64, client_w as u64, client_h as u64)
 }
 
-// ── Syscall 21 — window_update ────────────────────────────────────────────────
+/// Cria uma nova janela no Aladdin Desktop passando ponteiro bruto de título e dimensões diretas.
+#[inline(always)]
+pub unsafe fn sys_window_create_raw(title: *const u8, len: usize, width: u32, height: u32) -> i64 {
+    syscall4(20, title as u64, len as u64, width as u64, height as u64)
+}
+
+// ── Syscall 21 — window_update / window_blit ──────────────────────────────────
 
 /// Apresenta um buffer de pixels (0x00RRGGBB) na janela de cliente.
 /// `win_id`: identificador da janela retornado por `sys_window_create`.
@@ -340,6 +361,12 @@ pub unsafe fn sys_window_create(title: &str, client_w: usize, client_h: usize) -
 pub unsafe fn sys_window_update(win_id: usize, buffer: &[u32]) -> i64 {
     let len_bytes = buffer.len() * core::mem::size_of::<u32>();
     syscall3(21, win_id as u64, buffer.as_ptr() as u64, len_bytes as u64)
+}
+
+/// Apresenta pixels na janela a partir de um ponteiro de buffer e tamanho em bytes (sys_window_blit).
+#[inline(always)]
+pub unsafe fn sys_window_blit(window_id: u64, buffer: *const u8, size: usize) -> i64 {
+    syscall3(21, window_id, buffer as u64, size as u64)
 }
 
 // ── Syscall 22 — window_close ─────────────────────────────────────────────────

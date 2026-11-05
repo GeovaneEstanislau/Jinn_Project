@@ -2,7 +2,8 @@
 param(
     [string]$DiskPath = "disk.img",
     [string]$AppElfPath = "iso_root\apps\ola-mundo.elf",
-    [string]$BrowserElfPath = "iso_root\apps\browser.elf"
+    [string]$BrowserElfPath = "iso_root\apps\browser.elf",
+    [string]$GraficoElfPath = "iso_root\apps\ola-grafico.elf"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,6 +43,16 @@ if (Test-Path $resolvedBrowser) {
     $browserBytes = [byte[]]::new(512)
 }
 
+# Lê o binário gráfico Ring 3 (ola-grafico.elf)
+$graficoBytes = @()
+$resolvedGrafico = Join-Path $projectRoot $GraficoElfPath
+if (Test-Path $resolvedGrafico) {
+    $graficoBytes = [System.IO.File]::ReadAllBytes($resolvedGrafico)
+    Write-Host "Binário ola-grafico encontrado: $resolvedGrafico ($($graficoBytes.Length) bytes)"
+} else {
+    Write-Host "Aviso: $resolvedGrafico não encontrado."
+}
+
 # Texto do README.TXT da partição FAT32 (/disk)
 $readmeText = @"
 =====================================================
@@ -54,14 +65,13 @@ do disco rigido virtual usando o driver de VFS.
 
 Executaveis disponiveis nesta particao:
   - /disk/ola.elf (Processo de espaco de usuario Ring 3)
-  - /disk/browser.elf (Jinn Browser Engine v0.3.0)
+  - /disk/ola_graf.elf (App Grafico Independente Ring 3 Aladdin SDK)
+  - /disk/browser.elf (Jinn Browser Engine v0.5.0)
 
-Experimente executar no shell do Jinn:
-  jinn[K]> ls /disk
-  jinn[K]> cat /disk/readme.txt
-  jinn[K]> spawn /disk/ola.elf
-  jinn[K]> spawn /disk/browser.elf
-  jinn[K]> ps
+Experimente executar no terminal do Aladdin:
+  spawn /disk/ola.elf
+  spawn /disk/ola_graf.elf
+  spawn /disk/browser.elf
 "@
 $readmeBytes = [System.Text.Encoding]::ASCII.GetBytes($readmeText)
 
@@ -101,39 +111,23 @@ function Write-BytesAt([long]$offset, [byte[]]$bytes) {
 # ----------------------------------------------------------------------
 $mbr = [byte[]]::new(512)
 
-# --- Partição 1: FAT32 (Offset 446 / 0x1BE) ---
-$part1Offset = 446
-$mbr[$part1Offset + 0] = 0x80 # Bootable (Active)
-$mbr[$part1Offset + 1] = 0x00 # CHS Start
-$mbr[$part1Offset + 2] = 0x01
-$mbr[$part1Offset + 3] = 0x01
-$mbr[$part1Offset + 4] = 0x0C # Partition Type: FAT32 LBA
-$mbr[$part1Offset + 5] = 0x00 # CHS End
-$mbr[$part1Offset + 6] = 0x00
-$mbr[$part1Offset + 7] = 0x00
+# Partição 1: FAT32 (LBA 2048 a 65535, tamanho = 63488 setores = 31 MiB)
+$startLba1 = 2048
+$sizeLba1 = 63488
+$mbr[446 + 0] = 0x80 # Bootable
+$mbr[446 + 4] = 0x0C # Type: FAT32 LBA
+[System.BitConverter]::GetBytes([uint32]$startLba1).CopyTo($mbr, 446 + 8)
+[System.BitConverter]::GetBytes([uint32]$sizeLba1).CopyTo($mbr, 446 + 12)
 
-$startLba1 = 2048 # LBA 2048 (1 MiB)
-$part1Sectors = 63488 # 31 MiB
-[System.BitConverter]::GetBytes([uint32]$startLba1).CopyTo($mbr, $part1Offset + 8)
-[System.BitConverter]::GetBytes([uint32]$part1Sectors).CopyTo($mbr, $part1Offset + 12)
+# Partição 2: Linux Native / Ext2 (LBA 65536 a 129023, tamanho = 63488 setores = 31 MiB)
+$startLba2 = 65536
+$sizeLba2 = 63488
+$mbr[462 + 0] = 0x00 # Not bootable
+$mbr[462 + 4] = 0x83 # Type: Linux native (Ext2/Ext3/Ext4)
+[System.BitConverter]::GetBytes([uint32]$startLba2).CopyTo($mbr, 462 + 8)
+[System.BitConverter]::GetBytes([uint32]$sizeLba2).CopyTo($mbr, 462 + 12)
 
-# --- Partição 2: Ext2 (Offset 462 / 0x1CE) ---
-$part2Offset = 462
-$mbr[$part2Offset + 0] = 0x00 # Non-bootable
-$mbr[$part2Offset + 1] = 0x00 # CHS Start
-$mbr[$part2Offset + 2] = 0x01
-$mbr[$part2Offset + 3] = 0x01
-$mbr[$part2Offset + 4] = 0x83 # Partition Type: Linux Native (Ext2)
-$mbr[$part2Offset + 5] = 0x00 # CHS End
-$mbr[$part2Offset + 6] = 0x00
-$mbr[$part2Offset + 7] = 0x00
-
-$startLba2 = 65536 # LBA 65536 (32 MiB)
-$part2Sectors = 63488 # 31 MiB
-[System.BitConverter]::GetBytes([uint32]$startLba2).CopyTo($mbr, $part2Offset + 8)
-[System.BitConverter]::GetBytes([uint32]$part2Sectors).CopyTo($mbr, $part2Offset + 12)
-
-# MBR Signature 0x55AA
+# Assinatura de Boot MBR
 $mbr[510] = 0x55
 $mbr[511] = 0xAA
 Write-BytesAt 0 $mbr
@@ -144,50 +138,54 @@ Write-BytesAt 0 $mbr
 $part1ByteOffset = [long]$startLba1 * $sectorSize
 $bpb = [byte[]]::new(512)
 
-# JMP boot
+# Jump boot code + OEM Name
 $bpb[0] = 0xEB; $bpb[1] = 0x58; $bpb[2] = 0x90
 [System.Text.Encoding]::ASCII.GetBytes("MSWIN4.1").CopyTo($bpb, 3)
 
-[System.BitConverter]::GetBytes([uint16]512).CopyTo($bpb, 11)   # BytsPerSec = 512
-$bpb[13] = 8                                                    # SecPerClus = 8 (4096 bytes)
-[System.BitConverter]::GetBytes([uint16]32).CopyTo($bpb, 14)    # RsvdSecCnt = 32
-$bpb[16] = 2                                                    # NumFATs = 2
-[System.BitConverter]::GetBytes([uint16]0).CopyTo($bpb, 17)     # RootEntCnt = 0 (FAT32)
-[System.BitConverter]::GetBytes([uint16]0).CopyTo($bpb, 19)     # TotSec16 = 0
-$bpb[21] = 0xF8                                                 # Media = Fixed disk
-[System.BitConverter]::GetBytes([uint16]0).CopyTo($bpb, 22)     # FATSz16 = 0
-[System.BitConverter]::GetBytes([uint16]63).CopyTo($bpb, 24)    # SecPerTrk = 63
-[System.BitConverter]::GetBytes([uint16]255).CopyTo($bpb, 26)   # NumHeads = 255
-[System.BitConverter]::GetBytes([uint32]$startLba1).CopyTo($bpb, 28) # HiddSec = 2048
-[System.BitConverter]::GetBytes([uint32]$part1Sectors).CopyTo($bpb, 32) # TotSec32 = 63488
+# BPB Standard
+[System.BitConverter]::GetBytes([uint16]512).CopyTo($bpb, 11)   # Bytes por setor
+$bpb[13] = 8                                                    # Setores por cluster (4 KiB por cluster)
+[System.BitConverter]::GetBytes([uint16]32).CopyTo($bpb, 14)    # Setores reservados (inclui BPB e FSInfo)
+$bpb[16] = 2                                                    # Quantidade de FATs (FAT 1 e FAT 2)
+[System.BitConverter]::GetBytes([uint16]0).CopyTo($bpb, 17)     # Root entries (0 em FAT32)
+[System.BitConverter]::GetBytes([uint16]0).CopyTo($bpb, 19)     # Total sectors 16 (0 em FAT32)
+$bpb[21] = 0xF8                                                 # Media descriptor (Disco fixo)
+[System.BitConverter]::GetBytes([uint16]0).CopyTo($bpb, 22)     # Sectors per FAT 16 (0 em FAT32)
+[System.BitConverter]::GetBytes([uint16]63).CopyTo($bpb, 24)    # Setores por trilha
+[System.BitConverter]::GetBytes([uint16]255).CopyTo($bpb, 26)   # Cabeças por cilindro
+[System.BitConverter]::GetBytes([uint32]$startLba1).CopyTo($bpb, 28) # Setores ocultos (offset da partição)
+[System.BitConverter]::GetBytes([uint32]$sizeLba1).CopyTo($bpb, 32)  # Total de setores 32
 
-# Campos FAT32
-$sectorsPerFat = 256
-[System.BitConverter]::GetBytes([uint32]$sectorsPerFat).CopyTo($bpb, 36) # FATSz32 = 256
-[System.BitConverter]::GetBytes([uint16]0).CopyTo($bpb, 40)              # ExtFlags = 0
-[System.BitConverter]::GetBytes([uint16]0).CopyTo($bpb, 42)              # FSVer = 0
-[System.BitConverter]::GetBytes([uint32]2).CopyTo($bpb, 44)              # RootClus = 2
-[System.BitConverter]::GetBytes([uint16]1).CopyTo($bpb, 48)              # FSInfo = 1
-[System.BitConverter]::GetBytes([uint16]6).CopyTo($bpb, 50)              # BkBootSec = 6
-$bpb[64] = 0x80                                                          # DrvNum = 0x80
-$bpb[66] = 0x29                                                          # BootSig = 0x29
-[System.BitConverter]::GetBytes([uint32]0x12345678).CopyTo($bpb, 67)     # VolID
-[System.Text.Encoding]::ASCII.GetBytes("JINN DISK  ").CopyTo($bpb, 71)   # VolLab
-[System.Text.Encoding]::ASCII.GetBytes("FAT32   ").CopyTo($bpb, 82)      # FilSysType
-$bpb[510] = 0x55; $bpb[511] = 0xAA                                      # Boot signature
+# FAT32 Extended BPB
+$sectorsPerFat = 512
+[System.BitConverter]::GetBytes([uint32]$sectorsPerFat).CopyTo($bpb, 36) # Setores por FAT
+[System.BitConverter]::GetBytes([uint16]0).CopyTo($bpb, 40)              # ExtFlags
+[System.BitConverter]::GetBytes([uint16]0).CopyTo($bpb, 42)              # Versão do FS (0.0)
+[System.BitConverter]::GetBytes([uint32]2).CopyTo($bpb, 44)              # Cluster da raiz (Cluster 2)
+[System.BitConverter]::GetBytes([uint16]1).CopyTo($bpb, 48)              # Setor FSInfo (Setor 1)
+[System.BitConverter]::GetBytes([uint16]6).CopyTo($bpb, 50)              # Setor Backup Boot (Setor 6)
+$bpb[64] = 0x80                                                          # Drive number
+$bpb[66] = 0x29                                                          # Boot signature
+[System.BitConverter]::GetBytes([uint32]0x12345678).CopyTo($bpb, 67)     # Volume ID
+[System.Text.Encoding]::ASCII.GetBytes("NO NAME    ").CopyTo($bpb, 71)    # Volume Label (11 chars)
+[System.Text.Encoding]::ASCII.GetBytes("FAT32   ").CopyTo($bpb, 82)      # File System Type (8 chars)
+$bpb[510] = 0x55; $bpb[511] = 0xAA
 
+# Grava BPB primário e backup
 Write-BytesAt $part1ByteOffset $bpb
 Write-BytesAt ($part1ByteOffset + 6 * $sectorSize) $bpb
 
 $clusterBytes = 8 * 512 # 4096 bytes
 $olaClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($elfBytes.Length / $clusterBytes))
 $browserClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($browserBytes.Length / $clusterBytes))
+$graficoClustersNeeded = if ($graficoBytes.Length -gt 0) { [Math]::Max(1, [int][Math]::Ceiling($graficoBytes.Length / $clusterBytes)) } else { 0 }
 
 $olaStartClus = 4
 $browserStartClus = $olaStartClus + $olaClustersNeeded
 $indexClus = $browserStartClus + $browserClustersNeeded
 $aboutClus = $indexClus + 1
-$nextFreeClus = $aboutClus + 1
+$graficoStartClus = if ($graficoClustersNeeded -gt 0) { $aboutClus + 1 } else { 0 }
+$nextFreeClus = if ($graficoClustersNeeded -gt 0) { $graficoStartClus + $graficoClustersNeeded } else { $aboutClus + 1 }
 
 # FSInfo Sector (Setor 1 da partição FAT32)
 $fsinfo = [byte[]]::new(512)
@@ -230,6 +228,18 @@ for ($i = 0; $i -lt $browserClustersNeeded; $i++) {
 
 Set-FatEntry $indexClus 0x0FFFFFFF
 Set-FatEntry $aboutClus 0x0FFFFFFF
+
+# Cadeia OLA_GRAF.ELF
+if ($graficoClustersNeeded -gt 0) {
+    for ($i = 0; $i -lt $graficoClustersNeeded; $i++) {
+        $currentClus = $graficoStartClus + $i
+        if ($i -eq $graficoClustersNeeded - 1) {
+            Set-FatEntry $currentClus 0x0FFFFFFF
+        } else {
+            Set-FatEntry $currentClus ([uint32]($currentClus + 1))
+        }
+    }
+}
 
 $fat1Offset = $part1ByteOffset + [long]32 * $sectorSize
 $fat2Offset = $part1ByteOffset + [long](32 + $sectorsPerFat) * $sectorSize
@@ -297,6 +307,9 @@ Add-DirEntry 2 "OLA     ELF" 0x20 $olaStartClus ($elfBytes.Length)
 Add-DirEntry 3 "INDEX   HTM" 0x20 $indexClus ($indexHtmlBytes.Length)
 Add-DirEntry 4 "ABOUT   HTM" 0x20 $aboutClus ($aboutHtmlBytes.Length)
 Add-DirEntry 5 "BROWSER ELF" 0x20 $browserStartClus ($browserBytes.Length)
+if ($graficoBytes.Length -gt 0) {
+    Add-DirEntry 6 "OLA_GRAFELF" 0x20 $graficoStartClus ($graficoBytes.Length)
+}
 
 Write-BytesAt $dataStartByteOffset1 $rootDir
 Write-BytesAt ($dataStartByteOffset1 + [long](3 - 2) * $clusterBytes) $readmeBytes
@@ -304,6 +317,9 @@ Write-BytesAt ($dataStartByteOffset1 + [long]($olaStartClus - 2) * $clusterBytes
 Write-BytesAt ($dataStartByteOffset1 + [long]($browserStartClus - 2) * $clusterBytes) $browserBytes
 Write-BytesAt ($dataStartByteOffset1 + [long]($indexClus - 2) * $clusterBytes) $indexHtmlBytes
 Write-BytesAt ($dataStartByteOffset1 + [long]($aboutClus - 2) * $clusterBytes) $aboutHtmlBytes
+if ($graficoBytes.Length -gt 0) {
+    Write-BytesAt ($dataStartByteOffset1 + [long]($graficoStartClus - 2) * $clusterBytes) $graficoBytes
+}
 
 # ======================================================================
 # 3. FORMATAÇÃO DA PARTIÇÃO 2: Ext2 (/ext2)
@@ -410,5 +426,5 @@ $bw.Close()
 $fs.Close()
 
 Write-Host "Disco virtual criado com sucesso em: $targetDisk"
-Write-Host "  - Particao 1 (FAT32): LBA $startLba1 (31 MiB) -> Arquivos: README.TXT, OLA.ELF, BROWSER.ELF, INDEX.HTM, ABOUT.HTM"
+Write-Host "  - Particao 1 (FAT32): LBA $startLba1 (31 MiB) -> Arquivos: README.TXT, OLA.ELF, BROWSER.ELF, OLA_GRAF.ELF, INDEX.HTM, ABOUT.HTM"
 Write-Host "  - Particao 2 (Ext2):  LBA $startLba2 (31 MiB) -> Arquivos: SERVER.TXT (Read-Only)"

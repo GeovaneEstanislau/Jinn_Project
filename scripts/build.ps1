@@ -1,4 +1,3 @@
-
 # build.ps1 - Build the kernel and copy ELF to boot folder
 $ErrorActionPreference = 'Stop'
 
@@ -53,6 +52,22 @@ $isoAppsDir = Join-Path -Path (Get-Location) "iso_root\apps"
 New-Item -ItemType Directory -Force -Path $isoAppsDir | Out-Null
 Copy-Item -Path $appElfPath -Destination (Join-Path $isoAppsDir "ola-mundo.elf") -Force
 Copy-Item -Path $appElfPath -Destination (Join-Path $isoAppsDir "browser.elf") -Force
+
+# --- Build ola-grafico ---
+Write-Host "Building ola-grafico app..."
+Push-Location "apps\ola-grafico"
+& cargo +nightly build --release -Zjson-target-spec -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem
+if ($LASTEXITCODE -ne 0) {
+    Pop-Location
+    throw "App ola-grafico build failed."
+}
+Pop-Location
+
+$grafElfPath = "apps\ola-grafico\target\x86_64-jinn-user\release\ola-grafico"
+if (-not (Test-Path $grafElfPath)) {
+    throw "App ola-grafico ELF not found: $grafElfPath"
+}
+Copy-Item -Path $grafElfPath -Destination (Join-Path $isoAppsDir "ola-grafico.elf") -Force
 
 # --- Gera imagem de disco virtual FAT32 com MBR ---
 $makeDiskScript = Join-Path -Path (Get-Location) "scripts\make_disk.ps1"

@@ -460,7 +460,7 @@ pub fn setup_user_stack_with_args(
     argv: &[&str],
     envp: &[&str],
 ) -> Result<(usize, usize, usize, usize, usize), ElfError> {
-    const USTACK_SIZE: usize = 262144; // 256 KiB
+    const USTACK_SIZE: usize = 524288; // 512 KiB (128 paginas)
     const USER_STACK_BASE: u64 = 0x0000_7FFF_F000_0000;
 
     if argv.len() > 32 || envp.len() > 32 {
