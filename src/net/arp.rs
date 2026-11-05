@@ -1,4 +1,4 @@
-//! Jinn OS — Address Resolution Protocol (ARP) e Tabela de Cache L2
+﻿//! Jinn OS — Address Resolution Protocol (ARP) e Tabela de Cache L2
 
 pub const ARP_OP_REQUEST: u16 = 1;
 pub const ARP_OP_REPLY:   u16 = 2;
@@ -94,6 +94,11 @@ impl ArpTable {
     /// Inicializa a tabela de cache ARP com estado limpo
     pub fn init_defaults(&mut self) {
         *self = Self::new();
+        // Pre-popula gateway e DNS conhecidos para evitar stalls de ARP
+        let gw = unsafe { crate::net::dhcp::DHCP_CLIENT.gateway };
+        let dns = unsafe { crate::net::dhcp::DHCP_CLIENT.dns };
+        self.insert(gw, default_gateway_mac(), 0);
+        self.insert(dns, default_dns_mac(), 0);
     }
 }
 
@@ -236,9 +241,13 @@ pub fn resolve_mac_for_ip_blocking(dst_ip: [u8; 4], timeout_ticks: u64) -> Optio
 
     // Fallback de emergência caso nenhum pacote ARP ou DHCP tenha sido recebido
     if next_hop == [10, 0, 2, 3] {
-        Some(default_dns_mac())
+        let mac = default_dns_mac();
+        unsafe { ARP_CACHE.insert(next_hop, mac, crate::timer::ticks()); }
+        Some(mac)
     } else if next_hop == [10, 0, 2, 2] {
-        Some(default_gateway_mac())
+        let mac = default_gateway_mac();
+        unsafe { ARP_CACHE.insert(next_hop, mac, crate::timer::ticks()); }
+        Some(mac)
     } else {
         None
     }

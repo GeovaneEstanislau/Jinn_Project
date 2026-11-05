@@ -195,6 +195,48 @@ impl NetDiagnostics {
     pub fn record_tcp_csum_error(&self) {
         self.tcp_csum_errors.fetch_add(1, Ordering::Relaxed);
     }
+
+    /// Reinicia todos os contadores de telemetria e diagnóstico para zero.
+    pub fn reset(&self) {
+        self.rx_packets.store(0, Ordering::Relaxed);
+        self.tx_packets.store(0, Ordering::Relaxed);
+        self.rx_bytes.store(0, Ordering::Relaxed);
+        self.tx_bytes.store(0, Ordering::Relaxed);
+        self.rx_errors.store(0, Ordering::Relaxed);
+        self.tx_errors.store(0, Ordering::Relaxed);
+        self.dma_errors.store(0, Ordering::Relaxed);
+
+        self.arp_requests_sent.store(0, Ordering::Relaxed);
+        self.arp_replies_sent.store(0, Ordering::Relaxed);
+        self.arp_requests_rcvd.store(0, Ordering::Relaxed);
+        self.arp_replies_rcvd.store(0, Ordering::Relaxed);
+        self.arp_timeouts.store(0, Ordering::Relaxed);
+
+        self.ip_rx_packets.store(0, Ordering::Relaxed);
+        self.ip_tx_packets.store(0, Ordering::Relaxed);
+        self.ip_csum_errors.store(0, Ordering::Relaxed);
+        self.ip_dropped.store(0, Ordering::Relaxed);
+
+        self.udp_rx_packets.store(0, Ordering::Relaxed);
+        self.udp_tx_packets.store(0, Ordering::Relaxed);
+        self.dns_queries_sent.store(0, Ordering::Relaxed);
+        self.dns_replies_rcvd.store(0, Ordering::Relaxed);
+        self.dns_timeouts.store(0, Ordering::Relaxed);
+        self.dns_nxdomain.store(0, Ordering::Relaxed);
+
+        self.tcp_syn_sent.store(0, Ordering::Relaxed);
+        self.tcp_syn_ack_rcvd.store(0, Ordering::Relaxed);
+        self.tcp_established.store(0, Ordering::Relaxed);
+        self.tcp_rst_rcvd.store(0, Ordering::Relaxed);
+        self.tcp_rst_sent.store(0, Ordering::Relaxed);
+        self.tcp_retransmits.store(0, Ordering::Relaxed);
+        self.tcp_timeouts.store(0, Ordering::Relaxed);
+        self.tcp_csum_errors.store(0, Ordering::Relaxed);
+
+        self.sockets_opened.store(0, Ordering::Relaxed);
+        self.sockets_closed.store(0, Ordering::Relaxed);
+        self.firewall_drops.store(0, Ordering::Relaxed);
+    }
 }
 
 pub static NET_DIAGNOSTICS: NetDiagnostics = NetDiagnostics::new();

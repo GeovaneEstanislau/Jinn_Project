@@ -1,4 +1,4 @@
-//! Jinn OS — Protocolo TCP (Camada de Transporte Confiável L4 — RFC 793)
+﻿//! Jinn OS — Protocolo TCP (Camada de Transporte Confiável L4 — RFC 793)
 
 use crate::net::ethernet::{EthernetFrame, ETHERTYPE_IPV4};
 use crate::net::ipv4::{Ipv4Packet, PROTO_TCP};
@@ -875,6 +875,26 @@ pub fn poll_tcp_retransmissions(ticks: u64) {
                                 &[],
                             );
                         }
+                    }
+                } else if sock.owner_pid == usize::MAX {
+                    // Encerramento gracioso de sockets orfaos (RFC 793 TIME_WAIT e Teardown)
+                    let elapsed = ticks.saturating_sub(sock.tcb.last_tx_tick);
+                    let should_reap = match sock.tcb.state {
+                        TcpState::TimeWait => elapsed >= 400, // 4,0s (2*MSL virtualizado)
+                        TcpState::Closed => true,
+                        TcpState::FinWait1 | TcpState::FinWait2 | TcpState::Closing | TcpState::LastAck => elapsed >= 1000, // 10,0s timeout de teardown
+                        _ => false,
+                    };
+                    if should_reap {
+                        let our_ip = crate::net::dhcp::DHCP_CLIENT.ip;
+                        crate::net::jinnwall::JINNWALL.clear_connection(
+                            our_ip,
+                            sock.remote_ip,
+                            crate::net::ipv4::PROTO_TCP,
+                            sock.local_port,
+                            sock.remote_port,
+                        );
+                        *slot = None;
                     }
                 }
             }

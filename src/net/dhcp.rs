@@ -1,4 +1,4 @@
-//! Jinn OS — Cliente DHCP para Auto-Configuração de IP
+﻿//! Jinn OS — Cliente DHCP para Auto-Configuração de IP
 
 pub const DHCP_SERVER_PORT: u16 = 67;
 pub const DHCP_CLIENT_PORT: u16 = 68;
@@ -110,9 +110,15 @@ pub fn handle_dhcp_reply(payload: &[u8]) {
             }
             if router_ip != [0, 0, 0, 0] {
                 DHCP_CLIENT.gateway = router_ip;
+                unsafe {
+                    crate::net::arp::ARP_CACHE.insert(router_ip, crate::net::arp::default_gateway_mac(), crate::timer::ticks());
+                }
             }
             if dns_ip != [0, 0, 0, 0] {
                 DHCP_CLIENT.dns = dns_ip;
+                unsafe {
+                    crate::net::arp::ARP_CACHE.insert(dns_ip, crate::net::arp::default_dns_mac(), crate::timer::ticks());
+                }
             }
             DHCP_CLIENT.state = DhcpState::Bound(yiaddr);
         }

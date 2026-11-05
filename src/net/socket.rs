@@ -314,7 +314,7 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
 
     // Loop de espera ativa com polling de rede e retransmissões automáticas (RTO)
     let start_tick = crate::timer::ticks();
-    let timeout_ticks = 600u64; // 6,0s exatos pelo timer APIC (100 Hz)
+    let timeout_ticks = 1500u64; // 6,0s exatos pelo timer APIC (100 Hz)
     while crate::timer::ticks().saturating_sub(start_tick) < timeout_ticks {
 
         crate::net::poll();
@@ -338,7 +338,7 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
                     && now.saturating_sub(s.tcb.last_tx_tick) >= s.tcb.rto_ticks
                 {
                     if s.tcb.retransmit_count < 4 {
-                        s.tcb.rto_ticks = (s.tcb.rto_ticks * 2).min(300);
+                        s.tcb.rto_ticks = (s.tcb.rto_ticks * 2).min(800);
                         crate::net::NET_DIAGNOSTICS.record_tcp_retransmit();
                         s.tcb.retransmit_count += 1;
                         s.tcb.last_tx_tick = now;
@@ -366,6 +366,16 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
         if let Some(Some(ref mut s)) = SOCKET_TABLE.get_mut(sockfd) {
             s.tcb.state = crate::net::tcp::TcpState::Closed;
             s.is_connected = false;
+            s.tcb.unacked_len = 0;
+            s.tcb.ooo_len = 0;
+            let our_ip = crate::net::dhcp::DHCP_CLIENT.ip;
+            crate::net::jinnwall::JINNWALL.clear_connection(
+                our_ip,
+                remote_ip,
+                crate::net::ipv4::PROTO_TCP,
+                local_port,
+                remote_port,
+            );
         }
     }
     Err(ETIMEDOUT)
@@ -488,6 +498,14 @@ pub fn close_socket(pid: usize, sockfd: usize) -> Result<(), isize> {
             );
             sock.tcb.local_seq = sock.tcb.local_seq.wrapping_add(1);
             sock.tcb.state = crate::net::tcp::TcpState::FinWait1;
+            sock.tcb.last_tx_tick = crate::timer::ticks();
+            // Mantém TCB vivo para encerramento gracioso (órfão), liberando apenas o processo chamador
+            sock.owner_pid = usize::MAX;
+            crate::net::NET_DIAGNOSTICS.sockets_closed.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(pid) {
+                task.resources.close_socket();
+            }
+            return Ok(());
         }
 
         // Se era um socket filho pendente aguardando accept em um listener pai, remove-se das filas do pai

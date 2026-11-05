@@ -1,4 +1,4 @@
-/// Jinn OS — Shell do Kernel (Ring 0)
+﻿/// Jinn OS — Shell do Kernel (Ring 0)
 ///
 /// Executa no contexto do kernel (Ring 0) com acesso direto às APIs internas.
 /// Este shell NÃO usa syscalls — ele chama as funções do kernel diretamente,
@@ -121,7 +121,7 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
 
         // ── Rede & DNS ────────────────────────────────────────────────────────
         "netinfo" | "ifconfig" | "net" => cmd_netinfo(w),
-        "netdiag" | "netstat" => cmd_netdiag(w),
+        "netdiag" | "netstat" => cmd_netdiag(w, args),
         "dns" => cmd_dns(w, args),
         "dnscache" => cmd_dnscache(w),
         "jinnwall" | "firewall" => cmd_jinnwall(w, args),
@@ -2804,7 +2804,14 @@ fn cmd_netinfo(w: &mut Writer) {
 }
 
 /// `netdiag` — Telemetria e diagnóstico detalhado por camada de rede (Marco 0.5.0)
-fn cmd_netdiag(w: &mut Writer) {
+fn cmd_netdiag(w: &mut Writer, args: &str) {
+    if args.trim() == "reset" {
+        crate::net::NET_DIAGNOSTICS.reset();
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_line("[OK] Contadores de telemetria de rede resetados com sucesso.");
+        w.set_color(Color::LightGray, Color::Black);
+        return;
+    }
     use core::sync::atomic::Ordering::Relaxed;
     let diag = &crate::net::NET_DIAGNOSTICS;
 

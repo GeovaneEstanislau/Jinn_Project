@@ -1,4 +1,4 @@
-//! Jinn OS — Driver PCI Intel PRO/1000 (82540EM / 82545EM / e1000)
+﻿//! Jinn OS — Driver PCI Intel PRO/1000 (82540EM / 82545EM / e1000)
 //!
 //! Fornece suporte nativo a placas de rede Intel Gigabit Ethernet (Vendor 0x8086),
 //! controladora de rede padrão emulada no Oracle VirtualBox, VMware e QEMU.

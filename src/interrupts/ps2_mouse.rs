@@ -1,4 +1,4 @@
-/// Driver de Mouse PS/2 (i8042 Aux Device)
+﻿/// Driver de Mouse PS/2 (i8042 Aux Device)
 ///
 /// Implementa a comunicação com o mouse PS/2 padrão conectado à segunda
 /// porta do controlador i8042. Suporta tanto recepção assíncrona via IRQ12
@@ -227,6 +227,8 @@ pub fn init() {
         // 7. Habilita streaming de pacotes de dados (0xF4)
         mouse_write(0xF4);
         let _ = mouse_read(); // Descarta ACK (0xFA)
+        // 8. Desmascara IRQ12 no PIC para recepcao assincrona dual (interrupcao + polling)
+        crate::interrupts::pic::unmask_irq(12);
     }
 }
 

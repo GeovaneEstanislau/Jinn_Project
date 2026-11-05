@@ -1,4 +1,4 @@
-//! Jinn OS — Driver PCI AMD PCnet-FAST III / PCnet-PCI II (Am79C973 / Am79C970A)
+﻿//! Jinn OS — Driver PCI AMD PCnet-FAST III / PCnet-PCI II (Am79C973 / Am79C970A)
 //!
 //! Fornece suporte nativo a controladoras de rede AMD PCnet (Vendor 0x1022, Device 0x2000 / 0x2001),
 //! o adaptador de rede padrão emulado pelo Oracle VirtualBox (PCnet-FAST III)
@@ -324,7 +324,10 @@ pub fn init() -> bool {
 
         // 6. Aloca frames para InitBlock, Anéis RX/TX e Buffers
         let init_block_phys = match crate::memory::alloc_frame() {
-            Some(f) => f,
+            Some(f) => {
+                assert!(f < 0x1_0000_0000, "PCnet DMA InitBlock deve residir abaixo de 4GB");
+                f
+            }
             None => return false,
         };
         let init_block_virt = crate::memory::paging::phys_to_virt(init_block_phys);
