@@ -301,7 +301,7 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
     // Loop de espera ativa com polling de rede e retransmissões automáticas (RTO)
     let start_tick = crate::timer::ticks();
     let mut iters = 0usize;
-    while crate::timer::ticks().saturating_sub(start_tick) < 100 && iters < 200 {
+    while crate::timer::ticks().saturating_sub(start_tick) < 500 && iters < 20_000 {
         iters += 1;
         crate::net::poll();
 
