@@ -234,6 +234,371 @@ impl Ext2Fs {
     }
 
     /// Obtém a tabela de descritores de grupo de blocos e localiza a Inode Table
+    /// Retorna o bloco e o offset dentro do bloco para o descritor do grupo especificado
+    fn get_group_desc_location(&self, group: u32) -> (u32, usize) {
+        let desc_start_block = if self.block_size == 1024 { 2u32 } else { 1u32 };
+        let descs_per_block = (self.block_size / 32) as u32;
+        let desc_block = desc_start_block + (group / descs_per_block);
+        let desc_index = (group % descs_per_block) as usize;
+        (desc_block, desc_index * 32)
+    }
+
+    /// Aloca um novo Inode livre no bitmap de Inodes do Ext2
+    pub fn alloc_inode(&self, is_dir: bool) -> Result<u32, VfsError> {
+        let groups_count = (self.inodes_count + self.inodes_per_group - 1) / self.inodes_per_group;
+        let mut desc_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+        let mut bitmap_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+
+        for group in 0..groups_count {
+            let (desc_block, desc_offset) = self.get_group_desc_location(group);
+            if self.read_block(desc_block, &mut desc_buf[..self.block_size]).is_err() {
+                return Err(VfsError::IoError);
+            }
+
+            let free_inodes = u16::from_le_bytes([
+                desc_buf[desc_offset + 14],
+                desc_buf[desc_offset + 15],
+            ]);
+
+            if free_inodes == 0 {
+                continue;
+            }
+
+            let inode_bitmap_block = u32::from_le_bytes([
+                desc_buf[desc_offset + 4],
+                desc_buf[desc_offset + 5],
+                desc_buf[desc_offset + 6],
+                desc_buf[desc_offset + 7],
+            ]);
+
+            if self.read_block(inode_bitmap_block, &mut bitmap_buf[..self.block_size]).is_err() {
+                return Err(VfsError::IoError);
+            }
+
+            let inodes_in_this_group = self.inodes_per_group.min(self.inodes_count.saturating_sub(group * self.inodes_per_group));
+            for i in 0..inodes_in_this_group as usize {
+                let byte_idx = i / 8;
+                let bit_idx = i % 8;
+                if (bitmap_buf[byte_idx] & (1 << bit_idx)) == 0 {
+                    // Inode livre encontrado! Marca como ocupado
+                    bitmap_buf[byte_idx] |= 1 << bit_idx;
+                    if self.write_block(inode_bitmap_block, &bitmap_buf[..self.block_size]).is_err() {
+                        return Err(VfsError::IoError);
+                    }
+
+                    // Atualiza descritor de grupo
+                    let new_free_inodes = free_inodes.saturating_sub(1);
+                    desc_buf[desc_offset + 14..desc_offset + 16].copy_from_slice(&new_free_inodes.to_le_bytes());
+                    if is_dir {
+                        let used_dirs = u16::from_le_bytes([desc_buf[desc_offset + 16], desc_buf[desc_offset + 17]]);
+                        desc_buf[desc_offset + 16..desc_offset + 18].copy_from_slice(&(used_dirs + 1).to_le_bytes());
+                    }
+                    if self.write_block(desc_block, &desc_buf[..self.block_size]).is_err() {
+                        return Err(VfsError::IoError);
+                    }
+
+                    // Atualiza superblock (free_inodes_count fica no offset 16 do superblock)
+                    let sb_block = if self.block_size == 1024 { 1 } else { 0 };
+                    let mut sb_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+                    if self.read_block(sb_block, &mut sb_buf[..self.block_size]).is_ok() {
+                        let sb_free = u32::from_le_bytes([sb_buf[16], sb_buf[17], sb_buf[18], sb_buf[19]]);
+                        let new_sb_free = sb_free.saturating_sub(1);
+                        sb_buf[16..20].copy_from_slice(&new_sb_free.to_le_bytes());
+                        let _ = self.write_block(sb_block, &sb_buf[..self.block_size]);
+                    }
+
+                    let inode_num = group * self.inodes_per_group + (i as u32) + 1;
+                    return Ok(inode_num);
+                }
+            }
+        }
+
+        Err(VfsError::NoSpace)
+    }
+
+    /// Aloca um novo bloco de dados livre no bitmap de blocos do Ext2
+    pub fn alloc_block(&self) -> Result<u32, VfsError> {
+        let groups_count = (self.blocks_count + self.blocks_per_group - 1) / self.blocks_per_group;
+        let mut desc_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+        let mut bitmap_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+
+        for group in 0..groups_count {
+            let (desc_block, desc_offset) = self.get_group_desc_location(group);
+            if self.read_block(desc_block, &mut desc_buf[..self.block_size]).is_err() {
+                return Err(VfsError::IoError);
+            }
+
+            let free_blocks = u16::from_le_bytes([
+                desc_buf[desc_offset + 12],
+                desc_buf[desc_offset + 13],
+            ]);
+
+            if free_blocks == 0 {
+                continue;
+            }
+
+            let block_bitmap_block = u32::from_le_bytes([
+                desc_buf[desc_offset],
+                desc_buf[desc_offset + 1],
+                desc_buf[desc_offset + 2],
+                desc_buf[desc_offset + 3],
+            ]);
+
+            if self.read_block(block_bitmap_block, &mut bitmap_buf[..self.block_size]).is_err() {
+                return Err(VfsError::IoError);
+            }
+
+            let blocks_in_group = self.blocks_per_group.min(self.blocks_count.saturating_sub(group * self.blocks_per_group));
+            for i in 0..blocks_in_group as usize {
+                let byte_idx = i / 8;
+                let bit_idx = i % 8;
+                if (bitmap_buf[byte_idx] & (1 << bit_idx)) == 0 {
+                    bitmap_buf[byte_idx] |= 1 << bit_idx;
+                    if self.write_block(block_bitmap_block, &bitmap_buf[..self.block_size]).is_err() {
+                        return Err(VfsError::IoError);
+                    }
+
+                    // Atualiza descritor de grupo
+                    let new_free_blocks = free_blocks.saturating_sub(1);
+                    desc_buf[desc_offset + 12..desc_offset + 14].copy_from_slice(&new_free_blocks.to_le_bytes());
+                    if self.write_block(desc_block, &desc_buf[..self.block_size]).is_err() {
+                        return Err(VfsError::IoError);
+                    }
+
+                    // Atualiza superblock (free_blocks_count fica no offset 12 do superblock)
+                    let sb_block = if self.block_size == 1024 { 1 } else { 0 };
+                    let mut sb_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+                    if self.read_block(sb_block, &mut sb_buf[..self.block_size]).is_ok() {
+                        let sb_free = u32::from_le_bytes([sb_buf[12], sb_buf[13], sb_buf[14], sb_buf[15]]);
+                        let new_sb_free = sb_free.saturating_sub(1);
+                        sb_buf[12..16].copy_from_slice(&new_sb_free.to_le_bytes());
+                        let _ = self.write_block(sb_block, &sb_buf[..self.block_size]);
+                    }
+
+                    let block_num = self.first_data_block + group * self.blocks_per_group + (i as u32);
+                    // Zera o bloco alocado
+                    let zero_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+                    let _ = self.write_block(block_num, &zero_buf[..self.block_size]);
+
+                    return Ok(block_num);
+                }
+            }
+        }
+
+        Err(VfsError::NoSpace)
+    }
+
+    /// Libera um Inode no bitmap de Inodes do Ext2
+    pub fn free_inode(&self, inode_num: u32, is_dir: bool) -> Result<(), VfsError> {
+        if inode_num == 0 || inode_num > self.inodes_count {
+            return Err(VfsError::InvalidPath);
+        }
+
+        let group = (inode_num - 1) / self.inodes_per_group;
+        let index = ((inode_num - 1) % self.inodes_per_group) as usize;
+
+        let (desc_block, desc_offset) = self.get_group_desc_location(group);
+        let mut desc_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+        if self.read_block(desc_block, &mut desc_buf[..self.block_size]).is_err() {
+            return Err(VfsError::IoError);
+        }
+
+        let inode_bitmap_block = u32::from_le_bytes([
+            desc_buf[desc_offset + 4],
+            desc_buf[desc_offset + 5],
+            desc_buf[desc_offset + 6],
+            desc_buf[desc_offset + 7],
+        ]);
+
+        let mut bitmap_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+        if self.read_block(inode_bitmap_block, &mut bitmap_buf[..self.block_size]).is_err() {
+            return Err(VfsError::IoError);
+        }
+
+        let byte_idx = index / 8;
+        let bit_idx = index % 8;
+        bitmap_buf[byte_idx] &= !(1 << bit_idx);
+
+        if self.write_block(inode_bitmap_block, &bitmap_buf[..self.block_size]).is_err() {
+            return Err(VfsError::IoError);
+        }
+
+        let free_inodes = u16::from_le_bytes([desc_buf[desc_offset + 14], desc_buf[desc_offset + 15]]);
+        desc_buf[desc_offset + 14..desc_offset + 16].copy_from_slice(&(free_inodes + 1).to_le_bytes());
+        if is_dir {
+            let used_dirs = u16::from_le_bytes([desc_buf[desc_offset + 16], desc_buf[desc_offset + 17]]);
+            desc_buf[desc_offset + 16..desc_offset + 18].copy_from_slice(&(used_dirs.saturating_sub(1)).to_le_bytes());
+        }
+        let _ = self.write_block(desc_block, &desc_buf[..self.block_size]);
+
+        // Atualiza superblock
+        let sb_block = if self.block_size == 1024 { 1 } else { 0 };
+        let mut sb_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+        if self.read_block(sb_block, &mut sb_buf[..self.block_size]).is_ok() {
+            let sb_free = u32::from_le_bytes([sb_buf[16], sb_buf[17], sb_buf[18], sb_buf[19]]);
+            sb_buf[16..20].copy_from_slice(&(sb_free + 1).to_le_bytes());
+            let _ = self.write_block(sb_block, &sb_buf[..self.block_size]);
+        }
+
+        Ok(())
+    }
+
+    /// Libera um bloco de dados no bitmap de blocos do Ext2
+    pub fn free_block(&self, block_num: u32) -> Result<(), VfsError> {
+        if block_num < self.first_data_block || block_num >= self.blocks_count {
+            return Err(VfsError::InvalidPath);
+        }
+
+        let rel_block = block_num - self.first_data_block;
+        let group = rel_block / self.blocks_per_group;
+        let index = (rel_block % self.blocks_per_group) as usize;
+
+        let (desc_block, desc_offset) = self.get_group_desc_location(group);
+        let mut desc_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+        if self.read_block(desc_block, &mut desc_buf[..self.block_size]).is_err() {
+            return Err(VfsError::IoError);
+        }
+
+        let block_bitmap_block = u32::from_le_bytes([
+            desc_buf[desc_offset],
+            desc_buf[desc_offset + 1],
+            desc_buf[desc_offset + 2],
+            desc_buf[desc_offset + 3],
+        ]);
+
+        let mut bitmap_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+        if self.read_block(block_bitmap_block, &mut bitmap_buf[..self.block_size]).is_err() {
+            return Err(VfsError::IoError);
+        }
+
+        let byte_idx = index / 8;
+        let bit_idx = index % 8;
+        bitmap_buf[byte_idx] &= !(1 << bit_idx);
+
+        if self.write_block(block_bitmap_block, &bitmap_buf[..self.block_size]).is_err() {
+            return Err(VfsError::IoError);
+        }
+
+        let free_blocks = u16::from_le_bytes([desc_buf[desc_offset + 12], desc_buf[desc_offset + 13]]);
+        desc_buf[desc_offset + 12..desc_offset + 14].copy_from_slice(&(free_blocks + 1).to_le_bytes());
+        let _ = self.write_block(desc_block, &desc_buf[..self.block_size]);
+
+        // Atualiza superblock
+        let sb_block = if self.block_size == 1024 { 1 } else { 0 };
+        let mut sb_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+        if self.read_block(sb_block, &mut sb_buf[..self.block_size]).is_ok() {
+            let sb_free = u32::from_le_bytes([sb_buf[12], sb_buf[13], sb_buf[14], sb_buf[15]]);
+            sb_buf[12..16].copy_from_slice(&(sb_free + 1).to_le_bytes());
+            let _ = self.write_block(sb_block, &sb_buf[..self.block_size]);
+        }
+
+        Ok(())
+    }
+
+    /// Adiciona uma entrada de diretÃ³rio (Ext2DirEntry) a um Inode pai
+    pub fn add_dir_entry(
+        &self,
+        parent_inode_num: u32,
+        parent_inode: &mut Ext2Inode,
+        entry_inode: u32,
+        name: &str,
+        file_type: u8,
+    ) -> Result<(), VfsError> {
+        let name_bytes = name.as_bytes();
+        if name_bytes.len() > 255 {
+            return Err(VfsError::InvalidPath);
+        }
+        let needed_rec_len = ((8 + name_bytes.len() + 3) & !3) as u16;
+
+        let mut block_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+        let block_sz = self.block_size;
+
+        // 1. Tenta encontrar espaÃ§o nos blocos de diretÃ³rio existentes
+        for blk_idx in 0..12 {
+            let blk_num = parent_inode.direct_blocks[blk_idx];
+            if blk_num == 0 {
+                break;
+            }
+
+            if self.read_block(blk_num, &mut block_buf[..block_sz]).is_err() {
+                return Err(VfsError::IoError);
+            }
+
+            let mut offset = 0usize;
+            while offset < block_sz {
+                let entry_ino = u32::from_le_bytes([
+                    block_buf[offset],
+                    block_buf[offset + 1],
+                    block_buf[offset + 2],
+                    block_buf[offset + 3],
+                ]);
+                let rec_len = u16::from_le_bytes([
+                    block_buf[offset + 4],
+                    block_buf[offset + 5],
+                ]);
+                let name_len = block_buf[offset + 6] as usize;
+
+                if rec_len == 0 {
+                    break;
+                }
+
+                let actual_len = if entry_ino != 0 {
+                    ((8 + name_len + 3) & !3) as u16
+                } else {
+                    0
+                };
+
+                let remaining_space = rec_len.saturating_sub(actual_len);
+
+                if entry_ino != 0 && remaining_space >= needed_rec_len {
+                    block_buf[offset + 4..offset + 6].copy_from_slice(&actual_len.to_le_bytes());
+
+                    let new_off = offset + actual_len as usize;
+                    block_buf[new_off..new_off + 4].copy_from_slice(&entry_inode.to_le_bytes());
+                    block_buf[new_off + 4..new_off + 6].copy_from_slice(&remaining_space.to_le_bytes());
+                    block_buf[new_off + 6] = name_bytes.len() as u8;
+                    block_buf[new_off + 7] = file_type;
+                    block_buf[new_off + 8..new_off + 8 + name_bytes.len()].copy_from_slice(name_bytes);
+
+                    self.write_block(blk_num, &block_buf[..block_sz]).map_err(|_| VfsError::IoError)?;
+                    return Ok(());
+                } else if entry_ino == 0 && rec_len >= needed_rec_len {
+                    block_buf[offset..offset + 4].copy_from_slice(&entry_inode.to_le_bytes());
+                    block_buf[offset + 6] = name_bytes.len() as u8;
+                    block_buf[offset + 7] = file_type;
+                    block_buf[offset + 8..offset + 8 + name_bytes.len()].copy_from_slice(name_bytes);
+
+                    self.write_block(blk_num, &block_buf[..block_sz]).map_err(|_| VfsError::IoError)?;
+                    return Ok(());
+                }
+
+                offset += rec_len as usize;
+            }
+        }
+
+        // 2. Aloca novo bloco direto se necessÃ¡rio
+        for blk_idx in 0..12 {
+            if parent_inode.direct_blocks[blk_idx] == 0 {
+                let new_blk = self.alloc_block()?;
+                parent_inode.direct_blocks[blk_idx] = new_blk;
+                parent_inode.blocks += (block_sz / 512) as u32;
+                parent_inode.size += block_sz as u32;
+
+                let mut new_blk_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+                new_blk_buf[0..4].copy_from_slice(&entry_inode.to_le_bytes());
+                new_blk_buf[4..6].copy_from_slice(&(block_sz as u16).to_le_bytes());
+                new_blk_buf[6] = name_bytes.len() as u8;
+                new_blk_buf[7] = file_type;
+                new_blk_buf[8..8 + name_bytes.len()].copy_from_slice(name_bytes);
+
+                self.write_block(new_blk, &new_blk_buf[..block_sz]).map_err(|_| VfsError::IoError)?;
+                self.write_inode(parent_inode_num, parent_inode).map_err(|_| VfsError::IoError)?;
+                return Ok(());
+            }
+        }
+
+        Err(VfsError::NoSpace)
+    }
     fn get_inode_table_block(&self, group: u32) -> Result<u32, &'static str> {
         // Se block_size == 1024, superblock está no bloco 1 e descritores começam no bloco 2.
         // Se block_size > 1024, superblock está no bloco 0 e descritores no bloco 1.
@@ -542,12 +907,212 @@ impl FileSystem for Ext2Fs {
         Ok(bytes_written)
     }
 
-    fn create(&self, _path: &str) -> VfsResult<()> {
-        Err(VfsError::PermissionDenied)
+    fn create(&self, path: &str) -> VfsResult<()> {
+        if !self.is_mounted { return Err(VfsError::NotSupported); }
+        let clean = path.trim_matches('/');
+        if clean.is_empty() { return Err(VfsError::InvalidPath); }
+
+        if self.resolve_path(clean).is_ok() {
+            return Err(VfsError::AlreadyExists);
+        }
+
+        let (parent_path, leaf_name) = match clean.rfind('/') {
+            Some(idx) => (&clean[..idx], &clean[idx + 1..]),
+            None => ("", clean),
+        };
+
+        let (parent_ino_num, mut parent_inode) = if parent_path.is_empty() {
+            (EXT2_ROOT_INO, self.read_inode(EXT2_ROOT_INO).map_err(|_| VfsError::IoError)?)
+        } else {
+            self.resolve_path(parent_path)?
+        };
+
+        if (parent_inode.mode & 0xF000) != EXT2_S_IFDIR {
+            return Err(VfsError::NotADirectory);
+        }
+
+        let new_ino_num = self.alloc_inode(false)?;
+        let mut new_inode = Ext2Inode::empty();
+        new_inode.mode = EXT2_S_IFREG | 0o644;
+        new_inode.size = 0;
+        new_inode.links_count = 1;
+        new_inode.blocks = 0;
+
+        self.write_inode(new_ino_num, &new_inode).map_err(|_| VfsError::IoError)?;
+        self.add_dir_entry(parent_ino_num, &mut parent_inode, new_ino_num, leaf_name, EXT2_FT_REG_FILE)?;
+        self.sync()?;
+
+        Ok(())
     }
 
-    fn remove(&self, _path: &str) -> VfsResult<()> {
-        Err(VfsError::PermissionDenied)
+    fn mkdir(&self, path: &str) -> VfsResult<()> {
+        if !self.is_mounted { return Err(VfsError::NotSupported); }
+        let clean = path.trim_matches('/');
+        if clean.is_empty() { return Err(VfsError::InvalidPath); }
+
+        if self.resolve_path(clean).is_ok() {
+            return Err(VfsError::AlreadyExists);
+        }
+
+        let (parent_path, leaf_name) = match clean.rfind('/') {
+            Some(idx) => (&clean[..idx], &clean[idx + 1..]),
+            None => ("", clean),
+        };
+
+        let (parent_ino_num, mut parent_inode) = if parent_path.is_empty() {
+            (EXT2_ROOT_INO, self.read_inode(EXT2_ROOT_INO).map_err(|_| VfsError::IoError)?)
+        } else {
+            self.resolve_path(parent_path)?
+        };
+
+        if (parent_inode.mode & 0xF000) != EXT2_S_IFDIR {
+            return Err(VfsError::NotADirectory);
+        }
+
+        let new_ino_num = self.alloc_inode(true)?;
+        let new_blk_num = self.alloc_block()?;
+
+        // Formata o novo bloco do diretÃ³rio com as entradas "." e ".."
+        let mut blk_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+        let block_sz = self.block_size;
+
+        // Entrada "." (offset 0, rec_len 12)
+        blk_buf[0..4].copy_from_slice(&new_ino_num.to_le_bytes());
+        blk_buf[4..6].copy_from_slice(&12u16.to_le_bytes());
+        blk_buf[6] = 1;
+        blk_buf[7] = EXT2_FT_DIR;
+        blk_buf[8] = b'.';
+        blk_buf[9..12].fill(0);
+
+        // Entrada ".." (offset 12, rec_len = block_sz - 12)
+        let dotdot_rec_len = (block_sz - 12) as u16;
+        blk_buf[12..16].copy_from_slice(&parent_ino_num.to_le_bytes());
+        blk_buf[16..18].copy_from_slice(&dotdot_rec_len.to_le_bytes());
+        blk_buf[18] = 2;
+        blk_buf[19] = EXT2_FT_DIR;
+        blk_buf[20] = b'.';
+        blk_buf[21] = b'.';
+
+        self.write_block(new_blk_num, &blk_buf[..block_sz]).map_err(|_| VfsError::IoError)?;
+
+        let mut new_inode = Ext2Inode::empty();
+        new_inode.mode = EXT2_S_IFDIR | 0o755;
+        new_inode.size = block_sz as u32;
+        new_inode.links_count = 2;
+        new_inode.blocks = (block_sz / 512) as u32;
+        new_inode.direct_blocks[0] = new_blk_num;
+
+        self.write_inode(new_ino_num, &new_inode).map_err(|_| VfsError::IoError)?;
+        self.add_dir_entry(parent_ino_num, &mut parent_inode, new_ino_num, leaf_name, EXT2_FT_DIR)?;
+
+        parent_inode.links_count += 1;
+        self.write_inode(parent_ino_num, &parent_inode).map_err(|_| VfsError::IoError)?;
+        self.sync()?;
+
+        Ok(())
+    }
+
+    fn remove(&self, path: &str) -> VfsResult<()> {
+        if !self.is_mounted { return Err(VfsError::NotSupported); }
+        let clean = path.trim_matches('/');
+        if clean.is_empty() { return Err(VfsError::InvalidPath); }
+
+        let (target_ino_num, target_inode) = self.resolve_path(clean)?;
+        if target_ino_num == EXT2_ROOT_INO {
+            return Err(VfsError::PermissionDenied);
+        }
+
+        let is_dir = (target_inode.mode & 0xF000) == EXT2_S_IFDIR;
+        if is_dir {
+            let mut is_empty = true;
+            let _ = self.for_each_dir_entry(&target_inode, |_, _, name| {
+                if name != "." && name != ".." {
+                    is_empty = false;
+                    return false;
+                }
+                true
+            });
+            if !is_empty {
+                return Err(VfsError::Busy);
+            }
+        }
+
+        let (parent_path, leaf_name) = match clean.rfind('/') {
+            Some(idx) => (&clean[..idx], &clean[idx + 1..]),
+            None => ("", clean),
+        };
+
+        let (parent_ino_num, mut parent_inode) = if parent_path.is_empty() {
+            (EXT2_ROOT_INO, self.read_inode(EXT2_ROOT_INO).map_err(|_| VfsError::IoError)?)
+        } else {
+            self.resolve_path(parent_path)?
+        };
+
+        let block_sz = self.block_size;
+        let mut block_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
+        let mut removed = false;
+
+        for blk_idx in 0..12 {
+            let blk_num = parent_inode.direct_blocks[blk_idx];
+            if blk_num == 0 { break; }
+
+            if self.read_block(blk_num, &mut block_buf[..block_sz]).is_err() {
+                return Err(VfsError::IoError);
+            }
+
+            let mut offset = 0usize;
+            let mut prev_offset: Option<usize> = None;
+
+            while offset < block_sz {
+                let ino = u32::from_le_bytes([block_buf[offset], block_buf[offset + 1], block_buf[offset + 2], block_buf[offset + 3]]);
+                let rec_len = u16::from_le_bytes([block_buf[offset + 4], block_buf[offset + 5]]) as usize;
+                let name_len = block_buf[offset + 6] as usize;
+
+                if rec_len == 0 { break; }
+
+                if ino == target_ino_num {
+                    if let Ok(n) = core::str::from_utf8(&block_buf[offset + 8..offset + 8 + name_len]) {
+                        if n == leaf_name {
+                            if let Some(prev_off) = prev_offset {
+                                let prev_rec = u16::from_le_bytes([block_buf[prev_off + 4], block_buf[prev_off + 5]]) as usize;
+                                let new_prev_rec = (prev_rec + rec_len) as u16;
+                                block_buf[prev_off + 4..prev_off + 6].copy_from_slice(&new_prev_rec.to_le_bytes());
+                            } else {
+                                block_buf[offset..offset + 4].fill(0);
+                            }
+                            let _ = self.write_block(blk_num, &block_buf[..block_sz]);
+                            removed = true;
+                            break;
+                        }
+                    }
+                }
+
+                prev_offset = Some(offset);
+                offset += rec_len;
+            }
+
+            if removed { break; }
+        }
+
+        if !removed {
+            return Err(VfsError::NotFound);
+        }
+
+        for &blk_num in &target_inode.direct_blocks {
+            if blk_num != 0 {
+                let _ = self.free_block(blk_num);
+            }
+        }
+
+        let _ = self.free_inode(target_ino_num, is_dir);
+
+        if is_dir && parent_inode.links_count > 2 {
+            parent_inode.links_count -= 1;
+            let _ = self.write_inode(parent_ino_num, &parent_inode);
+        }
+
+        self.sync()?;
+        Ok(())
     }
 
     fn readdir(&self, path: &str, cb: &mut dyn FnMut(&str, NodeType)) {
@@ -568,17 +1133,16 @@ impl FileSystem for Ext2Fs {
     fn capabilities(&self) -> FsCapabilities {
         FsCapabilities {
             read_only: false,
-            supports_create: false,
-            supports_remove: false,
+            supports_create: true,
+            supports_remove: true,
             supports_write: true,
             supports_directories: true,
             supports_journaling: false,
             supports_permissions: true,
-            max_file_size: 2 * 1024 * 1024 * 1024 * 1024, // 2 TiB
+            max_file_size: 2 * 1024 * 1024 * 1024 * 1024,
             name: "Ext2 (Read/Write)",
         }
     }
-
     fn statvfs(&self) -> VfsResult<crate::vfs::FsStat> {
         if !self.is_mounted {
             return Err(VfsError::NotSupported);

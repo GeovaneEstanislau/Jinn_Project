@@ -1,4 +1,4 @@
-﻿//! Jinn OS — Address Resolution Protocol (ARP) e Tabela de Cache L2
+//! Jinn OS — Address Resolution Protocol (ARP) e Tabela de Cache L2
 
 pub const ARP_OP_REQUEST: u16 = 1;
 pub const ARP_OP_REPLY:   u16 = 2;
@@ -94,11 +94,19 @@ impl ArpTable {
     /// Inicializa a tabela de cache ARP com estado limpo
     pub fn init_defaults(&mut self) {
         *self = Self::new();
-        // Pre-popula gateway e DNS conhecidos para evitar stalls de ARP
+        // Pre-popula gateway e DNS conhecidos para evitar stalls de ARP em QEMU e VirtualBox
         let gw = unsafe { crate::net::dhcp::DHCP_CLIENT.gateway };
         let dns = unsafe { crate::net::dhcp::DHCP_CLIENT.dns };
-        self.insert(gw, default_gateway_mac(), 0);
-        self.insert(dns, default_dns_mac(), 0);
+        if gw != [0, 0, 0, 0] {
+            self.insert(gw, default_gateway_mac(), 0);
+        } else {
+            self.insert([10, 0, 2, 2], default_gateway_mac(), 0);
+        }
+        if dns != [0, 0, 0, 0] {
+            self.insert(dns, default_dns_mac(), 0);
+        } else {
+            self.insert([10, 0, 2, 3], default_dns_mac(), 0);
+        }
     }
 }
 
@@ -204,7 +212,13 @@ pub fn resolve_mac_for_ip_blocking(dst_ip: [u8; 4], timeout_ticks: u64) -> Optio
 
     // 1. Se já está no cache, retorna imediatamente sem bloquear
     if let Some(mac) = unsafe { ARP_CACHE.lookup(next_hop) } {
-        return Some(mac);
+        // Validação de coerência: se for o gateway, não aceitar MAC de DNS (terminando em 0x03)
+        let gateway = unsafe { crate::net::dhcp::DHCP_CLIENT.gateway };
+        if next_hop == gateway && mac[5] == 0x03 {
+            // Inválido - continua para re-resolver ou fallback do gateway
+        } else {
+            return Some(mac);
+        }
     }
 
     // 2. Dispara requisição ARP real para o próximo salto
@@ -214,7 +228,10 @@ pub fn resolve_mac_for_ip_blocking(dst_ip: [u8; 4], timeout_ticks: u64) -> Optio
     while crate::timer::ticks().saturating_sub(start) < timeout_ticks {
         crate::net::poll();
         if let Some(mac) = unsafe { ARP_CACHE.lookup(next_hop) } {
-            return Some(mac);
+            let gateway = unsafe { crate::net::dhcp::DHCP_CLIENT.gateway };
+            if !(next_hop == gateway && mac[5] == 0x03) {
+                return Some(mac);
+            }
         }
         // Retransmite a cada 15 ticks (150ms)
         if crate::timer::ticks().saturating_sub(last_send) >= 15 {
@@ -226,40 +243,45 @@ pub fn resolve_mac_for_ip_blocking(dst_ip: [u8; 4], timeout_ticks: u64) -> Optio
 
     crate::net::NET_DIAGNOSTICS.record_arp_timeout();
 
-    // 3. Fallback inteligente para ambientes virtuais (VirtualBox / QEMU NAT):
-    // Se conhecemos o MAC do gateway ou do DNS (aprendido via DHCP ou resposta DNS), associa ao next_hop
+    // 3. Fallback inteligente e estrito para ambientes virtuais (VirtualBox / QEMU NAT):
     let gateway = unsafe { crate::net::dhcp::DHCP_CLIENT.gateway };
-    if let Some(gw_mac) = unsafe { ARP_CACHE.lookup(gateway) } {
-        unsafe { ARP_CACHE.insert(next_hop, gw_mac, crate::timer::ticks()); }
-        return Some(gw_mac);
-    }
     let dns = unsafe { crate::net::dhcp::DHCP_CLIENT.dns };
-    if let Some(dns_mac) = unsafe { ARP_CACHE.lookup(dns) } {
-        unsafe { ARP_CACHE.insert(next_hop, dns_mac, crate::timer::ticks()); }
-        return Some(dns_mac);
-    }
 
-    // Fallback de emergência caso nenhum pacote ARP ou DHCP tenha sido recebido
-    if next_hop == [10, 0, 2, 3] {
+    if next_hop == dns || next_hop == [10, 0, 2, 3] {
+        if let Some(dns_mac) = unsafe { ARP_CACHE.lookup(dns) } {
+            return Some(dns_mac);
+        }
         let mac = default_dns_mac();
         unsafe { ARP_CACHE.insert(next_hop, mac, crate::timer::ticks()); }
-        Some(mac)
-    } else if next_hop == [10, 0, 2, 2] {
+        return Some(mac);
+    }
+
+    if next_hop == gateway || next_hop == [10, 0, 2, 2] {
+        if let Some(gw_mac) = unsafe { ARP_CACHE.lookup(gateway) } {
+            if gw_mac[5] != 0x03 {
+                return Some(gw_mac);
+            }
+        }
         let mac = default_gateway_mac();
         unsafe { ARP_CACHE.insert(next_hop, mac, crate::timer::ticks()); }
-        Some(mac)
-    } else {
-        None
+        return Some(mac);
     }
+
+    // Se for outro IP na sub-rede que não respondeu ao ARP
+    None
 }
 
 /// Resolve o endereço MAC para o próximo salto de um pacote com destino a `dst_ip`.
 pub fn resolve_mac_for_ip(dst_ip: [u8; 4]) -> [u8; 6] {
     if let Some(mac) = resolve_mac_for_ip_blocking(dst_ip, 50) {
         mac
-    } else if let Some(dns_mac) = unsafe { ARP_CACHE.lookup(crate::net::dhcp::DHCP_CLIENT.dns) } {
-        dns_mac
     } else {
-        default_gateway_mac()
+        let next_hop = crate::net::ipv4::get_next_hop_ip(dst_ip);
+        let dns = unsafe { crate::net::dhcp::DHCP_CLIENT.dns };
+        if next_hop == dns || next_hop == [10, 0, 2, 3] {
+            default_dns_mac()
+        } else {
+            default_gateway_mac()
+        }
     }
 }

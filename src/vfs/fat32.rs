@@ -1,4 +1,4 @@
-/// Jinn OS — Driver de Sistema de Arquivos FAT32
+﻿/// Jinn OS — Driver de Sistema de Arquivos FAT32
 ///
 /// Implementa a leitura de volumes formatados em FAT32 diretamente a partir
 /// de discos IDE/ATA ou partições MBR.
@@ -519,6 +519,68 @@ impl Fat32Fs {
     }
 
     /// Atualiza o tamanho do arquivo na entrada de diretório no disco (busca por cluster)
+    /// Resolve o caminho para o cluster do diretÃ³rio pai e o nome final do arquivo/pasta (leaf name).
+    pub fn resolve_parent_and_leaf<'a>(&self, path: &'a str) -> VfsResult<(u32, &'a str)> {
+        let clean = path.trim_matches('/');
+        if clean.is_empty() {
+            return Err(VfsError::InvalidPath);
+        }
+
+        if let Some(last_slash) = clean.rfind('/') {
+            let parent_path = &clean[..last_slash];
+            let leaf_name = &clean[last_slash + 1..];
+            if leaf_name.is_empty() {
+                return Err(VfsError::InvalidPath);
+            }
+            let parent_entry = self.find_file(parent_path)?;
+            if !parent_entry.is_dir {
+                return Err(VfsError::NotADirectory);
+            }
+            Ok((parent_entry.first_cluster, leaf_name))
+        } else {
+            Ok((self.root_cluster, clean))
+        }
+    }
+
+    /// Encontra um slot de diretÃ³rio de 32 bytes livre (0x00 ou 0xE5) na cadeia de clusters do diretÃ³rio pai.
+    /// Se todos os clusters existentes estiverem cheios, aloca um novo cluster na FAT, encadeia-o e retorna o primeiro slot.
+    pub fn find_free_dir_slot(&self, parent_cluster: u32) -> VfsResult<(u32, usize)> {
+        let mut cur_cluster = parent_cluster;
+        let mut last_cluster = parent_cluster;
+        let mut dir_buf = [0u8; 512];
+
+        while cur_cluster >= 2 && cur_cluster < FAT32_EOF {
+            last_cluster = cur_cluster;
+            let start_lba = self.cluster_to_lba(cur_cluster);
+
+            for sec in 0..self.sectors_per_cluster {
+                let sec_lba = start_lba + sec as u32;
+                if self.read_sec(sec_lba, &mut dir_buf).is_err() {
+                    return Err(VfsError::IoError);
+                }
+
+                for entry_idx in 0..(512 / 32) {
+                    let offset = entry_idx * 32;
+                    let first = dir_buf[offset];
+                    if first == 0x00 || first == 0xE5 {
+                        return Ok((sec_lba, offset));
+                    }
+                }
+            }
+
+            match self.get_next_cluster(cur_cluster).map_err(|_| VfsError::IoError)? {
+                Some(next) => cur_cluster = next,
+                None => break,
+            }
+        }
+
+        // Todos os clusters do diretÃ³rio estÃ£o cheios: expande a cadeia de clusters
+        let new_cluster = self.alloc_cluster()?;
+        self.set_next_cluster(last_cluster, new_cluster)?;
+
+        let new_lba = self.cluster_to_lba(new_cluster);
+        Ok((new_lba, 0))
+    }
     pub fn update_entry_size(&self, first_cluster: u32, new_size: u32) -> Result<(), VfsError> {
         let root_lba = self.cluster_to_lba(self.root_cluster);
         let mut dir_buf = [0u8; 512];
@@ -887,67 +949,54 @@ impl FileSystem for Fat32Fs {
         }
 
         let clean_path = path.trim_matches('/');
-        if clean_path.is_empty() || clean_path.contains('/') {
-            return Err(VfsError::NotSupported);
+        if clean_path.is_empty() {
+            return Err(VfsError::InvalidPath);
         }
 
-        // Verifica se já existe
+        // Verifica se o arquivo ou pasta com este nome jÃ¡ existe
         if self.find_file(clean_path).is_ok() {
             return Err(VfsError::AlreadyExists);
         }
 
-        let name_83 = self.encode_83(clean_path)?;
+        let (parent_cluster, leaf_name) = self.resolve_parent_and_leaf(clean_path)?;
+        let name_83 = self.encode_83(leaf_name)?;
         let new_cluster = self.alloc_cluster()?;
 
-        // Procura slot livre no cluster do diretório raiz
-        let root_lba = self.cluster_to_lba(self.root_cluster);
+        let (sec_lba, offset) = self.find_free_dir_slot(parent_cluster)?;
         let mut dir_buf = [0u8; 512];
-
-        for sec in 0..self.sectors_per_cluster {
-            let sec_lba = root_lba + sec as u32;
-            if self.read_sec(sec_lba, &mut dir_buf).is_err() {
-                return Err(VfsError::IoError);
-            }
-
-            for entry_idx in 0..(512 / 32) {
-                let offset = entry_idx * 32;
-                let first = dir_buf[offset];
-
-                if first == 0x00 || first == 0xE5 {
-                    // Slot disponível encontrado!
-                    dir_buf[offset..offset + 11].copy_from_slice(&name_83);
-                    dir_buf[offset + 11] = 0x20; // Atributo: Arquivo Normal (Archive)
-                    for k in 12..20 { dir_buf[offset + k] = 0; }
-
-                    // High cluster
-                    let clus_hi = ((new_cluster >> 16) & 0xFFFF) as u16;
-                    dir_buf[offset + 20] = (clus_hi & 0xFF) as u8;
-                    dir_buf[offset + 21] = ((clus_hi >> 8) & 0xFF) as u8;
-
-                    for k in 22..26 { dir_buf[offset + k] = 0; }
-
-                    // Low cluster
-                    let clus_lo = (new_cluster & 0xFFFF) as u16;
-                    dir_buf[offset + 26] = (clus_lo & 0xFF) as u8;
-                    dir_buf[offset + 27] = ((clus_lo >> 8) & 0xFF) as u8;
-
-                    // Tamanho inicial = 0
-                    dir_buf[offset + 28] = 0;
-                    dir_buf[offset + 29] = 0;
-                    dir_buf[offset + 30] = 0;
-                    dir_buf[offset + 31] = 0;
-
-                    if self.write_sec(sec_lba, &dir_buf).is_err() {
-                        return Err(VfsError::IoError);
-                    }
-                    let _ = self.sync();
-
-                    return Ok(());
-                }
-            }
+        if self.read_sec(sec_lba, &mut dir_buf).is_err() {
+            let _ = self.free_cluster_chain(new_cluster);
+            return Err(VfsError::IoError);
         }
 
-        Err(VfsError::NoSpace)
+        // Preenche a entrada de diretÃ³rio de 32 bytes (formato FAT32)
+        dir_buf[offset..offset + 11].copy_from_slice(&name_83);
+        dir_buf[offset + 11] = 0x20; // Atributo: Arquivo Normal (Archive)
+        for k in 12..20 { dir_buf[offset + k] = 0; }
+
+        let clus_hi = ((new_cluster >> 16) & 0xFFFF) as u16;
+        dir_buf[offset + 20] = (clus_hi & 0xFF) as u8;
+        dir_buf[offset + 21] = ((clus_hi >> 8) & 0xFF) as u8;
+
+        for k in 22..26 { dir_buf[offset + k] = 0; }
+
+        let clus_lo = (new_cluster & 0xFFFF) as u16;
+        dir_buf[offset + 26] = (clus_lo & 0xFF) as u8;
+        dir_buf[offset + 27] = ((clus_lo >> 8) & 0xFF) as u8;
+
+        // Tamanho inicial = 0 bytes
+        dir_buf[offset + 28] = 0;
+        dir_buf[offset + 29] = 0;
+        dir_buf[offset + 30] = 0;
+        dir_buf[offset + 31] = 0;
+
+        if self.write_sec(sec_lba, &dir_buf).is_err() {
+            let _ = self.free_cluster_chain(new_cluster);
+            return Err(VfsError::IoError);
+        }
+        let _ = self.sync();
+
+        Ok(())
     }
 
     fn mkdir(&self, path: &str) -> VfsResult<()> {
@@ -956,24 +1005,25 @@ impl FileSystem for Fat32Fs {
         }
 
         let clean_path = path.trim_matches('/');
-        if clean_path.is_empty() || clean_path.contains('/') {
-            return Err(VfsError::NotSupported);
+        if clean_path.is_empty() {
+            return Err(VfsError::InvalidPath);
         }
 
-        // Verifica se já existe
+        // Verifica se jÃ¡ existe
         if self.find_file(clean_path).is_ok() {
             return Err(VfsError::AlreadyExists);
         }
 
-        let name_83 = self.encode_83(clean_path)?;
+        let (parent_cluster, leaf_name) = self.resolve_parent_and_leaf(clean_path)?;
+        let name_83 = self.encode_83(leaf_name)?;
         let new_cluster = self.alloc_cluster()?;
 
-        // Inicializa o cluster do novo diretório com "." e ".."
+        // Inicializa o primeiro setor do novo cluster com as entradas "." e ".."
         let mut cluster_buf = [0u8; 512];
 
-        // Entrada "."
+        // Entrada "." (aponta para o prÃ³prio cluster recÃ©m-criado)
         cluster_buf[0..11].copy_from_slice(b".          ");
-        cluster_buf[11] = 0x10; // Atributo: Diretório
+        cluster_buf[11] = 0x10; // Atributo: DiretÃ³rio
         let clus_hi = ((new_cluster >> 16) & 0xFFFF) as u16;
         cluster_buf[20] = (clus_hi & 0xFF) as u8;
         cluster_buf[21] = ((clus_hi >> 8) & 0xFF) as u8;
@@ -981,14 +1031,14 @@ impl FileSystem for Fat32Fs {
         cluster_buf[26] = (clus_lo & 0xFF) as u8;
         cluster_buf[27] = ((clus_lo >> 8) & 0xFF) as u8;
 
-        // Entrada ".."
+        // Entrada ".." (aponta para o cluster do diretÃ³rio pai; se pai for raiz, clus=0 por especificaÃ§Ã£o FAT32)
         cluster_buf[32..43].copy_from_slice(b"..         ");
         cluster_buf[32 + 11] = 0x10;
-        let parent_cluster = self.root_cluster;
-        let p_hi = ((parent_cluster >> 16) & 0xFFFF) as u16;
+        let p_target = if parent_cluster == self.root_cluster { 0 } else { parent_cluster };
+        let p_hi = ((p_target >> 16) & 0xFFFF) as u16;
         cluster_buf[32 + 20] = (p_hi & 0xFF) as u8;
         cluster_buf[32 + 21] = ((p_hi >> 8) & 0xFF) as u8;
-        let p_lo = (parent_cluster & 0xFFFF) as u16;
+        let p_lo = (p_target & 0xFFFF) as u16;
         cluster_buf[32 + 26] = (p_lo & 0xFF) as u8;
         cluster_buf[32 + 27] = ((p_lo >> 8) & 0xFF) as u8;
 
@@ -998,49 +1048,38 @@ impl FileSystem for Fat32Fs {
             return Err(VfsError::IoError);
         }
 
-        // Procura slot livre no diretório raiz para registrar a nova pasta
-        let root_lba = self.cluster_to_lba(self.root_cluster);
+        // Localiza slot livre no diretÃ³rio pai
+        let (sec_lba, offset) = self.find_free_dir_slot(parent_cluster)?;
         let mut dir_buf = [0u8; 512];
-
-        for sec in 0..self.sectors_per_cluster {
-            let sec_lba = root_lba + sec as u32;
-            if self.read_sec(sec_lba, &mut dir_buf).is_err() {
-                return Err(VfsError::IoError);
-            }
-
-            for entry_idx in 0..(512 / 32) {
-                let offset = entry_idx * 32;
-                let first = dir_buf[offset];
-
-                if first == 0x00 || first == 0xE5 {
-                    dir_buf[offset..offset + 11].copy_from_slice(&name_83);
-                    dir_buf[offset + 11] = 0x10; // Atributo: Diretório
-                    for k in 12..20 { dir_buf[offset + k] = 0; }
-
-                    dir_buf[offset + 20] = (clus_hi & 0xFF) as u8;
-                    dir_buf[offset + 21] = ((clus_hi >> 8) & 0xFF) as u8;
-
-                    for k in 22..26 { dir_buf[offset + k] = 0; }
-
-                    dir_buf[offset + 26] = (clus_lo & 0xFF) as u8;
-                    dir_buf[offset + 27] = ((clus_lo >> 8) & 0xFF) as u8;
-
-                    dir_buf[offset + 28] = 0;
-                    dir_buf[offset + 29] = 0;
-                    dir_buf[offset + 30] = 0;
-                    dir_buf[offset + 31] = 0;
-
-                    if self.write_sec(sec_lba, &dir_buf).is_err() {
-                        return Err(VfsError::IoError);
-                    }
-                    let _ = self.sync();
-
-                    return Ok(());
-                }
-            }
+        if self.read_sec(sec_lba, &mut dir_buf).is_err() {
+            let _ = self.free_cluster_chain(new_cluster);
+            return Err(VfsError::IoError);
         }
 
-        Err(VfsError::NoSpace)
+        dir_buf[offset..offset + 11].copy_from_slice(&name_83);
+        dir_buf[offset + 11] = 0x10; // Atributo: DiretÃ³rio
+        for k in 12..20 { dir_buf[offset + k] = 0; }
+
+        dir_buf[offset + 20] = (clus_hi & 0xFF) as u8;
+        dir_buf[offset + 21] = ((clus_hi >> 8) & 0xFF) as u8;
+
+        for k in 22..26 { dir_buf[offset + k] = 0; }
+
+        dir_buf[offset + 26] = (clus_lo & 0xFF) as u8;
+        dir_buf[offset + 27] = ((clus_lo >> 8) & 0xFF) as u8;
+
+        dir_buf[offset + 28] = 0;
+        dir_buf[offset + 29] = 0;
+        dir_buf[offset + 30] = 0;
+        dir_buf[offset + 31] = 0;
+
+        if self.write_sec(sec_lba, &dir_buf).is_err() {
+            let _ = self.free_cluster_chain(new_cluster);
+            return Err(VfsError::IoError);
+        }
+        let _ = self.sync();
+
+        Ok(())
     }
 
     fn remove(&self, path: &str) -> VfsResult<()> {
@@ -1049,88 +1088,116 @@ impl FileSystem for Fat32Fs {
         }
 
         let clean_path = path.trim_matches('/');
-        if clean_path.is_empty() || clean_path.contains('/') {
-            return Err(VfsError::NotSupported);
+        if clean_path.is_empty() {
+            return Err(VfsError::InvalidPath);
         }
 
-        let root_lba = self.cluster_to_lba(self.root_cluster);
+        let (parent_cluster, leaf_name) = self.resolve_parent_and_leaf(clean_path)?;
+        let mut cur_cluster = parent_cluster;
         let mut dir_buf = [0u8; 512];
 
-        for sec in 0..self.sectors_per_cluster {
-            let sec_lba = root_lba + sec as u32;
-            if self.read_sec(sec_lba, &mut dir_buf).is_err() {
-                return Err(VfsError::IoError);
-            }
+        while cur_cluster >= 2 && cur_cluster < FAT32_EOF {
+            let start_lba = self.cluster_to_lba(cur_cluster);
 
-            for entry_idx in 0..(512 / 32) {
-                let offset = entry_idx * 32;
-                let first = dir_buf[offset];
-
-                if first == 0x00 {
-                    return Err(VfsError::NotFound); // Fim do diretório
-                }
-                if first == 0xE5 {
-                    continue; // Entrada excluída
+            for sec in 0..self.sectors_per_cluster {
+                let sec_lba = start_lba + sec as u32;
+                if self.read_sec(sec_lba, &mut dir_buf).is_err() {
+                    return Err(VfsError::IoError);
                 }
 
-                let attr = dir_buf[offset + 11];
-                if attr == 0x0F || (attr & 0x08) != 0 {
-                    continue;
-                }
+                for entry_idx in 0..(512 / 32) {
+                    let offset = entry_idx * 32;
+                    let first = dir_buf[offset];
 
-                // Extrai nome formatado
-                let mut name = [0u8; 13];
-                let mut len = 0;
-                for i in 0..8 {
-                    let c = dir_buf[offset + i];
-                    if c != b' ' { name[len] = c.to_ascii_lowercase(); len += 1; }
-                }
-                let ext1 = dir_buf[offset + 8];
-                let ext2 = dir_buf[offset + 9];
-                let ext3 = dir_buf[offset + 10];
-                if ext1 != b' ' || ext2 != b' ' || ext3 != b' ' {
-                    name[len] = b'.'; len += 1;
-                    for &c in &[ext1, ext2, ext3] {
+                    if first == 0x00 {
+                        return Err(VfsError::NotFound); // Fim do diretÃ³rio
+                    }
+                    if first == 0xE5 {
+                        continue; // Entrada excluÃ­da
+                    }
+
+                    let attr = dir_buf[offset + 11];
+                    if attr == 0x0F || (attr & 0x08) != 0 {
+                        continue;
+                    }
+
+                    // Extrai nome formatado 8.3
+                    let mut name = [0u8; 13];
+                    let mut len = 0;
+                    for i in 0..8 {
+                        let c = dir_buf[offset + i];
                         if c != b' ' { name[len] = c.to_ascii_lowercase(); len += 1; }
                     }
-                }
-
-                if let Ok(entry_str) = core::str::from_utf8(&name[..len]) {
-                    if entry_str.eq_ignore_ascii_case(clean_path) {
-                        let fst_hi = (dir_buf[offset + 20] as u32) | ((dir_buf[offset + 21] as u32) << 8);
-                        let fst_lo = (dir_buf[offset + 26] as u32) | ((dir_buf[offset + 27] as u32) << 8);
-                        let first_cluster = (fst_hi << 16) | fst_lo;
-
-                        // Marca entrada como excluída
-                        dir_buf[offset] = 0xE5;
-                        if self.write_sec(sec_lba, &dir_buf).is_err() {
-                            return Err(VfsError::IoError);
+                    let is_dir = (attr & 0x10) != 0;
+                    let ext1 = dir_buf[offset + 8];
+                    let ext2 = dir_buf[offset + 9];
+                    let ext3 = dir_buf[offset + 10];
+                    if !is_dir && (ext1 != b' ' || ext2 != b' ' || ext3 != b' ') {
+                        name[len] = b'.'; len += 1;
+                        for &c in &[ext1, ext2, ext3] {
+                            if c != b' ' { name[len] = c.to_ascii_lowercase(); len += 1; }
                         }
+                    }
 
-                        // Libera cadeia de clusters alocados
-                        if first_cluster >= 2 && first_cluster < FAT32_EOF {
-                            let _ = self.free_cluster_chain(first_cluster);
-                        }
+                    if let Ok(entry_str) = core::str::from_utf8(&name[..len]) {
+                        if entry_str.eq_ignore_ascii_case(leaf_name) {
+                            let fst_hi = (dir_buf[offset + 20] as u32) | ((dir_buf[offset + 21] as u32) << 8);
+                            let fst_lo = (dir_buf[offset + 26] as u32) | ((dir_buf[offset + 27] as u32) << 8);
+                            let first_cluster = (fst_hi << 16) | fst_lo;
 
-                        // Invalida em open_files se estiver aberto
-                        unsafe {
-                            let fs_ptr = core::ptr::addr_of_mut!(FAT32_GLOBAL);
-                            for slot in (*fs_ptr).open_files.iter_mut() {
-                                if slot.is_active && slot.entry.first_cluster == first_cluster {
-                                    slot.is_active = false;
+                            // Se for diretÃ³rio, valida se estÃ¡ vazio (somente '.' e '..')
+                            if is_dir && first_cluster >= 2 && first_cluster < FAT32_EOF {
+                                let mut is_empty = true;
+                                let _ = self.for_each_entry(first_cluster, |e| {
+                                    if let Ok(n) = core::str::from_utf8(&e.name[..e.name_len]) {
+                                        if n != "." && n != ".." {
+                                            is_empty = false;
+                                            return false;
+                                        }
+                                    }
+                                    true
+                                });
+                                if !is_empty {
+                                    return Err(VfsError::Busy);
                                 }
                             }
-                        }
 
-                        return Ok(());
+                            // Marca a entrada como excluÃ­da com 0xE5
+                            dir_buf[offset] = 0xE5;
+                            if self.write_sec(sec_lba, &dir_buf).is_err() {
+                                return Err(VfsError::IoError);
+                            }
+
+                            // Libera cadeia de clusters alocados na FAT
+                            if first_cluster >= 2 && first_cluster < FAT32_EOF {
+                                let _ = self.free_cluster_chain(first_cluster);
+                            }
+
+                            // Invalida em open_files se estiver aberto
+                            unsafe {
+                                let fs_ptr = core::ptr::addr_of_mut!(FAT32_GLOBAL);
+                                for slot in (*fs_ptr).open_files.iter_mut() {
+                                    if slot.is_active && slot.entry.first_cluster == first_cluster {
+                                        slot.is_active = false;
+                                    }
+                                }
+                            }
+
+                            let _ = self.sync();
+                            return Ok(());
+                        }
                     }
                 }
+            }
+
+            match self.get_next_cluster(cur_cluster).map_err(|_| VfsError::IoError)? {
+                Some(next) => cur_cluster = next,
+                None => break,
             }
         }
 
         Err(VfsError::NotFound)
     }
-
     fn readdir(&self, path: &str, cb: &mut dyn FnMut(&str, NodeType)) {
         if !self.is_mounted {
             return;

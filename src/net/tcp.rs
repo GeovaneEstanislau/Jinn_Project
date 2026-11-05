@@ -1,4 +1,4 @@
-﻿//! Jinn OS — Protocolo TCP (Camada de Transporte Confiável L4 — RFC 793)
+//! Jinn OS — Protocolo TCP (Camada de Transporte Confiável L4 — RFC 793)
 
 use crate::net::ethernet::{EthernetFrame, ETHERTYPE_IPV4};
 use crate::net::ipv4::{Ipv4Packet, PROTO_TCP};
