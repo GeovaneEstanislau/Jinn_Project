@@ -323,8 +323,17 @@ pub fn send_tcp_packet(
     }
 
     let total_frame_len = 14 + 20 + written;
+    if (flags & TCP_FLAG_RST) != 0 {
+        crate::net::NET_DIAGNOSTICS.tcp_rst_sent.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
     if let Some(dev) = crate::drivers::net::get_device() {
-        dev.transmit(&eth_buf[..total_frame_len]).is_ok()
+        let ok = dev.transmit(&eth_buf[..total_frame_len]).is_ok();
+        if ok {
+            crate::net::NET_DIAGNOSTICS.record_tx_ethernet(total_frame_len);
+        } else {
+            crate::net::NET_DIAGNOSTICS.record_tx_error();
+        }
+        ok
     } else {
         false
     }
@@ -397,6 +406,7 @@ pub fn handle_incoming_tcp_packet(src_ip: [u8; 4], _dst_ip: [u8; 4], tcp: &TcpPa
 
 fn process_syn_sent_event(sock: &mut crate::net::socket::Socket, src_ip: [u8; 4], tcp: &TcpPacket) {
     if (tcp.flags & TCP_FLAG_RST) != 0 {
+        crate::net::NET_DIAGNOSTICS.record_tcp_rst_rcvd();
         sock.tcb.state = TcpState::Closed;
         sock.is_connected = false;
         return;
@@ -409,6 +419,8 @@ fn process_syn_sent_event(sock: &mut crate::net::socket::Socket, src_ip: [u8; 4]
             sock.tcb.remote_win = tcp.window;
             sock.tcb.state = TcpState::Established;
             sock.is_connected = true;
+            crate::net::NET_DIAGNOSTICS.record_tcp_syn_ack_rcvd();
+            crate::net::NET_DIAGNOSTICS.record_tcp_established();
 
             // Envia ACK final do handshake de 3 vias
             send_tcp_packet(
@@ -497,6 +509,7 @@ fn process_connected_tcp_event(sock_idx: usize, src_ip: [u8; 4], tcp: &TcpPacket
     match sock.tcb.state {
         TcpState::SynReceived => {
             if (tcp.flags & TCP_FLAG_RST) != 0 {
+        crate::net::NET_DIAGNOSTICS.record_tcp_rst_rcvd();
                 sock.tcb.state = TcpState::Closed;
                 sock.is_connected = false;
                 let parent_opt = sock.parent_listener;
@@ -533,6 +546,8 @@ fn process_connected_tcp_event(sock_idx: usize, src_ip: [u8; 4], tcp: &TcpPacket
                 if promoted {
                     sock.tcb.state = TcpState::Established;
                     sock.is_connected = true;
+            crate::net::NET_DIAGNOSTICS.record_tcp_syn_ack_rcvd();
+            crate::net::NET_DIAGNOSTICS.record_tcp_established();
                 } else {
                     // Backlog cheio ou listener fechado: aborta conexão com RST conforme política de segurança
                     send_tcp_packet(
@@ -553,6 +568,7 @@ fn process_connected_tcp_event(sock_idx: usize, src_ip: [u8; 4], tcp: &TcpPacket
         }
         TcpState::Established => {
             if (tcp.flags & TCP_FLAG_RST) != 0 {
+        crate::net::NET_DIAGNOSTICS.record_tcp_rst_rcvd();
                 sock.tcb.state = TcpState::Closed;
                 sock.is_connected = false;
                 sock.tcb.unacked_len = 0;

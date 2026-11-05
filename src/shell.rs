@@ -121,6 +121,7 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
 
         // ── Rede & DNS ────────────────────────────────────────────────────────
         "netinfo" | "ifconfig" | "net" => cmd_netinfo(w),
+        "netdiag" | "netstat" => cmd_netdiag(w),
         "dns" => cmd_dns(w, args),
         "dnscache" => cmd_dnscache(w),
         "jinnwall" | "firewall" => cmd_jinnwall(w, args),
@@ -181,6 +182,7 @@ fn cmd_help(w: &mut Writer) {
     w.write_line("  jdabench       — executa benchmark do grafo Dataflow vs Baseline");
     w.write_line("  jdashm         — teste de ciclo de vida de memoria fisica compartilhada Zero-Copy");
     w.write_line("  netinfo        — configuracao IP, gateway, DNS e interface VirtIO");
+    w.write_line("  netdiag        — telemetria de rede, estatisticas L2/L3/L4 e erros");
     w.write_line("  dns <host>     — resolve nome de dominio para IPv4 via UDP/53");
     w.write_line("  dnscache       — lista entradas e TTL no cache local DNS");
     w.write_line("  jinnwall [dev] — exibe status e gerencia perfil do firewall SPI");
@@ -2801,6 +2803,86 @@ fn cmd_netinfo(w: &mut Writer) {
     }
 }
 
+/// `netdiag` — Telemetria e diagnóstico detalhado por camada de rede (Marco 0.5.0)
+fn cmd_netdiag(w: &mut Writer) {
+    use core::sync::atomic::Ordering::Relaxed;
+    let diag = &crate::net::NET_DIAGNOSTICS;
+
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_line("=== Telemetria de Rede & Diagnostico Jinn OS ===");
+    w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string("  Ethernet L2   : RX ");
+    w.write_decimal(diag.rx_packets.load(Relaxed) as usize);
+    w.write_string(" pkts (");
+    w.write_decimal(diag.rx_bytes.load(Relaxed) as usize);
+    w.write_string(" B) | TX ");
+    w.write_decimal(diag.tx_packets.load(Relaxed) as usize);
+    w.write_string(" pkts (");
+    w.write_decimal(diag.tx_bytes.load(Relaxed) as usize);
+    w.write_line(" B)");
+
+    w.write_string("  Erros L2/DMA  : RX Errs=");
+    w.write_decimal(diag.rx_errors.load(Relaxed) as usize);
+    w.write_string(" | TX Errs=");
+    w.write_decimal(diag.tx_errors.load(Relaxed) as usize);
+    w.write_string(" | DMA Errs=");
+    w.write_decimal(diag.dma_errors.load(Relaxed) as usize);
+    w.write_line("");
+
+    w.write_string("  ARP Cache     : Reqs Sent=");
+    w.write_decimal(diag.arp_requests_sent.load(Relaxed) as usize);
+    w.write_string(" | Replies Rcvd=");
+    w.write_decimal(diag.arp_replies_rcvd.load(Relaxed) as usize);
+    w.write_string(" | Timeouts=");
+    w.write_decimal(diag.arp_timeouts.load(Relaxed) as usize);
+    w.write_line("");
+
+    w.write_string("  IPv4 / ICMP   : RX Packets=");
+    w.write_decimal(diag.ip_rx_packets.load(Relaxed) as usize);
+    w.write_string(" | CSUM Errs=");
+    w.write_decimal(diag.ip_csum_errors.load(Relaxed) as usize);
+    w.write_string(" | Dropped=");
+    w.write_decimal(diag.ip_dropped.load(Relaxed) as usize);
+    w.write_line("");
+
+    w.write_string("  DNS / UDP     : Queries=");
+    w.write_decimal(diag.dns_queries_sent.load(Relaxed) as usize);
+    w.write_string(" | Replies=");
+    w.write_decimal(diag.dns_replies_rcvd.load(Relaxed) as usize);
+    w.write_string(" | Timeouts=");
+    w.write_decimal(diag.dns_timeouts.load(Relaxed) as usize);
+    w.write_string(" | NXDOMAIN=");
+    w.write_decimal(diag.dns_nxdomain.load(Relaxed) as usize);
+    w.write_line("");
+
+    w.write_string("  TCP Conexoes  : SYN Sent=");
+    w.write_decimal(diag.tcp_syn_sent.load(Relaxed) as usize);
+    w.write_string(" | SYN-ACK Rcvd=");
+    w.write_decimal(diag.tcp_syn_ack_rcvd.load(Relaxed) as usize);
+    w.write_string(" | Established=");
+    w.write_decimal(diag.tcp_established.load(Relaxed) as usize);
+    w.write_line("");
+
+    w.write_string("  TCP Confiabil : Retrans=");
+    w.write_decimal(diag.tcp_retransmits.load(Relaxed) as usize);
+    w.write_string(" | Timeouts=");
+    w.write_decimal(diag.tcp_timeouts.load(Relaxed) as usize);
+    w.write_string(" | RSTs=");
+    w.write_decimal((diag.tcp_rst_rcvd.load(Relaxed) + diag.tcp_rst_sent.load(Relaxed)) as usize);
+    w.write_string(" | CSUM Errs=");
+    w.write_decimal(diag.tcp_csum_errors.load(Relaxed) as usize);
+    w.write_line("");
+
+    w.write_string("  Sockets/Wall  : Abertos=");
+    w.write_decimal(diag.sockets_opened.load(Relaxed) as usize);
+    w.write_string(" | Fechados=");
+    w.write_decimal(diag.sockets_closed.load(Relaxed) as usize);
+    w.write_string(" | JinnWall DROPs=");
+    w.write_decimal(diag.firewall_drops.load(Relaxed) as usize);
+    w.write_line("");
+}
+
 /// `jinnwall` — Status e controle do firewall SPI JinnWall.
 fn cmd_jinnwall(w: &mut Writer, args: &str) {
     unsafe {
@@ -3082,6 +3164,48 @@ where
             if let Ok(s) = core::str::from_utf8(&buf[..len]) {
                 output(s, 0x0022_C55E);
             }
+        }
+        "netdiag" | "netstat" => {
+            output("=== Telemetria de Rede ===", 0x00F5_9E0B);
+            use core::sync::atomic::Ordering::Relaxed;
+            let diag = &crate::net::NET_DIAGNOSTICS;
+            let mut buf = [0u8; 64];
+            output("L2 Ethernet (RX/TX):", 0x0094_A3B8);
+            let rx = diag.rx_packets.load(Relaxed) as usize;
+            let tx = diag.tx_packets.load(Relaxed) as usize;
+            let mut b1 = [0u8; 16];
+            let mut b2 = [0u8; 16];
+            let l1 = aladdin::compositor::format_num(rx, &mut b1);
+            let l2 = aladdin::compositor::format_num(tx, &mut b2);
+            buf[..4].copy_from_slice(b"RX: ");
+            buf[4..(4 + l1)].copy_from_slice(&b1[..l1]);
+            let off = 4 + l1;
+            buf[off..(off + 6)].copy_from_slice(b" | TX: ");
+            buf[(off + 6)..(off + 6 + l2)].copy_from_slice(&b2[..l2]);
+            if let Ok(s) = core::str::from_utf8(&buf[..(off + 6 + l2)]) { output(s, 0x0038_BDF8); }
+
+            output("TCP (Handshake / Status):", 0x0094_A3B8);
+            let syn = diag.tcp_syn_sent.load(Relaxed) as usize;
+            let ack = diag.tcp_syn_ack_rcvd.load(Relaxed) as usize;
+            let est = diag.tcp_established.load(Relaxed) as usize;
+            let mut bs = [0u8; 16];
+            let mut ba = [0u8; 16];
+            let mut be = [0u8; 16];
+            let ls = aladdin::compositor::format_num(syn, &mut bs);
+            let la = aladdin::compositor::format_num(ack, &mut ba);
+            let le = aladdin::compositor::format_num(est, &mut be);
+            buf[..5].copy_from_slice(b"SYN: ");
+            buf[5..(5 + ls)].copy_from_slice(&bs[..ls]);
+            let mut o = 5 + ls;
+            buf[o..(o + 6)].copy_from_slice(b" | SA: ");
+            o += 6;
+            buf[o..(o + la)].copy_from_slice(&ba[..la]);
+            o += la;
+            buf[o..(o + 7)].copy_from_slice(b" | EST: ");
+            o += 7;
+            buf[o..(o + le)].copy_from_slice(&be[..le]);
+            o += le;
+            if let Ok(s) = core::str::from_utf8(&buf[..o]) { output(s, 0x0022_C55E); }
         }
         "net" | "netinfo" | "ifconfig" => {
             output("=== Configuracao de Rede ===", 0x00F5_9E0B);

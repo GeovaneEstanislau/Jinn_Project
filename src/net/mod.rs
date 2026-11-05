@@ -2,6 +2,7 @@
 
 pub mod arp;
 pub mod dhcp;
+pub mod diagnostics;
 pub mod dns;
 pub mod ethernet;
 pub mod icmp;
@@ -10,6 +11,8 @@ pub mod jinnwall;
 pub mod socket;
 pub mod tcp;
 pub mod udp;
+
+pub use diagnostics::NET_DIAGNOSTICS;
 
 use ethernet::{EthernetFrame, ETHERTYPE_ARP, ETHERTYPE_IPV4};
 use ipv4::{Ipv4Packet, PROTO_ICMP, PROTO_TCP, PROTO_UDP};
@@ -84,9 +87,14 @@ pub fn poll() {
     while let Some(len) = dev.receive(&mut rx_buf) {
         if len < 14 { continue; }
 
+        NET_DIAGNOSTICS.record_rx_ethernet(len);
+
         let frame = match EthernetFrame::parse(&rx_buf[..len]) {
             Ok(f) => f,
-            Err(_) => continue,
+            Err(_) => {
+                NET_DIAGNOSTICS.record_rx_error();
+                continue;
+            }
         };
 
         match frame.ethertype {
@@ -96,6 +104,8 @@ pub fn poll() {
                     unsafe {
                         arp::ARP_CACHE.insert(arp.sender_ip, arp.sender_mac, ticks);
                     }
+                    NET_DIAGNOSTICS.record_arp_reply_rcvd();
+
                     // Se for requisição ARP procurando nosso IP, responde
                     let our_ip = unsafe { dhcp::DHCP_CLIENT.ip };
                     if arp.opcode == arp::ARP_OP_REQUEST && arp.target_ip == our_ip {
@@ -123,6 +133,8 @@ pub fn poll() {
                     unsafe {
                         arp::ARP_CACHE.insert(ip_pkt.header.src_ip, frame.src_mac, ticks);
                     }
+                    NET_DIAGNOSTICS.ip_rx_packets.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+
                     let (src_port, dst_port) = match ip_pkt.header.protocol {
                         PROTO_UDP => {
                             if ip_pkt.payload.len() < 8 {
@@ -158,6 +170,7 @@ pub fn poll() {
                     };
 
                     if verdict == FilterVerdict::Drop {
+                        NET_DIAGNOSTICS.firewall_drops.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                         continue; // Pacote rejeitado pela política do firewall
                     }
 
@@ -173,6 +186,7 @@ pub fn poll() {
                             );
                         }
                         PROTO_UDP => {
+                            NET_DIAGNOSTICS.udp_rx_packets.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                             if let Ok(udp) = udp::UdpPacket::parse(ip_pkt.payload) {
                                 if udp.dst_port == dhcp::DHCP_CLIENT_PORT {
                                     dhcp::handle_dhcp_reply(udp.payload);
@@ -190,6 +204,8 @@ pub fn poll() {
                                 if let Ok(tcp) = tcp::TcpPacket::parse(ip_pkt.payload) {
                                     tcp::handle_incoming_tcp_packet(ip_pkt.header.src_ip, ip_pkt.header.dst_ip, &tcp);
                                 }
+                            } else {
+                                NET_DIAGNOSTICS.record_tcp_csum_error();
                             }
                         }
                         _ => {}

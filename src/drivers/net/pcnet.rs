@@ -164,6 +164,7 @@ impl PcnetDevice {
             let desc = &mut *tx_virt.add(desc_idx);
             // Verifica se o descritor ainda está retido pelo controlador (OWN = 1)
             if (desc.status & DESC_OWN) != 0 {
+                crate::net::NET_DIAGNOSTICS.record_dma_error();
                 return Err(());
             }
 
@@ -221,6 +222,8 @@ impl PcnetDevice {
                 let buf_virt = crate::memory::paging::phys_to_virt(self.rx_buffers_phys[desc_idx]) as *const u8;
                 core::ptr::copy_nonoverlapping(buf_virt, dest.as_mut_ptr(), to_copy);
                 copy_len = to_copy;
+            } else if has_err {
+                crate::net::NET_DIAGNOSTICS.record_dma_error();
             }
 
             // Limpa interrupção de recepção em CSR0 se pendente
@@ -449,4 +452,39 @@ mod tests {
         let complement = (-(len as i16) as u16) | 0xF000;
         assert_eq!(complement, 0xFA00);
     }
+
+    #[test]
+    fn test_pcnet_ring_modulo_and_wrap_around() {
+        let mut cur = 0usize;
+        for _ in 0..NUM_DESC {
+            cur = (cur + 1) % NUM_DESC;
+        }
+        assert_eq!(cur, 0);
+        cur = (31 + 1) % NUM_DESC;
+        assert_eq!(cur, 0);
+    }
+
+    #[test]
+    fn test_pcnet_descriptor_status_flags() {
+        let ready_status = DESC_OWN | DESC_STP | DESC_ENP;
+        assert_eq!(ready_status & DESC_OWN, DESC_OWN);
+        assert_eq!(ready_status & DESC_STP, DESC_STP);
+        assert_eq!(ready_status & DESC_ENP, DESC_ENP);
+        assert_eq!(ready_status & DESC_ERR, 0);
+
+        let err_status = DESC_ERR | DESC_STP;
+        assert_ne!(err_status & DESC_ERR, 0);
+    }
+
+    #[test]
+    fn test_pcnet_csr0_bits() {
+        assert_eq!(CSR0_INIT, 1 << 0);
+        assert_eq!(CSR0_STRT, 1 << 1);
+        assert_eq!(CSR0_STOP, 1 << 2);
+        assert_eq!(CSR0_TDMD, 1 << 3);
+        assert_eq!(CSR0_IENA, 1 << 6);
+        assert_eq!(CSR0_IDON, 1 << 8);
+        assert_eq!(CSR0_RINT, 1 << 10);
+    }
 }
+

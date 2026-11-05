@@ -168,6 +168,7 @@ pub fn send_arp_request(target_ip: [u8; 4]) -> bool {
         crate::net::ethernet::ETHERTYPE_ARP,
     );
     let arp_len = build_arp_request(&mut frame[14..], our_mac, our_ip, target_ip);
+    crate::net::NET_DIAGNOSTICS.record_arp_request_sent();
     dev.transmit(&frame[..(14 + arp_len)]).is_ok()
 }
 
@@ -198,13 +199,19 @@ pub fn resolve_mac_for_ip_blocking(dst_ip: [u8; 4], timeout_ticks: u64) -> Optio
         crate::scheduler::yield_now();
     }
 
+    crate::net::NET_DIAGNOSTICS.record_arp_timeout();
+
     // 3. Fallback inteligente para ambientes virtuais (VirtualBox / QEMU NAT):
-    // Se conhecemos o MAC do gateway (aprendido via DHCP), e next_hop é o DNS da sub-rede local,
-    // associa o MAC do gateway a esse host
+    // Se conhecemos o MAC do gateway ou do DNS (aprendido via DHCP ou resposta DNS), associa ao next_hop
     let gateway = unsafe { crate::net::dhcp::DHCP_CLIENT.gateway };
     if let Some(gw_mac) = unsafe { ARP_CACHE.lookup(gateway) } {
         unsafe { ARP_CACHE.insert(next_hop, gw_mac, crate::timer::ticks()); }
         return Some(gw_mac);
+    }
+    let dns = unsafe { crate::net::dhcp::DHCP_CLIENT.dns };
+    if let Some(dns_mac) = unsafe { ARP_CACHE.lookup(dns) } {
+        unsafe { ARP_CACHE.insert(next_hop, dns_mac, crate::timer::ticks()); }
+        return Some(dns_mac);
     }
 
     // Fallback de emergência caso nenhum pacote ARP ou DHCP tenha sido recebido
@@ -219,8 +226,10 @@ pub fn resolve_mac_for_ip_blocking(dst_ip: [u8; 4], timeout_ticks: u64) -> Optio
 
 /// Resolve o endereço MAC para o próximo salto de um pacote com destino a `dst_ip`.
 pub fn resolve_mac_for_ip(dst_ip: [u8; 4]) -> [u8; 6] {
-    if let Some(mac) = resolve_mac_for_ip_blocking(dst_ip, 30) {
+    if let Some(mac) = resolve_mac_for_ip_blocking(dst_ip, 50) {
         mac
+    } else if let Some(dns_mac) = unsafe { ARP_CACHE.lookup(crate::net::dhcp::DHCP_CLIENT.dns) } {
+        dns_mac
     } else {
         DEFAULT_GATEWAY_MAC
     }

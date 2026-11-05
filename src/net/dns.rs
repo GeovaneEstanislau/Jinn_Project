@@ -740,6 +740,7 @@ pub fn send_query_to(name: &str, tx_id: u16, server_override: Option<[u8; 4]>) -
 
     let total_len = 14 + 20 + 8 + payload_len;
     let _ = dev.transmit(&frame[..total_len]);
+    crate::net::NET_DIAGNOSTICS.record_dns_query_sent();
     Ok(())
 }
 
@@ -813,6 +814,7 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
                     return Ok(ip);
                 }
                 DnsQueryStatus::NxDomain => {
+                    crate::net::NET_DIAGNOSTICS.record_dns_nxdomain();
                     unsafe {
                         PENDING_QUERY = None;
                         PENDING_DNS_TABLE.remove(tx_id);
@@ -854,6 +856,7 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
         PENDING_QUERY = None;
         PENDING_DNS_TABLE.remove(tx_id);
     }
+    crate::net::NET_DIAGNOSTICS.record_dns_timeout();
     Err(DnsResolveError::Timeout)
 }
 

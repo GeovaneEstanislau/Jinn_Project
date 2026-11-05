@@ -1,6 +1,6 @@
 //! Jinn OS — Subsistema de Sockets e ABI de Rede para Aplicações Ring 3
 
-use crate::syscall::{EADDRINUSE, EAGAIN, EBADF, ECONNREFUSED, ECONNRESET, EINVAL, EMFILE, ENOBUFS, EPERM, ETIMEDOUT};
+use crate::syscall::{EADDRINUSE, EAGAIN, EBADF, ECONNREFUSED, ECONNRESET, EHOSTUNREACH, EINVAL, EMFILE, ENETDOWN, ENETUNREACH, ENOBUFS, EPERM, ETIMEDOUT};
 
 pub const AF_INET:     u32 = 2;
 pub const SOCK_STREAM: u32 = 1; // TCP
@@ -195,6 +195,7 @@ pub fn create_socket(pid: usize, domain: u32, sock_type: u32, _protocol: u32) ->
                 sock.owner_pid = pid;
                 sock.sock_type = sock_type;
                 *slot = Some(sock);
+                crate::net::NET_DIAGNOSTICS.sockets_opened.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 return Ok(idx);
             }
         }
@@ -240,6 +241,17 @@ pub fn bind_socket(pid: usize, sockfd: usize, local_port: u16) -> Result<(), isi
 /// Para UDP (SOCK_DGRAM), apenas registra o endpoint remoto.
 /// Para TCP (SOCK_STREAM), executa o handshake de 3 vias (SYN -> SYN-ACK -> ACK) com timeout e retransmissões.
 pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port: u16) -> Result<(), isize> {
+    // Validação estrita de interface de rede física/virtual
+    let dev_avail = crate::drivers::net::get_device().map(|d| d.is_available()).unwrap_or(false);
+    if !dev_avail {
+        return Err(ENETDOWN);
+    }
+
+    // Validação de rota de rede para o próximo salto
+    let next_hop = crate::net::ipv4::get_next_hop_ip(remote_ip);
+    if next_hop == [0, 0, 0, 0] {
+        return Err(EHOSTUNREACH);
+    }
     let (sock_type, local_port) = unsafe {
         let sock = match SOCKET_TABLE.get_mut(sockfd).and_then(|s| s.as_mut()) {
             Some(s) => s,
@@ -275,6 +287,7 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
             s.tcb.local_seq = (crate::timer::ticks() as u32).wrapping_mul(1000).wrapping_add(local_port as u32);
             s.tcb.last_tx_tick = crate::timer::ticks();
             s.tcb.retransmit_count = 0;
+            s.tcb.rto_ticks = 100; // 1,0s base RTO RFC 6298
         }
     }
 
@@ -282,6 +295,7 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
     let _ = crate::net::arp::resolve_mac_for_ip(remote_ip);
 
     let syn_seq = unsafe { SOCKET_TABLE[sockfd].as_ref().unwrap().tcb.local_seq };
+    crate::net::NET_DIAGNOSTICS.record_tcp_syn_sent();
     crate::net::tcp::send_tcp_packet(
         local_port,
         remote_ip,
@@ -300,9 +314,9 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
 
     // Loop de espera ativa com polling de rede e retransmissões automáticas (RTO)
     let start_tick = crate::timer::ticks();
-    let mut iters = 0usize;
-    while crate::timer::ticks().saturating_sub(start_tick) < 500 && iters < 20_000 {
-        iters += 1;
+    let timeout_ticks = 600u64; // 6,0s exatos pelo timer APIC (100 Hz)
+    while crate::timer::ticks().saturating_sub(start_tick) < timeout_ticks {
+
         crate::net::poll();
 
         unsafe {
@@ -323,7 +337,9 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
                 if s.tcb.state == crate::net::tcp::TcpState::SynSent
                     && now.saturating_sub(s.tcb.last_tx_tick) >= s.tcb.rto_ticks
                 {
-                    if s.tcb.retransmit_count < 3 {
+                    if s.tcb.retransmit_count < 4 {
+                        s.tcb.rto_ticks = (s.tcb.rto_ticks * 2).min(300);
+                        crate::net::NET_DIAGNOSTICS.record_tcp_retransmit();
                         s.tcb.retransmit_count += 1;
                         s.tcb.last_tx_tick = now;
                         let retrans_seq = s.tcb.local_seq.wrapping_sub(1);
@@ -345,6 +361,7 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
     }
 
     // Timeout atingido sem resposta do peer
+    crate::net::NET_DIAGNOSTICS.record_tcp_timeout();
     unsafe {
         if let Some(Some(ref mut s)) = SOCKET_TABLE.get_mut(sockfd) {
             s.tcb.state = crate::net::tcp::TcpState::Closed;
@@ -490,6 +507,7 @@ pub fn close_socket(pid: usize, sockfd: usize) -> Result<(), isize> {
             sock.remote_port,
         );
 
+        crate::net::NET_DIAGNOSTICS.sockets_closed.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         SOCKET_TABLE[sockfd] = None;
     }
     if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(pid) {

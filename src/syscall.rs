@@ -86,10 +86,13 @@ pub const ENOSPC:       isize = -28;  // No space left on device
 pub const ESPIPE:       isize = -29;  // Illegal seek
 pub const ENOSYS:       isize = -38;  // Function not implemented
 pub const EADDRINUSE:   isize = -98;  // Address already in use
+pub const ENETDOWN:     isize = -100; // Network interface is down
+pub const ENETUNREACH:  isize = -101; // Network is unreachable
 pub const ECONNRESET:   isize = -104; // Connection reset by peer
 pub const ENOBUFS:      isize = -105; // No buffer space available
 pub const ETIMEDOUT:    isize = -110; // Connection timed out
 pub const ECONNREFUSED: isize = -111; // Connection refused
+pub const EHOSTUNREACH: isize = -113; // No route to host
 pub const EDQUOT:       isize = -122; // Quota exceeded
 
 // ── Whence Flags (lseek) ─────────────────────────────────────────────────────

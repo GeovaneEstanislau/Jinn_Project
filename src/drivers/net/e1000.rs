@@ -294,4 +294,29 @@ pub fn init() -> bool {
 
 pub fn get_device() -> Option<&'static mut E1000Device> {
     unsafe { E1000_NET.as_mut() }
+
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_e1000_descriptors_size_and_alignment() {
+        assert_eq!(core::mem::size_of::<E1000RxDesc>(), 16);
+        assert_eq!(core::mem::size_of::<E1000TxDesc>(), 16);
+        assert_eq!(core::mem::align_of::<E1000RxDesc>(), 1);
+        assert_eq!(core::mem::align_of::<E1000TxDesc>(), 1);
+    }
+
+    #[test]
+    fn test_e1000_ring_modulo_and_status() {
+        let mut cur = 0usize;
+        for _ in 0..NUM_DESC {
+            cur = (cur + 1) % NUM_DESC;
+        }
+        assert_eq!(cur, 0);
+        assert_eq!(STAT_DD, 1 << 0);
+        assert_eq!(CMD_EOP | CMD_IFCS | CMD_RS, 0x0B);
+    }
 }
