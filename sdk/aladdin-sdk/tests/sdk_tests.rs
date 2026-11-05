@@ -67,3 +67,4 @@ fn test_canvas_primitives() {
     assert_eq!(canvas.buffer[3 * 10 + 3], Color::RED.0);
     assert_eq!(canvas.buffer[4 * 10 + 4], Color::BLACK.0);
 }
+

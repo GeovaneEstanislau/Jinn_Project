@@ -1,5 +1,12 @@
 //! Jinn Browser Engine - Reference Implementation and Session Manager
 
+pub mod tab;
+
+pub use tab::{
+    AudioFocusManager, AudioPlaybackState, MediaPipeline, Tab, TabManager, TabMetrics,
+    TabSnapshot, TabState, TabTelemetry,
+};
+
 use jbe_core::{EngineError, EngineLimits, Point};
 use jbe_css::StyleSheet;
 use jbe_dom::DomTree;

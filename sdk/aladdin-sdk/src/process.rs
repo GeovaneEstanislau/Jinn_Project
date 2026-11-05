@@ -26,3 +26,4 @@ pub fn yield_now() {
         syscall0(SYS_YIELD);
     }
 }
+

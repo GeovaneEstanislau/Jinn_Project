@@ -119,3 +119,4 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     println("[contador] [X] PANIC detectado no processo Contador! Abortando...");
     exit(102);
 }
+

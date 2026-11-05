@@ -102,3 +102,4 @@ pub fn open_window(title: &str, width: u32, height: u32) -> Result<WindowHandle,
         Err("Compositor rejeitou a alocacao da janela (limite atingido ou erro interno)")
     }
 }
+

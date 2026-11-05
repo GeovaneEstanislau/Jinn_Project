@@ -48,3 +48,4 @@ pub fn print_hex(n: u64) {
         print(s);
     }
 }
+
