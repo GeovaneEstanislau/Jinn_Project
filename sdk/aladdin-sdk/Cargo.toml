@@ -6,3 +6,4 @@ description = "SDK no_std para desenvolvimento de aplicacoes de usuario Ring 3 n
 authors = ["Jinn OS Engineering Team"]
 
 [dependencies]
+

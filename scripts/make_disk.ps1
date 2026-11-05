@@ -3,7 +3,8 @@ param(
     [string]$DiskPath = "disk.img",
     [string]$AppElfPath = "iso_root\apps\ola-mundo.elf",
     [string]$BrowserElfPath = "iso_root\apps\browser.elf",
-    [string]$GraficoElfPath = "iso_root\apps\ola-grafico.elf"
+    [string]$GraficoElfPath = "iso_root\apps\ola-grafico.elf",
+    [string]$ContadorElfPath = "iso_root\apps\contador.elf"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,6 +54,16 @@ if (Test-Path $resolvedGrafico) {
     Write-Host "Aviso: $resolvedGrafico não encontrado."
 }
 
+# Lê o binário concorrente Ring 3 (contador.elf)
+$contadorBytes = @()
+$resolvedContador = Join-Path $projectRoot $ContadorElfPath
+if (Test-Path $resolvedContador) {
+    $contadorBytes = [System.IO.File]::ReadAllBytes($resolvedContador)
+    Write-Host "Binário contador encontrado: $resolvedContador ($($contadorBytes.Length) bytes)"
+} else {
+    Write-Host "Aviso: $resolvedContador não encontrado."
+}
+
 # Texto do README.TXT da partição FAT32 (/disk)
 $readmeText = @"
 =====================================================
@@ -64,13 +75,15 @@ Este arquivo README.TXT foi lido diretamente dos clusters
 do disco rigido virtual usando o driver de VFS.
 
 Executaveis disponiveis nesta particao:
-  - /disk/ola.elf (Processo de espaco de usuario Ring 3)
+  - /disk/ola.elf (Processo de espaco de usuario Ring 3 - Console)
   - /disk/ola_graf.elf (App Grafico Independente Ring 3 Aladdin SDK)
+  - /disk/contador.elf (App Grafico Concorrente Ring 3 Aladdin SDK)
   - /disk/browser.elf (Jinn Browser Engine v0.5.0)
 
 Experimente executar no terminal do Aladdin:
   spawn /disk/ola.elf
   spawn /disk/ola_graf.elf
+  spawn /disk/contador.elf
   spawn /disk/browser.elf
 "@
 $readmeBytes = [System.Text.Encoding]::ASCII.GetBytes($readmeText)
@@ -179,13 +192,23 @@ $clusterBytes = 8 * 512 # 4096 bytes
 $olaClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($elfBytes.Length / $clusterBytes))
 $browserClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($browserBytes.Length / $clusterBytes))
 $graficoClustersNeeded = if ($graficoBytes.Length -gt 0) { [Math]::Max(1, [int][Math]::Ceiling($graficoBytes.Length / $clusterBytes)) } else { 0 }
+$contadorClustersNeeded = if ($contadorBytes.Length -gt 0) { [Math]::Max(1, [int][Math]::Ceiling($contadorBytes.Length / $clusterBytes)) } else { 0 }
 
 $olaStartClus = 4
 $browserStartClus = $olaStartClus + $olaClustersNeeded
 $indexClus = $browserStartClus + $browserClustersNeeded
 $aboutClus = $indexClus + 1
 $graficoStartClus = if ($graficoClustersNeeded -gt 0) { $aboutClus + 1 } else { 0 }
-$nextFreeClus = if ($graficoClustersNeeded -gt 0) { $graficoStartClus + $graficoClustersNeeded } else { $aboutClus + 1 }
+$contadorStartClus = if ($contadorClustersNeeded -gt 0) {
+    if ($graficoClustersNeeded -gt 0) { $graficoStartClus + $graficoClustersNeeded } else { $aboutClus + 1 }
+} else { 0 }
+$nextFreeClus = if ($contadorClustersNeeded -gt 0) {
+    $contadorStartClus + $contadorClustersNeeded
+} elseif ($graficoClustersNeeded -gt 0) {
+    $graficoStartClus + $graficoClustersNeeded
+} else {
+    $aboutClus + 1
+}
 
 # FSInfo Sector (Setor 1 da partição FAT32)
 $fsinfo = [byte[]]::new(512)
@@ -234,6 +257,18 @@ if ($graficoClustersNeeded -gt 0) {
     for ($i = 0; $i -lt $graficoClustersNeeded; $i++) {
         $currentClus = $graficoStartClus + $i
         if ($i -eq $graficoClustersNeeded - 1) {
+            Set-FatEntry $currentClus 0x0FFFFFFF
+        } else {
+            Set-FatEntry $currentClus ([uint32]($currentClus + 1))
+        }
+    }
+}
+
+# Cadeia CONTADOR.ELF
+if ($contadorClustersNeeded -gt 0) {
+    for ($i = 0; $i -lt $contadorClustersNeeded; $i++) {
+        $currentClus = $contadorStartClus + $i
+        if ($i -eq $contadorClustersNeeded - 1) {
             Set-FatEntry $currentClus 0x0FFFFFFF
         } else {
             Set-FatEntry $currentClus ([uint32]($currentClus + 1))
@@ -310,6 +345,9 @@ Add-DirEntry 5 "BROWSER ELF" 0x20 $browserStartClus ($browserBytes.Length)
 if ($graficoBytes.Length -gt 0) {
     Add-DirEntry 6 "OLA_GRAFELF" 0x20 $graficoStartClus ($graficoBytes.Length)
 }
+if ($contadorBytes.Length -gt 0) {
+    Add-DirEntry 7 "CONTADORELF" 0x20 $contadorStartClus ($contadorBytes.Length)
+}
 
 Write-BytesAt $dataStartByteOffset1 $rootDir
 Write-BytesAt ($dataStartByteOffset1 + [long](3 - 2) * $clusterBytes) $readmeBytes
@@ -319,6 +357,9 @@ Write-BytesAt ($dataStartByteOffset1 + [long]($indexClus - 2) * $clusterBytes) $
 Write-BytesAt ($dataStartByteOffset1 + [long]($aboutClus - 2) * $clusterBytes) $aboutHtmlBytes
 if ($graficoBytes.Length -gt 0) {
     Write-BytesAt ($dataStartByteOffset1 + [long]($graficoStartClus - 2) * $clusterBytes) $graficoBytes
+}
+if ($contadorBytes.Length -gt 0) {
+    Write-BytesAt ($dataStartByteOffset1 + [long]($contadorStartClus - 2) * $clusterBytes) $contadorBytes
 }
 
 # ======================================================================
@@ -426,5 +467,5 @@ $bw.Close()
 $fs.Close()
 
 Write-Host "Disco virtual criado com sucesso em: $targetDisk"
-Write-Host "  - Particao 1 (FAT32): LBA $startLba1 (31 MiB) -> Arquivos: README.TXT, OLA.ELF, BROWSER.ELF, OLA_GRAF.ELF, INDEX.HTM, ABOUT.HTM"
+Write-Host "  - Particao 1 (FAT32): LBA $startLba1 (31 MiB) -> Arquivos: README.TXT, OLA.ELF, BROWSER.ELF, OLA_GRAF.ELF, CONTADOR.ELF, INDEX.HTM, ABOUT.HTM"
 Write-Host "  - Particao 2 (Ext2):  LBA $startLba2 (31 MiB) -> Arquivos: SERVER.TXT (Read-Only)"

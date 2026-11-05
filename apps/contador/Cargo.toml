@@ -1,0 +1,15 @@
+[package]
+name = "contador"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aladdin-sdk = { path = "../../sdk/aladdin-sdk" }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+lto = true

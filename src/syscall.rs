@@ -390,7 +390,14 @@ pub extern "C" fn syscall_dispatch(
         19 => sys_lseek(arg0, arg1 as i64, arg2),
         20 => sys_window_create(arg0 as *const u8, arg1, arg2, arg3),
         21 => sys_window_update(arg0, arg1 as *const u32, arg2), // sys_window_blit (win_id, buffer, size_bytes)
-        22 => sys_window_close(arg0),
+        22 => {
+            // Suporta convenção de poll_event (arg1 != 0) e convenção de close (arg1 == 0)
+            if arg1 != 0 {
+                sys_window_poll_event(arg0, arg1 as *mut crate::gui::ClientWindowEvent, arg2)
+            } else {
+                sys_window_close(arg0)
+            }
+        }
         23 => sys_sync(),
         24 => sys_window_poll_event(arg0, arg1 as *mut crate::gui::ClientWindowEvent, arg2),
         25 => sys_res_stat(arg0, arg1 as *mut crate::resources::ProcessResourceStat, arg2),

@@ -69,6 +69,22 @@ if (-not (Test-Path $grafElfPath)) {
 }
 Copy-Item -Path $grafElfPath -Destination (Join-Path $isoAppsDir "ola-grafico.elf") -Force
 
+# --- Build contador ---
+Write-Host "Building contador app..."
+Push-Location "apps\contador"
+& cargo +nightly build --release -Zjson-target-spec -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem
+if ($LASTEXITCODE -ne 0) {
+    Pop-Location
+    throw "App contador build failed."
+}
+Pop-Location
+
+$contElfPath = "apps\contador\target\x86_64-jinn-user\release\contador"
+if (-not (Test-Path $contElfPath)) {
+    throw "App contador ELF not found: $contElfPath"
+}
+Copy-Item -Path $contElfPath -Destination (Join-Path $isoAppsDir "contador.elf") -Force
+
 # --- Gera imagem de disco virtual FAT32 com MBR ---
 $makeDiskScript = Join-Path -Path (Get-Location) "scripts\make_disk.ps1"
 if (Test-Path $makeDiskScript) {

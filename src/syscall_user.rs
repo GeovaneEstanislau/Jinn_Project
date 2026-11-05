@@ -377,6 +377,15 @@ pub unsafe fn sys_window_close(win_id: usize) -> i64 {
     syscall3(22, win_id as u64, 0, 0)
 }
 
+// ── Syscall 24 (e 22 com arg1 != 0) — window_poll_event ───────────────────────
+
+/// Coleta o próximo evento de entrada pendente para a janela de cliente.
+/// Retorna 1 se um evento foi recebido, 0 se a fila está vazia, ou código de erro negativo.
+#[inline(always)]
+pub unsafe fn sys_window_poll_event(win_id: usize, event_ptr: *mut crate::gui::ClientWindowEvent) -> i64 {
+    syscall3(24, win_id as u64, event_ptr as u64, 0)
+}
+
 // ── Syscall 26 — jda_shm_share ───────────────────────────────────────────────
 
 /// Compartilha um buffer físico com outro processo `target_pid` em modo USER_RO.
