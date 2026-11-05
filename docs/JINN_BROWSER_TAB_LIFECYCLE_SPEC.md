@@ -159,3 +159,4 @@ A suíte [`browser/jinn-browser/tests/tab_lifecycle_tests.rs`](file:///e:/Projet
 - `[V]` Gerenciador central `TabManager` com controle de orçamento e descarte (*Discarded*).
 - `[V]` Suíte de 6 testes automatizados validando o cenário das 5 abas e invariantes de CPU/RAM.
 - `[V]` Integração no workspace do navegador com 44 testes passando com 100% de sucesso.
+

@@ -3,8 +3,9 @@
 pub mod tab;
 
 pub use tab::{
-    AudioFocusManager, AudioPlaybackState, MediaPipeline, Tab, TabManager, TabMetrics,
-    TabSnapshot, TabState, TabTelemetry,
+    AudioFocusManager, AudioPlaybackState, MediaPipeline, MemoryBreakdown, Tab, TabManager,
+    TabMetrics, TabSnapshot, TabState, TabTaskContext, TabTelemetry, TabTransitionError,
+    TaskExecutionState,
 };
 
 use jbe_core::{EngineError, EngineLimits, Point};

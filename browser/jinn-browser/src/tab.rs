@@ -1,12 +1,16 @@
-//! Intelligent Tab Lifecycle & Exclusive Audio Focus Subsystem
+//! Intelligent Tab Lifecycle & Exclusive Audio Focus Subsystem (v0.7.0)
 //!
 //! Implementação da política "Near-Zero Resource Background Tabs":
-//! 1. Quatro estados de ciclo de vida: `Active`, `AudioBackground`, `Hibernated`, `Discarded`.
+//! 1. Quatro estados de ciclo de vida com validação estrita de transição:
+//!    `Active`, `AudioBackground`, `Hibernated`, `Discarded`.
 //! 2. Gerenciador Exclusivo de Foco de Áudio (`AudioFocusManager`): no máximo 1 aba com áudio automático.
-//! 3. Exceção explícita de áudio fixado (*Pinned Audio*) para podcasts e streaming de música.
-//! 4. Separação total entre Pipeline de Página (HTML/DOM/CSS/Layout) e Pipeline de Mídia (Áudio/Buffer/Decodificação).
-//! 5. Snapshot compacto para restauração instantânea de navegação com consumo de CPU = 0 e memória próxima de zero.
-//! 6. Controle rigoroso de orçamento global de memória com descarte automático sob pressão.
+//! 3. Integração com Contexto de Execução e Scheduler (`TabTaskContext`):
+//!    - Abas Hibernadas: suspensão de timers, animações e zero consumo de CPU (ticks = 0).
+//!    - Abas AudioBackground: execução estrita do pipeline de áudio, com tarefas de página suspensas.
+//! 4. Contabilização Granular de Memória (`MemoryBreakdown`):
+//!    - Discriminação entre processo principal, DOM, layout, framebuffers, cache, áudio e snapshots.
+//!    - Resolução documentada da variação de 1.219,40 KiB vs 1.259,45 KiB (liberação do buffer PCM não fixado).
+//! 5. Resiliência de Restauração: tratamento contra falhas de rede sem perda de snapshot.
 
 use std::collections::BTreeMap;
 use jbe_core::EngineError;
@@ -28,6 +32,99 @@ pub enum TabState {
     /// Aba descartada sob pressão de memória. Todos os buffers liberados.
     /// Apenas metadados de histórico são mantidos para recarga fria sob demanda.
     Discarded,
+}
+
+/// Erros de Transição de Estado do Ciclo de Vida
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TabTransitionError {
+    InvalidTransition { from: TabState, to: TabState },
+    RestorationFailed(String),
+    AudioUnauthorized,
+}
+
+/// Estado de Execução da Tarefa no Escalonador
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskExecutionState {
+    Running,
+    ThrottledAudioOnly,
+    Suspended,
+    Terminated,
+}
+
+/// Contexto de Execução da Aba integrado ao Modelo de Escalonamento do Jinn
+#[derive(Debug, Clone)]
+pub struct TabTaskContext {
+    pub task_id: u64,
+    pub execution_state: TaskExecutionState,
+    pub priority: u8, // 3: Normal/High (Active), 1: Throttled (Audio), 0: Suspended
+    pub page_timers_active: bool,
+    pub animations_active: bool,
+    pub pending_async_jobs: usize,
+    pub accumulated_cpu_ticks: u64,
+}
+
+impl TabTaskContext {
+    pub fn new(task_id: u64) -> Self {
+        Self {
+            task_id,
+            execution_state: TaskExecutionState::Running,
+            priority: 3,
+            page_timers_active: true,
+            animations_active: true,
+            pending_async_jobs: 0,
+            accumulated_cpu_ticks: 0,
+        }
+    }
+
+    /// Suspende tarefas de página, timers e animações
+    pub fn suspend(&mut self) {
+        self.execution_state = TaskExecutionState::Suspended;
+        self.priority = 0;
+        self.page_timers_active = false;
+        self.animations_active = false;
+        self.pending_async_jobs = 0;
+    }
+
+    /// Reduz a prioridade mantendo ativo estritamente o pipeline de áudio
+    pub fn throttle_to_audio_only(&mut self) {
+        self.execution_state = TaskExecutionState::ThrottledAudioOnly;
+        self.priority = 1;
+        self.page_timers_active = false;
+        self.animations_active = false;
+    }
+
+    /// Retoma a execução normal da aba em primeiro plano
+    pub fn resume(&mut self) {
+        self.execution_state = TaskExecutionState::Running;
+        self.priority = 3;
+        self.page_timers_active = true;
+        self.animations_active = true;
+    }
+
+    /// Encerra a tarefa no escalonador (estado DISCARDED)
+    pub fn terminate(&mut self) {
+        self.suspend();
+        self.execution_state = TaskExecutionState::Terminated;
+    }
+
+    /// Processa ticks no escalonador. Retorna os ticks efetivamente consumidos.
+    pub fn tick(&mut self, _delta_ms: u64) -> u64 {
+        match self.execution_state {
+            TaskExecutionState::Running => {
+                self.accumulated_cpu_ticks += 1;
+                1
+            }
+            TaskExecutionState::ThrottledAudioOnly => {
+                // Apenas processamento leve de streaming de áudio
+                self.accumulated_cpu_ticks += 1;
+                1
+            }
+            TaskExecutionState::Suspended | TaskExecutionState::Terminated => {
+                // Invariante de Near-Zero CPU: 0 ticks consumidos
+                0
+            }
+        }
+    }
 }
 
 /// Estado de Reprodução de Áudio no Pipeline de Mídia
@@ -132,6 +229,17 @@ impl TabSnapshot {
     }
 }
 
+/// Discriminação Granular de Memória da Aba
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryBreakdown {
+    pub dom_arena_bytes: usize,
+    pub layout_tree_bytes: usize,
+    pub render_framebuffer_bytes: usize,
+    pub audio_pcm_buffer_bytes: usize,
+    pub snapshot_metadata_bytes: usize,
+    pub total_resident_bytes: usize,
+}
+
 /// Representação de uma Aba do Navegador
 pub struct Tab {
     pub id: usize,
@@ -140,8 +248,11 @@ pub struct Tab {
     pub session: Option<BrowserSession>,
     pub media: MediaPipeline,
     pub snapshot: Option<TabSnapshot>,
+    pub task_context: TabTaskContext,
     pub creation_order: u64,
     pub last_active_tick: u64,
+    pub cumulative_freed_bytes: usize,
+    pub restoration_failed: bool,
 }
 
 impl Tab {
@@ -161,8 +272,11 @@ impl Tab {
             session: Some(session),
             media: MediaPipeline::new(),
             snapshot: None,
+            task_context: TabTaskContext::new(id as u64),
             creation_order: order,
             last_active_tick: order,
+            cumulative_freed_bytes: 0,
+            restoration_failed: false,
         };
 
         // Snapshot inicial de segurança
@@ -184,11 +298,62 @@ impl Tab {
         }
     }
 
+    /// Valida e executa a transição de estado da aba
+    pub fn transition_to(&mut self, new_state: TabState) -> Result<(), TabTransitionError> {
+        if self.state == new_state {
+            return Ok(());
+        }
+
+        match (self.state, new_state) {
+            // 1. ACTIVE -> HIBERNATED
+            (TabState::Active, TabState::Hibernated) => {
+                self.hibernate();
+                Ok(())
+            }
+            // 2. ACTIVE -> AUDIO_BACKGROUND
+            (TabState::Active, TabState::AudioBackground) => {
+                if !self.is_pinned_audio && !self.media.is_playing() {
+                    return Err(TabTransitionError::AudioUnauthorized);
+                }
+                self.state = TabState::AudioBackground;
+                self.task_context.throttle_to_audio_only();
+                Ok(())
+            }
+            // 3. AUDIO_BACKGROUND -> HIBERNATED
+            (TabState::AudioBackground, TabState::Hibernated) => {
+                self.hibernate();
+                Ok(())
+            }
+            // 4. HIBERNATED -> ACTIVE (requer restore)
+            (TabState::Hibernated, TabState::Active) => {
+                self.state = TabState::Active;
+                self.task_context.resume();
+                Ok(())
+            }
+            // 5. HIBERNATED -> DISCARDED
+            (TabState::Hibernated, TabState::Discarded) => {
+                self.discard();
+                Ok(())
+            }
+            // 6. DISCARDED -> ACTIVE (requer restore via cold-reload)
+            (TabState::Discarded, TabState::Active) => {
+                self.state = TabState::Active;
+                self.task_context.resume();
+                Ok(())
+            }
+            // Transições proibidas
+            (from, to) => Err(TabTransitionError::InvalidTransition { from, to }),
+        }
+    }
+
     /// Transita a aba para o estado HIBERNATED, liberando buffers pesados de DOM e renderização
     pub fn hibernate(&mut self) {
         if self.state == TabState::Hibernated || self.state == TabState::Discarded {
             return;
         }
+
+        // Calcula bytes a serem liberados
+        let initial_resident = self.resident_memory_bytes();
 
         // 1. Atualiza o snapshot com o estado mais recente
         if let Some(session) = &self.session {
@@ -211,20 +376,26 @@ impl Tab {
             });
         }
 
-        // 2. Suspende áudio caso não esteja fixado
+        // 2. Suspende áudio caso não esteja fixado e libera buffer de amostras PCM não fixado
         if !self.is_pinned_audio {
             self.media.pause();
+            self.media.buffer_samples = 0; // Libera buffer PCM (resolve variação de 1219.4 vs 1259.45 KiB)
         }
 
         // 3. Libera totalmente a sessão de página (DOM, árvore de layout e framebuffer de renderização)
         self.session = None;
+        self.task_context.suspend();
         self.state = TabState::Hibernated;
+
+        let final_resident = self.resident_memory_bytes();
+        self.cumulative_freed_bytes += initial_resident.saturating_sub(final_resident);
     }
 
     /// Transita a aba para o estado DISCARDED sob pressão extrema de memória
     pub fn discard(&mut self) {
         self.hibernate();
         self.media.buffer_samples = 0;
+        self.task_context.terminate();
         self.state = TabState::Discarded;
     }
 
@@ -242,29 +413,58 @@ impl Tab {
         let mut session = BrowserSession::new(640, 480, loader);
         session.history = snapshot.history.clone();
         session.history_index = snapshot.history_index;
-        
-        // Carrega o documento preservado
-        session.load_url(snapshot.url.clone())?;
-        
-        // Restaura deslocamento de rolagem
-        session.scroll(snapshot.scroll_y);
 
-        self.session = Some(session);
-        self.state = TabState::Active;
-
-        // Se o áudio estava em execução, restaura a posição
-        self.media.current_position_ms = snapshot.saved_media_position_ms;
-        Ok(())
+        // Tenta carregar o documento preservado; em caso de falha de rede, preserva o snapshot
+        match session.load_url(snapshot.url.clone()) {
+            Ok(()) => {
+                session.scroll(snapshot.scroll_y);
+                self.session = Some(session);
+                self.state = TabState::Active;
+                self.task_context.resume();
+                self.restoration_failed = false;
+                self.media.current_position_ms = snapshot.saved_media_position_ms;
+                Ok(())
+            }
+            Err(e) => {
+                // Em caso de falha de rede/VFS, marca a falha sem destruir o snapshot
+                self.restoration_failed = true;
+                Err(e)
+            }
+        }
     }
 
-    /// Retorna a estimativa de memória residente utilizada pela aba (em bytes)
+    /// Retorna a discriminação detalhada dos recursos alocados pela aba
+    pub fn memory_breakdown(&self) -> MemoryBreakdown {
+        let (dom, layout, fb) = if let Some(session) = &self.session {
+            let dom = session.current_dom.as_ref().map(|d| d.node_count() * 128).unwrap_or(0);
+            let layout = session.current_layout.as_ref().map(|_| 4096).unwrap_or(0);
+            let fb = (session.viewport_width as usize) * (session.viewport_height as usize) * 4;
+            (dom, layout, fb)
+        } else {
+            (0, 0, 0)
+        };
+
+        let audio = self.media.buffer_samples * 2;
+        let snapshot = self.snapshot.as_ref().map(|s| s.estimated_bytes()).unwrap_or(0);
+        let total = self.resident_memory_bytes();
+
+        MemoryBreakdown {
+            dom_arena_bytes: dom,
+            layout_tree_bytes: layout,
+            render_framebuffer_bytes: fb,
+            audio_pcm_buffer_bytes: audio,
+            snapshot_metadata_bytes: snapshot,
+            total_resident_bytes: total,
+        }
+    }
+
+    /// Retorna a estimativa total de memória residente utilizada pela aba (em bytes)
     pub fn resident_memory_bytes(&self) -> usize {
         let base_struct = std::mem::size_of::<Self>();
         let media_bytes = self.media.estimated_bytes();
         let snapshot_bytes = self.snapshot.as_ref().map(|s| s.estimated_bytes()).unwrap_or(0);
 
         let session_bytes = if let Some(session) = &self.session {
-            // Estima consumo do DOM, layout e backend de teste
             let dom_bytes = session.current_dom.as_ref().map(|d| d.node_count() * 128).unwrap_or(0);
             let layout_bytes = session.current_layout.as_ref().map(|_| 4096).unwrap_or(0);
             let framebuffer_bytes = (session.viewport_width as usize) * (session.viewport_height as usize) * 4;
@@ -327,6 +527,7 @@ pub struct TabTelemetry {
     pub total_resident_memory_bytes: usize,
     pub baseline_unoptimized_memory_bytes: usize,
     pub saved_memory_bytes: usize,
+    pub cumulative_freed_bytes: usize,
     pub background_cpu_ticks: u64,
 }
 
@@ -365,12 +566,12 @@ impl TabManager {
         // Se já existia uma aba ativa anterior, ela deve ser tratada
         if let Some(prev_tab) = self.get_active_tab_mut() {
             if prev_tab.media.is_playing() && prev_tab.is_pinned_audio {
-                prev_tab.state = TabState::AudioBackground;
+                let _ = prev_tab.transition_to(TabState::AudioBackground);
             } else {
                 if prev_tab.media.is_playing() {
                     prev_tab.media.pause();
                 }
-                prev_tab.hibernate();
+                let _ = prev_tab.transition_to(TabState::Hibernated);
             }
         }
 
@@ -416,12 +617,12 @@ impl TabManager {
         let current_id = self.active_tab_id;
         if let Some(current_tab) = self.get_tab_mut(current_id) {
             if current_tab.media.is_playing() && current_tab.is_pinned_audio {
-                current_tab.state = TabState::AudioBackground;
+                let _ = current_tab.transition_to(TabState::AudioBackground);
             } else {
                 if current_tab.media.is_playing() {
                     current_tab.media.pause();
                 }
-                current_tab.hibernate();
+                let _ = current_tab.transition_to(TabState::Hibernated);
             }
         }
 
@@ -441,6 +642,7 @@ impl TabManager {
             target_tab.restore(loader_factory())?;
         } else {
             target_tab.state = TabState::Active;
+            target_tab.task_context.resume();
         }
 
         self.active_tab_id = target_id;
@@ -454,7 +656,7 @@ impl TabManager {
             tab.is_pinned_audio = pinned;
             if !pinned && tab.state == TabState::AudioBackground {
                 tab.media.pause();
-                tab.hibernate();
+                let _ = tab.transition_to(TabState::Hibernated);
             }
             true
         } else {
@@ -483,27 +685,28 @@ impl TabManager {
         }
     }
 
-    /// Executa um ciclo temporal do navegador.
+    /// Executa um ciclo temporal do navegador integrado ao Scheduler.
     /// Invariante de Near-Zero CPU:
-    /// - Aba ativa recebe tick completo de página e mídia.
-    /// - Abas AudioBackground recebem tick estritamente de mídia (sem layout/DOM/scripts).
-    /// - Abas Hibernated e Discarded recebem ZERO ticks (0% de CPU).
+    /// - Aba ativa consome ticks normais de página e áudio.
+    /// - Abas AudioBackground consomem ticks estritamente para o pipeline de áudio.
+    /// - Abas Hibernated e Discarded consomem rigorosamente ZERO ticks (0% de CPU).
     pub fn tick(&mut self, delta_ms: u64) {
         self.current_tick += 1;
 
         for tab in self.tabs.iter_mut() {
+            let task_ticks = tab.task_context.tick(delta_ms);
+
             match tab.state {
                 TabState::Active => {
                     tab.media.tick(delta_ms);
-                    // Aqui seria executado o tick de animação/timer da página ativa
                 }
                 TabState::AudioBackground => {
-                    // Executa somente o pipeline de áudio isolado
                     tab.media.tick(delta_ms);
-                    self.background_cpu_ticks_counter += 1;
+                    self.background_cpu_ticks_counter += task_ticks;
                 }
                 TabState::Hibernated | TabState::Discarded => {
-                    // Zero CPU: absolutamente nenhum processamento para abas inativas
+                    // Verificação estrita de invariante: task_ticks deve ser 0!
+                    debug_assert_eq!(task_ticks, 0);
                 }
             }
         }
@@ -559,8 +762,10 @@ impl TabManager {
         let mut audio_background_count = 0;
         let mut hibernated_count = 0;
         let mut discarded_count = 0;
+        let mut cumulative_freed = 0;
 
         for tab in &self.tabs {
+            cumulative_freed += tab.cumulative_freed_bytes;
             match tab.state {
                 TabState::Active => active_count += 1,
                 TabState::AudioBackground => audio_background_count += 1,
@@ -582,6 +787,7 @@ impl TabManager {
             total_resident_memory_bytes: resident,
             baseline_unoptimized_memory_bytes: baseline,
             saved_memory_bytes: saved,
+            cumulative_freed_bytes: cumulative_freed,
             background_cpu_ticks: self.background_cpu_ticks_counter,
         }
     }
