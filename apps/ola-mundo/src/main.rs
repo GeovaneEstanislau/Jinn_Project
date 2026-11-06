@@ -33,6 +33,21 @@ unsafe fn syscall3(nr: u64, arg0: u64, arg1: u64, arg2: u64) -> i64 {
 }
 
 #[inline(always)]
+unsafe fn syscall4(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> i64 {
+    let ret: i64;
+    asm!(
+        "int 0x80",
+        inout("rax") nr => ret,
+        in("rdi") arg0,
+        in("rsi") arg1,
+        in("rdx") arg2,
+        in("r10") arg3,
+        options(nostack)
+    );
+    ret
+}
+
+#[inline(always)]
 unsafe fn sys_exit(code: i32) -> ! {
     loop {
         syscall3(0, code as u64, 0, 0);
@@ -219,8 +234,7 @@ unsafe fn sys_lseek(fd: u64, offset: i64, whence: u64) -> i64 {
 
 #[inline(always)]
 unsafe fn sys_window_create(title: &[u8], width: usize, height: usize) -> i64 {
-    let packed = (((width & 0xFFFF) as u64) << 16) | ((height & 0xFFFF) as u64);
-    syscall3(20, title.as_ptr() as u64, title.len() as u64, packed)
+    syscall4(20, title.as_ptr() as u64, title.len() as u64, width as u64, height as u64)
 }
 
 #[inline(always)]
@@ -2357,6 +2371,7 @@ fn get_cstr_len(s: &[u8]) -> usize {
 }
 
 unsafe fn run_browser_interactive() -> ! {
+    print_str(b"[BROWSER] Iniciando processo...\n");
     print_str(b"\n==================================================================\n");
     print_str(b"  JINN BROWSER 0.5.0 - SESSAO INTERATIVA NATIVA (RING 3)\n");
     print_str(b"==================================================================\n");
@@ -2364,13 +2379,20 @@ unsafe fn run_browser_interactive() -> ! {
     let mut session = browser::BrowserSession::new();
     let mut surface = DynamicSurfaceBuffer::new();
     unsafe { surface.init(); }
+    print_str(b"[BROWSER] Buffer alocado com sucesso (216 KiB BSS Surface)...\n");
     let buf_slice = surface.slice_mut();
 
     // 1. Carrega documento inicial do VFS (/disk/INDEX.HTM)
     print_str(b"[BROWSER] Carregando /disk/INDEX.HTM...\n");
     let bytes_read = match read_html_file(b"/disk/INDEX.HTM") {
-        Some(len) => len,
+        Some(len) => {
+            print_str(b"[BROWSER] Documento lido com sucesso (");
+            print_u64(len as u64);
+            print_str(b" bytes).\n");
+            len
+        }
         None => {
+            print_str(b"[BROWSER] /disk/INDEX.HTM nao encontrado no VFS, usando fallback embutido...\n");
             let fallback = b"<html><head><title>Jinn OS Portal</title></head><body><h1>Jinn Browser 0.3.0</h1><p>Bem-vindo ao Jinn Browser rodando nativamente sobre o microkernel Jinn OS e Aladdin Desktop Compositor.</p><p><a href=\"about.htm\">Sobre o Sistema</a></p></body></html>";
             let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
             core::ptr::copy_nonoverlapping(fallback.as_ptr(), f_ptr, fallback.len());
@@ -2382,19 +2404,29 @@ unsafe fn run_browser_interactive() -> ! {
     session.load_document_bytes(raw_bytes, b"file:///disk/INDEX.HTM");
 
     // 2. Cria janela nativa no Aladdin Desktop
-    let win_id = sys_window_create(b"Jinn Browser v0.5.0", browser::WIN_W, browser::WIN_H);
+    print_str(b"[BROWSER] Janela solicitada ao compositor (300x180)...\n");
+    let win_id = sys_window_create(b"Jinn Browser", browser::WIN_W, browser::WIN_H);
     if win_id < 0 {
-        print_str(b"[BROWSER] sys_window_create falhou para Jinn Browser!\n");
+        print_str(b"[BROWSER] [ERRO] sys_window_create falhou para Jinn Browser! Codigo: ");
+        print_i64(win_id);
+        print_str(b"\n");
         sys_exit(1);
     }
     let win_id = win_id as usize;
-    print_str(b"[BROWSER-INTERACTION] WINDOW_CREATED win_id=");
+    print_str(b"[BROWSER] Janela criada com sucesso no Compositor! win_id=");
     print_u64(win_id as u64);
     print_str(b"\n");
 
     // 3. Renderiza e atualiza primeiro quadro
     session.render(buf_slice);
-    let _ = sys_window_update(win_id, buf_slice);
+    let upd_ret = sys_window_update(win_id, buf_slice);
+    if upd_ret < 0 {
+        print_str(b"[BROWSER] [ERRO] sys_window_update falhou! Codigo: ");
+        print_i64(upd_ret);
+        print_str(b"\n");
+    } else {
+        print_str(b"[BROWSER] Primeiro frame renderizado.\n");
+    }
 
     // 4. Laço Interativo de Eventos do Aladdin
     let mut ev: ClientWindowEvent = core::mem::zeroed();
@@ -3554,7 +3586,7 @@ pub extern "C" fn _start() -> ! {
                 run_child_task(argc, argv);
             } else if streq(arg1, b"exec_done") {
                 run_exec_target(argc, argv);
-            } else if streq(arg1, b"browser") {
+            } else if str_contains(arg1, b"browser") {
                 run_browser_interactive();
             } else if streq(arg1, b"worker") {
                 run_worker_task(3);

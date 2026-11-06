@@ -8,7 +8,7 @@
 //! 5. Teste de estresse concorrente: transições rápidas de tela cheia sob pressão de memória.
 
 use jinn_browser::{
-    BrowserResourceManager, BrowserSession, FullscreenController, FullscreenState, MemoryProfile,
+    BrowserResourceManager, BrowserSession, DynamicSurfaceBuffer, FullscreenController, FullscreenState, MemoryProfile,
     Tab,
 };
 use jbe_url::Url;
@@ -164,6 +164,13 @@ fn test_syscall53_security_hardening_and_hierarchy() {
 
 #[test]
 fn test_dynamic_page_instrumentation_lifecycle_768_pages() {
+    let mut surface = DynamicSurfaceBuffer::new();
+    assert_eq!(surface.width, 300);
+    assert_eq!(surface.height, 180);
+    assert_eq!(surface.capacity_pixels, 54_000);
+    assert!(!surface.is_heap_allocated);
+    assert_eq!(surface.allocated_pages, 0);
+
     let mut allocated_pages = 0usize;
     let mut freed_pages = 0usize;
 
@@ -179,6 +186,12 @@ fn test_dynamic_page_instrumentation_lifecycle_768_pages() {
     let pages_needed = (bytes + 4095) / 4096;
     assert_eq!(pages_needed, 768, "Fullscreen 1024x768 requer exatamente 768 paginas de 4 KiB");
 
+    let alloc_res = surface.resize(fs_w, fs_h);
+    assert_eq!(alloc_res, Ok(768));
+    assert!(surface.is_heap_allocated);
+    assert_eq!(surface.allocated_pages, 768);
+    assert_eq!(surface.capacity_pixels, pixels);
+
     // Alocação sob demanda
     for _ in 0..pages_needed {
         allocated_pages += 1;
@@ -187,6 +200,12 @@ fn test_dynamic_page_instrumentation_lifecycle_768_pages() {
     assert_eq!(allocated_pages - freed_pages, 768);
 
     // Retorno para modo janela (300x180 <= 54.000 pixels): devolução de TODAS as páginas
+    let free_res = surface.resize(300, 180);
+    assert_eq!(free_res, Ok(768));
+    assert!(!surface.is_heap_allocated);
+    assert_eq!(surface.allocated_pages, 0);
+    assert_eq!(surface.capacity_pixels, 54_000);
+
     for _ in 0..allocated_pages {
         freed_pages += 1;
     }

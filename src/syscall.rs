@@ -1379,29 +1379,46 @@ fn sys_window_create(title_ptr: *const u8, title_len: usize, width_or_packed: us
     let pid = scheduler::current_pid();
     if is_current_task_user() {
         if let Err(e) = validate_user_buffer(title_ptr, title_len, false) {
+            crate::serial_write(b"[sys_window_create] Falha validate_user_buffer\n");
             return e;
         }
     }
     if title_ptr.is_null() || title_len == 0 || title_len > 48 {
+        crate::serial_write(b"[sys_window_create] Titulo invalido ou > 48 bytes\n");
         return EINVAL;
     }
     let title_slice = unsafe { core::slice::from_raw_parts(title_ptr, title_len) };
     let title_str = match core::str::from_utf8(title_slice) {
         Ok(s) => s,
-        Err(_) => return EINVAL,
+        Err(_) => {
+            crate::serial_write(b"[sys_window_create] Titulo nao UTF-8\n");
+            return EINVAL;
+        }
     };
-    let (width, height) = if height_opt > 0 {
-        (width_or_packed, height_opt)
-    } else {
+    let (width, height) = if width_or_packed > 1024 || height_opt == 0 {
         ((width_or_packed >> 16) & 0xFFFF, width_or_packed & 0xFFFF)
+    } else {
+        (width_or_packed, height_opt)
     };
     if width == 0 || height == 0 || width > 1024 || height > 768 {
+        crate::serial_write(b"[sys_window_create] Dimensoes invalidas\n");
         return EINVAL;
     }
 
     match crate::gui::window_create(pid, title_str, width, height) {
-        Ok(id) => id as isize,
-        Err(err) => err,
+        Ok(id) => {
+            crate::serial_write(b"[sys_window_create] Janela criada com sucesso no compositor: win_id=");
+            let mut buf = [b'0'; 4];
+            buf[0] = b'0' + ((id / 10) % 10) as u8;
+            buf[1] = b'0' + (id % 10) as u8;
+            buf[2] = b'\n';
+            crate::serial_write(&buf[..3]);
+            id as isize
+        }
+        Err(err) => {
+            crate::serial_write(b"[sys_window_create] crate::gui::window_create falhou com erro\n");
+            err
+        }
     }
 }
 

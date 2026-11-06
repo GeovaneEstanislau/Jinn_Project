@@ -285,3 +285,61 @@ impl FullscreenController {
         self.state == FullscreenState::Fullscreen
     }
 }
+
+pub const BASE_WIN_W: usize = 300;
+pub const BASE_WIN_H: usize = 180;
+pub const BASE_WIN_PIXELS: usize = BASE_WIN_W * BASE_WIN_H; // 54.000 pixels = 216 KiB
+pub const MAX_WIN_W: usize = 1024;
+pub const MAX_WIN_H: usize = 768;
+
+/// Gerenciador dinâmico de superfícies gráficas sob demanda para modo janela e tela cheia
+#[derive(Debug, Clone)]
+pub struct DynamicSurfaceBuffer {
+    pub width: usize,
+    pub height: usize,
+    pub capacity_pixels: usize,
+    pub is_heap_allocated: bool,
+    pub allocated_pages: usize,
+}
+
+impl DynamicSurfaceBuffer {
+    pub const fn new() -> Self {
+        Self {
+            width: BASE_WIN_W,
+            height: BASE_WIN_H,
+            capacity_pixels: BASE_WIN_PIXELS,
+            is_heap_allocated: false,
+            allocated_pages: 0,
+        }
+    }
+
+    pub fn resize(&mut self, new_w: usize, new_h: usize) -> Result<usize, ()> {
+        if new_w < 100 || new_w > MAX_WIN_W || new_h < 60 || new_h > MAX_WIN_H {
+            return Err(());
+        }
+        let needed_pixels = match new_w.checked_mul(new_h) {
+            Some(p) => p,
+            None => return Err(()),
+        };
+
+        if needed_pixels <= BASE_WIN_PIXELS {
+            let freed = self.allocated_pages;
+            self.is_heap_allocated = false;
+            self.allocated_pages = 0;
+            self.width = new_w;
+            self.height = new_h;
+            self.capacity_pixels = BASE_WIN_PIXELS;
+            return Ok(freed);
+        }
+
+        let needed_bytes = needed_pixels * 4;
+        let pages_needed = (needed_bytes + 4095) / 4096;
+        self.is_heap_allocated = true;
+        self.allocated_pages = pages_needed;
+        self.width = new_w;
+        self.height = new_h;
+        self.capacity_pixels = needed_pixels;
+        Ok(pages_needed)
+    }
+}
+

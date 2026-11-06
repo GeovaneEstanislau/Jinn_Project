@@ -4,7 +4,8 @@ pub mod tab;
 pub mod fullscreen;
 
 pub use fullscreen::{
-    FullscreenController, FullscreenState, FullscreenTransitionError, WindowGeometry,
+    BASE_WIN_H, BASE_WIN_PIXELS, BASE_WIN_W, DynamicSurfaceBuffer, FullscreenController,
+    FullscreenState, FullscreenTransitionError, MAX_WIN_H, MAX_WIN_W, WindowGeometry,
 };
 
 pub use tab::{
