@@ -105,6 +105,11 @@ exception_common:
     push r14
     push r15
 
+    # Assegura seletores de dados do kernel em Ring 0 (DPL 0)
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+
     # At this point:
     # [rsp..rsp+14*8]  = 15 GPRs (r15 at rsp, rax at rsp+14*8)
     # [rsp + 15*8]     = vector number
@@ -131,6 +136,14 @@ exception_common:
 
     # Context switch: load new task's RSP returned by scheduler
     mov rsp, rax
+
+    # Se CS (em [rsp + 18*8]) tem RPL=3, configura DS e ES com USER_DATA_SEL (0x1B) para Ring 3
+    test byte ptr [rsp + 18*8], 3
+    jz .exc_to_kernel
+    mov ax, 0x1B
+    mov ds, ax
+    mov es, ax
+.exc_to_kernel:
 
     pop r15
     pop r14
@@ -177,6 +190,11 @@ irq_common:
     push r14
     push r15
 
+    # Assegura seletores de dados do kernel em Ring 0 (DPL 0)
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+
     mov rdi, [rsp + 15*8]        # vector number
     mov rsi, rsp                  # frame pointer
 
@@ -191,6 +209,14 @@ irq_common:
     jz .no_ctx_switch
     mov rsp, rax
 .no_ctx_switch:
+
+    # Se CS (em [rsp + 18*8]) tem RPL=3, configura DS e ES com USER_DATA_SEL (0x1B) para Ring 3
+    test byte ptr [rsp + 18*8], 3
+    jz .irq_to_kernel
+    mov ax, 0x1B
+    mov ds, ax
+    mov es, ax
+.irq_to_kernel:
 
     pop r15
     pop r14
@@ -233,6 +259,11 @@ isr128_stub:
     push r14
     push r15
 
+    # Assegura seletores de dados do kernel em Ring 0 (DPL 0)
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+
     mov rdi, rsp                 # frame pointer as 1st argument to syscall_dispatch_framed
 
     # Alinha a pilha a 16 bytes (obrigatório pela ABI antes de CALL)
@@ -246,6 +277,14 @@ isr128_stub:
     jz .no_syscall_switch
     mov rsp, rax
 .no_syscall_switch:
+
+    # Se CS (em [rsp + 18*8]) tem RPL=3, configura DS e ES com USER_DATA_SEL (0x1B) para Ring 3
+    test byte ptr [rsp + 18*8], 3
+    jz .sys_to_kernel
+    mov ax, 0x1B
+    mov ds, ax
+    mov es, ax
+.sys_to_kernel:
 
     pop r15
     pop r14

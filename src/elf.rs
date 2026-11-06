@@ -404,6 +404,21 @@ pub fn load_elf(elf_data: &[u8], pml4_phys: u64) -> Result<(u64, usize), ElfErro
                     unsafe {
                         core::ptr::copy_nonoverlapping(src, dst, copy_len);
                     }
+
+                    // Se a página estende além dos dados do arquivo para cobrir BSS (memsz > filesz),
+                    // garante que a porção restante da página seja explicitamente zerada:
+                    let copied_end = page_offset as usize + copy_len;
+                    if copied_end < 4096 && !is_exec {
+                        unsafe {
+                            core::ptr::write_bytes(frame_virt.add(copied_end), 0x00, 4096 - copied_end);
+                        }
+                    }
+                } else if !is_exec {
+                    // Página inteira pertencente à seção BSS (.bss sem dados no arquivo):
+                    // Garante explicitamente que a página inteira esteja zerada:
+                    unsafe {
+                        core::ptr::write_bytes(frame_virt, 0x00, 4096);
+                    }
                 }
             }
         }

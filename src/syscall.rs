@@ -465,6 +465,7 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
                 w.set_color(crate::vga::Color::LightRed, crate::vga::Color::Black);
             }
             for &byte in slice {
+                crate::serial_write_byte(byte);
                 w.write_byte(byte);
             }
             len as isize
@@ -1979,7 +1980,7 @@ fn sys_execve_framed(path_ptr: usize, argv_ptr: usize, envp_ptr: usize, frame: *
                 *frame.add(17) = entry_rip as usize; // RIP
                 *frame.add(18) = crate::gdt::USER_CODE_SEL as usize; // CS
                 *frame.add(19) = 0x202; // RFLAGS
-                *frame.add(20) = user_rsp - 8; // RSP (alinhamento ABI para _start)
+                *frame.add(20) = user_rsp - 8; // RSP % 16 == 8 para entrada de função rustc ABI (_start)
                 *frame.add(21) = crate::gdt::USER_DATA_SEL as usize; // SS
 
                 // Registradores iniciais da System V ABI para _start:

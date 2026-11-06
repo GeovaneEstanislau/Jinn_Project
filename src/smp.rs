@@ -151,8 +151,9 @@ pub unsafe extern "C" fn ap_entry(info: *const LimineSmpInfo) -> ! {
     // 3. Carrega a tabela IDT (compartilhada)
     crate::interrupts::idt::load();
 
-    // 4. Habilita extensões SSE/AVX
+    // 4. Habilita extensões SSE/AVX e NX (No-Execute)
     crate::cpu::enable_sse();
+    crate::cpu::enable_nxe();
 
     // 5. Inicializa o Local APIC do núcleo
     apic::init_ap();

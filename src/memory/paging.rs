@@ -107,8 +107,14 @@ pub unsafe fn map_page(pml4: *mut PageTable, virt: u64, phys: u64, flags: u64) {
     let pd   = walk_or_create(pdpt, pdpt_idx(virt), table_flags);
     let pt   = walk_or_create(pd,   pd_idx(virt),   table_flags);
 
+    let safe_flags = if (crate::cpu::read_efer() & (1 << 11)) == 0 {
+        flags & !NO_EXEC
+    } else {
+        flags
+    };
+
     let entry = &mut (*pt).entries[pt_idx(virt)];
-    *entry = PageEntry::new(phys, flags | PRESENT);
+    *entry = PageEntry::new(phys, safe_flags | PRESENT);
 
     // TLB flush for this page
     core::arch::asm!("invlpg [{0}]", in(reg) virt, options(nostack));

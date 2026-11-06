@@ -322,3 +322,33 @@ pub unsafe fn read_efer() -> u64 {
     core::arch::asm!("rdmsr", in("ecx") 0xC0000080u32, out("eax") lo, out("edx") hi, options(nomem, nostack, preserves_flags));
     ((hi as u64) << 32) | (lo as u64)
 }
+
+#[inline]
+pub unsafe fn write_efer(val: u64) {
+    let lo = val as u32;
+    let hi = (val >> 32) as u32;
+    core::arch::asm!(
+        "wrmsr",
+        in("ecx") 0xC0000080u32,
+        in("eax") lo,
+        in("edx") hi,
+        options(nomem, nostack, preserves_flags)
+    );
+}
+
+/// Habilita o suporte a páginas NX (No-Execute Enable, bit 11 do IA32_EFER).
+/// Essencial para evitar Page Faults de bits reservados em hardware real e VirtualBox.
+pub unsafe fn enable_nxe() {
+    let (max_ext, _, _, _) = cpuid(0x8000_0000);
+    if max_ext >= 0x8000_0001 {
+        let (_, _, _, edx) = cpuid(0x8000_0001);
+        let has_nx = (edx & (1 << 20)) != 0;
+        if has_nx {
+            let mut efer = read_efer();
+            if (efer & (1 << 11)) == 0 {
+                efer |= 1 << 11;
+                write_efer(efer);
+            }
+        }
+    }
+}

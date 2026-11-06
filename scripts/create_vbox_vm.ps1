@@ -39,7 +39,10 @@ Write-Host "Configurando hardware (1024MB RAM, 2 vCPUs, I/O APIC, VBoxSVGA, Mous
     --boot2 disk `
     --boot3 none `
     --nic1 nat `
-    --nictype1 82540EM
+    --nictype1 82540EM `
+    --pae on `
+    --uart1 0x3F8 4 `
+    --uartmode1 file (Join-Path $projectRoot "vbox_serial.log")
 
 Write-Host "Adicionando controladora de armazenamento IDE..."
 & $vbox storagectl $vmName --name "IDE Controller" --add ide --controller PIIX4

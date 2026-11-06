@@ -81,11 +81,76 @@ pub extern "C" fn exception_dispatch(vector: u64, error_code: u64, frame: *mut u
 
     if is_user {
         let current_pid = crate::scheduler::current_pid();
+        let fault_rsp = unsafe { *frame.add(20) };
+        let fault_ss  = unsafe { *frame.add(21) };
         let mut cr2: u64 = 0;
         if vector == 14 {
             unsafe { core::arch::asm!("mov {}, cr2", out(reg) cr2, options(nomem, nostack)); }
         }
 
+        // 1. Registro detalhado via porta serial COM1 (diagnóstico VirtualBox / QEMU)
+        crate::serial_write(b"\n====================================================\n");
+        crate::serial_write(b"[!] FALHA DE PROCESSO EM RING 3: PID=");
+        let mut pid_buf = [b'0'; 10];
+        let mut p_val = current_pid;
+        let mut p_idx = 0;
+        if p_val == 0 {
+            pid_buf[0] = b'0';
+            p_idx = 1;
+        } else {
+            while p_val > 0 && p_idx < 10 {
+                pid_buf[p_idx] = b'0' + (p_val % 10) as u8;
+                p_val /= 10;
+                p_idx += 1;
+            }
+            pid_buf[..p_idx].reverse();
+        }
+        crate::serial_write(&pid_buf[..p_idx]);
+        crate::serial_write(b" Excecao: #");
+        let mut vec_b = [b'0'; 4];
+        vec_b[0] = b'0' + ((vector / 10) % 10) as u8;
+        vec_b[1] = b'0' + (vector % 10) as u8;
+        vec_b[2] = b' ';
+        crate::serial_write(&vec_b[..3]);
+        crate::serial_write(exception_name(vector).as_bytes());
+        crate::serial_write(b"\n");
+
+        let print_hex_ser = |label: &[u8], val: u64| {
+            crate::serial_write(label);
+            crate::serial_write(b" 0x");
+            for i in (0..16).rev() {
+                let n = ((val >> (i * 4)) & 0xF) as u8;
+                let ch = if n < 10 { b'0' + n } else { b'a' + (n - 10) };
+                crate::serial_write_byte(ch);
+            }
+            crate::serial_write(b"\n");
+        };
+
+        print_hex_ser(b"  Fault RIP :", rip as u64);
+        print_hex_ser(b"  Fault RSP :", fault_rsp as u64);
+        print_hex_ser(b"  Fault CS  :", cs as u64);
+        print_hex_ser(b"  Fault SS  :", fault_ss as u64);
+        print_hex_ser(b"  Err Code  :", error_code);
+
+        if vector == 14 {
+            print_hex_ser(b"  CR2 (Fault Address):", cr2);
+            let p_flag    = (error_code & 1) != 0;
+            let wr_flag   = (error_code & 2) != 0;
+            let us_flag   = (error_code & 4) != 0;
+            let rsvd_flag = (error_code & 8) != 0;
+            let id_flag   = (error_code & 16) != 0;
+            crate::serial_write(b"  Decoded #PF flags: [");
+            if p_flag { crate::serial_write(b"Protection-Violation "); } else { crate::serial_write(b"Non-Present-Page "); }
+            if wr_flag { crate::serial_write(b"Write-Access "); } else { crate::serial_write(b"Read-Access "); }
+            if us_flag { crate::serial_write(b"User-Mode "); } else { crate::serial_write(b"Kernel-Mode "); }
+            if rsvd_flag { crate::serial_write(b"RESERVED-BIT-VIOLATION "); }
+            if id_flag { crate::serial_write(b"Instruction-Fetch "); }
+            crate::serial_write(b"]\n");
+        }
+        crate::serial_write(b"  Encerrando processo com segfault e recuperando escalonador...\n");
+        crate::serial_write(b"====================================================\n");
+
+        // 2. Apresentação em tela VGA text
         let mut writer = crate::vga::Writer::new();
         writer.set_color(crate::vga::Color::LightRed, crate::vga::Color::Black);
         writer.write_line("\n====================================================");

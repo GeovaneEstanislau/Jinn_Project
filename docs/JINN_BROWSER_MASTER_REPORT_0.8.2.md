@@ -127,3 +127,4 @@ While user-space ticks remain strictly 0, the kernel loop inspects every slot. T
 ## 4. CONCLUSION
 
 Jinn Browser 0.8.2 achieves absolute technical convergence across all low-level subsystems. The kernel scheduler enforces strict permissions and hierarchy; the memory allocator guarantees zero dynamic leaks between windowed and fullscreen surfaces; and the BRCR telemetry is mathematically sound and visible on the desktop. The foundation is fully consolidated to proceed to the HTML/CSS layout engine expansion.
+

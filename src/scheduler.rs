@@ -456,7 +456,7 @@ impl Scheduler {
             let rflags: u64 = 0x202; // IF=1
 
             sp -= 8; unsafe { (sp as *mut u64).write_volatile(ss_sel); }
-            let abi_rsp = (user_rsp - 8) as u64;
+            let abi_rsp = (user_rsp - 8) as u64; // RSP % 16 == 8 para entrada de função rustc ABI (_start)
             sp -= 8; unsafe { (sp as *mut u64).write_volatile(abi_rsp); }
             sp -= 8; unsafe { (sp as *mut u64).write_volatile(rflags); }
             sp -= 8; unsafe { (sp as *mut u64).write_volatile(cs_sel); }
@@ -588,7 +588,7 @@ impl Scheduler {
             let rflags: u64 = 0x202; // IF=1
 
             sp -= 8; unsafe { (sp as *mut u64).write_volatile(ss_sel); }
-            let abi_rsp = (user_rsp - 8) as u64;
+            let abi_rsp = (user_rsp - 8) as u64; // RSP % 16 == 8 para entrada de função rustc ABI (_start)
             sp -= 8; unsafe { (sp as *mut u64).write_volatile(abi_rsp); }
             sp -= 8; unsafe { (sp as *mut u64).write_volatile(rflags); }
             sp -= 8; unsafe { (sp as *mut u64).write_volatile(cs_sel); }
@@ -761,8 +761,8 @@ impl Scheduler {
         let rflags: u64 = 0x202; // IF=1
 
         sp -= 8; unsafe { (sp as *mut u64).write_volatile(ss_sel); }
-        let abi_rsp = user_rsp - 8;
-        sp -= 8; unsafe { (sp as *mut u64).write_volatile(abi_rsp as u64); }
+        let abi_rsp = (user_rsp - 8) as u64; // RSP % 16 == 8 para entrada de função rustc ABI (_start)
+        sp -= 8; unsafe { (sp as *mut u64).write_volatile(abi_rsp); }
         sp -= 8; unsafe { (sp as *mut u64).write_volatile(rflags); }
         sp -= 8; unsafe { (sp as *mut u64).write_volatile(cs_sel); }
         sp -= 8; unsafe { (sp as *mut u64).write_volatile(entry_virt); }

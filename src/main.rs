@@ -114,7 +114,10 @@ pub extern "C" fn _start() -> ! {
     w.write_string("[+] GDT e TSS (Ring 3 Ready)...");
     serial_write(b"GDT start\n");
     gdt::init();
-    unsafe { cpu::enable_sse(); }
+    unsafe {
+        cpu::enable_sse();
+        cpu::enable_nxe();
+    }
     serial_write(b"GDT done\n");
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
