@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 pub const PAGE_SIZE: usize = 4096;
-const MAX_FRAMES: usize = 1024 * 1024;
-const BITMAP_WORDS: usize = MAX_FRAMES / 64;
+pub const MAX_FRAMES: usize = 8 * 1024 * 1024; // 8,388,608 frames = 32 GiB of physical memory
+pub const BITMAP_WORDS: usize = MAX_FRAMES / 64; // 131,072 u64 words = 1 MiB
 const RESERVED_LOW_MEMORY: u64 = 1024 * 1024;
 
 pub struct BuddyAllocator {

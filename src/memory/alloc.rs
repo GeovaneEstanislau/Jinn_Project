@@ -6,8 +6,8 @@ use core::ptr::null_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 pub const PAGE_SIZE: usize = 4096;
-const MAX_FRAMES: usize = 1024 * 1024; // 1,048,576 frames = 4 GiB of physical memory
-const BITMAP_WORDS: usize = MAX_FRAMES / 64; // 16,384 u64 words = 128 KiB
+pub const MAX_FRAMES: usize = 8 * 1024 * 1024; // 8,388,608 frames = 32 GiB of physical memory
+pub const BITMAP_WORDS: usize = MAX_FRAMES / 64; // 131,072 u64 words = 1 MiB
 
 // ── Simple Zero-Dependency SpinLock ──────────────────────────────────────────
 pub struct SpinLock<T> {
