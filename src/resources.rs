@@ -4,6 +4,8 @@
 //! descritores de arquivos, conexões de rede, buffers JDA e janelas do compositor.
 
 use crate::syscall::{EMFILE, ENOBUFS, ENOMEM};
+use crate::hardware_profiler::HardwareProfile;
+use crate::memory::SpinLock;
 
 /// Limites configuráveis de consumo de recursos por processo.
 #[derive(Debug, Clone, Copy)]
@@ -32,6 +34,42 @@ impl ResourceLimits {
             max_jda_buffers: 4,   // Até 4 buffers JDA Zero-Copy
             max_sockets: 4,       // Até 4 sockets de rede
             max_cpu_ticks: 0,     // Padrão: ilimitado (ou atribuído especificamente)
+        }
+    }
+
+    /// Limites adaptativos por processo de acordo com o Perfil Oficial de Hardware (JAHA 1.0)
+    pub const fn user_for_profile(profile: HardwareProfile) -> Self {
+        Self {
+            max_frames: profile.max_user_frames(),
+            max_fds: match profile {
+                HardwareProfile::Legacy => 8,
+                HardwareProfile::Compact => 12,
+                HardwareProfile::Standard => 16,
+                HardwareProfile::Performance => 32,
+                HardwareProfile::HighEnd => 64,
+            },
+            max_windows: match profile {
+                HardwareProfile::Legacy => 2,
+                HardwareProfile::Compact => 4,
+                HardwareProfile::Standard => 6,
+                HardwareProfile::Performance => 8,
+                HardwareProfile::HighEnd => 16,
+            },
+            max_jda_buffers: match profile {
+                HardwareProfile::Legacy => 2,
+                HardwareProfile::Compact => 4,
+                HardwareProfile::Standard => 8,
+                HardwareProfile::Performance => 16,
+                HardwareProfile::HighEnd => 32,
+            },
+            max_sockets: match profile {
+                HardwareProfile::Legacy => 4,
+                HardwareProfile::Compact => 8,
+                HardwareProfile::Standard => 16,
+                HardwareProfile::Performance => 32,
+                HardwareProfile::HighEnd => 64,
+            },
+            max_cpu_ticks: 0,
         }
     }
 
@@ -191,4 +229,136 @@ pub struct ProcessResourceStat {
     pub max_cpu_ticks: u64,
     pub irq_preemptions: u64,
     pub voluntary_yields: u64,
+}
+
+// ── Adaptive Resource Manager (JAHA 1.0) ──────────────────────────────────────
+
+/// Estado dinâmico de pressão de memória do sistema
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryPressureState {
+    /// Mais de 25% de RAM utilizável livre: operação plena e caches ativos
+    Normal,
+    /// Entre 10% e 25% de RAM utilizável: alerta moderado, redução de pré-busca
+    Moderate,
+    /// Menos de 10% de RAM utilizável: contenção estrita, descarte de caches e hibernação de abas
+    Critical,
+}
+
+impl MemoryPressureState {
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Normal => "NORMAL",
+            Self::Moderate => "MODERATE",
+            Self::Critical => "CRITICAL",
+        }
+    }
+}
+
+/// Gerenciador Adaptativo de Recursos do Microkernel Jinn
+#[derive(Debug, Clone, Copy)]
+pub struct AdaptiveResourceManager {
+    pub profile: HardwareProfile,
+    pub pressure_state: MemoryPressureState,
+    pub total_ram_bytes: u64,
+    pub usable_ram_bytes: u64,
+    pub reserved_ram_bytes: u64,
+    pub last_free_bytes: u64,
+    pub backpressure_events: u64,
+    pub cache_reduction_events: u64,
+    pub tab_hibernations_triggered: u64,
+}
+
+impl AdaptiveResourceManager {
+    pub const fn empty() -> Self {
+        Self {
+            profile: HardwareProfile::Standard,
+            pressure_state: MemoryPressureState::Normal,
+            total_ram_bytes: 0,
+            usable_ram_bytes: 0,
+            reserved_ram_bytes: 0,
+            last_free_bytes: 0,
+            backpressure_events: 0,
+            cache_reduction_events: 0,
+            tab_hibernations_triggered: 0,
+        }
+    }
+
+    pub fn new(profile: HardwareProfile, total_ram: u64, usable_ram: u64, reserved_ram: u64) -> Self {
+        Self {
+            profile,
+            pressure_state: MemoryPressureState::Normal,
+            total_ram_bytes: total_ram,
+            usable_ram_bytes: usable_ram,
+            reserved_ram_bytes: reserved_ram,
+            last_free_bytes: usable_ram,
+            backpressure_events: 0,
+            cache_reduction_events: 0,
+            tab_hibernations_triggered: 0,
+        }
+    }
+
+    /// Avalia a pressão atual de memória física livre contra a memória utilizável
+    pub fn evaluate_pressure(&mut self, free_bytes: u64) -> MemoryPressureState {
+        self.last_free_bytes = free_bytes;
+        if self.usable_ram_bytes == 0 {
+            self.pressure_state = MemoryPressureState::Normal;
+            return MemoryPressureState::Normal;
+        }
+
+        let free_pct = (free_bytes.saturating_mul(100)) / self.usable_ram_bytes;
+        let old_state = self.pressure_state;
+
+        let new_state = if free_pct < 10 {
+            MemoryPressureState::Critical
+        } else if free_pct < 25 {
+            MemoryPressureState::Moderate
+        } else {
+            MemoryPressureState::Normal
+        };
+
+        if new_state != old_state && (new_state == MemoryPressureState::Critical || new_state == MemoryPressureState::Moderate) {
+            self.backpressure_events = self.backpressure_events.saturating_add(1);
+        }
+
+        self.pressure_state = new_state;
+        new_state
+    }
+
+    /// Indica se abas do navegador em segundo plano devem ser forçadas a hibernar
+    pub fn should_hibernate_tabs(&self) -> bool {
+        match self.profile {
+            HardwareProfile::Legacy => true, // No perfil Legacy (256 MB), abas inativas hibernam imediatamente
+            _ => self.pressure_state == MemoryPressureState::Critical || self.pressure_state == MemoryPressureState::Moderate,
+        }
+    }
+
+    /// Indica se o cache LRU de blocos de disco deve esvaziar buffers limpos
+    pub fn should_reduce_cache(&self) -> bool {
+        self.pressure_state == MemoryPressureState::Critical
+    }
+
+    /// Registra evento de backpressure
+    pub fn record_backpressure(&mut self) {
+        self.backpressure_events = self.backpressure_events.saturating_add(1);
+    }
+
+    /// Registra gatilho de hibernação de aba disparado pelo Resource Manager
+    pub fn record_tab_hibernation(&mut self) {
+        self.tab_hibernations_triggered = self.tab_hibernations_triggered.saturating_add(1);
+    }
+}
+
+pub static RESOURCE_MANAGER: SpinLock<AdaptiveResourceManager> = SpinLock::new(AdaptiveResourceManager::empty());
+
+pub fn init_resource_manager(profile: HardwareProfile, total_ram: u64, usable_ram: u64, reserved_ram: u64) {
+    *RESOURCE_MANAGER.lock() = AdaptiveResourceManager::new(profile, total_ram, usable_ram, reserved_ram);
+}
+
+pub fn get_resource_manager() -> AdaptiveResourceManager {
+    *RESOURCE_MANAGER.lock()
+}
+
+pub fn current_pressure() -> MemoryPressureState {
+    let free_bytes = crate::memory::alloc::free_frames() as u64 * 4096;
+    RESOURCE_MANAGER.lock().evaluate_pressure(free_bytes)
 }

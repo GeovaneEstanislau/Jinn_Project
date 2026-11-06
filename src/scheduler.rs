@@ -480,7 +480,8 @@ impl Scheduler {
             }
 
             let mut res = crate::resources::ProcessResources::new();
-            let limits = crate::resources::ResourceLimits::user_default();
+            let profile = crate::hardware_profiler::get_profile();
+            let limits = crate::resources::ResourceLimits::user_for_profile(profile);
             let _ = res.check_and_alloc_frames(stack_frames + elf_frames, &limits);
 
             let task_name = if path.contains("browser") || path.contains("BROWSER") {
@@ -612,7 +613,8 @@ impl Scheduler {
             }
 
             let mut res = crate::resources::ProcessResources::new();
-            let limits = crate::resources::ResourceLimits::user_default();
+            let profile = crate::hardware_profiler::get_profile();
+            let limits = crate::resources::ResourceLimits::user_for_profile(profile);
             let _ = res.check_and_alloc_frames(stack_frames + elf_frames, &limits);
 
             let caller_pid = current_pid();
@@ -778,7 +780,8 @@ impl Scheduler {
         }
 
         let mut res = crate::resources::ProcessResources::new();
-        let limits = crate::resources::ResourceLimits::user_default();
+        let profile = crate::hardware_profiler::get_profile();
+        let limits = crate::resources::ResourceLimits::user_for_profile(profile);
         // Frames alocados para a pilha de usuário (256 KiB = 64 frames) + frames do ELF
         let _ = res.check_and_alloc_frames((USTACK_SIZE / 4096) + elf_frames, &limits);
 

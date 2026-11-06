@@ -11,8 +11,10 @@ pub mod drivers;
 pub mod elf;
 pub mod font;
 pub mod flusher;
+pub mod hardware_profiler;
 pub mod httpd;
 pub mod profile;
+pub mod services;
 pub mod supervisor;
 pub mod elf_tests;
 pub mod gdt;
@@ -192,6 +194,19 @@ pub extern "C" fn _start() -> ! {
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
 
+    w.write_string("[+] Hardware Profiler & Resource Manager (JAHA 1.0)...");
+    let caps = hardware_profiler::init();
+    resources::init_resource_manager(caps.profile, caps.total_ram_bytes, caps.usable_ram_bytes, caps.reserved_ram_bytes);
+    w.set_color(Color::LightGreen, Color::Black);
+    w.write_string(" OK (");
+    w.set_color(Color::LightCyan, Color::Black);
+    w.write_string(caps.profile.short_code());
+    w.set_color(Color::LightGreen, Color::Black);
+    w.write_line(")");
+    w.set_color(Color::LightGray, Color::Black);
+    w.write_string("    Perfil Ativo       : ");
+    w.write_line(caps.profile.name());
+
     w.write_string("[+] VFS + ramfs /dev...");
     vfs::ramfs::init_dev();
     vfs::mount("/dev", &vfs::ramfs::DEV_FS).ok();
@@ -305,6 +320,27 @@ pub extern "C" fn _start() -> ! {
     w.write_decimal(drivers::device_manager::device_count());
     w.write_line(" dispositivos ativos)");
     w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string("[+] Driver Supervisor & Fault Isolation (JAHA 1.0)...");
+    drivers::supervisor::init_canonical_drivers();
+    let (drv_passed, drv_total) = drivers::supervisor::run_fault_injection_tests();
+    if drv_passed == drv_total {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string(" OK (");
+        w.write_decimal(drv_passed);
+        w.write_string("/");
+        w.write_decimal(drv_total);
+        w.write_line(" aprovados)");
+        w.set_color(Color::LightGray, Color::Black);
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string(" FALHA (");
+        w.write_decimal(drv_passed);
+        w.write_string("/");
+        w.write_decimal(drv_total);
+        w.write_line(")");
+        w.set_color(Color::LightGray, Color::Black);
+    }
 
     w.write_string("[+] Testes de Seguranca do ELF Loader...");
     let (passed, total) = elf_tests::run_elf_security_selftests();
