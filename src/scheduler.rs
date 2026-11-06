@@ -31,10 +31,45 @@ static SCHED_TICKS: AtomicU64 = AtomicU64::new(0);
 /// Contador global de trocas de contexto efetivas.
 static CONTEXT_SWITCHES: AtomicU64 = AtomicU64::new(0);
 
+/// Latência e ciclos de CPU gastos no algoritmo de seleção do escalonador (RDTSC).
+pub static LAST_SCHED_CYCLES: AtomicU64 = AtomicU64::new(0);
+pub static MAX_SCHED_CYCLES: AtomicU64 = AtomicU64::new(0);
+pub static TOTAL_SCHED_CYCLES: AtomicU64 = AtomicU64::new(0);
+pub static SCHED_SAMPLE_COUNT: AtomicU64 = AtomicU64::new(0);
+
+#[inline(always)]
+pub fn read_tsc() -> u64 {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::x86_64::_rdtsc()
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        0
+    }
+}
+
+pub fn last_sched_cycles() -> u64 {
+    LAST_SCHED_CYCLES.load(Ordering::Relaxed)
+}
+
+pub fn max_sched_cycles() -> u64 {
+    MAX_SCHED_CYCLES.load(Ordering::Relaxed)
+}
+
+pub fn avg_sched_cycles() -> u64 {
+    let count = SCHED_SAMPLE_COUNT.load(Ordering::Relaxed);
+    if count > 0 {
+        TOTAL_SCHED_CYCLES.load(Ordering::Relaxed) / count
+    } else {
+        0
+    }
+}
+
 // ── Constantes ────────────────────────────────────────────────────────────────
 
-/// Número máximo de tarefas simultâneas no sistema.
-pub const MAX_TASKS: usize = 32;
+/// Número máximo de tarefas simultâneas no sistema (ampliado para 64 no Jinn Browser 0.8.2).
+pub const MAX_TASKS: usize = 64;
 
 /// Número máximo de descritores de arquivos e sockets por tarefa.
 pub const MAX_TASK_FDS: usize = 8;
@@ -241,6 +276,12 @@ pub struct Task {
     // ── Rastreamento SMP ──────────────────────────────────────────────────
     /// Núcleo de CPU em que a tarefa está alocada ou executando no momento.
     pub running_on_cpu: Option<usize>,
+
+    // ── Hierarquia e Segurança de Processos ────────────────────────────────
+    /// PID do processo pai (None se for processo raiz/kernel/init).
+    pub parent_pid: Option<usize>,
+    /// Token de geração do PID para proteção contra reaproveitamento de slot.
+    pub generation: u64,
 }
 
 // ── Estrutura do escalonador ──────────────────────────────────────────────────
@@ -255,6 +296,7 @@ pub struct Scheduler {
     current: Option<usize>,
     pub core_current: [Option<usize>; crate::gdt::MAX_CPUS],
     pub core_idle: [usize; crate::gdt::MAX_CPUS],
+    pub slot_generation: [u64; MAX_TASKS],
 }
 
 // ── Instância global ──────────────────────────────────────────────────────────
@@ -282,6 +324,7 @@ impl Scheduler {
             current: None,
             core_current: [NONE_CORE; crate::gdt::MAX_CPUS],
             core_idle: [0; crate::gdt::MAX_CPUS],
+            slot_generation: [1; MAX_TASKS],
         }
     }
 
@@ -309,6 +352,7 @@ impl Scheduler {
             if let Some(t) = &self.tasks[idx] {
                 if (t.state == TaskState::Zombie || t.state == TaskState::Completed) && t.running_on_cpu.is_none() {
                     self.tasks[idx] = None;
+                    self.slot_generation[idx] = self.slot_generation[idx].wrapping_add(1);
                     return Some(idx);
                 }
             }
@@ -447,6 +491,10 @@ impl Scheduler {
                 "spawned-user[U3]"
             };
 
+            let caller_pid = current_pid();
+            let parent_pid = if caller_pid != id { Some(caller_pid) } else { None };
+            let gen = self.slot_generation[id];
+
             self.tasks[id] = Some(Task {
                 id,
                 name: task_name,
@@ -468,6 +516,8 @@ impl Scheduler {
                 resources: res,
                 limits,
                 running_on_cpu: None,
+                parent_pid,
+                generation: gen,
             });
             let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
             self.next_id = (id + 1) % max_alloc;
@@ -565,6 +615,10 @@ impl Scheduler {
             let limits = crate::resources::ResourceLimits::user_default();
             let _ = res.check_and_alloc_frames(stack_frames + elf_frames, &limits);
 
+            let caller_pid = current_pid();
+            let parent_pid = if caller_pid != id { Some(caller_pid) } else { None };
+            let gen = self.slot_generation[id];
+
             self.tasks[id] = Some(Task {
                 id,
                 name,
@@ -586,6 +640,8 @@ impl Scheduler {
                 resources: res,
                 limits,
                 running_on_cpu: None,
+                parent_pid,
+                generation: gen,
             });
             let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
             self.next_id = (id + 1) % max_alloc;
@@ -726,6 +782,10 @@ impl Scheduler {
         // Frames alocados para a pilha de usuário (256 KiB = 64 frames) + frames do ELF
         let _ = res.check_and_alloc_frames((USTACK_SIZE / 4096) + elf_frames, &limits);
 
+        let caller_pid = current_pid();
+        let parent_pid = if caller_pid != id { Some(caller_pid) } else { None };
+        let gen = self.slot_generation[id];
+
         self.tasks[id] = Some(Task {
             id,
             name,
@@ -747,6 +807,8 @@ impl Scheduler {
             resources: res,
             limits,
             running_on_cpu: None,
+            parent_pid,
+            generation: gen,
         });
         let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
         self.next_id = (id + 1) % max_alloc;
@@ -834,6 +896,7 @@ impl Scheduler {
 
         let res = crate::resources::ProcessResources::new();
         let limits = crate::resources::ResourceLimits::kernel_default();
+        let gen = self.slot_generation[slot];
 
         let _guard = SCHED_LOCK.lock();
         self.tasks[slot] = Some(Task {
@@ -857,6 +920,8 @@ impl Scheduler {
             resources: res,
             limits,
             running_on_cpu: None,
+            parent_pid: None,
+            generation: gen,
         });
 
         if cpu_id < crate::gdt::MAX_CPUS {
@@ -909,6 +974,10 @@ impl Scheduler {
             let res = crate::resources::ProcessResources::new();
             let limits = crate::resources::ResourceLimits::kernel_default();
 
+            let caller_pid = current_pid();
+            let parent_pid = if caller_pid != id { Some(caller_pid) } else { None };
+            let gen = self.slot_generation[id];
+
             self.tasks[id] = Some(Task {
                 id,
                 name,
@@ -930,6 +999,8 @@ impl Scheduler {
                 resources: res,
                 limits,
                 running_on_cpu: None,
+                parent_pid,
+                generation: gen,
             });
             let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
             self.next_id = (id + 1) % max_alloc;
@@ -1171,8 +1242,11 @@ impl Scheduler {
 
     /// Seleciona a próxima tarefa pronta com maior prioridade (Round-Robin por nível).
     pub fn run_next(&mut self) -> Option<usize> {
+        let start_tsc = read_tsc();
+        let mut result = None;
+
         // Prioridade RealTime > Normal > Idle
-        for priority in [TaskPriority::RealTime, TaskPriority::Normal, TaskPriority::Idle] {
+        'outer: for priority in [TaskPriority::RealTime, TaskPriority::Normal, TaskPriority::Idle] {
             let start = self.current.unwrap_or(usize::MAX);
             for delta in 1..=MAX_TASKS {
                 let idx = if start == usize::MAX {
@@ -1189,12 +1263,26 @@ impl Scheduler {
                         if cpu_id < crate::gdt::MAX_CPUS {
                             YIELDED[cpu_id].store(false, Ordering::SeqCst);
                         }
-                        return Some(idx);
+                        result = Some(idx);
+                        break 'outer;
                     }
                 }
             }
         }
-        None
+
+        let elapsed_tsc = read_tsc().saturating_sub(start_tsc);
+        LAST_SCHED_CYCLES.store(elapsed_tsc, Ordering::Relaxed);
+        let mut cur_max = MAX_SCHED_CYCLES.load(Ordering::Relaxed);
+        while elapsed_tsc > cur_max {
+            match MAX_SCHED_CYCLES.compare_exchange_weak(cur_max, elapsed_tsc, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => break,
+                Err(actual) => cur_max = actual,
+            }
+        }
+        TOTAL_SCHED_CYCLES.fetch_add(elapsed_tsc, Ordering::Relaxed);
+        SCHED_SAMPLE_COUNT.fetch_add(1, Ordering::Relaxed);
+
+        result
     }
 
     /// Chamado pelo handler do APIC Timer (vetor 32) para fazer preempção no núcleo especificado.
@@ -1287,6 +1375,8 @@ impl Scheduler {
 
 
 
+        let start_tsc = read_tsc();
+
         // Escalonamento por prioridade (Round-Robin dentro de cada nível, SMP-aware)
         let core_idle_id = if cpu_id < crate::gdt::MAX_CPUS && self.core_idle[cpu_id] != 0 {
             self.core_idle[cpu_id]
@@ -1340,6 +1430,18 @@ impl Scheduler {
                         if current_cr3 != task.pml4_phys || task.ring == Ring::User {
                             unsafe { paging::load_cr3(task.pml4_phys); }
                         }
+
+                        let elapsed_tsc = read_tsc().saturating_sub(start_tsc);
+                        LAST_SCHED_CYCLES.store(elapsed_tsc, Ordering::Relaxed);
+                        let mut cur_max = MAX_SCHED_CYCLES.load(Ordering::Relaxed);
+                        while elapsed_tsc > cur_max {
+                            match MAX_SCHED_CYCLES.compare_exchange_weak(cur_max, elapsed_tsc, Ordering::Relaxed, Ordering::Relaxed) {
+                                Ok(_) => break,
+                                Err(actual) => cur_max = actual,
+                            }
+                        }
+                        TOTAL_SCHED_CYCLES.fetch_add(elapsed_tsc, Ordering::Relaxed);
+                        SCHED_SAMPLE_COUNT.fetch_add(1, Ordering::Relaxed);
 
                         return task.saved_rsp;
                     }

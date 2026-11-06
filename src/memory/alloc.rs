@@ -236,3 +236,20 @@ pub fn used_bytes() -> usize {
 pub fn total_bytes() -> usize {
     FRAME_ALLOCATOR.lock().total_frames * 4096
 }
+
+// ── Instrumentação de Páginas Dinâmicas (Jinn Browser 0.8.2) ───────────────────
+
+use core::sync::atomic::AtomicU64;
+
+pub static ALLOCATED_DYNAMIC_PAGES: AtomicU64 = AtomicU64::new(0);
+pub static FREED_DYNAMIC_PAGES: AtomicU64 = AtomicU64::new(0);
+
+#[inline]
+pub fn allocated_dynamic_pages() -> u64 {
+    ALLOCATED_DYNAMIC_PAGES.load(Ordering::Relaxed)
+}
+
+#[inline]
+pub fn freed_dynamic_pages() -> u64 {
+    FREED_DYNAMIC_PAGES.load(Ordering::Relaxed)
+}

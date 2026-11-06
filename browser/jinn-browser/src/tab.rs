@@ -610,6 +610,12 @@ impl Tab {
             total_physical_bytes: total_bytes,
         }
     }
+
+    /// Retorna a etiqueta textual formatada da métrica BRCR para exibição na UI
+    pub fn brcr_telemetry_label(&self, active_tab: &Tab, rm: &BrowserResourceManager) -> String {
+        let brcr = rm.calculate_detailed_brcr(active_tab, self);
+        brcr.formatted_composite()
+    }
 }
 
 /// Pegada Lógica da Aba (metadados e estruturas de documento preservadas)
@@ -649,6 +655,26 @@ pub struct BrcrMetricsBreakdown {
     pub io_background_ratio: f64,
     /// Razão Composta Agregada (pesos formais: 40% Memória, 30% Gráficos, 20% CPU, 5% Mídia, 5% I/O)
     pub composite_background_ratio: f64,
+}
+
+impl BrcrMetricsBreakdown {
+    /// Retorna a representação formatada da métrica composta (ex: "BRCR: 0.134%")
+    pub fn formatted_composite(&self) -> String {
+        format!("BRCR: {:.3}%", self.composite_background_ratio)
+    }
+
+    /// Retorna o detalhamento completo de telemetria nos 5 eixos
+    pub fn formatted_telemetry(&self) -> String {
+        format!(
+            "BRCR: {:.3}% [Mem: {:.3}%, Gfx: {:.1}%, CPU: {:.1}%, Media: {:.1}%, IO: {:.1}%]",
+            self.composite_background_ratio,
+            self.memory_retention_ratio,
+            self.graphics_retention_ratio,
+            self.cpu_background_ratio,
+            self.media_retention_ratio,
+            self.io_background_ratio
+        )
+    }
 }
 
 /// Mapeamento Canônico de Estados da Aba para o Escalonador do Kernel Jinn (Ring 0)

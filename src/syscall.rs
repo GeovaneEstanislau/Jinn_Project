@@ -84,6 +84,7 @@ pub const EINVAL:       isize = -22;  // Invalid argument
 pub const EMFILE:       isize = -24;  // Too many open files
 pub const ENOSPC:       isize = -28;  // No space left on device
 pub const ESPIPE:       isize = -29;  // Illegal seek
+pub const EDEADLK:      isize = -35;  // Resource deadlock avoided
 pub const ENOSYS:       isize = -38;  // Function not implemented
 pub const EADDRINUSE:   isize = -98;  // Address already in use
 pub const ENETDOWN:     isize = -100; // Network interface is down
@@ -428,7 +429,7 @@ pub extern "C" fn syscall_dispatch(
         50 => sys_unlink(arg0 as *const u8, arg1),
         51 => sys_mkdir(arg0 as *const u8, arg1),
         52 => sys_rename(arg0 as *const RenameArgs),
-        53 => sys_task_set_state(arg0, arg1 as u32),
+        53 => sys_task_set_state(arg0, arg1 as u32, arg2 as u64),
         _  => ENOSYS,
     }
 }
@@ -1008,6 +1009,7 @@ fn sys_alloc_page() -> isize {
 
                     // Registra a propriedade da página dinâmica na tarefa
                     task.dynamic_pages[slot_idx] = vaddr;
+                    crate::memory::ALLOCATED_DYNAMIC_PAGES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     vaddr as isize
                 } else {
                     phys as isize
@@ -1061,6 +1063,7 @@ fn sys_free_page(addr: u64) -> isize {
                 memory::free_frame(phys);
                 task.dynamic_pages[slot_idx] = 0; // Remove do registro de páginas dinâmicas
                 task.resources.free_frames(1);    // Atualiza contabilidade
+                crate::memory::FREED_DYNAMIC_PAGES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 0
             } else {
                 task.dynamic_pages[slot_idx] = 0;
@@ -1069,6 +1072,7 @@ fn sys_free_page(addr: u64) -> isize {
         } else {
             task.resources.free_frames(1);
             memory::free_frame(addr);
+            crate::memory::FREED_DYNAMIC_PAGES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             0
         }
     } else {
@@ -1125,11 +1129,29 @@ fn sys_sleep(ms: usize) -> isize {
     0
 }
 
-/// `sys_task_set_state(target_pid, state)` — Syscall 53
+/// `sys_task_set_state(target_pid, state, expected_token)` — Syscall 53
 /// Permite o controle explícito do estado de agendamento de tarefas (ex: hibernação e retomada de abas pelo navegador):
 /// - state 1: `TaskState::Ready` (retoma a tarefa na fila do escalonador)
 /// - state 3: `TaskState::Blocked` (suspende a tarefa no escalonador com estritamente 0 ticks de CPU)
-fn sys_task_set_state(target_pid: usize, new_state: u32) -> isize {
+///
+/// Regras de Segurança e Hierarquia (Jinn Browser 0.8.2):
+/// 1. Proteção absoluta do PID 0 (Idle): Rejeita imediatamente com EPERM qualquer tentativa de alterar o estado do PID 0.
+/// 2. Validação estrita de hierarquia:
+///    - Processos privilegiados (caller_pid <= 1) têm permissão irrestrita (exceto sobre PID 0).
+///    - Processo pai tem controle total sobre seus processos filhos (target_task.parent_pid == Some(caller_pid)).
+///    - O próprio processo (caller_pid == target_pid) pode gerenciar a si mesmo com restrição anti-deadlock.
+///    - Qualquer outra relação entre processos não privilegiados é rejeitada com EPERM.
+/// 3. Prevenção de Auto-Deadlock: Um processo não privilegiado é estritamente impedido de bloquear a si próprio (state 3)
+///    sem um supervisor externo, retornando EDEADLK (-35).
+/// 4. Proteção contra Race Condition e Reuso de PID (Token de Geração): Se `expected_token != 0`, valida contra
+///    `target_task.generation`. Se divergente, retorna ESRCH.
+/// 5. Rejeição de Tarefas Mortas/Encerradas: Se a tarefa estiver em Zombie ou Completed, rejeita com ESRCH.
+fn sys_task_set_state(target_pid: usize, new_state: u32, expected_token: u64) -> isize {
+    // 1. Proteção absoluta da Idle Task (PID 0)
+    if target_pid == 0 {
+        return EPERM;
+    }
+
     let caller_pid = scheduler::current_pid();
     let sched = scheduler::get();
 
@@ -1138,9 +1160,28 @@ fn sys_task_set_state(target_pid: usize, new_state: u32) -> isize {
     }
 
     if let Some(Some(target_task)) = sched.tasks.get_mut(target_pid) {
-        // Validação de segurança: apenas o próprio processo ou kernel/init (caller_pid <= 1)
-        if caller_pid > 1 && caller_pid != target_pid {
+        // 2. Validação de token de geração contra reaproveitamento de slot
+        if expected_token != 0 && target_task.generation != expected_token {
+            return ESRCH;
+        }
+
+        // 3. Rejeição de tarefas encerradas ou zumbis
+        if target_task.state == scheduler::TaskState::Zombie || target_task.state == scheduler::TaskState::Completed {
+            return ESRCH;
+        }
+
+        // 4. Validação estrita de hierarquia
+        let is_self = caller_pid == target_pid;
+        let is_parent = target_task.parent_pid == Some(caller_pid);
+        let is_privileged = caller_pid <= 1;
+
+        if !is_privileged && !is_parent && !is_self {
             return EPERM;
+        }
+
+        // 5. Prevenção de auto-deadlock permanente
+        if is_self && !is_privileged && new_state == 3 {
+            return EDEADLK;
         }
 
         match new_state {
@@ -1159,7 +1200,7 @@ fn sys_task_set_state(target_pid: usize, new_state: u32) -> isize {
             _ => EINVAL,
         }
     } else {
-        -3 // ESRCH
+        ESRCH
     }
 }
 

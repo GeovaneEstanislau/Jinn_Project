@@ -550,8 +550,9 @@ pub unsafe fn sys_rename(old_path: &str, new_path: &str) -> i64 {
 
 // ── Syscall 53 — task_set_state ───────────────────────────────────────────────
 
-/// Modifica o estado de agendamento de uma tarefa (1 = Ready, 3 = Blocked)
+/// Modifica o estado de agendamento de uma tarefa (1 = Ready, 3 = Blocked).
+/// Permite passar um token de geração para proteção contra reaproveitamento de PID (0 = wildcard).
 #[inline(always)]
-pub unsafe fn sys_task_set_state(target_pid: usize, state: u32) -> i64 {
-    syscall3(53, target_pid as u64, state as u64, 0)
+pub unsafe fn sys_task_set_state(target_pid: usize, state: u32, token: u64) -> i64 {
+    syscall3(53, target_pid as u64, state as u64, token)
 }

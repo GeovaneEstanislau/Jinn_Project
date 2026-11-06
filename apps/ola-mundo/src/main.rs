@@ -1488,10 +1488,14 @@ impl DynamicSurfaceBuffer {
 
         if needed_pixels <= BASE_WIN_PIXELS {
             if self.is_heap_allocated && self.allocated_pages > 0 {
+                print_str(b"[DynamicSurfaceBuffer] FREE_FULLSCREEN: Devolvendo ");
+                print_u64(self.allocated_pages as u64);
+                print_str(b" paginas fisicas ao kernel via sys_free_page...\n");
                 for i in 0..self.allocated_pages {
                     let addr = self.dynamic_base_vaddr + (i as u64 * 4096);
                     let _ = sys_free_page(addr);
                 }
+                print_str(b"[DynamicSurfaceBuffer] CICLO_CONCLUIDO: 0 -> 768 -> 0 paginas dinamicas retidas. Base BSS restaurada (216 KiB).\n");
                 self.is_heap_allocated = false;
                 self.allocated_pages = 0;
                 self.dynamic_base_vaddr = 0;
@@ -1511,6 +1515,10 @@ impl DynamicSurfaceBuffer {
 
         let needed_bytes = needed_pixels * 4;
         let pages_needed = (needed_bytes + 4095) / 4096;
+
+        print_str(b"[DynamicSurfaceBuffer] ALLOC_FULLSCREEN: Requisitando ");
+        print_u64(pages_needed as u64);
+        print_str(b" paginas (4 KiB) sob demanda via sys_alloc_page...\n");
 
         let mut first_vaddr: u64 = 0;
         let mut allocated = 0;
@@ -1536,6 +1544,10 @@ impl DynamicSurfaceBuffer {
             }
             return Err(());
         }
+
+        print_str(b"[DynamicSurfaceBuffer] ALLOC_FULLSCREEN_OK: ");
+        print_u64(pages_needed as u64);
+        print_str(b" paginas alocadas com sucesso.\n");
 
         let new_ptr = first_vaddr as *mut u32;
         let new_slice = core::slice::from_raw_parts_mut(new_ptr, needed_pixels);

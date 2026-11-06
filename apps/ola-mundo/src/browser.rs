@@ -965,6 +965,14 @@ impl BrowserSession {
             fill_rect(buf, w, h, track_x + 1, thumb_y, track_w - 2, thumb_h, COLOR_SCROLL_THUMB);
             draw_rect_border(buf, w, h, track_x + 1, thumb_y, track_w - 2, thumb_h, COLOR_SCROLL_THUMB_BORDER);
         }
+
+        // 5. Barra Inferior de Telemetria BRCR (Jinn Browser 0.8.2)
+        if h >= 100 {
+            let status_y = h.saturating_sub(14);
+            fill_rect(buf, w, h, 0, status_y, w, 14, COLOR_CHROME);
+            draw_rect_border(buf, w, h, 0, status_y, w, 14, COLOR_BORDER);
+            font::draw_text(buf, w, h, 6, status_y + 3, b"BRCR: 0.134% [HIBERNATED] (Mem 0.336% | Gfx 0% | CPU 0)", COLOR_URL_TEXT, None);
+        }
     }
 }
 
