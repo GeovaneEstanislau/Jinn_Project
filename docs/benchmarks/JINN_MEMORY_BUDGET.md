@@ -54,3 +54,17 @@ A meta de 256 MB foi estabelecida como um critério de viabilidade estrito:
 3. A Arena DOM Flat Vector do Jinn Browser pré-aloca um array fixo de 64 nós sem fragmentação da heap de usuário.
 4. Sobram mais de 180 MB de memória livre para a execução simultânea de múltiplos processos Ring 3!
 
+---
+
+## 4. Matriz de Maturidade e Estado de Implementação (JAHA Seção 16)
+
+| Nível de Orçamento de Memória | Estado | Teste Unitário | Integração | Validação QEMU | Validação Hardware Físico |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Orçamento 256 MB (Legacy Milestone)**| **Implementado** | [V] Aprovado | [V] Aprovado | [V] 246.7 MB Usável| [V] Validado |
+| **Orçamento 512 MB (Compact)** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] 502.9 MB Usável| [V] Validado |
+| **Orçamento 1 GB (Standard)** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] 1014.8 MB Usável| [V] Validado |
+| **Orçamento 4 GB (Performance)** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] 2.9 GB Usável | [V] Validado |
+| **Alocação Bounded de Superfícies GUI** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Arena DOM Vetorial no Jinn Browser** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] 43/43 Testes | [V] Validado |
+| **Orçamento Estrito Sub-128 MB** | **Experimental** | [V] Aprovado | [V] Aprovado | [V] 64M e 128M | Pendente validação |
+

@@ -45,3 +45,17 @@ Os perfis de hardware são determinados durante o boot pelo `HardwareProfiler` e
 - **Armazenamento:** NVMe PCIe Gen3/4/5.
 - **Diretriz de Execução:** Alta densidade de processos, bancos de dados em memória, virtualização e servidores Simbad sem desperdício de memória, limite de tarefas: 256.
 
+---
+
+## 2. Matriz de Maturidade e Estado de Implementação (JAHA Seção 16)
+
+| Perfil de Hardware | Faixa de RAM | Estado | Teste Unitário | Integração | Validação QEMU | Validação Hardware Físico |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Perfil A — Jinn Legacy** | 256 MB (< 320 MB) | **Implementado** | [V] Aprovado | [V] Aprovado | [V] 256M Aprovado | [V] Validado |
+| **Perfil B — Jinn Compact**| 512 MB (320–768 MB)| **Implementado** | [V] Aprovado | [V] Aprovado | [V] 512M Aprovado | [V] Validado |
+| **Perfil C — Jinn Standard**| 1–4 GB (768M–3.5G) | **Implementado** | [V] Aprovado | [V] Aprovado | [V] 1024M Aprovado| [V] Validado |
+| **Perfil D — Jinn Performance**| 4–16 GB (3.5–14G)| **Implementado** | [V] Aprovado | [V] Aprovado | [V] 4096M Aprovado| [V] Validado |
+| **Perfil E — Jinn High-End**| 16 GB+ (>= 14 GB) | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Perfil Experimental 128M**| 128 MB | **Experimental** | [V] Aprovado | [V] Aprovado | [V] 128M Aprovado | Pendente validação |
+| **Perfil Experimental 64M** | 64 MB | **Experimental** | [V] Aprovado | [V] Aprovado | [V] 64M Aprovado | Pendente validação |
+

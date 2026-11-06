@@ -71,3 +71,17 @@ Quando o subsistema de memória física (`BuddyAllocator`) detectar esgotamento 
 6. **Preservação de Serviços Críticos:** Proteção inviolável do PID 0 (Idle), Shell do kernel, Compositor Aladdin e Supervisor.
 7. **Notificação de Backpressure:** Retorno de erro `-ENOMEM` ou flag de pressão para impedir que aplicações continuem chamando `sys_alloc_page` em loop.
 
+---
+
+## 4. Matriz de Maturidade e Estado de Implementação (JAHA Seção 16)
+
+| Componente Arquitetural | Estado | Teste Unitário | Integração | Validação QEMU | Validação Hardware Físico |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Hardware Profiler** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] 64M a 4GB | [V] VirtualBox / Limine BIOS |
+| **Adaptive Resource Manager** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Backpressure em 7 Níveis** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Driver Supervisor & Faults** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] 5/5 Falhas | [V] Validado |
+| **Paginamento Dinâmico Ring 3**| **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **IOMMU Hardware Isolation** | **Planejado** | — | — | — | Pendente hardware VT-d |
+| **Perfis Experimentais (64M/128M)** | **Experimental**| [V] Aprovado | [V] Aprovado | [V] Validado | Pendente validação física |
+

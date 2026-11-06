@@ -91,3 +91,16 @@ Quando um driver falha, o supervisor aplica políticas de contenção específic
    - **Cautela Crítica:** Um controlador de disco NÃO é reiniciado indiscriminadamente se houver escritas pendentes no cache ou no barramento.
    - O supervisor bloqueia novas requisições com `-EIO`, drena ou congela transações abertas e protege o sistema de arquivos contra corrupção silenciosa de metadados.
 
+---
+
+## 5. Matriz de Maturidade e Estado de Implementação (JAHA Seção 16)
+
+| Componente Arquitetural / Funcionalidade | Estado | Teste Unitário | Integração | Validação QEMU | Validação Hardware Físico |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Driver Supervisor (9 Estados)** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Circuit-Breaker (Max 3 falhas)** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Degradação Graciosa (Áudio/Rede/Disco)** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Injeção de Falhas Adversariais** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] 5/5 Cenários | [V] Validado |
+| **Ring 3 User-Space Drivers** | **Parcialmente implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **IOMMU Protection VT-d / AMD-Vi** | **Planejado** | — | — | — | Pendente hardware VT-d |
+

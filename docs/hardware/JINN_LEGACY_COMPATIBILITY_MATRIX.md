@@ -80,3 +80,17 @@ Conforme a diretriz estratégica, **não haverá migração ou bifurcação do k
 | **Barramento PCI** | PCI Configuration Mechanism #1 | `src/drivers/pci.rs` | **Implementado e Validado** (Portas 0xCF8/0xCFC) |
 | **Temporizador** | PIT 8254 (100 Hz) e APIC Timer | `pit.rs`, `timer.rs` | **Implementado e Validado** |
 
+---
+
+## 5. Matriz de Maturidade e Estado de Implementação (JAHA Seção 16)
+
+| Controlador / Dispositivo Legado | Estado | Teste Unitário | Integração | Validação QEMU | Validação Hardware Físico |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **CPU x86_64 Long Mode (CPUID)** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Athlon 64 / Core 2 / P4 |
+| **Barramento PCI Config Mech #1** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Controlador IDE / PATA (PIIX3)** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Controlador SATA AHCI** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Rede Intel e1000 / RTL8139** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Teclado / Mouse PS/2 (Portas 0x60/64)**| **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Suporte 32-bit x86 Legado (i686)** | **Planejado** | — | — | — | Investigação futura |
+

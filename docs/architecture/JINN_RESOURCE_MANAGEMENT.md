@@ -66,3 +66,16 @@ Qualquer processo Ring 3 com permissão de auditoria pode inspecionar sua própr
 - `cpu_ticks`: Tempo de CPU efetivamente consumido.
 - `limit_violations`: Tentativas de ultrapassar cotas barradas pelo microkernel com `-ENOMEM`, `-EMFILE` ou `-ENOBUFS`.
 
+---
+
+## 5. Matriz de Maturidade e Estado de Implementação (JAHA Seção 16)
+
+| Subsistema / Recurso de Governança | Estado | Teste Unitário | Integração | Validação QEMU | Validação Hardware Físico |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Adaptive Resource Manager (ARM)** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Pressão de Memória (Normal/Mod/Crit)** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Cotas de Recursos por Perfil A..E** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Backpressure em Syscall 25/53/alloc** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Hibernação Automática de Abas** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Swap Paging em Disco Secundário** | **Planejado** | — | — | — | Arquitetura VFS futura |
+

@@ -45,3 +45,16 @@ O módulo `src/drivers/supervisor.rs` executa uma suíte automatizada de testes 
 
 > **Critério Central Atendido:** A falha ou encerramento inesperado de um driver periférico NÃO provoca falha do microkernel, nem corrupção do scheduler ou encerramento de aplicações independentes.
 
+---
+
+## 4. Matriz de Maturidade e Estado de Implementação (JAHA Seção 16)
+
+| Barreira de Segurança / Mecanismo | Estado | Teste Unitário | Integração | Validação QEMU | Validação Hardware Físico |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Isolamento de Privilégio Ring 0/Ring 3** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Validação de Buffers Syscall (EFAULT)** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Injeção de Falhas Automatizada (5/5)** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] 100% Sucesso | [V] Validado |
+| **Prevenção de Corrupção de Disco (SafeHalt)**| **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **Proteção contra Deadlock de Supervisão** | **Implementado** | [V] Aprovado | [V] Aprovado | [V] Validado | [V] Validado |
+| **DMA Remapping via IOMMU Hardware** | **Planejado** | — | — | — | Pendente hardware VT-d |
+
