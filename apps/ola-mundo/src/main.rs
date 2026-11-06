@@ -2393,7 +2393,7 @@ unsafe fn run_browser_interactive() -> ! {
         }
         None => {
             print_str(b"[BROWSER] /disk/INDEX.HTM nao encontrado no VFS, usando fallback embutido...\n");
-            let fallback = b"<html><head><title>Jinn OS Portal</title></head><body><h1>Jinn Browser 0.3.0</h1><p>Bem-vindo ao Jinn Browser rodando nativamente sobre o microkernel Jinn OS e Aladdin Desktop Compositor.</p><p><a href=\"about.htm\">Sobre o Sistema</a></p></body></html>";
+            let fallback = b"<html><head><title>Jinn OS Portal</title><style>h1{color:#f9e2af;margin:8px;} .card{background-color:#1e1e2e;margin:6px;} .btn{background-color:#313244;color:#89dceb;} #counter-display{color:#00ffaa;font-weight:bold;}</style></head><body><h1>Jinn Browser 0.6.0</h1><p>Motor Nativo: HTML + Mini-CSS + JavaScript</p><div class=\"card\"><p id=\"counter-display\">Cliques: 0</p><button id=\"btn-count\" class=\"btn\" onclick=\"clicks=clicks+1;document.getElementById('counter-display').innerText='Cliques: '+clicks;\">[ Incrementar Contador ]</button></div><script>var clicks = 0;</script><hr/><p><a href=\"about.htm\">Sobre o Sistema</a></p></body></html>";
             let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
             core::ptr::copy_nonoverlapping(fallback.as_ptr(), f_ptr, fallback.len());
             fallback.len()
@@ -2525,6 +2525,15 @@ unsafe fn run_browser_interactive() -> ! {
                             session.push_back_current();
                             session.history_fwd_count = 0;
                             browser_load_and_display(&mut session, &resolved[..res_len], win_id, buf_cur);
+                        }
+                        browser::BrowserAction::JsAction(node_idx) => {
+                            print_str(b"[BROWSER-INTERACTION] ACTION JsAction node=");
+                            print_u64(node_idx as u64);
+                            print_str(b"\n");
+                            if session.dispatch_js_click(node_idx) {
+                                session.render(buf_cur);
+                                let _ = sys_window_update(win_id, buf_cur);
+                            }
                         }
                         browser::BrowserAction::FocusAddress => {
                             print_str(b"[BROWSER-INTERACTION] ACTION FocusAddress\n");

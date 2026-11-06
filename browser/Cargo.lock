@@ -37,6 +37,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "jbe-js"
+version = "0.1.0"
+dependencies = [
+ "jbe-core",
+ "jbe-dom",
+]
+
+[[package]]
 name = "jbe-layout"
 version = "0.1.0"
 dependencies = [
@@ -79,6 +87,7 @@ dependencies = [
  "jbe-dom",
  "jbe-html",
  "jbe-image",
+ "jbe-js",
  "jbe-layout",
  "jbe-net",
  "jbe-render",

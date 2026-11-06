@@ -303,21 +303,30 @@ function Add-DirEntry([int]$index, [string]$name11, [byte]$attr, [uint32]$firstC
 $indexHtmlText = @"
 <!DOCTYPE html>
 <html>
-<head><title>Jinn OS Portal</title></head>
+<head>
+  <title>Jinn OS Portal</title>
+  <style>
+    h1 { color: #f9e2af; margin: 8px; }
+    .card { background-color: #1e1e2e; border-color: #45475a; margin: 6px; }
+    .btn { background-color: #313244; color: #89dceb; border-color: #89dceb; margin: 4px; }
+    #counter-display { color: #00ffaa; font-weight: bold; }
+  </style>
+</head>
 <body>
-  <h1>Jinn Browser 0.5.0</h1>
-  <p>Bem-vindo ao Jinn Browser rodando nativamente sobre o microkernel Jinn OS e Aladdin Desktop Compositor.</p>
+  <h1>Jinn Browser 0.6.0</h1>
+  <p>Motor Nativo: HTML + Mini-CSS + JavaScript (no_std / Ring 3).</p>
+  <div class="card">
+    <p id="counter-display">Cliques: 0</p>
+    <button id="btn-count" class="btn" onclick="clicks = clicks + 1; var c = document.getElementById('counter-display'); c.innerText = 'Cliques: ' + clicks;">[ Incrementar Contador ]</button>
+  </div>
+  <script>
+    var clicks = 0;
+  </script>
   <hr/>
-  <p><b>Acessos Rapidos na Internet (HTTP Puro):</b></p>
+  <p><b>Acessos Rapidos:</b></p>
   <p>- <a href="http://neverssl.com">Testar Internet Real (neverssl.com)</a></p>
-  <p>- <a href="http://example.com">Dominio de Teste RFC 2606 (example.com)</a></p>
-  <p>- <a href="http://info.cern.ch">Primeiro Site da Web (info.cern.ch)</a></p>
-  <p>- <a href="http://10.0.2.2:8080">Servidor Web do Host Local (10.0.2.2:8080)</a></p>
-  <hr/>
-  <p><b>Documentos Locais:</b></p>
+  <p>- <a href="http://example.com">Dominio de Teste (example.com)</a></p>
   <p>- <a href="about.htm">Sobre o Jinn Microkernel</a></p>
-  <hr/>
-  <p><i>Nota: Sites que forcam HTTPS/TLS 1.3 redirecionam para a tela informativa correspondente.</i></p>
 </body>
 </html>
 "@

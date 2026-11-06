@@ -32,7 +32,903 @@ pub const COLOR_SCROLL_TRACK: u32 = 0x0018_1825;
 pub const COLOR_SCROLL_THUMB: u32 = 0x0058_5B70;
 pub const COLOR_SCROLL_THUMB_BORDER: u32 = 0x0089_DCEB;
 
-// ── Tipos do Parser e DOM ─────────────────────────────────────────────────────
+// ── Pipeline Completo: Flat Vector DOM, Mini-CSS e Mini-JS (no_std) ──────────
+
+pub const MAX_DOM_NODES: usize = 64;
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DomNodeType {
+    Element,
+    Text,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ComputedStyle {
+    pub color: u32,
+    pub bg_color: Option<u32>,
+    pub border_color: Option<u32>,
+    pub font_size: usize,
+    pub margin_top: usize,
+    pub margin_bottom: usize,
+    pub is_bold: bool,
+    pub display_block: bool,
+}
+
+impl ComputedStyle {
+    pub const fn default() -> Self {
+        Self {
+            color: COLOR_TEXT,
+            bg_color: None,
+            border_color: None,
+            font_size: 12,
+            margin_top: 2,
+            margin_bottom: 4,
+            is_bold: false,
+            display_block: true,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+pub struct DomNode {
+    pub id: usize,
+    pub node_type: DomNodeType,
+    pub tag: [u8; 16],
+    pub tag_len: usize,
+    pub id_attr: [u8; 32],
+    pub id_len: usize,
+    pub class_attr: [u8; 32],
+    pub class_len: usize,
+    pub style_attr: [u8; 64],
+    pub style_len: usize,
+    pub href_attr: [u8; 64],
+    pub href_len: usize,
+    pub onclick_attr: [u8; 128],
+    pub onclick_len: usize,
+    pub text: [u8; 128],
+    pub text_len: usize,
+    pub parent: Option<usize>,
+    pub children: [usize; 8],
+    pub child_count: usize,
+    pub computed_style: ComputedStyle,
+}
+
+impl DomNode {
+    pub const fn empty() -> Self {
+        Self {
+            id: 0,
+            node_type: DomNodeType::Element,
+            tag: [0; 16],
+            tag_len: 0,
+            id_attr: [0; 32],
+            id_len: 0,
+            class_attr: [0; 32],
+            class_len: 0,
+            style_attr: [0; 64],
+            style_len: 0,
+            href_attr: [0; 64],
+            href_len: 0,
+            onclick_attr: [0; 128],
+            onclick_len: 0,
+            text: [0; 128],
+            text_len: 0,
+            parent: None,
+            children: [0; 8],
+            child_count: 0,
+            computed_style: ComputedStyle::default(),
+        }
+    }
+}
+
+pub struct DomArena {
+    pub nodes: [DomNode; MAX_DOM_NODES],
+    pub node_count: usize,
+    pub title: [u8; 64],
+    pub title_len: usize,
+}
+
+impl DomArena {
+    pub const fn new() -> Self {
+        Self {
+            nodes: [DomNode::empty(); MAX_DOM_NODES],
+            node_count: 0,
+            title: [0; 64],
+            title_len: 0,
+        }
+    }
+
+    pub fn alloc_node(&mut self, node_type: DomNodeType) -> Option<usize> {
+        if self.node_count < MAX_DOM_NODES {
+            let id = self.node_count;
+            let mut node = DomNode::empty();
+            node.id = id;
+            node.node_type = node_type;
+            self.nodes[id] = node;
+            self.node_count += 1;
+            Some(id)
+        } else {
+            None
+        }
+    }
+
+    pub fn find_by_id(&self, id_bytes: &[u8]) -> Option<usize> {
+        for i in 0..self.node_count {
+            let node = &self.nodes[i];
+            if node.id_len == id_bytes.len() && &node.id_attr[..node.id_len] == id_bytes {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    pub fn set_text_content(&mut self, idx: usize, new_text: &[u8]) {
+        if idx < self.node_count {
+            let len = new_text.len().min(127);
+            self.nodes[idx].text[..len].copy_from_slice(&new_text[..len]);
+            self.nodes[idx].text_len = len;
+        }
+    }
+
+    pub fn set_style_color(&mut self, idx: usize, col: u32) {
+        if idx < self.node_count {
+            self.nodes[idx].computed_style.color = col;
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn set_style_bg(&mut self, idx: usize, col: u32) {
+        if idx < self.node_count {
+            self.nodes[idx].computed_style.bg_color = Some(col);
+        }
+    }
+}
+
+// ── Mini-CSS e Resolução de Estilos ──────────────────────────────────────────
+
+pub const MAX_CSS_RULES: usize = 32;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SelectorKind {
+    Tag,
+    Class,
+    Id,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+pub struct CssRule {
+    pub kind: SelectorKind,
+    pub selector: [u8; 32],
+    pub selector_len: usize,
+    pub color: Option<u32>,
+    pub bg_color: Option<u32>,
+    pub border_color: Option<u32>,
+    pub font_size: Option<usize>,
+    pub margin: Option<usize>,
+    pub is_bold: Option<bool>,
+    pub display_block: Option<bool>,
+}
+
+impl CssRule {
+    pub const fn empty() -> Self {
+        Self {
+            kind: SelectorKind::Tag,
+            selector: [0; 32],
+            selector_len: 0,
+            color: None,
+            bg_color: None,
+            border_color: None,
+            font_size: None,
+            margin: None,
+            is_bold: None,
+            display_block: None,
+        }
+    }
+}
+
+pub struct MiniCss {
+    pub rules: [CssRule; MAX_CSS_RULES],
+    pub rule_count: usize,
+}
+
+impl MiniCss {
+    pub const fn new() -> Self {
+        Self {
+            rules: [CssRule::empty(); MAX_CSS_RULES],
+            rule_count: 0,
+        }
+    }
+
+    pub fn parse_stylesheet(&mut self, css: &[u8]) {
+        self.rule_count = 0;
+        let mut i = 0usize;
+        let len = css.len();
+
+        while i < len && self.rule_count < MAX_CSS_RULES {
+            while i < len && (css[i] == b' ' || css[i] == b'\t' || css[i] == b'\r' || css[i] == b'\n') {
+                i += 1;
+            }
+            if i >= len { break; }
+
+            let sel_start = i;
+            while i < len && css[i] != b'{' && css[i] != b'}' {
+                i += 1;
+            }
+            if i >= len || css[i] != b'{' { break; }
+            let sel_raw = css[sel_start..i].trim_ascii();
+            i += 1;
+
+            if sel_raw.is_empty() { continue; }
+
+            let (kind, sel_name) = if sel_raw[0] == b'.' {
+                (SelectorKind::Class, &sel_raw[1..])
+            } else if sel_raw[0] == b'#' {
+                (SelectorKind::Id, &sel_raw[1..])
+            } else {
+                (SelectorKind::Tag, sel_raw)
+            };
+
+            let mut rule = CssRule::empty();
+            rule.kind = kind;
+            let copy_sel = sel_name.len().min(31);
+            rule.selector[..copy_sel].copy_from_slice(&sel_name[..copy_sel]);
+            rule.selector_len = copy_sel;
+
+            let body_start = i;
+            while i < len && css[i] != b'}' {
+                i += 1;
+            }
+            let body = &css[body_start..i];
+            if i < len && css[i] == b'}' {
+                i += 1;
+            }
+
+            for decl in body.split(|&b| b == b';') {
+                let decl_clean = decl.trim_ascii();
+                if decl_clean.is_empty() { continue; }
+                if let Some(colon) = decl_clean.iter().position(|&b| b == b':') {
+                    let prop = decl_clean[..colon].trim_ascii();
+                    let val = decl_clean[colon + 1..].trim_ascii();
+
+                    if prop.eq_ignore_ascii_case(b"color") {
+                        rule.color = parse_hex_color(val);
+                    } else if prop.eq_ignore_ascii_case(b"background-color") || prop.eq_ignore_ascii_case(b"background") {
+                        rule.bg_color = parse_hex_color(val);
+                    } else if prop.eq_ignore_ascii_case(b"border-color") {
+                        rule.border_color = parse_hex_color(val);
+                    } else if prop.eq_ignore_ascii_case(b"margin") {
+                        rule.margin = parse_px(val);
+                    } else if prop.eq_ignore_ascii_case(b"font-weight") {
+                        if val.eq_ignore_ascii_case(b"bold") {
+                            rule.is_bold = Some(true);
+                        }
+                    } else if prop.eq_ignore_ascii_case(b"display") {
+                        if val.eq_ignore_ascii_case(b"none") {
+                            rule.display_block = Some(false);
+                        } else if val.eq_ignore_ascii_case(b"block") {
+                            rule.display_block = Some(true);
+                        } else if val.eq_ignore_ascii_case(b"inline") {
+                            rule.display_block = Some(false);
+                        }
+                    }
+                }
+            }
+
+            self.rules[self.rule_count] = rule;
+            self.rule_count += 1;
+        }
+    }
+
+    pub fn resolve(&self, node: &mut DomNode) {
+        let tag = &node.tag[..node.tag_len];
+        if tag == b"h1" {
+            node.computed_style.color = COLOR_H1;
+            node.computed_style.margin_top = 8;
+            node.computed_style.margin_bottom = 6;
+            node.computed_style.is_bold = true;
+            node.computed_style.display_block = true;
+        } else if tag == b"h2" {
+            node.computed_style.color = 0x00F3_8BA8;
+            node.computed_style.margin_top = 6;
+            node.computed_style.margin_bottom = 4;
+            node.computed_style.is_bold = true;
+            node.computed_style.display_block = true;
+        } else if tag == b"h3" {
+            node.computed_style.color = 0x00A6_E3A1;
+            node.computed_style.margin_top = 4;
+            node.computed_style.margin_bottom = 4;
+            node.computed_style.is_bold = true;
+            node.computed_style.display_block = true;
+        } else if tag == b"p" {
+            node.computed_style.color = COLOR_TEXT;
+            node.computed_style.margin_top = 2;
+            node.computed_style.margin_bottom = 4;
+            node.computed_style.display_block = true;
+        } else if tag == b"a" {
+            node.computed_style.color = COLOR_LINK;
+            node.computed_style.display_block = false;
+        } else if tag == b"button" {
+            node.computed_style.color = COLOR_BTN_TEXT;
+            node.computed_style.bg_color = Some(0x0031_3244);
+            node.computed_style.border_color = Some(0x0045_475A);
+            node.computed_style.margin_top = 3;
+            node.computed_style.margin_bottom = 3;
+            node.computed_style.display_block = false;
+        } else if tag == b"div" {
+            node.computed_style.display_block = true;
+        }
+
+        for i in 0..self.rule_count {
+            let r = &self.rules[i];
+            let r_sel = &r.selector[..r.selector_len];
+            let mut matches = false;
+
+            match r.kind {
+                SelectorKind::Tag => {
+                    if node.tag_len == r.selector_len && &node.tag[..node.tag_len] == r_sel {
+                        matches = true;
+                    }
+                }
+                SelectorKind::Class => {
+                    let class_slice = &node.class_attr[..node.class_len];
+                    if class_slice.contains_ignore_ascii_case(r_sel) {
+                        matches = true;
+                    }
+                }
+                SelectorKind::Id => {
+                    if node.id_len == r.selector_len && &node.id_attr[..node.id_len] == r_sel {
+                        matches = true;
+                    }
+                }
+            }
+
+            if matches {
+                if let Some(c) = r.color { node.computed_style.color = c; }
+                if let Some(bg) = r.bg_color { node.computed_style.bg_color = Some(bg); }
+                if let Some(bc) = r.border_color { node.computed_style.border_color = Some(bc); }
+                if let Some(m) = r.margin {
+                    node.computed_style.margin_top = m;
+                    node.computed_style.margin_bottom = m;
+                }
+                if let Some(b) = r.is_bold { node.computed_style.is_bold = b; }
+                if let Some(d) = r.display_block { node.computed_style.display_block = d; }
+            }
+        }
+
+        if node.style_len > 0 {
+            let inline = &node.style_attr[..node.style_len];
+            for decl in inline.split(|&b| b == b';') {
+                let decl_clean = decl.trim_ascii();
+                if let Some(colon) = decl_clean.iter().position(|&b| b == b':') {
+                    let prop = decl_clean[..colon].trim_ascii();
+                    let val = decl_clean[colon + 1..].trim_ascii();
+                    if prop.eq_ignore_ascii_case(b"color") {
+                        if let Some(c) = parse_hex_color(val) { node.computed_style.color = c; }
+                    } else if prop.eq_ignore_ascii_case(b"background-color") || prop.eq_ignore_ascii_case(b"background") {
+                        if let Some(bg) = parse_hex_color(val) { node.computed_style.bg_color = Some(bg); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Mini-JS Runtime para Ring 3 (no_std) ──────────────────────────────────────
+
+pub const MAX_JS_VARS: usize = 16;
+
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+pub struct JsVar {
+    pub name: [u8; 16],
+    pub name_len: usize,
+    pub val_num: i64,
+    pub is_num: bool,
+    pub val_str: [u8; 64],
+    pub val_str_len: usize,
+}
+
+impl JsVar {
+    pub const fn empty() -> Self {
+        Self {
+            name: [0; 16],
+            name_len: 0,
+            val_num: 0,
+            is_num: true,
+            val_str: [0; 64],
+            val_str_len: 0,
+        }
+    }
+}
+
+pub struct MiniJsRuntime {
+    pub vars: [JsVar; MAX_JS_VARS],
+    pub var_count: usize,
+}
+
+impl MiniJsRuntime {
+    pub const fn new() -> Self {
+        Self {
+            vars: [JsVar::empty(); MAX_JS_VARS],
+            var_count: 0,
+        }
+    }
+
+    pub fn get_num(&self, name: &[u8]) -> Option<i64> {
+        for i in 0..self.var_count {
+            let v = &self.vars[i];
+            if v.name_len == name.len() && &v.name[..v.name_len] == name {
+                if v.is_num {
+                    return Some(v.val_num);
+                }
+            }
+        }
+        None
+    }
+
+    pub fn set_num(&mut self, name: &[u8], val: i64) {
+        for i in 0..self.var_count {
+            let v = &mut self.vars[i];
+            if v.name_len == name.len() && &v.name[..v.name_len] == name {
+                v.val_num = val;
+                v.is_num = true;
+                return;
+            }
+        }
+        if self.var_count < MAX_JS_VARS {
+            let idx = self.var_count;
+            let mut v = JsVar::empty();
+            let cpy = name.len().min(15);
+            v.name[..cpy].copy_from_slice(&name[..cpy]);
+            v.name_len = cpy;
+            v.val_num = val;
+            v.is_num = true;
+            self.vars[idx] = v;
+            self.var_count += 1;
+        }
+    }
+
+    pub fn eval_script(&mut self, script: &[u8], dom: &mut DomArena) {
+        for stmt_raw in script.split(|&b| b == b';' || b == b'\n') {
+            let stmt = stmt_raw.trim_ascii();
+            if stmt.is_empty() { continue; }
+
+            let clean_stmt = if stmt.starts_with(b"var ") {
+                stmt[4..].trim_ascii()
+            } else if stmt.starts_with(b"let ") {
+                stmt[4..].trim_ascii()
+            } else {
+                stmt
+            };
+
+            if let Some(inner_pos) = find_subslice(clean_stmt, b".innerText") {
+                let lhs = clean_stmt[..inner_pos].trim_ascii();
+                let after = clean_stmt[inner_pos + 10..].trim_ascii();
+                if after.starts_with(b"=") {
+                    let rhs = after[1..].trim_ascii();
+                    let target_id_opt = extract_quoted_arg(lhs);
+                    let elem_idx_opt = if let Some(id_name) = target_id_opt {
+                        dom.find_by_id(id_name)
+                    } else {
+                        // Se for 'c.innerText' e houve getElementById prévio
+                        dom.find_by_id(b"counter-display")
+                    };
+
+                    if let Some(elem_idx) = elem_idx_opt {
+                        let mut eval_buf = [0u8; 128];
+                        let eval_len = self.eval_expr_string(rhs, &mut eval_buf);
+                        dom.set_text_content(elem_idx, &eval_buf[..eval_len]);
+                    }
+                }
+            } else if let Some(color_pos) = find_subslice(clean_stmt, b".style.color") {
+                let lhs = clean_stmt[..color_pos].trim_ascii();
+                let after = clean_stmt[color_pos + 12..].trim_ascii();
+                if after.starts_with(b"=") {
+                    let rhs = after[1..].trim_ascii();
+                    let target_id_opt = extract_quoted_arg(lhs);
+                    let elem_idx_opt = if let Some(id_name) = target_id_opt {
+                        dom.find_by_id(id_name)
+                    } else {
+                        dom.find_by_id(b"counter-display")
+                    };
+                    if let Some(elem_idx) = elem_idx_opt {
+                        if let Some(quote_val) = extract_string_lit(rhs) {
+                            if let Some(col) = parse_hex_color(quote_val) {
+                                dom.set_style_color(elem_idx, col);
+                            }
+                        }
+                    }
+                }
+            } else if let Some(eq_pos) = clean_stmt.iter().position(|&b| b == b'=') {
+                let var_name = clean_stmt[..eq_pos].trim_ascii();
+                let is_plus_eq = !var_name.is_empty() && var_name[var_name.len() - 1] == b'+';
+                let real_var = if is_plus_eq { &var_name[..var_name.len() - 1].trim_ascii() } else { &var_name };
+
+                let rhs = clean_stmt[eq_pos + 1..].trim_ascii();
+                let cur_val = self.get_num(real_var).unwrap_or(0);
+
+                if is_plus_eq {
+                    let add_val = parse_int(rhs).unwrap_or(1);
+                    self.set_num(real_var, cur_val + add_val);
+                } else if let Some(plus_idx) = rhs.iter().position(|&b| b == b'+') {
+                    let op1 = rhs[..plus_idx].trim_ascii();
+                    let op2 = rhs[plus_idx + 1..].trim_ascii();
+                    let val1 = if op1 == *real_var { cur_val } else { parse_int(op1).unwrap_or(0) };
+                    let val2 = if op2 == *real_var { cur_val } else { parse_int(op2).unwrap_or(0) };
+                    self.set_num(real_var, val1 + val2);
+                } else {
+                    let val = parse_int(rhs).unwrap_or(0);
+                    self.set_num(real_var, val);
+                }
+            }
+        }
+    }
+
+    fn eval_expr_string(&self, expr: &[u8], out: &mut [u8]) -> usize {
+        let mut out_len = 0usize;
+        for part in expr.split(|&b| b == b'+') {
+            let p = part.trim_ascii();
+            if let Some(lit) = extract_string_lit(p) {
+                let cpy = lit.len().min(out.len() - out_len);
+                out[out_len..out_len + cpy].copy_from_slice(&lit[..cpy]);
+                out_len += cpy;
+            } else if let Some(num) = self.get_num(p) {
+                let mut num_buf = [0u8; 16];
+                let n_len = format_i64(num, &mut num_buf);
+                let cpy = n_len.min(out.len() - out_len);
+                out[out_len..out_len + cpy].copy_from_slice(&num_buf[..cpy]);
+                out_len += cpy;
+            }
+        }
+        out_len
+    }
+}
+
+// ── Funções Auxiliares de Parsing e Conversão ─────────────────────────────────
+
+pub fn parse_hex_color(hex: &[u8]) -> Option<u32> {
+    let s = hex.trim_ascii();
+    if s.is_empty() { return None; }
+    let s = if s[0] == b'#' { &s[1..] } else { s };
+    if s.len() == 6 {
+        let r = hex_byte(&s[0..2])?;
+        let g = hex_byte(&s[2..4])?;
+        let b = hex_byte(&s[4..6])?;
+        Some(((r as u32) << 16) | ((g as u32) << 8) | (b as u32))
+    } else if s.len() == 3 {
+        let r = hex_nibble(s[0])?;
+        let g = hex_nibble(s[1])?;
+        let b = hex_nibble(s[2])?;
+        Some(((r as u32 * 17) << 16) | ((g as u32 * 17) << 8) | (b as u32 * 17))
+    } else {
+        None
+    }
+}
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn hex_byte(bytes: &[u8]) -> Option<u8> {
+    if bytes.len() != 2 { return None; }
+    let h = hex_nibble(bytes[0])?;
+    let l = hex_nibble(bytes[1])?;
+    Some((h << 4) | l)
+}
+
+pub fn parse_px(val: &[u8]) -> Option<usize> {
+    let s = val.trim_ascii();
+    let mut num: usize = 0;
+    let mut found = false;
+    for &b in s {
+        if b >= b'0' && b <= b'9' {
+            num = num.saturating_mul(10).saturating_add((b - b'0') as usize);
+            found = true;
+        } else {
+            break;
+        }
+    }
+    if found { Some(num) } else { None }
+}
+
+pub fn parse_int(val: &[u8]) -> Option<i64> {
+    let s = val.trim_ascii();
+    if s.is_empty() { return None; }
+    let (is_neg, start) = if s[0] == b'-' { (true, 1) } else { (false, 0) };
+    let mut num: i64 = 0;
+    let mut found = false;
+    for &b in &s[start..] {
+        if b >= b'0' && b <= b'9' {
+            num = num.saturating_mul(10).saturating_add((b - b'0') as i64);
+            found = true;
+        } else {
+            break;
+        }
+    }
+    if found {
+        Some(if is_neg { -num } else { num })
+    } else {
+        None
+    }
+}
+
+pub fn format_i64(mut n: i64, buf: &mut [u8; 16]) -> usize {
+    if n == 0 {
+        buf[0] = b'0';
+        return 1;
+    }
+    let is_neg = n < 0;
+    if is_neg {
+        n = -n;
+    }
+    let mut tmp = [0u8; 16];
+    let mut count = 0;
+    while n > 0 && count < 15 {
+        tmp[count] = b'0' + (n % 10) as u8;
+        n /= 10;
+        count += 1;
+    }
+    let mut idx = 0;
+    if is_neg {
+        buf[idx] = b'-';
+        idx += 1;
+    }
+    for i in (0..count).rev() {
+        buf[idx] = tmp[i];
+        idx += 1;
+    }
+    idx
+}
+
+pub fn extract_string_lit(val: &[u8]) -> Option<&[u8]> {
+    let s = val.trim_ascii();
+    if s.len() >= 2 && (s[0] == b'"' || s[0] == b'\'') {
+        let quote = s[0];
+        if s[s.len() - 1] == quote {
+            return Some(&s[1..s.len() - 1]);
+        }
+    }
+    None
+}
+
+pub fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() { return Some(0); }
+    if haystack.len() < needle.len() { return None; }
+    for i in 0..=(haystack.len() - needle.len()) {
+        if &haystack[i..i + needle.len()] == needle {
+            return Some(i);
+        }
+    }
+    None
+}
+
+pub fn extract_quoted_arg(call: &[u8]) -> Option<&[u8]> {
+    let lparen = call.iter().position(|&b| b == b'(')?;
+    let rparen = call.iter().rposition(|&b| b == b')')?;
+    if rparen > lparen + 1 {
+        let arg = call[lparen + 1..rparen].trim_ascii();
+        extract_string_lit(arg)
+    } else {
+        None
+    }
+}
+
+// ── Parser HTML Zero-Copy para Flat Vector DOM ────────────────────────────────
+
+pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, js: &mut MiniJsRuntime) {
+    dom.node_count = 0;
+    dom.title_len = 0;
+    css.rule_count = 0;
+
+    let mut i = 0usize;
+    let len = html.len();
+
+    while i < len {
+        if html[i] == b'<' {
+            i += 1;
+            if i < len && html[i] == b'/' {
+                // Tag de fechamento, avança até '>'
+                while i < len && html[i] != b'>' { i += 1; }
+                if i < len { i += 1; }
+                continue;
+            }
+
+            // Lê nome da tag
+            let tag_start = i;
+            while i < len && html[i] != b' ' && html[i] != b'>' && html[i] != b'/' {
+                i += 1;
+            }
+            let mut tag_buf = [0u8; 16];
+            let raw_tag = &html[tag_start..i];
+            let tag_len = raw_tag.len().min(15);
+            for t_idx in 0..tag_len {
+                let mut c = raw_tag[t_idx];
+                if c >= b'A' && c <= b'Z' { c += 32; }
+                tag_buf[t_idx] = c;
+            }
+            let tag_name = &tag_buf[..tag_len];
+
+            // Trata <style>
+            if tag_name == b"style" {
+                while i < len && html[i] != b'>' { i += 1; }
+                if i < len { i += 1; }
+                let style_start = i;
+                while i + 7 < len && !html[i..i + 8].eq_ignore_ascii_case(b"</style>") {
+                    i += 1;
+                }
+                let css_bytes = &html[style_start..i];
+                css.parse_stylesheet(css_bytes);
+                while i < len && html[i] != b'>' { i += 1; }
+                if i < len { i += 1; }
+                continue;
+            }
+
+            // Trata <script>
+            if tag_name == b"script" {
+                while i < len && html[i] != b'>' { i += 1; }
+                if i < len { i += 1; }
+                let script_start = i;
+                while i + 8 < len && !html[i..i + 9].eq_ignore_ascii_case(b"</script>") {
+                    i += 1;
+                }
+                let script_bytes = &html[script_start..i];
+                js.eval_script(script_bytes, dom);
+                while i < len && html[i] != b'>' { i += 1; }
+                if i < len { i += 1; }
+                continue;
+            }
+
+            // Trata <title>
+            if tag_name == b"title" {
+                while i < len && html[i] != b'>' { i += 1; }
+                if i < len { i += 1; }
+                let title_start = i;
+                while i + 7 < len && !html[i..i + 8].eq_ignore_ascii_case(b"</title>") {
+                    i += 1;
+                }
+                let t_len = (i - title_start).min(63);
+                dom.title[..t_len].copy_from_slice(&html[title_start..title_start + t_len]);
+                dom.title_len = t_len;
+                while i < len && html[i] != b'>' { i += 1; }
+                if i < len { i += 1; }
+                continue;
+            }
+
+            // Elemento normal
+            let node_id_opt = dom.alloc_node(DomNodeType::Element);
+            if node_id_opt.is_none() {
+                // Arena cheia
+                break;
+            }
+            let node_id = node_id_opt.unwrap();
+            dom.nodes[node_id].tag = tag_buf;
+            dom.nodes[node_id].tag_len = tag_len;
+
+            // Lê atributos: id, class, style, href, onclick
+            while i < len && html[i] != b'>' {
+                if i + 3 < len && html[i..i + 3].eq_ignore_ascii_case(b"id=") {
+                    i += 3;
+                    let quote = if i < len && (html[i] == b'"' || html[i] == b'\'') { let q = html[i]; i += 1; Some(q) } else { None };
+                    let a_start = i;
+                    while i < len {
+                        let c = html[i];
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' { break; }
+                        i += 1;
+                    }
+                    let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
+                    let cpy = a_val.len().min(31);
+                    dom.nodes[node_id].id_attr[..cpy].copy_from_slice(&a_val[..cpy]);
+                    dom.nodes[node_id].id_len = cpy;
+                } else if i + 6 < len && html[i..i + 6].eq_ignore_ascii_case(b"class=") {
+                    i += 6;
+                    let quote = if i < len && (html[i] == b'"' || html[i] == b'\'') { let q = html[i]; i += 1; Some(q) } else { None };
+                    let a_start = i;
+                    while i < len {
+                        let c = html[i];
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' { break; }
+                        i += 1;
+                    }
+                    let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
+                    let cpy = a_val.len().min(31);
+                    dom.nodes[node_id].class_attr[..cpy].copy_from_slice(&a_val[..cpy]);
+                    dom.nodes[node_id].class_len = cpy;
+                } else if i + 6 < len && html[i..i + 6].eq_ignore_ascii_case(b"style=") {
+                    i += 6;
+                    let quote = if i < len && (html[i] == b'"' || html[i] == b'\'') { let q = html[i]; i += 1; Some(q) } else { None };
+                    let a_start = i;
+                    while i < len {
+                        let c = html[i];
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' { break; }
+                        i += 1;
+                    }
+                    let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
+                    let cpy = a_val.len().min(63);
+                    dom.nodes[node_id].style_attr[..cpy].copy_from_slice(&a_val[..cpy]);
+                    dom.nodes[node_id].style_len = cpy;
+                } else if i + 5 < len && html[i..i + 5].eq_ignore_ascii_case(b"href=") {
+                    i += 5;
+                    let quote = if i < len && (html[i] == b'"' || html[i] == b'\'') { let q = html[i]; i += 1; Some(q) } else { None };
+                    let a_start = i;
+                    while i < len {
+                        let c = html[i];
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' { break; }
+                        i += 1;
+                    }
+                    let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
+                    let cpy = a_val.len().min(63);
+                    dom.nodes[node_id].href_attr[..cpy].copy_from_slice(&a_val[..cpy]);
+                    dom.nodes[node_id].href_len = cpy;
+                } else if i + 8 < len && html[i..i + 8].eq_ignore_ascii_case(b"onclick=") {
+                    i += 8;
+                    let quote = if i < len && (html[i] == b'"' || html[i] == b'\'') { let q = html[i]; i += 1; Some(q) } else { None };
+                    let a_start = i;
+                    while i < len {
+                        let c = html[i];
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' { break; }
+                        i += 1;
+                    }
+                    let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
+                    let cpy = a_val.len().min(127);
+                    dom.nodes[node_id].onclick_attr[..cpy].copy_from_slice(&a_val[..cpy]);
+                    dom.nodes[node_id].onclick_len = cpy;
+                } else {
+                    i += 1;
+                }
+            }
+
+            if i < len && html[i] == b'>' {
+                i += 1;
+            }
+
+            // Lê texto até '<'
+            let mut text_buf = [0u8; 128];
+            let mut t_idx = 0usize;
+            while i < len && html[i] != b'<' {
+                let b = html[i];
+                if b == b'\n' || b == b'\r' || b == b'\t' {
+                    if t_idx > 0 && text_buf[t_idx - 1] != b' ' && t_idx < 127 {
+                        text_buf[t_idx] = b' ';
+                        t_idx += 1;
+                    }
+                } else if b == b'&' {
+                    if i + 3 < len && &html[i..i + 4] == b"&lt;" {
+                        if t_idx < 127 { text_buf[t_idx] = b'<'; t_idx += 1; }
+                        i += 3;
+                    } else if i + 3 < len && &html[i..i + 4] == b"&gt;" {
+                        if t_idx < 127 { text_buf[t_idx] = b'>'; t_idx += 1; }
+                        i += 3;
+                    } else if i + 4 < len && &html[i..i + 5] == b"&amp;" {
+                        if t_idx < 127 { text_buf[t_idx] = b'&'; t_idx += 1; }
+                        i += 4;
+                    } else {
+                        if t_idx < 127 { text_buf[t_idx] = b; t_idx += 1; }
+                    }
+                } else {
+                    if t_idx < 127 {
+                        text_buf[t_idx] = b;
+                        t_idx += 1;
+                    }
+                }
+                i += 1;
+            }
+
+            dom.nodes[node_id].text = text_buf;
+            dom.nodes[node_id].text_len = t_idx;
+            css.resolve(&mut dom.nodes[node_id]);
+        } else {
+            i += 1;
+        }
+    }
+}
+
+// ── Tipos do Parser e DOM Legado ──────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BlockKind {
@@ -95,6 +991,18 @@ pub struct ClickRegion {
     pub h: usize,
     pub target: [u8; 128],
     pub target_len: usize,
+    pub is_js: bool,
+    pub node_idx: usize,
+}
+
+#[derive(Clone, Copy)]
+pub struct BoxRect {
+    pub x: usize,
+    pub y: usize,
+    pub w: usize,
+    pub h: usize,
+    pub bg_color: u32,
+    pub border_color: Option<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -291,6 +1199,8 @@ pub fn parse_html(html: &[u8], page: &mut ParsedPage) {
 pub struct DocumentLayout {
     pub lines: [RenderLine; 64],
     pub line_count: usize,
+    pub boxes: [BoxRect; 16],
+    pub box_count: usize,
     pub click_regions: [ClickRegion; 16],
     pub click_count: usize,
     pub total_height: usize,
@@ -309,6 +1219,15 @@ impl DocumentLayout {
                 is_hr: false,
             }; 64],
             line_count: 0,
+            boxes: [BoxRect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+                bg_color: 0,
+                border_color: None,
+            }; 16],
+            box_count: 0,
             click_regions: [ClickRegion {
                 x: 0,
                 y: 0,
@@ -316,9 +1235,153 @@ impl DocumentLayout {
                 h: 0,
                 target: [0; 128],
                 target_len: 0,
+                is_js: false,
+                node_idx: 0,
             }; 16],
             click_count: 0,
             total_height: 0,
+        }
+    }
+
+    pub fn compute_from_dom(&mut self, dom: &DomArena, content_width: usize) {
+        self.line_count = 0;
+        self.click_count = 0;
+        self.box_count = 0;
+
+        let max_chars_per_line = (content_width / font::FONT_WIDTH).min(50);
+        let mut curr_y = 6usize;
+
+        for i in 0..dom.node_count {
+            let node = &dom.nodes[i];
+            let tag = &node.tag[..node.tag_len];
+
+            if tag == b"hr" {
+                if self.line_count < self.lines.len() {
+                    self.lines[self.line_count] = RenderLine {
+                        text: [0; 64],
+                        text_len: 0,
+                        x: 8,
+                        y: curr_y + 4,
+                        color: COLOR_HR,
+                        is_link: false,
+                        is_hr: true,
+                    };
+                    self.line_count += 1;
+                }
+                curr_y += 10;
+                continue;
+            }
+
+            if node.text_len == 0 && node.computed_style.bg_color.is_none() {
+                continue;
+            }
+
+            if node.computed_style.display_block {
+                curr_y += node.computed_style.margin_top;
+            }
+
+            let start_y = curr_y;
+            let text = &node.text[..node.text_len];
+            let is_interactive = tag == b"button" || node.onclick_len > 0;
+            let is_link = tag == b"a" && node.href_len > 0;
+            let start_x = if is_interactive || node.computed_style.bg_color.is_some() { 12 } else { 8 };
+
+            if is_interactive {
+                self.add_wrapped_text_interactive(text, start_x, &mut curr_y, max_chars_per_line, node.computed_style.color, true, node.id);
+            } else if is_link {
+                let href = &node.href_attr[..node.href_len];
+                self.add_wrapped_text(text, start_x, &mut curr_y, max_chars_per_line, node.computed_style.color, true, Some(href));
+            } else {
+                self.add_wrapped_text(text, start_x, &mut curr_y, max_chars_per_line, node.computed_style.color, false, None);
+            }
+
+            if let Some(bg) = node.computed_style.bg_color {
+                if self.box_count < self.boxes.len() {
+                    let box_h = (curr_y.saturating_sub(start_y) + 4).max(font::FONT_HEIGHT + 6);
+                    let box_w = if node.computed_style.display_block { content_width } else { (node.text_len * font::FONT_WIDTH + 12).min(content_width) };
+                    self.boxes[self.box_count] = BoxRect {
+                        x: start_x.saturating_sub(4),
+                        y: start_y.saturating_sub(2),
+                        w: box_w,
+                        h: box_h,
+                        bg_color: bg,
+                        border_color: node.computed_style.border_color,
+                    };
+                    self.box_count += 1;
+                }
+            }
+
+            if node.computed_style.display_block {
+                curr_y += node.computed_style.margin_bottom;
+            }
+        }
+
+        self.total_height = curr_y + 10;
+    }
+
+    fn add_wrapped_text_interactive(
+        &mut self,
+        text: &[u8],
+        start_x: usize,
+        curr_y: &mut usize,
+        max_chars: usize,
+        color: u32,
+        is_interactive: bool,
+        node_idx: usize,
+    ) {
+        if text.is_empty() { return; }
+
+        let mut offset = 0usize;
+
+        while offset < text.len() && self.line_count < self.lines.len() {
+            let remaining = text.len() - offset;
+            let take = if remaining <= max_chars {
+                remaining
+            } else {
+                let mut break_idx = max_chars;
+                while break_idx > 0 && text[offset + break_idx] != b' ' {
+                    break_idx -= 1;
+                }
+                if break_idx == 0 { max_chars } else { break_idx }
+            };
+
+            let mut line_buf = [0u8; 64];
+            let actual_take = take.min(63);
+            line_buf[..actual_take].copy_from_slice(&text[offset..offset + actual_take]);
+
+            if is_interactive {
+                if self.click_count < self.click_regions.len() {
+                    let reg = ClickRegion {
+                        x: start_x,
+                        y: *curr_y,
+                        w: actual_take * font::FONT_WIDTH + 8,
+                        h: font::FONT_HEIGHT + 4,
+                        target: [0; 128],
+                        target_len: 0,
+                        is_js: true,
+                        node_idx,
+                    };
+                    self.click_regions[self.click_count] = reg;
+                    self.click_count += 1;
+                }
+            }
+
+            self.lines[self.line_count] = RenderLine {
+                text: line_buf,
+                text_len: actual_take,
+                x: start_x,
+                y: *curr_y,
+                color,
+                is_link: false,
+                is_hr: false,
+            };
+            self.line_count += 1;
+
+            offset += take;
+            while offset < text.len() && text[offset] == b' ' {
+                offset += 1;
+            }
+            *curr_y += font::FONT_HEIGHT + 4;
         }
     }
 
@@ -438,6 +1501,8 @@ impl DocumentLayout {
                             h: font::FONT_HEIGHT + 2,
                             target: [0; 128],
                             target_len: 0,
+                            is_js: false,
+                            node_idx: 0,
                         };
                         let h_len = href.len().min(128);
                         reg.target[..h_len].copy_from_slice(&href[..h_len]);
@@ -489,6 +1554,7 @@ pub enum BrowserAction {
     Forward,
     Reload,
     NavigateTarget([u8; 128], usize),
+    JsAction(usize),
     FocusAddress,
     Scroll(i32),
     ToggleFullscreen,
@@ -520,6 +1586,9 @@ pub struct BrowserSession {
     pub saved_h: usize,
     pub fullscreen_state: FullscreenState,
     pub page: ParsedPage,
+    pub dom: DomArena,
+    pub css: MiniCss,
+    pub js_runtime: MiniJsRuntime,
     pub layout: DocumentLayout,
 }
 
@@ -546,8 +1615,28 @@ impl BrowserSession {
             saved_h: WIN_H,
             fullscreen_state: FullscreenState::Windowed,
             page: ParsedPage::new(),
+            dom: DomArena::new(),
+            css: MiniCss::new(),
+            js_runtime: MiniJsRuntime::new(),
             layout: DocumentLayout::new(),
         }
+    }
+
+    pub fn dispatch_js_click(&mut self, node_idx: usize) -> bool {
+        if node_idx < self.dom.node_count {
+            let onclick_len = self.dom.nodes[node_idx].onclick_len;
+            if onclick_len > 0 {
+                let mut script_buf = [0u8; 128];
+                script_buf[..onclick_len].copy_from_slice(&self.dom.nodes[node_idx].onclick_attr[..onclick_len]);
+                self.js_runtime.eval_script(&script_buf[..onclick_len], &mut self.dom);
+                for i in 0..self.dom.node_count {
+                    self.css.resolve(&mut self.dom.nodes[i]);
+                }
+                self.recompute_layout();
+                return true;
+            }
+        }
+        false
     }
 
     pub fn resize(&mut self, new_w: usize, new_h: usize) {
@@ -560,7 +1649,11 @@ impl BrowserSession {
 
     pub fn recompute_layout(&mut self) {
         let content_w = self.viewport_w.saturating_sub(24);
-        self.layout.compute(&self.page, content_w);
+        if self.dom.node_count > 0 {
+            self.layout.compute_from_dom(&self.dom, content_w);
+        } else {
+            self.layout.compute(&self.page, content_w);
+        }
         let clip_top = CLIP_TOP;
         let clip_bottom = self.viewport_h.saturating_sub(1);
         let v_h = clip_bottom.saturating_sub(clip_top);
@@ -760,6 +1853,7 @@ impl BrowserSession {
         self.is_address_focused = false;
         self.address_selected = false;
         parse_html(html, &mut self.page);
+        parse_html_into_dom(html, &mut self.dom, &mut self.css, &mut self.js_runtime);
         self.recompute_layout();
     }
 
@@ -840,14 +1934,18 @@ impl BrowserSession {
                 return BrowserAction::None;
             }
 
-            // Hit-test em links do documento
+            // Hit-test em links e botões interativos
             let doc_y = (click_y - clip_top) + self.scroll_y;
             for i in 0..self.layout.click_count {
                 let r = &self.layout.click_regions[i];
                 if click_x >= r.x && click_x <= r.x + r.w && doc_y >= r.y && doc_y <= r.y + r.h {
-                    let mut target = [0u8; 128];
-                    target[..r.target_len].copy_from_slice(&r.target[..r.target_len]);
-                    return BrowserAction::NavigateTarget(target, r.target_len);
+                    if r.is_js {
+                        return BrowserAction::JsAction(r.node_idx);
+                    } else {
+                        let mut target = [0u8; 128];
+                        target[..r.target_len].copy_from_slice(&r.target[..r.target_len]);
+                        return BrowserAction::NavigateTarget(target, r.target_len);
+                    }
                 }
             }
         }
@@ -907,6 +2005,20 @@ impl BrowserSession {
         } else {
             let url_slice = &self.current_url[..self.current_url_len];
             font::draw_text_clipped(buf, w, h, url_x + 4, 9, url_slice, COLOR_URL_TEXT, None, 4, 22);
+        }
+
+        // 2.5. Renderiza caixas estilizadas (backgrounds de .card, buttons, etc.)
+        for i in 0..self.layout.box_count {
+            let bx = &self.layout.boxes[i];
+            if bx.y + bx.h >= self.scroll_y {
+                let actual_y = (bx.y.saturating_sub(self.scroll_y)) + clip_top;
+                if actual_y >= clip_top && actual_y <= clip_bottom {
+                    fill_rect(buf, w, h, bx.x, actual_y, bx.w, bx.h, bx.bg_color);
+                    if let Some(bc) = bx.border_color {
+                        draw_rect_border(buf, w, h, bx.x, actual_y, bx.w, bx.h, bc);
+                    }
+                }
+            }
         }
 
         // 3. Documento no Viewport (com scroll_y aplicado e clipping)

@@ -8,6 +8,8 @@ pub use fullscreen::{
     FullscreenState, FullscreenTransitionError, MAX_WIN_H, MAX_WIN_W, WindowGeometry,
 };
 
+pub use jbe_js::{JsError, JsRuntime, JsValue};
+
 pub use tab::{
     AudioFocusManager, AudioPlaybackState, BrcrMetricsBreakdown, BrowserResourceManager, KernelTaskStateMapping,
     LogicalTabFootprint, MediaPipeline, MemoryBreakdown, MemoryProfile, PhysicalMemoryFootprint,
@@ -15,7 +17,7 @@ pub use tab::{
     TabTelemetry, TabTransitionError, TaskExecutionState,
 };
 
-use jbe_core::{EngineError, EngineLimits, Point};
+use jbe_core::{EngineError, EngineLimits, NodeId, Point};
 use jbe_css::StyleSheet;
 use jbe_dom::DomTree;
 use jbe_html::parse_html;
@@ -36,6 +38,7 @@ pub struct BrowserSession {
     pub viewport_width: u32,
     pub viewport_height: u32,
     pub scroll_y: f32,
+    pub js_runtime: JsRuntime,
 }
 
 impl BrowserSession {
@@ -51,6 +54,7 @@ impl BrowserSession {
             viewport_width,
             viewport_height,
             scroll_y: 0.0,
+            js_runtime: JsRuntime::new(),
         }
     }
 
@@ -83,7 +87,7 @@ impl BrowserSession {
         })?;
 
         // 1. HTML -> DOM
-        let dom = parse_html(&html_content, &self.limits)?;
+        let mut dom = parse_html(&html_content, &self.limits)?;
 
         // 2. Process and validate <img> elements
         for img_id in dom.find_all_by_tag("img") {
@@ -106,6 +110,14 @@ impl BrowserSession {
             stylesheet.rules.extend(parsed_sheet.rules);
         }
 
+        // 3.5. Execute Scripts (<script> tags)
+        for script_id in dom.find_all_by_tag("script") {
+            let script_code = dom.text_content(script_id);
+            if !script_code.trim().is_empty() {
+                let _ = self.js_runtime.eval(&script_code, &mut dom);
+            }
+        }
+
         // 4. Computed Styles
         let computed_styles = jbe_css::resolve_styles(&dom, &stylesheet);
 
@@ -121,6 +133,37 @@ impl BrowserSession {
         self.repaint();
 
         Ok(())
+    }
+
+    /// Dispatches a click event to a node, recomputing layout and repainting if DOM changed.
+    pub fn dispatch_click(&mut self, node_id: NodeId) -> Result<bool, EngineError> {
+        if let Some(mut dom) = self.current_dom.take() {
+            let handled = self.js_runtime.dispatch_event(node_id, "click", &mut dom)
+                .map_err(|e| EngineError::Internal(format!("JS error: {:?}", e)))?;
+
+            if handled {
+                // Recompute styles and layout
+                let mut stylesheet = StyleSheet::new();
+                for style_node in dom.find_all_by_tag("style") {
+                    let css_text = dom.text_content(style_node);
+                    let parsed_sheet = StyleSheet::parse(&css_text);
+                    stylesheet.rules.extend(parsed_sheet.rules);
+                }
+                let computed_styles = jbe_css::resolve_styles(&dom, &stylesheet);
+                let layout_tree = build_and_layout_tree(&dom, &computed_styles, self.viewport_width as f32)
+                    .ok_or_else(|| EngineError::Internal("Failed to rebuild layout tree".into()))?;
+
+                self.current_dom = Some(dom);
+                self.current_layout = Some(layout_tree);
+                self.repaint();
+                Ok(true)
+            } else {
+                self.current_dom = Some(dom);
+                Ok(false)
+            }
+        } else {
+            Ok(false)
+        }
     }
 
     /// Returns total scrollable content height of current document.

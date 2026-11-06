@@ -9,6 +9,7 @@ members = [
     "crates/jbe-render",
     "crates/jbe-image",
     "crates/jbe-net",
+    "crates/jbe-js",
     "jinn-browser",
 ]
 resolver = "2"

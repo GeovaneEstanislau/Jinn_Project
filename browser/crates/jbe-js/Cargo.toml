@@ -1,0 +1,10 @@
+[package]
+name = "jbe-js"
+version = "0.1.0"
+edition = "2021"
+description = "Lightweight sandboxed JavaScript interpreter and DOM bridge for Jinn Browser Engine"
+
+[dependencies]
+jbe-core = { path = "../jbe-core" }
+jbe-dom = { path = "../jbe-dom" }
+

@@ -293,6 +293,69 @@ impl DomTree {
         }
     }
 
+    /// Finds an element with the given `id` attribute.
+    pub fn find_by_id(&self, id_str: &str) -> Option<NodeId> {
+        for node in &self.nodes {
+            if let Some(id_val) = node.id_attr() {
+                if id_val == id_str {
+                    return Some(node.id);
+                }
+            }
+        }
+        None
+    }
+
+    /// Sets or replaces the text content of a node.
+    /// If the node has existing text children, updates the first and clears others.
+    /// If no children, creates and appends a text child.
+    pub fn set_text_content(&mut self, node_id: NodeId, new_text: &str) -> Result<(), EngineError> {
+        if node_id.index() >= self.nodes.len() {
+            return Err(EngineError::InvalidNodeId(node_id.index()));
+        }
+
+        // If the node itself is a Text node, update directly
+        if let NodeType::Text(ref mut s) = self.nodes[node_id.index()].node_type {
+            s.clear();
+            s.push_str(new_text);
+            return Ok(());
+        }
+
+        // For elements: look for existing text child
+        let children = self.nodes[node_id.index()].children.clone();
+        for &child in &children {
+            if let Some(child_node) = self.get_mut(child) {
+                if let NodeType::Text(ref mut s) = child_node.node_type {
+                    s.clear();
+                    s.push_str(new_text);
+                    return Ok(());
+                }
+            }
+        }
+
+        // Otherwise create a new text node and append
+        let text_id = self.create_text(new_text)?;
+        self.append_child(node_id, text_id)?;
+        Ok(())
+    }
+
+    /// Sets or adds an attribute to an element node.
+    pub fn set_attribute(&mut self, node_id: NodeId, name: &str, value: &str) -> Result<(), EngineError> {
+        if let Some(node) = self.get_mut(node_id) {
+            if let NodeType::Element { ref mut attributes, .. } = node.node_type {
+                for (k, v) in attributes.iter_mut() {
+                    if k.eq_ignore_ascii_case(name) {
+                        v.clear();
+                        v.push_str(value);
+                        return Ok(());
+                    }
+                }
+                attributes.push((name.to_string(), value.to_string()));
+                return Ok(());
+            }
+        }
+        Err(EngineError::InvalidNodeId(node_id.index()))
+    }
+
     /// Preorder traversal returning all NodeIds starting from root.
     pub fn preorder(&self) -> Vec<NodeId> {
         let mut res = Vec::new();
