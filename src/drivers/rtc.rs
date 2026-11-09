@@ -2,15 +2,24 @@
 //!
 //! Fornece leitura de data/hora UTC e geração de timestamp UNIX (segundos desde 1970-01-01)
 //! através do chip CMOS (portas I/O 0x70 e 0x71) com interpolação de alta precisão
-//! baseada no timer PIT do microkernel.
+//! baseada no timer PIT do microkernel, suporte a fuso horário configurável e tempo monotônico.
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 
 const CMOS_ADDR: u16 = 0x70;
 const CMOS_DATA: u16 = 0x71;
 
+// ── Identificadores POSIX de Relógio (Syscall 70) ─────────────────────────────
+pub const CLOCK_REALTIME: u32 = 0;
+pub const CLOCK_MONOTONIC: u32 = 1;
+pub const CLOCK_PROCESS_CPUTIME_ID: u32 = 2;
+pub const CLOCK_THREAD_CPUTIME_ID: u32 = 3;
+
 static BOOT_UNIX_SECONDS: AtomicU64 = AtomicU64::new(0);
 static BOOT_TICKS: AtomicU64 = AtomicU64::new(0);
+static TIMEZONE_OFFSET_SECONDS: AtomicI32 = AtomicI32::new(0);
+static RTC_IS_LOCAL_TIME: AtomicBool = AtomicBool::new(false);
+static RTC_IS_CALIBRATED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtcDateTime {
@@ -54,6 +63,28 @@ fn is_leap_year(year: u64) -> bool {
 
 const DAYS_IN_MONTH: [u64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
+/// Valida se os campos de data e hora lidos do CMOS são cronologicamente consistentes
+pub fn is_valid_datetime(dt: &RtcDateTime) -> bool {
+    if dt.year < 1970 || dt.year > 2100 {
+        return false;
+    }
+    if dt.month < 1 || dt.month > 12 {
+        return false;
+    }
+    let max_days = if dt.month == 2 && is_leap_year(dt.year as u64) {
+        29
+    } else {
+        DAYS_IN_MONTH[(dt.month - 1) as usize] as u8
+    };
+    if dt.day < 1 || dt.day > max_days {
+        return false;
+    }
+    if dt.hour > 23 || dt.minute > 59 || dt.second > 60 {
+        return false;
+    }
+    true
+}
+
 pub fn datetime_to_unix(dt: &RtcDateTime) -> u64 {
     let year = dt.year as u64;
     if year < 1970 {
@@ -87,7 +118,7 @@ pub fn datetime_to_unix(dt: &RtcDateTime) -> u64 {
     seconds
 }
 
-/// Lê a data e hora UTC direta do CMOS RTC, evitando condições de corrida de UIP
+/// Lê a data e hora do CMOS RTC, evitando condições de corrida de UIP
 pub fn read_cmos_raw() -> RtcDateTime {
     // Aguarda conclusão de eventual atualização em progresso
     let mut spins = 0;
@@ -161,27 +192,76 @@ pub fn read_cmos_raw() -> RtcDateTime {
     }
 }
 
-/// Inicializa o driver RTC capturando a linha de base de tempo
-pub fn init() {
-    let dt = read_cmos_raw();
-    let unix = datetime_to_unix(&dt);
-    let current_ticks = crate::timer::ticks();
-
-    BOOT_UNIX_SECONDS.store(unix, Ordering::SeqCst);
-    BOOT_TICKS.store(current_ticks, Ordering::SeqCst);
+/// Configura o deslocamento de fuso horário e a base do relógio CMOS (UTC vs Hora Local)
+pub fn set_timezone(offset_seconds: i32, is_local_time: bool) {
+    TIMEZONE_OFFSET_SECONDS.store(offset_seconds, Ordering::SeqCst);
+    RTC_IS_LOCAL_TIME.store(is_local_time, Ordering::SeqCst);
 }
 
-/// Retorna o tempo UNIX atual (segundos, nanossegundos) interpolado via PIT ticks
+/// Retorna a configuração de fuso horário atual (offset em segundos, flag de hora local)
+pub fn get_timezone() -> (i32, bool) {
+    (
+        TIMEZONE_OFFSET_SECONDS.load(Ordering::Relaxed),
+        RTC_IS_LOCAL_TIME.load(Ordering::Relaxed),
+    )
+}
+
+/// Informa se o relógio RTC foi lido com sucesso e calibrado
+pub fn is_calibrated() -> bool {
+    RTC_IS_CALIBRATED.load(Ordering::Relaxed)
+}
+
+/// Inicializa o driver RTC capturando a linha de base de tempo e verificando consistência
+pub fn init() {
+    let dt = read_cmos_raw();
+    if is_valid_datetime(&dt) {
+        let unix = datetime_to_unix(&dt);
+        let current_ticks = crate::timer::ticks();
+
+        BOOT_UNIX_SECONDS.store(unix, Ordering::SeqCst);
+        BOOT_TICKS.store(current_ticks, Ordering::SeqCst);
+        RTC_IS_CALIBRATED.store(true, Ordering::SeqCst);
+    } else {
+        // Alerta de falha do RTC CMOS / bateria esgotada: define linha de base mínima segura
+        BOOT_UNIX_SECONDS.store(1704067200, Ordering::SeqCst); // 2024-01-01 00:00:00 UTC
+        BOOT_TICKS.store(crate::timer::ticks(), Ordering::SeqCst);
+        RTC_IS_CALIBRATED.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Retorna o tempo UNIX atual UTC (segundos, nanossegundos) com ajuste de fuso e interpolação PIT
 pub fn current_unix_time() -> (u64, u32) {
-    let boot_unix = BOOT_UNIX_SECONDS.load(Ordering::Relaxed);
+    let raw_boot_unix = BOOT_UNIX_SECONDS.load(Ordering::Relaxed);
     let boot_ticks = BOOT_TICKS.load(Ordering::Relaxed);
     let now_ticks = crate::timer::ticks();
 
+    let hz = crate::timer::HZ.max(1);
     let elapsed_ticks = now_ticks.saturating_sub(boot_ticks);
-    let elapsed_secs = elapsed_ticks / 100;
-    let elapsed_nanos = ((elapsed_ticks % 100) * 10_000_000) as u32;
+    let elapsed_secs = elapsed_ticks / hz;
+    let elapsed_nanos = ((elapsed_ticks % hz) * (1_000_000_000 / hz)) as u32;
+
+    // Se o CMOS opera em hora local, converte para UTC descontando o offset
+    let boot_unix = if RTC_IS_LOCAL_TIME.load(Ordering::Relaxed) {
+        let offset = TIMEZONE_OFFSET_SECONDS.load(Ordering::Relaxed) as i64;
+        if offset >= 0 {
+            raw_boot_unix.saturating_sub(offset as u64)
+        } else {
+            raw_boot_unix.saturating_add((-offset) as u64)
+        }
+    } else {
+        raw_boot_unix
+    };
 
     (boot_unix.saturating_add(elapsed_secs), elapsed_nanos)
+}
+
+/// Retorna o tempo monotônico estritamente crescente desde o boot do microkernel (segundos, nanos)
+pub fn monotonic_time() -> (u64, u32) {
+    let now_ticks = crate::timer::ticks();
+    let hz = crate::timer::HZ.max(1);
+    let secs = now_ticks / hz;
+    let nanos = ((now_ticks % hz) * (1_000_000_000 / hz)) as u32;
+    (secs, nanos)
 }
 
 /// Retorna timestamp UNIX atual em segundos

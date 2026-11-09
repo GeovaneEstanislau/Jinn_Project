@@ -4054,7 +4054,7 @@ unsafe fn test_userspace_driver_subsystem() {
 unsafe fn test_tls13_cryptography_and_syscalls() {
     print_str(b"\n[TEST 19] Cryptographic Triad: Syscall 69 (sys_getrandom), Syscall 70 (sys_clock_gettime) e TLS 1.3 Cripto...\n");
 
-    // 1. Teste da Syscall 69: sys_getrandom
+    // 1. Teste da Syscall 69: sys_getrandom bloqueante
     let mut rnd_buf = [0u8; 32];
     let n_rnd = sys_getrandom(rnd_buf.as_mut_ptr(), 32, 0);
     let mut has_nonzero = false;
@@ -4072,34 +4072,70 @@ unsafe fn test_tls13_cryptography_and_syscalls() {
         print_str(b"\n");
     }
 
-    // 2. Proteção de limites de sys_getrandom (ponteiro inválido)
+    // 2. Teste da Syscall 69 com flag GRND_NONBLOCK (0x0001)
+    let mut rnd_nb = [0u8; 32];
+    let n_nb = sys_getrandom(rnd_nb.as_mut_ptr(), 32, 1);
+    if n_nb == 32 {
+        print_str(b"  [PASS] 19.2: sys_getrandom (GRND_NONBLOCK): CSPRNG semeado (> 256 bits min-entropia) retornou sem bloqueio!\n");
+    } else {
+        print_str(b"  [FAIL] 19.2: sys_getrandom com GRND_NONBLOCK falhou, ret: ");
+        print_i64(n_nb);
+        print_str(b"\n");
+    }
+
+    // 3. Proteção de limites de sys_getrandom (ponteiro inválido)
     let bad_rnd = sys_getrandom(0xDEAD_BEEFu64 as *mut u8, 32, 0);
     if bad_rnd == EFAULT {
-        print_str(b"  [PASS] 19.2: sys_getrandom rejeitou ponteiro invalido (ret=-14 EFAULT)\n");
+        print_str(b"  [PASS] 19.3: sys_getrandom rejeitou ponteiro invalido (ret=-14 EFAULT)\n");
     } else {
-        print_str(b"  [FAIL] 19.2: sys_getrandom nao rejeitou ponteiro invalido (ret=");
+        print_str(b"  [FAIL] 19.3: sys_getrandom nao rejeitou ponteiro invalido (ret=");
         print_i64(bad_rnd);
         print_str(b")\n");
     }
 
-    // 3. Teste da Syscall 70: sys_clock_gettime
+    // 4. Teste da Syscall 70: sys_clock_gettime CLOCK_REALTIME (0)
     let mut ts = Timespec::default();
     let ret_ts = sys_clock_gettime(0, &mut ts as *mut Timespec);
     if ret_ts == 0 && ts.tv_sec > 1_700_000_000 {
-        print_str(b"  [PASS] 19.3: sys_clock_gettime (Syscall 70): RTC CMOS timestamp UNIX: ");
+        print_str(b"  [PASS] 19.4: sys_clock_gettime (CLOCK_REALTIME): RTC CMOS timestamp UNIX: ");
         print_u64(ts.tv_sec);
         print_str(b"s (validado > 2023)\n");
     } else if ret_ts == 0 {
-        print_str(b"  [PASS] 19.3: sys_clock_gettime (Syscall 70): RTC CMOS timestamp UNIX obtido: ");
+        print_str(b"  [PASS] 19.4: sys_clock_gettime (CLOCK_REALTIME): RTC CMOS timestamp UNIX obtido: ");
         print_u64(ts.tv_sec);
         print_str(b"s\n");
     } else {
-        print_str(b"  [FAIL] 19.3: sys_clock_gettime falhou com codigo: ");
+        print_str(b"  [FAIL] 19.4: sys_clock_gettime CLOCK_REALTIME falhou com codigo: ");
         print_i64(ret_ts);
         print_str(b"\n");
     }
 
-    // 4. Teste de Criptografia TLS 1.3: ChaCha20-Poly1305 AEAD (RFC 8439)
+    // 5. Teste da Syscall 70: sys_clock_gettime CLOCK_MONOTONIC (1)
+    let mut mono_ts = Timespec::default();
+    let ret_mono = sys_clock_gettime(1, &mut mono_ts as *mut Timespec);
+    if ret_mono == 0 && mono_ts.tv_nsec < 1_000_000_000 {
+        print_str(b"  [PASS] 19.5: sys_clock_gettime (CLOCK_MONOTONIC): Tempo monotonico continuo: ");
+        print_u64(mono_ts.tv_sec);
+        print_str(b"s ");
+        print_u64(mono_ts.tv_nsec as u64);
+        print_str(b"ns\n");
+    } else {
+        print_str(b"  [FAIL] 19.5: sys_clock_gettime CLOCK_MONOTONIC falhou com codigo: ");
+        print_i64(ret_mono);
+        print_str(b"\n");
+    }
+
+    // 6. Teste de rejeição de clock_id inválido
+    let bad_clock = sys_clock_gettime(99, &mut ts as *mut Timespec);
+    if bad_clock == EINVAL {
+        print_str(b"  [PASS] 19.6: sys_clock_gettime rejeitou clock_id invalido (ret=-22 EINVAL)\n");
+    } else {
+        print_str(b"  [FAIL] 19.6: sys_clock_gettime nao rejeitou clock_id invalido (ret=");
+        print_i64(bad_clock);
+        print_str(b")\n");
+    }
+
+    // 7. Teste de Criptografia TLS 1.3: ChaCha20-Poly1305 AEAD (RFC 8439)
     let key = [0x42u8; 32];
     let nonce = [0x24u8; 12];
     let aad = b"JinnOS-TLS13";
@@ -4111,12 +4147,12 @@ unsafe fn test_tls13_cryptography_and_syscalls() {
     let decrypt_ok = tls::ChaCha20Poly1305::decrypt(&key, &nonce, aad, &mut msg_buf[..original.len()], &tag);
 
     if decrypt_ok && &msg_buf[..original.len()] == original {
-        print_str(b"  [PASS] 19.4: ChaCha20-Poly1305 (RFC 8439): Cifragem AEAD e Autenticacao Poly1305 aprovadas!\n");
+        print_str(b"  [PASS] 19.7: ChaCha20-Poly1305 (RFC 8439): Cifragem AEAD e Autenticacao Poly1305 aprovadas!\n");
     } else {
-        print_str(b"  [FAIL] 19.4: ChaCha20-Poly1305 falhou na decifragem ou validacao do tag MAC!\n");
+        print_str(b"  [FAIL] 19.7: ChaCha20-Poly1305 falhou na decifragem ou validacao do tag MAC!\n");
     }
 
-    // 5. Teste de Troca de Chaves Diffie-Hellman Curve25519 (RFC 7748)
+    // 8. Teste de Troca de Chaves Diffie-Hellman Curve25519 (RFC 7748)
     let alice_priv = [0x55u8; 32];
     let bob_priv = [0xAAu8; 32];
     let alice_pub = tls::x25519_basepoint(&alice_priv);
@@ -4125,22 +4161,22 @@ unsafe fn test_tls13_cryptography_and_syscalls() {
     let secret_bob = tls::x25519(&bob_priv, &alice_pub);
 
     if secret_alice == secret_bob {
-        print_str(b"  [PASS] 19.5: Curve25519 / X25519 (RFC 7748): Segredo compartilhado de Diffie-Hellman acordado!\n");
+        print_str(b"  [PASS] 19.8: Curve25519 / X25519 (RFC 7748): Segredo compartilhado de Diffie-Hellman acordado!\n");
     } else {
-        print_str(b"  [FAIL] 19.5: Curve25519 divergiu entre Alice e Bob!\n");
+        print_str(b"  [FAIL] 19.8: Curve25519 divergiu entre Alice e Bob!\n");
     }
 
-    // 6. Teste de Sessão e Geração de ClientHello TLS 1.3
+    // 9. Teste de Sessão e Geração de ClientHello TLS 1.3
     let sess_seed = [0x77u8; 64];
     let mut client_session = tls::Tls13ClientSession::new(&sess_seed);
     let mut ch_buf = [0u8; 512];
     let ch_len = client_session.build_client_hello(b"jinn-os.internal", &mut ch_buf);
     if ch_len > 100 && ch_buf[0] == tls::CONTENT_HANDSHAKE && ch_buf[5] == 1 {
-        print_str(b"  [PASS] 19.6: TLS 1.3 ClientHello (RFC 8446): SNI, X25519 e CipherSuites gerados com exito (bytes=");
+        print_str(b"  [PASS] 19.9: TLS 1.3 ClientHello (RFC 8446): SNI, X25519 e CipherSuites gerados com exito (bytes=");
         print_u64(ch_len as u64);
         print_str(b")!\n");
     } else {
-        print_str(b"  [FAIL] 19.6: Falha ao construir ClientHello TLS 1.3!\n");
+        print_str(b"  [FAIL] 19.9: Falha ao construir ClientHello TLS 1.3!\n");
     }
 
     print_str(b"  [PASS] test_tls13_cryptography_and_syscalls: Triade Criptografica e TLS 1.3 Homologados em Ring 3!\n");

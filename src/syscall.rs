@@ -1637,7 +1637,7 @@ fn sys_dma_device_reset_status(handle: u64, reset_confirmed: u32) -> isize {
 
 /// `sys_getrandom(buf, len, flags)` — Syscall 69
 /// Preenche um buffer de usuário com bytes pseudoaleatórios criptograficamente seguros (CSPRNG).
-fn sys_getrandom(buf: *mut u8, len: usize, _flags: u32) -> isize {
+fn sys_getrandom(buf: *mut u8, len: usize, flags: u32) -> isize {
     if buf.is_null() || len == 0 {
         return EINVAL;
     }
@@ -1648,20 +1648,27 @@ fn sys_getrandom(buf: *mut u8, len: usize, _flags: u32) -> isize {
         return e;
     }
     let slice = unsafe { core::slice::from_raw_parts_mut(buf, len) };
-    crate::crypto::entropy::fill_random_bytes(slice);
-    len as isize
+    match crate::crypto::entropy::fill_random_bytes(slice, flags) {
+        Ok(n) => n as isize,
+        Err(errno) => errno,
+    }
 }
 
 /// `sys_clock_gettime(clock_id, out_ts)` — Syscall 70
-/// Retorna o tempo decorrido desde o Epoch UNIX (1970-01-01 00:00:00 UTC) obtido via RTC CMOS.
-fn sys_clock_gettime(_clock_id: u32, out_ts: *mut Timespec) -> isize {
+/// Retorna o tempo decorrido desde o Epoch UNIX (1970-01-01 00:00:00 UTC) obtido via RTC CMOS
+/// ou tempo monotônico contínuo desde o boot.
+fn sys_clock_gettime(clock_id: u32, out_ts: *mut Timespec) -> isize {
     if out_ts.is_null() {
         return EINVAL;
     }
     if let Err(e) = validate_user_buffer(out_ts as *const u8, core::mem::size_of::<Timespec>(), true) {
         return e;
     }
-    let (sec, nsec) = crate::drivers::rtc::current_unix_time();
+    let (sec, nsec) = match clock_id {
+        crate::drivers::rtc::CLOCK_REALTIME => crate::drivers::rtc::current_unix_time(),
+        crate::drivers::rtc::CLOCK_MONOTONIC => crate::drivers::rtc::monotonic_time(),
+        _ => return EINVAL,
+    };
     unsafe {
         (*out_ts).tv_sec = sec;
         (*out_ts).tv_nsec = nsec;

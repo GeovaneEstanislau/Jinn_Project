@@ -1,5 +1,7 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
+pub const HZ: u64 = 100;
+
 static TICK_COUNT: AtomicU64 = AtomicU64::new(0);
 
 #[inline]
