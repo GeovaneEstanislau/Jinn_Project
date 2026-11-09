@@ -159,6 +159,33 @@ pub fn process_byte(b: u8) {
     }
 }
 
+/// Reseta a máquina de estados de sincronização de pacotes do mouse (3 bytes)
+pub fn reset_sync() {
+    unsafe {
+        let mouse = &mut *core::ptr::addr_of_mut!(MOUSE);
+        mouse.cycle = 0;
+        mouse.packet = [0; 3];
+    }
+}
+
+/// Atualiza o estado do cursor e botões a partir de comandos normalizados do driver em Ring 3
+pub fn update_from_driver(kind: u16, code: u16, x: usize, y: usize) {
+    unsafe {
+        let mouse = &mut *core::ptr::addr_of_mut!(MOUSE);
+        mouse.x = x.min(mouse.max_x.saturating_sub(1));
+        mouse.y = y.min(mouse.max_y.saturating_sub(1));
+        match kind {
+            crate::drivers::device_manager::INPUT_KIND_MOUSE_BUTTON_DOWN => {
+                mouse.buttons |= code as u8;
+            }
+            crate::drivers::device_manager::INPUT_KIND_MOUSE_BUTTON_UP => {
+                mouse.buttons &= !(code as u8);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Faz polling direto no controlador i8042 processando bytes da porta auxiliar (mouse).
 /// Garante funcionamento perfeito mesmo quando o I/O APIC está ativo ou IRQ12 não é entregue.
 pub fn poll() {
@@ -175,7 +202,9 @@ pub fn poll() {
             }
             // Bit 5 = 1: O byte pertence ao mouse
             let b = inb(PS2_DATA);
-            process_byte(b);
+            if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_MOUSE0, 12, b) {
+                process_byte(b);
+            }
         }
     }
 }
@@ -253,7 +282,9 @@ pub extern "C" fn mouse_irq_handler() {
         // Processa apenas se o dado veio da porta auxiliar (mouse)
         if (status & 0x20) != 0 {
             let b = inb(PS2_DATA);
-            process_byte(b);
+            if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_MOUSE0, 12, b) {
+                process_byte(b);
+            }
         }
 
         pic::send_eoi(12);

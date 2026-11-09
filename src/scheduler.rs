@@ -1094,6 +1094,9 @@ impl Scheduler {
             // Desregistra a caixa de mensagens IPC da tarefa
             crate::ipc::unregister(pid);
 
+            // Notifica encerramento e limpa autorizações de drivers em Ring 3 para este PID
+            crate::drivers::device_manager::notify_driver_pid_exit(pid);
+
             // Libera a memória de páginas de usuário e o próprio PML4
             if task.ring == Ring::User {
                 unsafe { paging::free_user_pml4(task.pml4_phys); }

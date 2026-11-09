@@ -368,6 +368,77 @@ unsafe fn sys_jinnwall_ctrl(cmd: u64, arg0: u64, arg1: u64) -> i64 {
     syscall3(37, cmd, arg0, arg1)
 }
 
+// ── Driver Subsystem Syscalls & Constants (Syscalls 54..=58) ──────────────────
+pub const DRIVER_CAP_PIO: u32 = 0x0001;
+pub const DRIVER_CAP_DMA: u32 = 0x0002;
+pub const DRIVER_CAP_INPUT: u32 = 0x0004;
+
+pub const EVENT_TYPE_RAW_BYTE: u16 = 1;
+pub const EVENT_TYPE_IRQ: u16 = 2;
+pub const EVENT_TYPE_OVERFLOW_WARN: u16 = 4;
+pub const EVENT_TYPE_RESET_SYNC: u16 = 5;
+
+pub const EVENT_FLAG_SPURIOUS: u32 = 0x0001;
+pub const EVENT_FLAG_OVERFLOW: u32 = 0x0002;
+
+pub const INPUT_KIND_KEY_DOWN: u16 = 1;
+pub const INPUT_KIND_KEY_UP: u16 = 2;
+pub const INPUT_KIND_MOUSE_MOVE: u16 = 3;
+pub const INPUT_KIND_MOUSE_BUTTON_DOWN: u16 = 4;
+pub const INPUT_KIND_MOUSE_BUTTON_UP: u16 = 5;
+
+pub const DEV_KBD0: u32 = 7;
+pub const DEV_MOUSE0: u32 = 8;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HardwareEvent {
+    pub timestamp_ticks: u64,
+    pub device_id: u32,
+    pub event_type: u16,
+    pub code: u16,
+    pub data: u32,
+    pub flags: u32,
+}
+
+impl HardwareEvent {
+    pub const fn empty() -> Self {
+        Self {
+            timestamp_ticks: 0,
+            device_id: 0,
+            event_type: 0,
+            code: 0,
+            data: 0,
+            flags: 0,
+        }
+    }
+}
+
+#[inline(always)]
+unsafe fn sys_driver_register(device_id: u32, flags: u32) -> i64 {
+    syscall3(54, device_id as u64, flags as u64, 0)
+}
+
+#[inline(always)]
+unsafe fn sys_driver_event_poll(device_id: u32, out_ptr: *mut HardwareEvent, max_events: u64) -> i64 {
+    syscall3(55, device_id as u64, out_ptr as u64, max_events)
+}
+
+#[inline(always)]
+unsafe fn sys_driver_send_input(kind: u16, code: u16, x: i32, y: i32) -> i64 {
+    syscall4(56, kind as u64, code as u64, x as u64, y as u64)
+}
+
+#[inline(always)]
+unsafe fn sys_driver_unregister(device_id: u32) -> i64 {
+    syscall3(57, device_id as u64, 0, 0)
+}
+
+#[inline(always)]
+unsafe fn sys_driver_restart(device_id: u32) -> i64 {
+    syscall3(58, device_id as u64, 0, 0)
+}
+
 // ── Output Helpers ───────────────────────────────────────────────────────────
 
 unsafe fn print_str(s: &[u8]) {
@@ -3569,6 +3640,114 @@ unsafe fn test_adv_elf_exec_and_spawn() {
     print_str(b"  [PASS] test_adv_elf_exec_and_spawn: Testes de sys_spawn e isolamento APROVADOS!\n");
 }
 
+// ── Teste 18: Driver Manager & Ring 3 User-Space PS/2 Driver ────────────────
+unsafe fn test_userspace_driver_subsystem() {
+    print_str(b"\n[TEST 18] Driver Manager & User-Space PS/2 Driver (Ring 3 Isolation)...\n");
+
+    // 1. Rejeição de DMA sem IOMMU (EPERM) - Requisito Arquitetural 3
+    let dma_ret = sys_driver_register(DEV_KBD0, DRIVER_CAP_DMA);
+    if dma_ret == EPERM {
+        print_str(b"  [PASS] 18.1: Rejeicao estrita de DRIVER_CAP_DMA sem IOMMU (EPERM)\n");
+    } else {
+        print_str(b"  [FAIL] 18.1: Falha ao rejeitar DRIVER_CAP_DMA, ret: ");
+        print_i64(dma_ret);
+        print_str(b"\n");
+    }
+
+    // 2. Registro válido com PIO e INPUT
+    let reg_ret = sys_driver_register(DEV_KBD0, DRIVER_CAP_PIO | DRIVER_CAP_INPUT);
+    if reg_ret > 0 {
+        print_str(b"  [PASS] 18.2: Registro valido de driver em Ring 3 (generation > 0)\n");
+    } else {
+        print_str(b"  [FAIL] 18.2: Falha no registro de driver, ret: ");
+        print_i64(reg_ret);
+        print_str(b"\n");
+    }
+
+    // 3. Conflito por registro duplicado / concorrência (EBUSY = -16)
+    let busy_ret = sys_driver_register(DEV_KBD0, DRIVER_CAP_PIO | DRIVER_CAP_INPUT);
+    if busy_ret == -16 { // EBUSY
+        print_str(b"  [PASS] 18.3: Rejeicao de registro concorrente duplicado (EBUSY)\n");
+    } else {
+        print_str(b"  [FAIL] 18.3: Registro duplicado nao retornou EBUSY: ");
+        print_i64(busy_ret);
+        print_str(b"\n");
+    }
+
+    // 4. Polling com buffer inválido (EFAULT)
+    let fault_ret = sys_driver_event_poll(DEV_KBD0, 0x1000 as *mut HardwareEvent, 1);
+    if fault_ret == EFAULT {
+        print_str(b"  [PASS] 18.4: Polling com buffer de usuario invalido rejeitado (EFAULT)\n");
+    } else {
+        print_str(b"  [FAIL] 18.4: Buffer invalido nao retornou EFAULT: ");
+        print_i64(fault_ret);
+        print_str(b"\n");
+    }
+
+    // 5. Polling de eventos válidos na fila (fila vazia inicialmente = 0 eventos)
+    let mut ev_buf = [HardwareEvent::empty(); 8];
+    let poll_ret = sys_driver_event_poll(DEV_KBD0, ev_buf.as_mut_ptr(), 8);
+    if poll_ret >= 0 {
+        print_str(b"  [PASS] 18.5: Polling de fila delimitada executado com sucesso\n");
+    } else {
+        print_str(b"  [FAIL] 18.5: Polling de fila falhou: ");
+        print_i64(poll_ret);
+        print_str(b"\n");
+    }
+
+    // 6. Envio de evento de entrada normalizado autorizado de volta ao kernel
+    let input_ret = sys_driver_send_input(INPUT_KIND_KEY_DOWN, b'Z' as u16, 0, 0);
+    if input_ret == 0 {
+        print_str(b"  [PASS] 18.6: Despacho de entrada normalizada autorizada (sys_driver_send_input)\n");
+    } else {
+        print_str(b"  [FAIL] 18.6: Despacho de entrada falhou: ");
+        print_i64(input_ret);
+        print_str(b"\n");
+    }
+
+    // 7. Envio de entrada de mouse normalizada com clamping de coordenadas
+    let mouse_ret = sys_driver_send_input(INPUT_KIND_MOUSE_MOVE, 0, 512, 384);
+    if mouse_ret == 0 {
+        print_str(b"  [PASS] 18.7: Despacho de coordenadas e clamping do mouse normalizado\n");
+    } else {
+        print_str(b"  [FAIL] 18.7: Despacho do mouse falhou: ");
+        print_i64(mouse_ret);
+        print_str(b"\n");
+    }
+
+    // 8. Desregistro do driver e restauração de fallback Ring 0
+    let unreg_ret = sys_driver_unregister(DEV_KBD0);
+    if unreg_ret == 0 {
+        print_str(b"  [PASS] 18.8: Desregistro limpo e devolucao de controle ao Ring 0 (sys_driver_unregister)\n");
+    } else {
+        print_str(b"  [FAIL] 18.8: Desregistro falhou: ");
+        print_i64(unreg_ret);
+        print_str(b"\n");
+    }
+
+    // 9. Rejeição de input por processo não mais autorizado após desregistro
+    let unauth_input = sys_driver_send_input(INPUT_KIND_KEY_DOWN, b'X' as u16, 0, 0);
+    if unauth_input == EPERM {
+        print_str(b"  [PASS] 18.9: Rejeicao de envio de entrada sem driver registrado (EPERM)\n");
+    } else {
+        print_str(b"  [FAIL] 18.9: Rejeicao de entrada nao autorizada falhou: ");
+        print_i64(unauth_input);
+        print_str(b"\n");
+    }
+
+    // 10. Teste de reinicializacao de driver via sys_driver_restart
+    let rereg = sys_driver_register(DEV_KBD0, DRIVER_CAP_PIO | DRIVER_CAP_INPUT);
+    if rereg > 0 {
+        let restart_ret = sys_driver_restart(DEV_KBD0);
+        if restart_ret > rereg {
+            print_str(b"  [PASS] 18.10: Reinicializacao via sys_driver_restart incrementou generation token\n");
+        } else {
+            print_str(b"  [FAIL] 18.10: Reinicializacao nao incrementou generation token\n");
+        }
+        let _ = sys_driver_unregister(DEV_KBD0);
+    }
+}
+
 // ── Entry Point ──────────────────────────────────────────────────────────────
 
 #[no_mangle]
@@ -3648,6 +3827,7 @@ pub extern "C" fn _start() -> ! {
         test_adv_fat32_persistent_write_and_recovery();
         test_adv_elf_exec_and_spawn();
         test_sched_preemption_and_cpu_quota();
+        test_userspace_driver_subsystem();
         run_gui_demo();
 
         print_str(b"\n>>> TODOS OS TESTES DA SUITE ADVERSARIAL FORAM CONCLUIDOS COM SUCESSO! <<<\n");

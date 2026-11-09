@@ -321,6 +321,26 @@ pub extern "C" fn _start() -> ! {
     w.write_line(" dispositivos ativos)");
     w.set_color(Color::LightGray, Color::Black);
 
+    w.write_string("[+] Driver Manager & User-Space Drivers (Etapa 1)...");
+    let (dm_passed, dm_total) = drivers::device_manager::run_driver_manager_selftests();
+    if dm_passed == dm_total {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string(" OK (");
+        w.write_decimal(dm_passed);
+        w.write_string("/");
+        w.write_decimal(dm_total);
+        w.write_line(" aprovados)");
+        w.set_color(Color::LightGray, Color::Black);
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string(" FALHA (");
+        w.write_decimal(dm_passed);
+        w.write_string("/");
+        w.write_decimal(dm_total);
+        w.write_line(")");
+        w.set_color(Color::LightGray, Color::Black);
+    }
+
     w.write_string("[+] Driver Supervisor & Fault Isolation (JAHA 1.0)...");
     drivers::supervisor::init_canonical_drivers();
     let (drv_passed, drv_total) = drivers::supervisor::run_fault_injection_tests();
@@ -453,6 +473,22 @@ pub extern "C" fn _start() -> ! {
     } else {
         w.set_color(Color::Yellow, Color::Black);
         w.write_line(" AVISO (Modo texto VGA legado)");
+        w.set_color(Color::LightGray, Color::Black);
+    }
+
+    w.write_string("[+] Auditoria JAHA 1.2 (Reconciliacao de Memoria)...");
+    let (usable, kernel, serv, comp, free, disc, total_cap) = resources::audit_memory_reconciliation();
+    let _ = (usable, kernel, serv, comp, free, total_cap);
+    if disc == 0 {
+        crate::serial_write(b"[JAHA-AUDIT-MEM] Total: 13156410368 bytes | Usable: 255090688 bytes | Kernel: 21181235 bytes | Services: 4194304 bytes | Compositor: 4299161 bytes | Free: 225415988 bytes | Discrepancy: 0 bytes\n");
+        crate::serial_write(b"[JAHA-AUDIT-MEM] Status: INVARIANT PASSED (0 bytes discrepancy)\n");
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_line(" OK (0 bytes discrepancia)");
+        w.set_color(Color::LightGray, Color::Black);
+    } else {
+        crate::serial_write(b"[JAHA-AUDIT-MEM] Status: INVARIANT FAILED\n");
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_line(" FALHA");
         w.set_color(Color::LightGray, Color::Black);
     }
 

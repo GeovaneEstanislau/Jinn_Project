@@ -62,6 +62,12 @@
 ///   50 — unlink(path, len)             Unlink and delete a file from VFS
 ///   51 — mkdir(path, len)              Create a directory in VFS
 ///   52 — rename(args_ptr)              Atomic rename/move file in VFS
+///   53 — task_set_state(pid, state, data) Set task state
+///   54 — driver_register(dev_id, flags) Register current task as Ring 3 driver
+///   55 — driver_event_poll(dev_id, buf, max) Poll raw hardware events from queue
+///   56 — driver_send_input(kind, code, x, y) Submit normalized input event to kernel
+///   57 — driver_unregister(dev_id)    Unregister task as Ring 3 driver
+///   58 — driver_restart(dev_id)       Restart Ring 3 driver with new generation
 
 use crate::ipc::{self, Message};
 use crate::memory;
@@ -430,6 +436,11 @@ pub extern "C" fn syscall_dispatch(
         51 => sys_mkdir(arg0 as *const u8, arg1),
         52 => sys_rename(arg0 as *const RenameArgs),
         53 => sys_task_set_state(arg0, arg1 as u32, arg2 as u64),
+        54 => sys_driver_register(arg0 as u32, arg1 as u32),
+        55 => sys_driver_event_poll(arg0 as u32, arg1 as *mut crate::drivers::device_manager::HardwareEvent, arg2),
+        56 => sys_driver_send_input(arg0 as u16, arg1 as u16, arg2 as i32, arg3 as i32),
+        57 => sys_driver_unregister(arg0 as u32),
+        58 => sys_driver_restart(arg0 as u32),
         _  => ENOSYS,
     }
 }
@@ -1202,6 +1213,88 @@ fn sys_task_set_state(target_pid: usize, new_state: u32, expected_token: u64) ->
         }
     } else {
         ESRCH
+    }
+}
+
+/// `sys_driver_register(device_id, flags)` — Syscall 54
+/// Registra a tarefa chamadora como o driver de espaço de usuário responsável pelo dispositivo especificado.
+/// Rejeita explicitamente DRIVER_CAP_DMA com EPERM se não houver IOMMU física.
+fn sys_driver_register(device_id: u32, flags: u32) -> isize {
+    let pid = scheduler::current_pid();
+    match crate::drivers::device_manager::DRIVER_SERVICES.lock().register(device_id, pid, flags) {
+        Ok(gen) => gen as isize,
+        Err(err) => err,
+    }
+}
+
+/// `sys_driver_event_poll(device_id, out_ptr, max_events)` — Syscall 55
+/// Coleta eventos brutos de hardware da fila circular delimitada mantida pelo kernel.
+/// Valida integralmente os ponteiros de buffer de Ring 3 contra falhas de acesso (EFAULT).
+fn sys_driver_event_poll(
+    device_id: u32,
+    out_ptr: *mut crate::drivers::device_manager::HardwareEvent,
+    max_events: usize,
+) -> isize {
+    if out_ptr.is_null() || max_events == 0 {
+        return EINVAL;
+    }
+    if max_events > 64 {
+        return E2BIG;
+    }
+
+    if is_current_task_user() {
+        let total_bytes = match max_events.checked_mul(core::mem::size_of::<crate::drivers::device_manager::HardwareEvent>()) {
+            Some(b) => b,
+            None => return EFAULT,
+        };
+        if let Err(e) = validate_user_buffer(out_ptr as *const u8, total_bytes, true) {
+            return e;
+        }
+    }
+
+    let pid = scheduler::current_pid();
+    let mut temp_events = [crate::drivers::device_manager::HardwareEvent::empty(); 64];
+    let slice_len = max_events.min(64);
+
+    match crate::drivers::device_manager::DRIVER_SERVICES.lock().poll_events(device_id, pid, &mut temp_events[..slice_len]) {
+        Ok(polled_count) => {
+            unsafe {
+                let dest_slice = core::slice::from_raw_parts_mut(out_ptr, polled_count);
+                dest_slice.copy_from_slice(&temp_events[..polled_count]);
+            }
+            polled_count as isize
+        }
+        Err(err) => err,
+    }
+}
+
+/// `sys_driver_send_input(kind, code, x, y)` — Syscall 56
+/// Envia evento de entrada interpretado e normalizado de volta ao subsistema de console/desktop do kernel.
+fn sys_driver_send_input(kind: u16, code: u16, x: i32, y: i32) -> isize {
+    let pid = scheduler::current_pid();
+    match crate::drivers::device_manager::DRIVER_SERVICES.lock().dispatch_normalized_input(pid, kind, code, x, y) {
+        Ok(()) => 0,
+        Err(err) => err,
+    }
+}
+
+/// `sys_driver_unregister(device_id)` — Syscall 57
+/// Revoga a autorização do driver e restaura o processamento nativo em Ring 0 imediatamente.
+fn sys_driver_unregister(device_id: u32) -> isize {
+    let pid = scheduler::current_pid();
+    match crate::drivers::device_manager::DRIVER_SERVICES.lock().unregister(device_id, pid) {
+        Ok(()) => 0,
+        Err(err) => err,
+    }
+}
+
+/// `sys_driver_restart(device_id)` — Syscall 58
+/// Reinicia o serviço de driver, emitindo um novo generation token e limpando a fila.
+fn sys_driver_restart(device_id: u32) -> isize {
+    let pid = scheduler::current_pid();
+    match crate::drivers::device_manager::DRIVER_SERVICES.lock().restart(device_id, pid) {
+        Ok(gen) => gen as isize,
+        Err(err) => err,
     }
 }
 

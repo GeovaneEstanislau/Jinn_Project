@@ -5,9 +5,39 @@
 /// inicialização, prontidão operacional, suspensão e falha) e desacoplamento do kernel
 /// de inicializações estáticas.
 
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, AtomicU32, Ordering};
 
 pub const MAX_DEVICES: usize = 32;
+
+// Constantes bem-conhecidas de identificadores de periféricos de entrada
+pub const DEV_KBD0: u32 = 7;
+pub const DEV_MOUSE0: u32 = 8;
+pub static KBD_DEVICE_ID: AtomicU32 = AtomicU32::new(DEV_KBD0);
+pub static MOUSE_DEVICE_ID: AtomicU32 = AtomicU32::new(DEV_MOUSE0);
+
+// Capacidades de Driver e Políticas de Isolamento (Distinção DMA vs PIO)
+pub const DRIVER_CAP_PIO: u32 = 0x0001;     // I/O programado mediado por filas de eventos do kernel
+pub const DRIVER_CAP_DMA: u32 = 0x0002;     // DMA físico (rejeitado sem IOMMU)
+pub const DRIVER_CAP_INPUT: u32 = 0x0004;   // Periférico de entrada de usuário
+pub const DRIVER_CAP_STORAGE: u32 = 0x0008; // Controlador de bloco
+pub const DRIVER_CAP_NET: u32 = 0x0010;     // Adaptador de rede
+
+// Tipos de Eventos de Hardware Brutos do Kernel -> User-Space
+pub const EVENT_TYPE_RAW_BYTE: u16 = 1;     // Byte bruto capturado da porta de dados
+pub const EVENT_TYPE_IRQ: u16 = 2;          // Notificação de interrupção física
+pub const EVENT_TYPE_OVERFLOW_WARN: u16 = 4;// Alerta de perda/descarte por saturação
+pub const EVENT_TYPE_RESET_SYNC: u16 = 5;   // Solicitação de reset de sincronização de protocolo
+
+// Flags de Eventos
+pub const EVENT_FLAG_SPURIOUS: u32 = 0x0001;// Interrupção espúria detectada
+pub const EVENT_FLAG_OVERFLOW: u32 = 0x0002;// Ocorrência de saturação de fila
+
+// Tipos de Entrada Normalizada User-Space -> Kernel
+pub const INPUT_KIND_KEY_DOWN: u16 = 1;
+pub const INPUT_KIND_KEY_UP: u16 = 2;
+pub const INPUT_KIND_MOUSE_MOVE: u16 = 3;
+pub const INPUT_KIND_MOUSE_BUTTON_DOWN: u16 = 4;
+pub const INPUT_KIND_MOUSE_BUTTON_UP: u16 = 5;
 
 /// Categoria padronizada de dispositivo de hardware
 #[repr(u32)]
@@ -358,7 +388,7 @@ pub fn init() {
     )).ok();
 
     // 5. Registra Periféricos de Entrada
-    reg.register(DeviceDescriptor::new(
+    if let Ok(id) = reg.register(DeviceDescriptor::new(
         0,
         DeviceCategory::Input,
         DeviceState::Operational,
@@ -367,9 +397,11 @@ pub fn init() {
         "kbd0",
         "PS/2 Keyboard (Port 0x60)",
         0x0003,
-    )).ok();
+    )) {
+        KBD_DEVICE_ID.store(id as u32, Ordering::SeqCst);
+    }
 
-    reg.register(DeviceDescriptor::new(
+    if let Ok(id) = reg.register(DeviceDescriptor::new(
         0,
         DeviceCategory::Input,
         DeviceState::Operational,
@@ -378,7 +410,9 @@ pub fn init() {
         "mouse0",
         "PS/2 Mouse (IRQ 12)",
         0x0003,
-    )).ok();
+    )) {
+        MOUSE_DEVICE_ID.store(id as u32, Ordering::SeqCst);
+    }
 
     // 6. Registra Temporizador e Controlador de Interrupções do Sistema
     reg.register(DeviceDescriptor::new(
@@ -468,4 +502,549 @@ pub fn generate_device_summary(buf: &mut [u8]) -> usize {
     }
 
     offset
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Subsistema de Drivers em User-Space (Ring 3) e Isolamento de Falhas (Etapa 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[inline]
+pub fn is_kbd_device(id: u32) -> bool {
+    id == DEV_KBD0 || id == KBD_DEVICE_ID.load(Ordering::Relaxed)
+}
+
+#[inline]
+pub fn is_mouse_device(id: u32) -> bool {
+    id == DEV_MOUSE0 || id == MOUSE_DEVICE_ID.load(Ordering::Relaxed)
+}
+
+#[inline]
+fn is_matching_dev(a: u32, b: u32) -> bool {
+    (is_kbd_device(a) && is_kbd_device(b)) || (is_mouse_device(a) && is_mouse_device(b)) || (a == b)
+}
+
+/// Descritor de evento de hardware bruto entregue pelo kernel ao driver em Ring 3
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HardwareEvent {
+    pub timestamp_ticks: u64,
+    pub device_id: u32,
+    pub event_type: u16,
+    pub code: u16,
+    pub data: u32,
+    pub flags: u32,
+}
+
+impl HardwareEvent {
+    pub const fn empty() -> Self {
+        Self {
+            timestamp_ticks: 0,
+            device_id: 0,
+            event_type: 0,
+            code: 0,
+            data: 0,
+            flags: 0,
+        }
+    }
+}
+
+pub const EVENT_QUEUE_CAPACITY: usize = 64;
+
+/// Fila circular delimitada (bounded) para eventos brutos de hardware
+pub struct HardwareEventQueue {
+    pub events: [HardwareEvent; EVENT_QUEUE_CAPACITY],
+    pub head: usize,
+    pub tail: usize,
+    pub count: usize,
+    pub dropped_overflow: u64,
+    pub spurious_count: u64,
+}
+
+impl HardwareEventQueue {
+    pub const fn new() -> Self {
+        Self {
+            events: [HardwareEvent::empty(); EVENT_QUEUE_CAPACITY],
+            head: 0,
+            tail: 0,
+            count: 0,
+            dropped_overflow: 0,
+            spurious_count: 0,
+        }
+    }
+
+    pub fn push(&mut self, event: HardwareEvent) -> bool {
+        if self.count >= EVENT_QUEUE_CAPACITY {
+            self.dropped_overflow = self.dropped_overflow.saturating_add(1);
+            return false;
+        }
+        self.events[self.head] = event;
+        self.head = (self.head + 1) % EVENT_QUEUE_CAPACITY;
+        self.count += 1;
+        true
+    }
+
+    pub fn pop(&mut self) -> Option<HardwareEvent> {
+        if self.count == 0 {
+            None
+        } else {
+            let ev = self.events[self.tail];
+            self.tail = (self.tail + 1) % EVENT_QUEUE_CAPACITY;
+            self.count -= 1;
+            Some(ev)
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.head = 0;
+        self.tail = 0;
+        self.count = 0;
+    }
+}
+
+/// Estado e autorização de um serviço de driver em execução em Ring 3
+pub struct DriverService {
+    pub device_id: u32,
+    pub owner_pid: usize,
+    pub generation: u64,
+    pub flags: u32,
+    pub is_active: bool,
+    pub quota_cpu_ticks: u32,
+    pub event_queue: HardwareEventQueue,
+    pub events_posted: u64,
+    pub events_polled: u64,
+    pub inputs_received: u64,
+}
+
+impl DriverService {
+    pub const fn empty() -> Self {
+        Self {
+            device_id: 0,
+            owner_pid: 0,
+            generation: 0,
+            flags: 0,
+            is_active: false,
+            quota_cpu_ticks: 25,
+            event_queue: HardwareEventQueue::new(),
+            events_posted: 0,
+            events_polled: 0,
+            inputs_received: 0,
+        }
+    }
+}
+
+pub const MAX_DRIVER_SERVICES: usize = 16;
+
+/// Registro central de supervisão e mediação de drivers de Ring 3
+pub struct DriverServiceRegistry {
+    pub services: [Option<DriverService>; MAX_DRIVER_SERVICES],
+    pub next_generation: u64,
+}
+
+impl DriverServiceRegistry {
+    pub const fn new() -> Self {
+        const NONE_SVC: Option<DriverService> = None;
+        Self {
+            services: [NONE_SVC; MAX_DRIVER_SERVICES],
+            next_generation: 1,
+        }
+    }
+
+    /// Registra um processo em Ring 3 como driver responsável por um dispositivo
+    pub fn register(&mut self, device_id: u32, pid: usize, flags: u32) -> Result<u64, isize> {
+        // Regra 1: Rejeição estrita de DMA sem IOMMU (Isolamento de Processo != Isolamento de DMA)
+        if (flags & DRIVER_CAP_DMA) != 0 {
+            return Err(crate::syscall::EPERM);
+        }
+
+        let resolved_id = if is_kbd_device(device_id) {
+            KBD_DEVICE_ID.load(Ordering::Relaxed)
+        } else if is_mouse_device(device_id) {
+            MOUSE_DEVICE_ID.load(Ordering::Relaxed)
+        } else {
+            device_id
+        };
+
+        // Valida se o dispositivo existe no inventário do kernel
+        let dev_exists = DEVICE_REGISTRY.lock().get_by_index(resolved_id as usize).is_some();
+        if !dev_exists {
+            return Err(crate::syscall::ENOENT);
+        }
+
+        // Verifica conflito de exclusividade: somente 1 driver ativo por dispositivo
+        for slot in self.services.iter() {
+            if let Some(svc) = slot {
+                if (svc.device_id == resolved_id || is_matching_dev(svc.device_id, resolved_id)) && svc.is_active {
+                    return Err(crate::syscall::EBUSY);
+                }
+            }
+        }
+
+        self.next_generation = self.next_generation.wrapping_add(1);
+        let gen = self.next_generation;
+
+        for slot in self.services.iter_mut() {
+            if slot.is_none() || !slot.as_ref().unwrap().is_active {
+                *slot = Some(DriverService {
+                    device_id: resolved_id,
+                    owner_pid: pid,
+                    generation: gen,
+                    flags,
+                    is_active: true,
+                    quota_cpu_ticks: 25,
+                    event_queue: HardwareEventQueue::new(),
+                    events_posted: 0,
+                    events_polled: 0,
+                    inputs_received: 0,
+                });
+                return Ok(gen);
+            }
+        }
+
+        Err(crate::syscall::ENOMEM)
+    }
+
+    /// Desregistra o driver e devolve o controle imediato ao Ring 0
+    pub fn unregister(&mut self, device_id: u32, pid: usize) -> Result<(), isize> {
+        let resolved_id = if is_kbd_device(device_id) {
+            KBD_DEVICE_ID.load(Ordering::Relaxed)
+        } else if is_mouse_device(device_id) {
+            MOUSE_DEVICE_ID.load(Ordering::Relaxed)
+        } else {
+            device_id
+        };
+
+        for slot in self.services.iter_mut() {
+            if let Some(svc) = slot {
+                if (svc.device_id == resolved_id || is_matching_dev(svc.device_id, resolved_id)) && svc.owner_pid == pid {
+                    svc.is_active = false;
+                    svc.generation = svc.generation.wrapping_add(1);
+                    svc.event_queue.clear();
+                    crate::interrupts::ps2_keyboard::reset_sync();
+                    crate::interrupts::ps2_mouse::reset_sync();
+                    *slot = None;
+                    return Ok(());
+                }
+            }
+        }
+        Err(crate::syscall::ENOENT)
+    }
+
+    /// Reinicia o serviço de driver, invalidando o generation counter anterior
+    pub fn restart(&mut self, device_id: u32, pid: usize) -> Result<u64, isize> {
+        let resolved_id = if is_kbd_device(device_id) {
+            KBD_DEVICE_ID.load(Ordering::Relaxed)
+        } else if is_mouse_device(device_id) {
+            MOUSE_DEVICE_ID.load(Ordering::Relaxed)
+        } else {
+            device_id
+        };
+
+        for slot in self.services.iter_mut() {
+            if let Some(svc) = slot {
+                if svc.device_id == resolved_id || is_matching_dev(svc.device_id, resolved_id) {
+                    if svc.owner_pid != pid {
+                        return Err(crate::syscall::EPERM);
+                    }
+                    self.next_generation = self.next_generation.wrapping_add(1);
+                    svc.generation = self.next_generation;
+                    svc.event_queue.clear();
+                    svc.is_active = true;
+                    crate::interrupts::ps2_keyboard::reset_sync();
+                    crate::interrupts::ps2_mouse::reset_sync();
+                    return Ok(svc.generation);
+                }
+            }
+        }
+        Err(crate::syscall::ENOENT)
+    }
+
+    /// Polling de eventos de hardware pelo driver em Ring 3
+    pub fn poll_events(&mut self, device_id: u32, pid: usize, out_slice: &mut [HardwareEvent]) -> Result<usize, isize> {
+        let resolved_id = if is_kbd_device(device_id) {
+            KBD_DEVICE_ID.load(Ordering::Relaxed)
+        } else if is_mouse_device(device_id) {
+            MOUSE_DEVICE_ID.load(Ordering::Relaxed)
+        } else {
+            device_id
+        };
+
+        for slot in self.services.iter_mut() {
+            if let Some(svc) = slot {
+                if svc.device_id == resolved_id || is_matching_dev(svc.device_id, resolved_id) {
+                    if svc.owner_pid != pid || !svc.is_active {
+                        return Err(crate::syscall::EPERM);
+                    }
+                    let mut count = 0;
+                    while count < out_slice.len() {
+                        if let Some(ev) = svc.event_queue.pop() {
+                            out_slice[count] = ev;
+                            count += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    svc.events_polled = svc.events_polled.saturating_add(count as u64);
+                    return Ok(count);
+                }
+            }
+        }
+        Err(crate::syscall::ENOENT)
+    }
+
+    /// Envio de evento normalizado pelo driver em Ring 3 de volta ao kernel
+    pub fn dispatch_normalized_input(&mut self, pid: usize, kind: u16, code: u16, x: i32, y: i32) -> Result<(), isize> {
+        // Valida se o PID possui autorização de driver ativo com DRIVER_CAP_INPUT
+        let mut authorized = false;
+        for slot in self.services.iter() {
+            if let Some(svc) = slot {
+                if svc.owner_pid == pid && svc.is_active && (svc.flags & DRIVER_CAP_INPUT) != 0 {
+                    authorized = true;
+                    break;
+                }
+            }
+        }
+        if !authorized {
+            return Err(crate::syscall::EPERM);
+        }
+
+        match kind {
+            INPUT_KIND_KEY_DOWN => {
+                if code != 0 {
+                    crate::keyboard_buffer::push(code as u8);
+                }
+            }
+            INPUT_KIND_KEY_UP => {
+                // Notificação de liberação de tecla (processada se necessário)
+            }
+            INPUT_KIND_MOUSE_MOVE | INPUT_KIND_MOUSE_BUTTON_DOWN | INPUT_KIND_MOUSE_BUTTON_UP => {
+                let clamped_x = x.max(0).min(1024) as usize;
+                let clamped_y = y.max(0).min(768) as usize;
+                crate::interrupts::ps2_mouse::update_from_driver(kind, code, clamped_x, clamped_y);
+            }
+            _ => return Err(crate::syscall::EINVAL),
+        }
+
+        for slot in self.services.iter_mut() {
+            if let Some(svc) = slot {
+                if svc.owner_pid == pid && svc.is_active {
+                    svc.inputs_received = svc.inputs_received.saturating_add(1);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Verifica se há um driver em Ring 3 ativamente atendendo ao dispositivo
+    pub fn has_active_driver(&self, device_id: u32) -> bool {
+        let resolved_id = if is_kbd_device(device_id) {
+            KBD_DEVICE_ID.load(Ordering::Relaxed)
+        } else if is_mouse_device(device_id) {
+            MOUSE_DEVICE_ID.load(Ordering::Relaxed)
+        } else {
+            device_id
+        };
+
+        for slot in self.services.iter() {
+            if let Some(svc) = slot {
+                if (svc.device_id == resolved_id || is_matching_dev(svc.device_id, resolved_id)) && svc.is_active {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Enfileira byte capturado pelo ISR / Polling do kernel na fila do driver em Ring 3.
+    /// Retorna `true` se o byte foi enfileirado para o driver, ou `false` para indicar fallback em Ring 0.
+    pub fn post_raw_hardware_byte(&mut self, device_id: u32, irq: u8, byte: u8) -> bool {
+        let resolved_id = if is_kbd_device(device_id) {
+            KBD_DEVICE_ID.load(Ordering::Relaxed)
+        } else if is_mouse_device(device_id) {
+            MOUSE_DEVICE_ID.load(Ordering::Relaxed)
+        } else {
+            device_id
+        };
+
+        for slot in self.services.iter_mut() {
+            if let Some(svc) = slot {
+                if (svc.device_id == resolved_id || is_matching_dev(svc.device_id, resolved_id)) && svc.is_active {
+                    let ticks = crate::timer::ticks();
+                    let mut flags = 0u32;
+                    if svc.event_queue.dropped_overflow > 0 {
+                        flags |= EVENT_FLAG_OVERFLOW;
+                    }
+                    let ev = HardwareEvent {
+                        timestamp_ticks: ticks,
+                        device_id: resolved_id,
+                        event_type: EVENT_TYPE_RAW_BYTE,
+                        code: irq as u16,
+                        data: byte as u32,
+                        flags,
+                    };
+                    if !svc.event_queue.push(ev) {
+                        svc.event_queue.dropped_overflow = svc.event_queue.dropped_overflow.saturating_add(1);
+                    }
+                    svc.events_posted = svc.events_posted.saturating_add(1);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Notifica falha do driver e reativa fallback de Ring 0 imediatamente
+    pub fn notify_driver_failure(&mut self, device_id: u32) {
+        let resolved_id = if is_kbd_device(device_id) {
+            KBD_DEVICE_ID.load(Ordering::Relaxed)
+        } else if is_mouse_device(device_id) {
+            MOUSE_DEVICE_ID.load(Ordering::Relaxed)
+        } else {
+            device_id
+        };
+
+        for slot in self.services.iter_mut() {
+            if let Some(svc) = slot {
+                if (svc.device_id == resolved_id || is_matching_dev(svc.device_id, resolved_id)) && svc.is_active {
+                    svc.is_active = false;
+                    svc.generation = svc.generation.wrapping_add(1);
+                    svc.event_queue.clear();
+                    crate::interrupts::ps2_keyboard::reset_sync();
+                    crate::interrupts::ps2_mouse::reset_sync();
+                }
+            }
+        }
+    }
+
+    /// Notifica encerramento ou crash de um PID, restaurando fallback para Ring 0
+    pub fn notify_pid_exit(&mut self, pid: usize) {
+        for slot in self.services.iter_mut() {
+            if let Some(svc) = slot {
+                if svc.owner_pid == pid && svc.is_active {
+                    svc.is_active = false;
+                    svc.generation = svc.generation.wrapping_add(1);
+                    svc.event_queue.clear();
+                    let _dev_id = svc.device_id;
+                    crate::interrupts::ps2_keyboard::reset_sync();
+                    crate::interrupts::ps2_mouse::reset_sync();
+                    crate::serial_write(b"[DRIVER-MGR] Processo de driver encerrou; fallback Ring 0 restaurado\n");
+                }
+            }
+        }
+    }
+}
+
+pub static DRIVER_SERVICES: SpinLock<DriverServiceRegistry> = SpinLock::new(DriverServiceRegistry::new());
+
+// ── Funções de Interface Pública para ISRs e Agendador ──────────────────────
+
+pub fn has_active_driver(device_id: u32) -> bool {
+    DRIVER_SERVICES.lock().has_active_driver(device_id)
+}
+
+pub fn post_raw_hardware_byte(device_id: u32, irq: u8, byte: u8) -> bool {
+    DRIVER_SERVICES.lock().post_raw_hardware_byte(device_id, irq, byte)
+}
+
+pub fn notify_driver_pid_exit(pid: usize) {
+    DRIVER_SERVICES.lock().notify_pid_exit(pid);
+}
+
+pub fn notify_driver_failure(device_id: u32) {
+    DRIVER_SERVICES.lock().notify_driver_failure(device_id);
+}
+
+// ── Suíte de Selftests do Driver Manager e Ring 3 Drivers ────────────────────
+
+pub fn run_driver_manager_selftests() -> (usize, usize) {
+    let mut passed = 0;
+    let mut total = 0;
+
+    let test_pid = 999usize;
+    let dev_kbd = KBD_DEVICE_ID.load(Ordering::Relaxed);
+
+    // Teste 1: Registro válido com PIO e INPUT
+    total += 1;
+    let reg_result = DRIVER_SERVICES.lock().register(dev_kbd, test_pid, DRIVER_CAP_PIO | DRIVER_CAP_INPUT);
+    if let Ok(gen) = reg_result {
+        if gen > 0 && has_active_driver(dev_kbd) {
+            passed += 1;
+        }
+    }
+
+    // Teste 2: Rejeição estrita de DMA sem IOMMU (EPERM)
+    total += 1;
+    let dma_result = DRIVER_SERVICES.lock().register(dev_kbd, test_pid + 1, DRIVER_CAP_DMA);
+    if dma_result == Err(crate::syscall::EPERM) {
+        passed += 1;
+    }
+
+    // Teste 3: Rejeição de conflito por exclusividade (EBUSY)
+    total += 1;
+    let busy_result = DRIVER_SERVICES.lock().register(dev_kbd, test_pid + 2, DRIVER_CAP_PIO | DRIVER_CAP_INPUT);
+    if busy_result == Err(crate::syscall::EBUSY) {
+        passed += 1;
+    }
+
+    // Teste 4: Enfileiramento de bytes e saturação delimitada (bounded queue)
+    total += 1;
+    let mut queue_ok = true;
+    for i in 0..64u8 {
+        if !post_raw_hardware_byte(dev_kbd, 1, i) {
+            queue_ok = false;
+        }
+    }
+    // 65º byte deve saturar e incrementar dropped_overflow sem pânico
+    let _overflow_post = post_raw_hardware_byte(dev_kbd, 1, 0xFF);
+    {
+        let reg = DRIVER_SERVICES.lock();
+        if let Some(Some(svc)) = reg.services.iter().find(|s| s.is_some() && s.as_ref().unwrap().device_id == dev_kbd) {
+            if svc.event_queue.dropped_overflow == 0 {
+                queue_ok = false;
+            }
+        } else {
+            queue_ok = false;
+        }
+    }
+    if queue_ok {
+        passed += 1;
+    }
+
+    // Teste 5: Polling seguro de eventos por PID autorizado
+    total += 1;
+    let mut poll_buf = [HardwareEvent::empty(); 32];
+    let poll_unauth = DRIVER_SERVICES.lock().poll_events(dev_kbd, test_pid + 1, &mut poll_buf);
+    let poll_auth = DRIVER_SERVICES.lock().poll_events(dev_kbd, test_pid, &mut poll_buf);
+    if poll_unauth == Err(crate::syscall::EPERM) && poll_auth.is_ok() && poll_auth.unwrap() == 32 {
+        passed += 1;
+    }
+
+    // Teste 6: Envio de entrada normalizada e clamping seguro
+    total += 1;
+    let input_unauth = DRIVER_SERVICES.lock().dispatch_normalized_input(test_pid + 1, INPUT_KIND_KEY_DOWN, b'A' as u16, 0, 0);
+    let input_auth = DRIVER_SERVICES.lock().dispatch_normalized_input(test_pid, INPUT_KIND_KEY_DOWN, b'A' as u16, 0, 0);
+    let mouse_auth = DRIVER_SERVICES.lock().dispatch_normalized_input(test_pid, INPUT_KIND_MOUSE_MOVE, 0, 2000, -500);
+    if input_unauth == Err(crate::syscall::EPERM) && input_auth.is_ok() && mouse_auth.is_ok() {
+        passed += 1;
+    }
+
+    // Teste 7: Recuperação de falha e restauração de fallback Ring 0 via notify_driver_pid_exit
+    total += 1;
+    notify_driver_pid_exit(test_pid);
+    if !has_active_driver(dev_kbd) {
+        passed += 1;
+    }
+
+    // Teste 8: Re-registro após falha incrementa generation counter
+    total += 1;
+    let rereg_result = DRIVER_SERVICES.lock().register(dev_kbd, test_pid + 10, DRIVER_CAP_PIO | DRIVER_CAP_INPUT);
+    if let Ok(new_gen) = rereg_result {
+        // Limpa estado para não interferir em boot subsequente
+        let _ = DRIVER_SERVICES.lock().unregister(dev_kbd, test_pid + 10);
+        if new_gen > 1 && !has_active_driver(dev_kbd) {
+            passed += 1;
+        }
+    }
+
+    (passed, total)
 }

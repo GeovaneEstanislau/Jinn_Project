@@ -572,7 +572,9 @@ pub fn run_desktop() {
                 if sc == 0x01 { // Scancode ESC
                     return Some(0x1B);
                 }
-                crate::interrupts::ps2_keyboard::process_scancode(sc);
+                if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_KBD0, 1, sc) {
+                    crate::interrupts::ps2_keyboard::process_scancode(sc);
+                }
             }
             crate::keyboard_buffer::pop()
         };

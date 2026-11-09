@@ -190,12 +190,23 @@ pub fn process_scancode(sc: u8) {
     }
 }
 
+/// Reseta o estado de sincronização e modificadores do teclado
+pub fn reset_sync() {
+    unsafe {
+        SHIFT_DOWN = false;
+        CAPS_LOCK = false;
+        EXTENDED_KEY = false;
+    }
+}
+
 /// IRQ1 handler (vetor 33) — usado se IRQ1 for habilitado no PIC.
 #[no_mangle]
 pub extern "C" fn kbd_irq_handler() {
     unsafe {
         let sc = inb(KBD_DATA);
         pic::send_eoi(1);
-        process_scancode(sc);
+        if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_KBD0, 1, sc) {
+            process_scancode(sc);
+        }
     }
 }
