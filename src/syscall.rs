@@ -437,10 +437,11 @@ pub extern "C" fn syscall_dispatch(
         52 => sys_rename(arg0 as *const RenameArgs),
         53 => sys_task_set_state(arg0, arg1 as u32, arg2 as u64),
         54 => sys_driver_register(arg0 as u32, arg1 as u32),
-        55 => sys_driver_event_poll(arg0 as u32, arg1 as *mut crate::drivers::device_manager::HardwareEvent, arg2),
+        55 => sys_driver_event_poll(arg0 as u32, arg1 as *mut crate::drivers::device_manager::HardwareEvent, arg2, arg3 as u64),
         56 => sys_driver_send_input(arg0 as u16, arg1 as u16, arg2 as i32, arg3 as i32),
         57 => sys_driver_unregister(arg0 as u32),
         58 => sys_driver_restart(arg0 as u32),
+        59 => sys_driver_telemetry(arg0 as u32, arg1 as *mut crate::drivers::device_manager::DriverTelemetryStats),
         _  => ENOSYS,
     }
 }
@@ -476,7 +477,6 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
                 w.set_color(crate::vga::Color::LightRed, crate::vga::Color::Black);
             }
             for &byte in slice {
-                crate::serial_write_byte(byte);
                 w.write_byte(byte);
             }
             len as isize
@@ -1227,13 +1227,15 @@ fn sys_driver_register(device_id: u32, flags: u32) -> isize {
     }
 }
 
-/// `sys_driver_event_poll(device_id, out_ptr, max_events)` — Syscall 55
+/// `sys_driver_event_poll(device_id, out_ptr, max_events, expected_gen)` — Syscall 55
 /// Coleta eventos brutos de hardware da fila circular delimitada mantida pelo kernel.
 /// Valida integralmente os ponteiros de buffer de Ring 3 contra falhas de acesso (EFAULT).
+/// Se `expected_gen > 0`, valida atomicamente se a geração do driver coincide, prevenindo race conditions.
 fn sys_driver_event_poll(
     device_id: u32,
     out_ptr: *mut crate::drivers::device_manager::HardwareEvent,
     max_events: usize,
+    expected_gen: u64,
 ) -> isize {
     if out_ptr.is_null() || max_events == 0 {
         return EINVAL;
@@ -1256,7 +1258,7 @@ fn sys_driver_event_poll(
     let mut temp_events = [crate::drivers::device_manager::HardwareEvent::empty(); 64];
     let slice_len = max_events.min(64);
 
-    match crate::drivers::device_manager::DRIVER_SERVICES.lock().poll_events(device_id, pid, &mut temp_events[..slice_len]) {
+    match crate::drivers::device_manager::DRIVER_SERVICES.lock().poll_events(device_id, pid, expected_gen, &mut temp_events[..slice_len]) {
         Ok(polled_count) => {
             unsafe {
                 let dest_slice = core::slice::from_raw_parts_mut(out_ptr, polled_count);
@@ -1272,7 +1274,7 @@ fn sys_driver_event_poll(
 /// Envia evento de entrada interpretado e normalizado de volta ao subsistema de console/desktop do kernel.
 fn sys_driver_send_input(kind: u16, code: u16, x: i32, y: i32) -> isize {
     let pid = scheduler::current_pid();
-    match crate::drivers::device_manager::DRIVER_SERVICES.lock().dispatch_normalized_input(pid, kind, code, x, y) {
+    match crate::drivers::device_manager::DRIVER_SERVICES.lock().dispatch_normalized_input(pid, 0, kind, code, x, y) {
         Ok(()) => 0,
         Err(err) => err,
     }
@@ -1296,6 +1298,28 @@ fn sys_driver_restart(device_id: u32) -> isize {
         Ok(gen) => gen as isize,
         Err(err) => err,
     }
+}
+
+/// `sys_driver_telemetry(device_id, out_ptr)` — Syscall 59
+/// Retorna métricas de telemetria e rastreamento de origem de eventos (Ring 3 vs Ring 0 Fallback).
+fn sys_driver_telemetry(
+    device_id: u32,
+    out_ptr: *mut crate::drivers::device_manager::DriverTelemetryStats,
+) -> isize {
+    if out_ptr.is_null() {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        let size = core::mem::size_of::<crate::drivers::device_manager::DriverTelemetryStats>();
+        if let Err(e) = validate_user_buffer(out_ptr as *const u8, size, true) {
+            return e;
+        }
+    }
+    let stats = crate::drivers::device_manager::get_telemetry(device_id);
+    unsafe {
+        core::ptr::write(out_ptr, stats);
+    }
+    0
 }
 
 /// `sys_jda_shm_alloc(is_read_only)` — Aloca um buffer físico no pool do JDA.

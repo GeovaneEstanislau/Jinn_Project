@@ -57,6 +57,78 @@ impl<'a, T> Drop for SpinLockGuard<'a, T> {
     }
 }
 
+// ── Interrupt-Safe SpinLock (Prevents ISR vs Process Deadlocks) ───────────────
+
+#[inline(always)]
+pub unsafe fn save_rflags_and_cli() -> usize {
+    let flags: usize;
+    core::arch::asm!(
+        "pushfq",
+        "pop {0}",
+        "cli",
+        out(reg) flags,
+        options(nomem)
+    );
+    flags
+}
+
+#[inline(always)]
+pub unsafe fn restore_rflags(flags: usize) {
+    if (flags & 0x200) != 0 {
+        core::arch::asm!("sti", options(nomem, nostack));
+    }
+}
+
+pub struct IrqSafeSpinLock<T> {
+    lock: AtomicBool,
+    data: UnsafeCell<T>,
+}
+
+unsafe impl<T: Send> Sync for IrqSafeSpinLock<T> {}
+unsafe impl<T: Send> Send for IrqSafeSpinLock<T> {}
+
+impl<T> IrqSafeSpinLock<T> {
+    pub const fn new(data: T) -> Self {
+        Self {
+            lock: AtomicBool::new(false),
+            data: UnsafeCell::new(data),
+        }
+    }
+
+    pub fn lock(&self) -> IrqSafeSpinLockGuard<'_, T> {
+        let flags = unsafe { save_rflags_and_cli() };
+        while self.lock.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+            core::hint::spin_loop();
+        }
+        IrqSafeSpinLockGuard { lock: self, rflags: flags }
+    }
+}
+
+pub struct IrqSafeSpinLockGuard<'a, T> {
+    lock: &'a IrqSafeSpinLock<T>,
+    rflags: usize,
+}
+
+impl<'a, T> core::ops::Deref for IrqSafeSpinLockGuard<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        unsafe { &*self.lock.data.get() }
+    }
+}
+
+impl<'a, T> core::ops::DerefMut for IrqSafeSpinLockGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe { &mut *self.lock.data.get() }
+    }
+}
+
+impl<'a, T> Drop for IrqSafeSpinLockGuard<'a, T> {
+    fn drop(&mut self) {
+        self.lock.lock.store(false, Ordering::Release);
+        unsafe { restore_rflags(self.rflags) };
+    }
+}
+
 // ── Physical Page Frame Allocator (Buddy) ────────────────────────────────────
 use crate::memory::buddy::BuddyAllocator;
 

@@ -1,4 +1,4 @@
-﻿/// Driver de Mouse PS/2 (i8042 Aux Device)
+/// Driver de Mouse PS/2 (i8042 Aux Device)
 ///
 /// Implementa a comunicação com o mouse PS/2 padrão conectado à segunda
 /// porta do controlador i8042. Suporta tanto recepção assíncrona via IRQ12
@@ -159,13 +159,22 @@ pub fn process_byte(b: u8) {
     }
 }
 
-/// Reseta a máquina de estados de sincronização de pacotes do mouse (3 bytes)
+/// Reseta a máquina de estados de sincronização de pacotes do mouse (3 bytes) e libera botões presos
 pub fn reset_sync() {
     unsafe {
         let mouse = &mut *core::ptr::addr_of_mut!(MOUSE);
         mouse.cycle = 0;
         mouse.packet = [0; 3];
+        mouse.buttons = 0;
     }
+}
+
+pub fn get_cycle() -> u8 {
+    unsafe { MOUSE.cycle }
+}
+
+pub fn set_cycle(cycle: u8) {
+    unsafe { MOUSE.cycle = cycle; }
 }
 
 /// Atualiza o estado do cursor e botões a partir de comandos normalizados do driver em Ring 3

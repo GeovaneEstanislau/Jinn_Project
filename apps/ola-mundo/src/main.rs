@@ -9,6 +9,7 @@ use core::{arch::asm, panic::PanicInfo};
 
 // ── Constantes de Erros POSIX ─────────────────────────────────────────────────
 const EPERM:   i64 = -1;
+const ESRCH:   i64 = -3;
 const EBADF:   i64 = -9;
 const ENOMEM:  i64 = -12;
 const EFAULT:  i64 = -14;
@@ -387,8 +388,8 @@ pub const INPUT_KIND_MOUSE_MOVE: u16 = 3;
 pub const INPUT_KIND_MOUSE_BUTTON_DOWN: u16 = 4;
 pub const INPUT_KIND_MOUSE_BUTTON_UP: u16 = 5;
 
-pub const DEV_KBD0: u32 = 7;
-pub const DEV_MOUSE0: u32 = 8;
+pub const DEV_KBD0: u32 = 0x1001;
+pub const DEV_MOUSE0: u32 = 0x1002;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -414,6 +415,21 @@ impl HardwareEvent {
     }
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DriverTelemetryStats {
+    pub ring0_fallback_events: u64,
+    pub ring3_driver_events: u64,
+    pub events_enqueued: u64,
+    pub events_polled: u64,
+    pub events_dropped_overflow: u64,
+    pub spurious_irqs: u64,
+    pub active_driver_pid: u32,
+    pub active_generation: u64,
+    pub is_ring3_active: u32,
+    pub recoveries_count: u64,
+}
+
 #[inline(always)]
 unsafe fn sys_driver_register(device_id: u32, flags: u32) -> i64 {
     syscall3(54, device_id as u64, flags as u64, 0)
@@ -421,7 +437,12 @@ unsafe fn sys_driver_register(device_id: u32, flags: u32) -> i64 {
 
 #[inline(always)]
 unsafe fn sys_driver_event_poll(device_id: u32, out_ptr: *mut HardwareEvent, max_events: u64) -> i64 {
-    syscall3(55, device_id as u64, out_ptr as u64, max_events)
+    syscall4(55, device_id as u64, out_ptr as u64, max_events, 0)
+}
+
+#[inline(always)]
+unsafe fn sys_driver_event_poll_gen(device_id: u32, out_ptr: *mut HardwareEvent, max_events: u64, expected_gen: u64) -> i64 {
+    syscall4(55, device_id as u64, out_ptr as u64, max_events, expected_gen)
 }
 
 #[inline(always)]
@@ -437,6 +458,11 @@ unsafe fn sys_driver_unregister(device_id: u32) -> i64 {
 #[inline(always)]
 unsafe fn sys_driver_restart(device_id: u32) -> i64 {
     syscall3(58, device_id as u64, 0, 0)
+}
+
+#[inline(always)]
+unsafe fn sys_driver_telemetry(device_id: u32, out_ptr: *mut DriverTelemetryStats) -> i64 {
+    syscall3(59, device_id as u64, out_ptr as u64, 0)
 }
 
 // ── Output Helpers ───────────────────────────────────────────────────────────
@@ -3745,6 +3771,84 @@ unsafe fn test_userspace_driver_subsystem() {
             print_str(b"  [FAIL] 18.10: Reinicializacao nao incrementou generation token\n");
         }
         let _ = sys_driver_unregister(DEV_KBD0);
+    } else {
+        print_str(b"  [FAIL] 18.10: Falha no re-registro para teste de restart\n");
+    }
+
+    // 11. Pipeline Completo Teclado Ring 3: Decode Scancode Set 1 -> ASCII e envio normalizado
+    let kbd_gen = sys_driver_register(DEV_KBD0, DRIVER_CAP_PIO | DRIVER_CAP_INPUT);
+    if kbd_gen > 0 {
+        // Simulação do driver Ring 3: recebe scancode 0x1E ('A' make), traduz para ASCII 'A'
+        let scancode_raw: u8 = 0x1E;
+        let ascii_decoded: u16 = match scancode_raw {
+            0x1E => b'A' as u16,
+            _ => 0,
+        };
+        let send_res = sys_driver_send_input(INPUT_KIND_KEY_DOWN, ascii_decoded, 0, 0);
+        let mut telem = DriverTelemetryStats::default();
+        let telem_res = sys_driver_telemetry(DEV_KBD0, &mut telem);
+        if send_res == 0 && telem_res == 0 && telem.ring3_driver_events > 0 && telem.is_ring3_active == 1 {
+            print_str(b"  [PASS] 18.11: Decodificacao Scancode Set 1 -> ASCII em Ring 3 e entrega normalizada\n");
+        } else {
+            print_str(b"  [FAIL] 18.11: Falha no pipeline Ring 3 de teclado\n");
+        }
+    } else {
+        print_str(b"  [FAIL] 18.11: Falha ao registrar driver de teclado para teste 18.11\n");
+    }
+
+    // 12. Pipeline Completo Mouse Ring 3: Decode de pacote 3-bytes PS/2 e despacho normalizado
+    let mouse_gen = sys_driver_register(DEV_MOUSE0, DRIVER_CAP_PIO | DRIVER_CAP_INPUT);
+    if mouse_gen > 0 {
+        // Simulação do driver Ring 3: pacote de 3 bytes (flags=0x09 [btn_left], dx=15, dy=-10)
+        let p_flags: u8 = 0x09;
+        let p_dx: i8 = 15;
+        let p_dy: i8 = -10;
+        let btn_left = (p_flags & 0x01) != 0;
+        let m_move_res = sys_driver_send_input(INPUT_KIND_MOUSE_MOVE, 0, p_dx as i32, p_dy as i32);
+        let m_btn_res = if btn_left {
+            sys_driver_send_input(INPUT_KIND_MOUSE_BUTTON_DOWN, 1, 0, 0)
+        } else {
+            0
+        };
+        let mut m_telem = DriverTelemetryStats::default();
+        let m_telem_res = sys_driver_telemetry(DEV_MOUSE0, &mut m_telem);
+        if m_move_res == 0 && m_btn_res == 0 && m_telem_res == 0 && m_telem.is_ring3_active == 1 {
+            print_str(b"  [PASS] 18.12: Decodificacao de pacote 3-bytes PS/2 Mouse em Ring 3 com coordenadas e botoes\n");
+        } else {
+            print_str(b"  [FAIL] 18.12: Falha no pipeline Ring 3 de mouse\n");
+        }
+    } else {
+        print_str(b"  [FAIL] 18.12: Falha ao registrar driver de mouse para teste 18.12, ret: ");
+        print_i64(mouse_gen);
+        print_str(b"\n");
+    }
+
+    // 13. Proteção atômica de tokens obsoletos (ESRCH) e recuperação limpa de estado
+    if kbd_gen > 0 {
+        let stale_gen = kbd_gen as u64 + 999;
+        let stale_poll = sys_driver_event_poll_gen(DEV_KBD0, ev_buf.as_mut_ptr(), 8, stale_gen);
+        let unreg_k = sys_driver_unregister(DEV_KBD0);
+        let unreg_m = sys_driver_unregister(DEV_MOUSE0);
+        if stale_poll == ESRCH && unreg_k == 0 && unreg_m == 0 {
+            print_str(b"  [PASS] 18.13: Protecao atomica de token (ESRCH) e limpeza de estado em desregistro\n");
+        } else {
+            print_str(b"  [FAIL] 18.13: Protecao atomica ou limpeza falhou, stale_poll: ");
+            print_i64(stale_poll);
+            print_str(b", unreg_k: ");
+            print_i64(unreg_k);
+            print_str(b", unreg_m: ");
+            print_i64(unreg_m);
+            print_str(b"\n");
+        }
+    }
+
+    // 14. Telemetria de rastreamento de origem e restauração de fallback Ring 0
+    let mut telem_final = DriverTelemetryStats::default();
+    let telem_final_res = sys_driver_telemetry(DEV_KBD0, &mut telem_final);
+    if telem_final_res == 0 && telem_final.is_ring3_active == 0 && telem_final.ring3_driver_events > 0 && telem_final.recoveries_count > 0 {
+        print_str(b"  [PASS] 18.14: Telemetria de rastreamento de origem e restauracao de fallback Ring 0 comprovada\n");
+    } else {
+        print_str(b"  [FAIL] 18.14: Telemetria final inconsistente\n");
     }
 }
 

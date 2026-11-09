@@ -1,4 +1,4 @@
-﻿/// PS/2 Keyboard Driver
+/// PS/2 Keyboard Driver
 ///
 /// Inicialização correta do controlador PS/2 i8042.
 /// Usa polling direto (sem IRQ) da porta 0x60/0x64.
@@ -197,6 +197,14 @@ pub fn reset_sync() {
         CAPS_LOCK = false;
         EXTENDED_KEY = false;
     }
+}
+
+pub fn is_shift_down() -> bool {
+    unsafe { SHIFT_DOWN }
+}
+
+pub fn set_shift_down(val: bool) {
+    unsafe { SHIFT_DOWN = val; }
 }
 
 /// IRQ1 handler (vetor 33) — usado se IRQ1 for habilitado no PIC.
