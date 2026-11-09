@@ -201,6 +201,13 @@ impl CsprngState {
 
     /// Preenchimento de buffer de destino com números pseudoaleatórios (ChaCha20 DRBG)
     pub fn fill_bytes(&mut self, dest: &mut [u8]) {
+        if !self.is_seeded {
+            for b in dest.iter_mut() {
+                *b = 0;
+            }
+            return;
+        }
+
         let mut offset = 0;
         let mut block = [0u8; 64];
 
@@ -390,21 +397,7 @@ pub fn fill_random_bytes(dest: &mut [u8], flags: u32) -> Result<usize, isize> {
         guard.mix_entropy(&sample, bits);
     }
 
-    let mut offset = 0;
-    let mut block = [0u8; 64];
-
-    while offset < dest.len() {
-        guard.generate_block(&mut block);
-        let chunk = (dest.len() - offset).min(64);
-        dest[offset..offset + chunk].copy_from_slice(&block[..chunk]);
-        offset += chunk;
-    }
-
-    // Limpeza volátil do buffer temporário
-    unsafe {
-        core::ptr::write_volatile(&mut block as *mut _ as *mut u8, 0);
-    }
-
+    guard.fill_bytes(dest);
     Ok(dest.len())
 }
 

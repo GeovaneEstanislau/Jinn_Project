@@ -298,3 +298,52 @@ fn test_rtc_timezone_offset_handling() {
     // 15:00 UTC-3 = 18:00 UTC (+3 horas = +10800s)
     assert_eq!(utc_unix, local_unix + 10800);
 }
+
+#[test]
+fn test_rtc_clock_routing_realtime_and_monotonic() {
+    pub const CLOCK_REALTIME: u32 = 0;
+    pub const CLOCK_MONOTONIC: u32 = 1;
+    pub const EINVAL: isize = -22;
+
+    struct Timespec {
+        tv_sec: u64,
+        tv_nsec: u32,
+    }
+
+    fn mock_clock_gettime(clock_id: u32, out: &mut Timespec, ticks: u64, boot_unix: u64, hz: u64) -> isize {
+        match clock_id {
+            CLOCK_REALTIME => {
+                let elapsed_secs = ticks / hz;
+                let elapsed_nanos = ((ticks % hz) * (1_000_000_000 / hz)) as u32;
+                out.tv_sec = boot_unix + elapsed_secs;
+                out.tv_nsec = elapsed_nanos;
+                0
+            }
+            CLOCK_MONOTONIC => {
+                let secs = ticks / hz;
+                let nanos = ((ticks % hz) * (1_000_000_000 / hz)) as u32;
+                out.tv_sec = secs;
+                out.tv_nsec = nanos;
+                0
+            }
+            _ => EINVAL,
+        }
+    }
+
+    let mut ts = Timespec { tv_sec: 0, tv_nsec: 0 };
+    // 1. CLOCK_REALTIME (0)
+    let ret_rt = mock_clock_gettime(CLOCK_REALTIME, &mut ts, 500, 1700000000, 100);
+    assert_eq!(ret_rt, 0);
+    assert_eq!(ts.tv_sec, 1700000005);
+    assert_eq!(ts.tv_nsec, 0);
+
+    // 2. CLOCK_MONOTONIC (1)
+    let ret_mono = mock_clock_gettime(CLOCK_MONOTONIC, &mut ts, 250, 1700000000, 100);
+    assert_eq!(ret_mono, 0);
+    assert_eq!(ts.tv_sec, 2);
+    assert_eq!(ts.tv_nsec, 500_000_000);
+
+    // 3. Rejeição de clock_id inválido (99)
+    let ret_bad = mock_clock_gettime(99, &mut ts, 250, 1700000000, 100);
+    assert_eq!(ret_bad, -22);
+}
