@@ -61,8 +61,11 @@ pub fn init() {
 
 static NET_POLL_LOCK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-/// Processa pacotes de rede recebidos da placa física.
+/// Processa pacotes de rede recebidos da placa física e barramento loopback.
 pub fn poll() {
+    // Processa tráfego de loopback interno independente do hardware de rede
+    tcp::drain_loopback();
+
     // Garante exclusão mútua em SMP para evitar corrupção de anéis VirtIO e condições de corrida de sockets
     if NET_POLL_LOCK.compare_exchange(false, true, core::sync::atomic::Ordering::Acquire, core::sync::atomic::Ordering::Relaxed).is_err() {
         return;

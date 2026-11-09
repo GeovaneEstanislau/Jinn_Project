@@ -110,6 +110,9 @@ pub fn is_local_subnet(dst_ip: [u8; 4], our_ip: [u8; 4], netmask: [u8; 4]) -> bo
 /// Se o destino estiver na rede local, o próximo salto é o próprio `dst_ip`.
 /// Se o destino for externo (Internet), o próximo salto é o default gateway.
 pub fn get_next_hop_ip(dst_ip: [u8; 4]) -> [u8; 4] {
+    if dst_ip[0] == 127 {
+        return dst_ip;
+    }
     let (our_ip, netmask, gateway) = unsafe {
         (
             crate::net::dhcp::DHCP_CLIENT.ip,

@@ -2264,8 +2264,16 @@ pub fn has_chunked_terminator(body: &[u8]) -> bool {
     if body.starts_with(b"0\r\n\r\n") || body.ends_with(b"0\r\n\r\n") {
         return true;
     }
+    if body.ends_with(b"\r\n0\r\n\r\n") {
+        return true;
+    }
+    for w in body.windows(7) {
+        if w == b"\r\n0\r\n\r\n" {
+            return true;
+        }
+    }
     for w in body.windows(5) {
-        if w == b"\r\n0\r\n" {
+        if w == b"0\r\n\r\n" {
             return true;
         }
     }
@@ -2532,6 +2540,10 @@ pub fn decode_chunked_body(raw: &[u8], out: &mut [u8]) -> Result<usize, ()> {
             hex_slice = &hex_slice[..semi];
         }
         let hex_slice = hex_slice.trim_ascii();
+        if hex_slice.is_empty() {
+            src_idx = line_end + 1;
+            continue;
+        }
 
         let mut chunk_size: usize = 0;
         for &b in hex_slice {

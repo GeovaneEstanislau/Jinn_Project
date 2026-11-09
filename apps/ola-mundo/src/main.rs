@@ -1983,7 +1983,15 @@ unsafe fn fetch_http_document(
                 if n > 0 {
                     rx_total += n as usize;
                     idle_spins = 0;
+                    print_str(b"[TLS-HTTP-RX] Recebidos ");
+                    print_u64(n as u64);
+                    print_str(b" bytes cifrados (acumulado cifrado: ");
+                    print_u64(rx_total as u64);
+                    print_str(b", decifrado: ");
+                    print_u64(plain_total as u64);
+                    print_str(b")\n");
                 } else if n == 0 {
+                    print_str(b"[TLS-HTTP-RX] Conexao TLS encerrada pelo servidor (EOF)\n");
                     break;
                 } else if n == -11 {
                     idle_spins += 1;
@@ -2003,31 +2011,46 @@ unsafe fn fetch_http_document(
             loop {
                 let space = 32768 - rx_total;
                 if space == 0 {
+                    print_str(b"[BROWSER-NET] Buffer de recepcao cheio (32 KiB)!\n");
                     break;
                 }
                 let n = sys_recv(sockfd, rx_ptr.add(rx_total), space);
                 if n > 0 {
                     rx_total += n as usize;
                     idle_spins = 0;
+                    print_str(b"[HTTP-RX] Recebidos ");
+                    print_u64(n as u64);
+                    print_str(b" bytes (acumulado: ");
+                    print_u64(rx_total as u64);
+                    print_str(b")\n");
                     let rx_slice = core::slice::from_raw_parts(rx_ptr as *const u8, rx_total);
                     if let Some(hdr) = browser::parse_http_response_header(rx_slice) {
                         if let Some(cl) = hdr.content_length {
                             if rx_total >= hdr.header_len + cl {
+                                print_str(b"[HTTP-RX] Corpo completo recebido por Content-Length (");
+                                print_u64(cl as u64);
+                                print_str(b" bytes)\n");
                                 break;
                             }
                         } else if hdr.is_chunked {
                             let body_part = &rx_slice[hdr.header_len..];
                             if browser::has_chunked_terminator(body_part) {
+                                print_str(b"[HTTP-RX] Terminador de chunked transfer detectado!\n");
                                 break;
                             }
                         }
                     }
                 } else if n == 0 {
+                    print_str(b"[HTTP-RX] Conexao fechada pelo servidor (EOF), total recebido: ");
+                    print_u64(rx_total as u64);
+                    print_str(b" bytes\n");
                     break;
                 } else if n == -11 {
                     idle_spins += 1;
                     if idle_spins > 600 {
-                        print_str(b"[BROWSER-NET] Timeout de recepcao atingido (3.0s)\n");
+                        print_str(b"[BROWSER-NET] Timeout de recepcao atingido (3.0s, recebidos ");
+                        print_u64(rx_total as u64);
+                        print_str(b" bytes)\n");
                         let _ = sys_close(sockfd);
                         return Err(FetchError::RecvTimeout);
                     }
@@ -2053,6 +2076,15 @@ unsafe fn fetch_http_document(
 
         print_str(b"[BROWSER-NET] HTTP Status: ");
         print_u64(hdr.status_code as u64);
+        print_str(b", Header-Len: ");
+        print_u64(hdr.header_len as u64);
+        if let Some(cl) = hdr.content_length {
+            print_str(b", Content-Length: ");
+            print_u64(cl as u64);
+        }
+        if hdr.is_chunked {
+            print_str(b", Transfer-Encoding: chunked");
+        }
         print_str(b"\n");
 
         // 301 / 302 Redirection
@@ -2088,17 +2120,30 @@ unsafe fn fetch_http_document(
         // Extracao de corpo HTTP 200
         let body_bytes = &rx_slice[hdr.header_len..];
         if hdr.is_chunked {
-            print_str(b"[BROWSER-NET] Decodificando Transfer-Encoding: chunked...\n");
+            print_str(b"[BROWSER-NET] Decodificando Transfer-Encoding: chunked (raw ");
+            print_u64(body_bytes.len() as u64);
+            print_str(b" bytes)...\n");
             match browser::decode_chunked_body(body_bytes, out_buf) {
-                Ok(decoded_len) => return Ok(decoded_len),
+                Ok(decoded_len) => {
+                    print_str(b"[BROWSER-NET] Chunked decodificado: ");
+                    print_u64(decoded_len as u64);
+                    print_str(b" bytes entregues ao renderizador\n");
+                    return Ok(decoded_len);
+                }
                 Err(_) => {
+                    print_str(b"[BROWSER-NET] AVISO: Falha ao decodificar chunked; repassando bruto (");
                     let copy_len = body_bytes.len().min(out_buf.len());
+                    print_u64(copy_len as u64);
+                    print_str(b" bytes)\n");
                     out_buf[..copy_len].copy_from_slice(&body_bytes[..copy_len]);
                     return Ok(copy_len);
                 }
             }
         } else {
             let copy_len = body_bytes.len().min(out_buf.len());
+            print_str(b"[BROWSER-NET] Corpo HTTP entregue ao renderizador: ");
+            print_u64(copy_len as u64);
+            print_str(b" bytes\n");
             out_buf[..copy_len].copy_from_slice(&body_bytes[..copy_len]);
             return Ok(copy_len);
         }

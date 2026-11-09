@@ -10,6 +10,7 @@ pub const MAX_SOCKETS: usize = 32;
 pub const MAX_BACKLOG: usize = 8;
 pub const MAX_SYN_BACKLOG: usize = 8;
 pub const SOCK_RX_BUF_SIZE: usize = 1536;
+pub const SOCK_RX_STREAM_SIZE: usize = 32768; // 32 KiB por socket para fluxo continuo HTTP/TCP
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -22,6 +23,7 @@ pub struct SockAddrIn {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Socket {
+    pub sock_idx: usize,
     pub owner_pid: usize,
     pub sock_type: u32,
     pub local_port: u16,
@@ -43,16 +45,16 @@ pub struct Socket {
     pub accept_queue: [Option<usize>; MAX_BACKLOG],
     pub accept_count: usize,
 
-    // Fila circular de recepção para o socket
-    pub rx_buf: [[u8; SOCK_RX_BUF_SIZE]; 4],
-    pub rx_len: [usize; 4],
+    // Buffer circular de recepcao continua (Stream Ring Buffer de 32 KiB)
     pub rx_head: usize,
     pub rx_tail: usize,
+    pub rx_len: usize,
 }
 
 impl Socket {
     pub const fn empty() -> Self {
         Self {
+            sock_idx: 0,
             owner_pid: 0,
             sock_type: 0,
             local_port: 0,
@@ -67,10 +69,9 @@ impl Socket {
             syn_count: 0,
             accept_queue: [None; MAX_BACKLOG],
             accept_count: 0,
-            rx_buf: [[0; SOCK_RX_BUF_SIZE]; 4],
-            rx_len: [0; 4],
             rx_head: 0,
             rx_tail: 0,
+            rx_len: 0,
         }
     }
 
@@ -147,31 +148,69 @@ impl Socket {
         }
     }
 
-    /// Enfileira dados recebidos da rede na fila do socket
-    pub fn push_rx(&mut self, data: &[u8]) -> bool {
-        let next_head = (self.rx_head + 1) % 4;
-        if next_head == self.rx_tail {
-            return false; // Fila cheia
-        }
-        let len = data.len().min(SOCK_RX_BUF_SIZE);
-        self.rx_buf[self.rx_head][..len].copy_from_slice(&data[..len]);
-        self.rx_len[self.rx_head] = len;
-        self.rx_head = next_head;
-        true
+    /// Retorna o espaço disponível no buffer circular de recepção (em bytes)
+    pub fn rx_available_space(&self) -> usize {
+        SOCK_RX_STREAM_SIZE.saturating_sub(self.rx_len)
     }
 
-    /// Desenfileira dados recebidos para o buffer de destino
-    pub fn pop_rx(&mut self, dest: &mut [u8]) -> Option<usize> {
-        if self.rx_head == self.rx_tail {
-            return None; // Fila vazia
+    /// Enfileira dados recebidos da rede no buffer de fluxo contínuo (Stream Ring Buffer).
+    /// Retorna a quantidade exata de bytes absorvidos.
+    pub fn push_rx(&mut self, data: &[u8]) -> usize {
+        if self.sock_idx >= MAX_SOCKETS || data.is_empty() {
+            return 0;
         }
-        let len = self.rx_len[self.rx_tail].min(dest.len());
-        dest[..len].copy_from_slice(&self.rx_buf[self.rx_tail][..len]);
-        self.rx_tail = (self.rx_tail + 1) % 4;
-        Some(len)
+        let avail = self.rx_available_space();
+        let to_store = data.len().min(avail);
+        if to_store == 0 {
+            return 0;
+        }
+
+        unsafe {
+            let buf = &mut SOCKET_RX_BUFFERS[self.sock_idx];
+            let part1 = to_store.min(SOCK_RX_STREAM_SIZE - self.rx_head);
+            buf[self.rx_head..self.rx_head + part1].copy_from_slice(&data[..part1]);
+            let part2 = to_store - part1;
+            if part2 > 0 {
+                buf[..part2].copy_from_slice(&data[part1..to_store]);
+            }
+        }
+
+        self.rx_head = (self.rx_head + to_store) % SOCK_RX_STREAM_SIZE;
+        self.rx_len += to_store;
+        // Atualiza dinamicamente a janela de recepção anunciada (RFC 793)
+        self.tcb.local_win = self.rx_available_space().min(65535) as u16;
+        to_store
+    }
+
+    /// Desenfileira dados recebidos para o buffer de destino preservando bytes não lidos.
+    pub fn pop_rx(&mut self, dest: &mut [u8]) -> Option<usize> {
+        if self.sock_idx >= MAX_SOCKETS || self.rx_len == 0 {
+            return None; // Sem dados no momento
+        }
+        let to_read = dest.len().min(self.rx_len);
+        if to_read == 0 {
+            return Some(0);
+        }
+
+        unsafe {
+            let buf = &SOCKET_RX_BUFFERS[self.sock_idx];
+            let part1 = to_read.min(SOCK_RX_STREAM_SIZE - self.rx_tail);
+            dest[..part1].copy_from_slice(&buf[self.rx_tail..self.rx_tail + part1]);
+            let part2 = to_read - part1;
+            if part2 > 0 {
+                dest[part1..to_read].copy_from_slice(&buf[..part2]);
+            }
+        }
+
+        self.rx_tail = (self.rx_tail + to_read) % SOCK_RX_STREAM_SIZE;
+        self.rx_len -= to_read;
+        // Atualiza dinamicamente a janela de recepção anunciada (RFC 793)
+        self.tcb.local_win = self.rx_available_space().min(65535) as u16;
+        Some(to_read)
     }
 }
 
+pub static mut SOCKET_RX_BUFFERS: [[u8; SOCK_RX_STREAM_SIZE]; MAX_SOCKETS] = [[0; SOCK_RX_STREAM_SIZE]; MAX_SOCKETS];
 pub static mut SOCKET_TABLE: [Option<Socket>; MAX_SOCKETS] = [None; MAX_SOCKETS];
 pub static mut NEXT_EPHEMERAL_PORT: u16 = 40000;
 
@@ -192,6 +231,7 @@ pub fn create_socket(pid: usize, domain: u32, sock_type: u32, _protocol: u32) ->
         for (idx, slot) in SOCKET_TABLE.iter_mut().enumerate() {
             if slot.is_none() {
                 let mut sock = Socket::empty();
+                sock.sock_idx = idx;
                 sock.owner_pid = pid;
                 sock.sock_type = sock_type;
                 *slot = Some(sock);
@@ -241,9 +281,11 @@ pub fn bind_socket(pid: usize, sockfd: usize, local_port: u16) -> Result<(), isi
 /// Para UDP (SOCK_DGRAM), apenas registra o endpoint remoto.
 /// Para TCP (SOCK_STREAM), executa o handshake de 3 vias (SYN -> SYN-ACK -> ACK) com timeout e retransmissões.
 pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port: u16) -> Result<(), isize> {
-    // Validação estrita de interface de rede física/virtual
+    let is_loopback = remote_ip[0] == 127 || remote_ip == [127, 0, 0, 1];
+
+    // Validação estrita de interface de rede física/virtual (dispensada para loopback interno)
     let dev_avail = crate::drivers::net::get_device().map(|d| d.is_available()).unwrap_or(false);
-    if !dev_avail {
+    if !is_loopback && !dev_avail {
         return Err(ENETDOWN);
     }
 
@@ -291,8 +333,10 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
         }
     }
 
-    // Garante resolucao de proximo salto (gateway para IPs externos ou host local)
-    let _ = crate::net::arp::resolve_mac_for_ip(remote_ip);
+    // Garante resolucao de proximo salto se não for loopback
+    if !is_loopback {
+        let _ = crate::net::arp::resolve_mac_for_ip(remote_ip);
+    }
 
     let syn_seq = unsafe { SOCKET_TABLE[sockfd].as_ref().unwrap().tcb.local_seq };
     crate::net::NET_DIAGNOSTICS.record_tcp_syn_sent();
@@ -717,7 +761,7 @@ pub fn dispatch_incoming_packet(proto: u8, src_ip: [u8; 4], src_port: u16, dst_p
                 if sock.sock_type == sock_type && sock.local_port != 0 && sock.local_port == dst_port {
                     // Se o socket estiver conectado a um endpoint específico, valida IP e porta remotos
                     if !sock.is_connected || (sock.remote_ip == src_ip && (sock.remote_port == src_port || sock.remote_port == 0)) {
-                        return sock.push_rx(payload);
+                        return sock.push_rx(payload) > 0;
                     }
                 }
             }
@@ -728,6 +772,9 @@ pub fn dispatch_incoming_packet(proto: u8, src_ip: [u8; 4], src_port: u16, dst_p
 
 /// Recebe dados do buffer do socket para o espaço de usuário.
 pub fn recv_socket(pid: usize, sockfd: usize, dest: &mut [u8]) -> Result<usize, isize> {
+    if dest.is_empty() {
+        return Ok(0);
+    }
     crate::net::poll();
     unsafe {
         let sock = match SOCKET_TABLE.get_mut(sockfd).and_then(|s| s.as_mut()) {
@@ -738,7 +785,24 @@ pub fn recv_socket(pid: usize, sockfd: usize, dest: &mut [u8]) -> Result<usize, 
             return Err(EPERM);
         }
         match sock.pop_rx(dest) {
-            Some(len) => Ok(len),
+            Some(len) => {
+                // Notificação de abertura de janela (Window Update ACK) quando há espaço recuperado
+                if sock.sock_type == SOCK_STREAM && sock.tcb.state == crate::net::tcp::TcpState::Established {
+                    if sock.tcb.local_win >= 2048 {
+                        crate::net::tcp::send_tcp_packet(
+                            sock.local_port,
+                            sock.remote_ip,
+                            sock.remote_port,
+                            sock.tcb.local_seq,
+                            sock.tcb.remote_seq,
+                            crate::net::tcp::TCP_FLAG_ACK,
+                            sock.tcb.local_win,
+                            &[],
+                        );
+                    }
+                }
+                Ok(len)
+            }
             None => {
                 if sock.sock_type == SOCK_STREAM {
                     if sock.tcb.state == crate::net::tcp::TcpState::CloseWait

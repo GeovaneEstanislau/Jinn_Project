@@ -10,7 +10,7 @@ pub const TCP_FLAG_PSH: u8 = 0x08;
 pub const TCP_FLAG_ACK: u8 = 0x10;
 pub const TCP_FLAG_URG: u8 = 0x20;
 
-pub const TCP_DEFAULT_WINDOW: u16 = 4096;
+pub const TCP_DEFAULT_WINDOW: u16 = 32768;
 pub const TCP_DEFAULT_RTO_TICKS: u64 = 100; // 1 segundo (100 Hz timer)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,6 +261,57 @@ pub fn write_segment(
     total_len
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct LoopbackFrame {
+    pub sender_ip: [u8; 4],
+    pub dst_ip: [u8; 4],
+    pub len: usize,
+    pub data: [u8; 1536],
+}
+
+pub static mut LOOPBACK_QUEUE: [Option<LoopbackFrame>; 16] = [None; 16];
+pub static mut LOOPBACK_HEAD: usize = 0;
+pub static mut LOOPBACK_TAIL: usize = 0;
+pub static mut LOOPBACK_COUNT: usize = 0;
+static LOOPBACK_DRAINING: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+pub fn enqueue_loopback(sender_ip: [u8; 4], dst_ip: [u8; 4], data: &[u8]) -> bool {
+    unsafe {
+        if LOOPBACK_COUNT >= 16 {
+            return false;
+        }
+        let mut frame = LoopbackFrame {
+            sender_ip,
+            dst_ip,
+            len: data.len().min(1536),
+            data: [0; 1536],
+        };
+        frame.data[..frame.len].copy_from_slice(&data[..frame.len]);
+        LOOPBACK_QUEUE[LOOPBACK_HEAD] = Some(frame);
+        LOOPBACK_HEAD = (LOOPBACK_HEAD + 1) % 16;
+        LOOPBACK_COUNT += 1;
+        true
+    }
+}
+
+pub fn drain_loopback() {
+    if LOOPBACK_DRAINING.compare_exchange(false, true, core::sync::atomic::Ordering::Acquire, core::sync::atomic::Ordering::Relaxed).is_err() {
+        return;
+    }
+    unsafe {
+        while LOOPBACK_COUNT > 0 {
+            if let Some(frame) = LOOPBACK_QUEUE[LOOPBACK_TAIL].take() {
+                LOOPBACK_TAIL = (LOOPBACK_TAIL + 1) % 16;
+                LOOPBACK_COUNT -= 1;
+                if let Ok(pkt) = TcpPacket::parse(&frame.data[..frame.len]) {
+                    handle_incoming_tcp_packet(frame.sender_ip, frame.dst_ip, &pkt);
+                }
+            }
+        }
+    }
+    LOOPBACK_DRAINING.store(false, core::sync::atomic::Ordering::Release);
+}
+
 /// Constrói e transmite um pacote TCP completo (Ethernet + IPv4 + TCP Segment).
 pub fn send_tcp_packet(
     src_port: u16,
@@ -273,6 +324,30 @@ pub fn send_tcp_packet(
     payload: &[u8],
 ) -> bool {
     let our_ip = unsafe { crate::net::dhcp::DHCP_CLIENT.ip };
+
+    // Roteamento de loopback direto (127.0.0.0/8 ou nosso proprio IP)
+    if dst_ip[0] == 127 || (our_ip != [0, 0, 0, 0] && dst_ip == our_ip) {
+        let sender_ip = if dst_ip[0] == 127 { [127, 0, 0, 1] } else { our_ip };
+        let mut loop_buf = [0u8; 1536];
+        let written = write_segment(
+            &mut loop_buf,
+            sender_ip,
+            dst_ip,
+            src_port,
+            dst_port,
+            seq_num,
+            ack_num,
+            flags,
+            window_size,
+            payload,
+        );
+        if written > 0 {
+            let ok = enqueue_loopback(sender_ip, dst_ip, &loop_buf[..written]);
+            drain_loopback();
+            return ok;
+        }
+        return false;
+    }
     let our_mac = crate::drivers::net::get_device()
         .map(|d| d.mac_address())
         .unwrap_or([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
@@ -459,6 +534,7 @@ fn process_listen_tcp_event(listening_idx: usize, src_ip: [u8; 4], tcp: &TcpPack
             for (idx, slot) in crate::net::socket::SOCKET_TABLE.iter_mut().enumerate() {
                 if slot.is_none() {
                     let mut child = crate::net::socket::Socket::empty();
+                    child.sock_idx = idx;
                     child.owner_pid = owner_pid;
                     child.sock_type = crate::net::socket::SOCK_STREAM;
                     child.local_port = listening_port;
@@ -640,21 +716,27 @@ fn process_connected_tcp_event(sock_idx: usize, src_ip: [u8; 4], tcp: &TcpPacket
                 let diff = tcp.seq_num.wrapping_sub(sock.tcb.remote_seq) as i32;
 
                 if diff == 0 {
-                    // Segmento contíguo esperado
-                    let _ = sock.push_rx(tcp.payload);
-                    sock.tcb.remote_seq = sock.tcb.remote_seq.wrapping_add(tcp.payload.len() as u32);
+                    // Segmento contíguo esperado: armazena no buffer de fluxo e avança sequência pelos bytes absorvidos
+                    let stored = sock.push_rx(tcp.payload);
+                    sock.tcb.remote_seq = sock.tcb.remote_seq.wrapping_add(stored as u32);
 
                     // Verifica se o buffer de fora-de-ordem conecta contiguamente agora
                     if sock.tcb.ooo_len > 0 && sock.tcb.ooo_seq == sock.tcb.remote_seq {
                         let mut temp_ooo = [0u8; 1536];
                         let ooo_len = sock.tcb.ooo_len.min(1536);
                         temp_ooo[..ooo_len].copy_from_slice(&sock.tcb.ooo_buf[..ooo_len]);
-                        let _ = sock.push_rx(&temp_ooo[..ooo_len]);
-                        sock.tcb.remote_seq = sock.tcb.remote_seq.wrapping_add(ooo_len as u32);
-                        sock.tcb.ooo_len = 0;
+                        let ooo_stored = sock.push_rx(&temp_ooo[..ooo_len]);
+                        sock.tcb.remote_seq = sock.tcb.remote_seq.wrapping_add(ooo_stored as u32);
+                        if ooo_stored == ooo_len {
+                            sock.tcb.ooo_len = 0;
+                        } else {
+                            sock.tcb.ooo_buf.copy_within(ooo_stored..ooo_len, 0);
+                            sock.tcb.ooo_len -= ooo_stored;
+                            sock.tcb.ooo_seq = sock.tcb.ooo_seq.wrapping_add(ooo_stored as u32);
+                        }
                     }
 
-                    // Responde com ACK imediato com a sequência atualizada
+                    // Responde com ACK imediato com a sequência atualizada e janela anunciada dinâmica
                     send_tcp_packet(
                         sock.local_port,
                         src_ip,
@@ -672,8 +754,8 @@ fn process_connected_tcp_event(sock_idx: usize, src_ip: [u8; 4], tcp: &TcpPacket
                         let skip = sock.tcb.remote_seq.wrapping_sub(tcp.seq_num) as usize;
                         if skip < tcp.payload.len() {
                             let new_data = &tcp.payload[skip..];
-                            let _ = sock.push_rx(new_data);
-                            sock.tcb.remote_seq = sock.tcb.remote_seq.wrapping_add(new_data.len() as u32);
+                            let stored = sock.push_rx(new_data);
+                            sock.tcb.remote_seq = sock.tcb.remote_seq.wrapping_add(stored as u32);
                         }
                     }
                     // Emite ACK repetido confirmando o ponto de sequência esperado
