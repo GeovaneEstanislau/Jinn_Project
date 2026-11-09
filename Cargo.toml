@@ -5,6 +5,11 @@ edition = "2021"
 license-file = "LICENSE"
 description = "Minimalist and preemptive x86_64 microkernel in Rust"
 
+[[bin]]
+name = "jinn"
+path = "src/main.rs"
+test = false
+
 [dependencies]
 aladdin = { path = "../Aladdin", default-features = false }
 
