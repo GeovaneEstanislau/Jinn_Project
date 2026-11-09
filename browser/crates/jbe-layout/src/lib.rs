@@ -181,7 +181,16 @@ pub fn layout_box(box_node: &mut LayoutBox, containing_block: &Rect) {
         + box_node.dimensions.padding.right;
 
     let content_width = if let Some(w) = box_node.style.width {
-        w
+        match box_node.style.box_sizing {
+            jbe_css::BoxSizing::BorderBox => {
+                let bp = box_node.dimensions.border.left
+                    + box_node.dimensions.border.right
+                    + box_node.dimensions.padding.left
+                    + box_node.dimensions.padding.right;
+                (w - bp).max(0.0)
+            }
+            jbe_css::BoxSizing::ContentBox => w,
+        }
     } else {
         (containing_block.width - total_h_extras).max(0.0)
     };
@@ -225,7 +234,18 @@ pub fn layout_box(box_node: &mut LayoutBox, containing_block: &Rect) {
 
         // Content height is either explicitly specified or calculated from children
         if let Some(h) = box_node.style.height {
-            box_node.dimensions.content.height = h;
+            match box_node.style.box_sizing {
+                jbe_css::BoxSizing::BorderBox => {
+                    let bp = box_node.dimensions.border.top
+                        + box_node.dimensions.border.bottom
+                        + box_node.dimensions.padding.top
+                        + box_node.dimensions.padding.bottom;
+                    box_node.dimensions.content.height = (h - bp).max(0.0);
+                }
+                jbe_css::BoxSizing::ContentBox => {
+                    box_node.dimensions.content.height = h;
+                }
+            }
         } else {
             box_node.dimensions.content.height = cursor_y;
         }

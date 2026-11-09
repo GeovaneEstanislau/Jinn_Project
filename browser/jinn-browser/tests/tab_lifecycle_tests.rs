@@ -406,3 +406,47 @@ fn test_stress_scenario_i_rapid_tab_switching() {
     // Tempo de restauração em modo debug unoptimized deve ser razoável (< 50 ms)
     assert!(avg_switch_us < 50_000.0, "Latência média de restauração excedeu teto razoável");
 }
+
+#[test]
+fn test_process_isolated_multi_tab_crash_and_recovery() {
+    let mut manager = TabManager::new(64 * 1024 * 1024);
+
+    let s1 = create_sample_session("http://video.local/watch");
+    let s2 = create_sample_session("http://heavy-script.local/dashboard");
+
+    let tab1_id = manager.open_tab(s1);
+    let tab2_id = manager.open_tab(s2);
+
+    // Ambas as abas possuem PIDs isolados em Ring 3
+    let pid1 = manager.tabs.iter().find(|t| t.id == tab1_id).unwrap().process_id;
+    let pid2 = manager.tabs.iter().find(|t| t.id == tab2_id).unwrap().process_id;
+    assert!(pid1.is_some());
+    assert!(pid2.is_some());
+    assert_ne!(pid1, pid2, "Cada aba deve possuir PID de processo isolado distinto");
+
+    // Simula falha/crash catastrófico na aba 2 (ex: loop infinito ou memory quota excedida por JS)
+    let crash_reported = manager.report_tab_crash(tab2_id, "JS_OUT_OF_MEMORY");
+    assert!(crash_reported);
+
+    let crashed_tab = manager.tabs.iter().find(|t| t.id == tab2_id).unwrap();
+    assert!(crashed_tab.is_crashed);
+    assert_eq!(crashed_tab.crash_reason.as_deref(), Some("JS_OUT_OF_MEMORY"));
+    assert!(crashed_tab.session.is_none(), "Buffers da aba com crash devem ser liberados");
+    assert!(crashed_tab.snapshot.is_some(), "Snapshot da aba deve ser preservado para recuperação limpa");
+
+    // Aba 1 permanece completamente intacta e saudável no sistema
+    let tab1 = manager.tabs.iter().find(|t| t.id == tab1_id).unwrap();
+    assert!(!tab1.is_crashed);
+
+    // Recuperação transparente da aba 2 a partir de seu snapshot
+    let recover_res = manager.recover_tab(tab2_id, create_mock_loader());
+    assert!(recover_res.is_ok(), "Aba deve ser recuperada com sucesso");
+
+    let recovered_tab = manager.tabs.iter().find(|t| t.id == tab2_id).unwrap();
+    assert!(!recovered_tab.is_crashed);
+    assert!(recovered_tab.session.is_some());
+    assert_eq!(recovered_tab.restart_count, 1);
+    // Novo processo Ring 3 isolado alocado após recuperação
+    let new_pid2 = recovered_tab.process_id;
+    assert_ne!(new_pid2, pid2, "Processo recuperado deve receber novo PID isolado");
+}

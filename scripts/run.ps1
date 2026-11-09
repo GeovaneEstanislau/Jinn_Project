@@ -1,4 +1,4 @@
-﻿# run.ps1 - Gera a ISO com Limine e inicia o QEMU
+# run.ps1 - Gera a ISO com Limine e inicia o QEMU
 param(
     [switch]$NoRun,
     [string]$IsoPath = "jinn.iso",

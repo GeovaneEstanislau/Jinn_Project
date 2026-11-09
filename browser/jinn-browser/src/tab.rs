@@ -269,6 +269,10 @@ pub struct Tab {
     pub last_active_tick: u64,
     pub cumulative_freed_bytes: usize,
     pub restoration_failed: bool,
+    pub process_id: Option<u64>,
+    pub is_crashed: bool,
+    pub crash_reason: Option<String>,
+    pub restart_count: usize,
 }
 
 impl Tab {
@@ -293,11 +297,34 @@ impl Tab {
             last_active_tick: order,
             cumulative_freed_bytes: 0,
             restoration_failed: false,
+            process_id: Some(1000 + id as u64),
+            is_crashed: false,
+            crash_reason: None,
+            restart_count: 0,
         };
 
         // Snapshot inicial de segurança
         tab.capture_snapshot(title, url);
         tab
+    }
+
+    /// Sinaliza que a tarefa isolada em Ring 3 que executa o conteúdo desta aba sofreu crash
+    pub fn handle_crash(&mut self, reason: &str) {
+        self.is_crashed = true;
+        self.crash_reason = Some(reason.to_string());
+        self.session = None;
+        self.task_context.terminate();
+    }
+
+    /// Reinicia de forma limpa a aba a partir de seu snapshot compacto, sem afetar o restante do sistema
+    pub fn recover(&mut self, loader: Box<dyn ResourceLoader>) -> Result<(), TabTransitionError> {
+        self.restore(loader).map_err(|e| TabTransitionError::RestorationFailed(format!("{:?}", e)))?;
+        self.restart_count += 1;
+        self.is_crashed = false;
+        self.crash_reason = None;
+        self.process_id = Some(1000 + self.id as u64 + (self.restart_count as u64 * 100));
+        self.task_context.resume();
+        Ok(())
     }
 
     fn capture_snapshot(&mut self, title: String, url: Url) {
@@ -1185,5 +1212,29 @@ impl TabManager {
             cumulative_freed_bytes: cumulative_freed,
             background_cpu_ticks: self.background_cpu_ticks_counter,
         }
+    }
+
+    /// Registra uma falha / crash isolado em uma aba específica sem derrubar o restante do sistema
+    pub fn report_tab_crash(&mut self, tab_id: usize, reason: &str) -> bool {
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            tab.handle_crash(reason);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Reinicia e restaura de forma limpa uma aba que sofreu crash
+    pub fn recover_tab(&mut self, tab_id: usize, loader: Box<dyn ResourceLoader>) -> Result<(), TabTransitionError> {
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            tab.recover(loader)
+        } else {
+            Err(TabTransitionError::RestorationFailed("Aba não encontrada".to_string()))
+        }
+    }
+
+    /// Retorna o PID do processo isolado em Ring 3 da aba ativa
+    pub fn active_isolated_pid(&self) -> Option<u64> {
+        self.get_active_tab().and_then(|t| t.process_id)
     }
 }

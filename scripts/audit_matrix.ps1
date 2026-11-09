@@ -1,4 +1,4 @@
-﻿# scripts/audit_matrix.ps1 - Executa a Matriz de Compatibilidade de Hardware do Jinn OS
+# scripts/audit_matrix.ps1 - Executa a Matriz de Compatibilidade de Hardware do Jinn OS
 param(
     [string]$Group = "ALL", # "CPU", "RAM", "SMP", "ALL"
     [switch]$SkipBuild
@@ -129,3 +129,4 @@ Write-Host "========================================================"
 Write-Host "RESUMO DA MATRIZ DE AUDITORIA DE HARDWARE JINN OS"
 Write-Host "========================================================"
 $results | Format-Table -AutoSize
+

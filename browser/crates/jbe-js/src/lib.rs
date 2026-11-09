@@ -907,7 +907,7 @@ impl JsRuntime {
                         }
                     }
 
-                    // Check for element.addEventListener("click", handler)
+                    // Check for element.addEventListener("click", handler), setAttribute, getAttribute
                     if let JsValue::Element(elem_id) = obj {
                         if method_name == "addEventListener" && args.len() >= 2 {
                             let ev = self.eval_expr(&args[0], dom)?.to_string_val();
@@ -917,6 +917,17 @@ impl JsRuntime {
                             };
                             self.event_listeners.insert((elem_id, ev), handler);
                             return Ok(JsValue::Undefined);
+                        }
+                        if method_name == "setAttribute" && args.len() >= 2 {
+                            let attr_name = self.eval_expr(&args[0], dom)?.to_string_val();
+                            let attr_val = self.eval_expr(&args[1], dom)?.to_string_val();
+                            let _ = dom.set_attribute(elem_id, &attr_name, &attr_val);
+                            return Ok(JsValue::Undefined);
+                        }
+                        if method_name == "getAttribute" && !args.is_empty() {
+                            let attr_name = self.eval_expr(&args[0], dom)?.to_string_val();
+                            let val = dom.get(elem_id).and_then(|n| n.get_attribute(&attr_name)).unwrap_or("").to_string();
+                            return Ok(JsValue::String(val));
                         }
                     }
                 }

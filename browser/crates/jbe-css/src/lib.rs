@@ -34,10 +34,19 @@ pub enum TextAlign {
     Right,
 }
 
+/// CSS box-sizing property value (W3C Box Model).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BoxSizing {
+    #[default]
+    ContentBox,
+    BorderBox,
+}
+
 /// Fully computed CSS style for a DOM node.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComputedStyle {
     pub display: Display,
+    pub box_sizing: BoxSizing,
     pub color: Color,
     pub background_color: Option<Color>,
     pub width: Option<f32>,
@@ -55,6 +64,7 @@ impl Default for ComputedStyle {
     fn default() -> Self {
         Self {
             display: Display::Inline,
+            box_sizing: BoxSizing::ContentBox,
             color: Color::WHITE,
             background_color: None,
             width: None,
@@ -74,6 +84,7 @@ impl Default for ComputedStyle {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Property {
     Display(Display),
+    BoxSizing(BoxSizing),
     Color(Color),
     BackgroundColor(Option<Color>),
     Width(Option<f32>),
@@ -96,16 +107,17 @@ pub enum Property {
     TextAlign(TextAlign),
 }
 
-/// A simple CSS selector.
+/// A simple CSS selector with support for tag, class, id and pseudo-classes (:hover, :active).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selector {
     pub tag: Option<String>,
     pub class: Option<String>,
     pub id: Option<String>,
+    pub pseudo_class: Option<String>,
 }
 
 impl Selector {
-    /// Computes selector specificity (ID: 100, Class: 10, Tag: 1).
+    /// Computes selector specificity (ID: 100, Class/Pseudo-class: 10, Tag: 1).
     pub fn specificity(&self) -> u32 {
         let mut score = 0;
         if self.id.is_some() {
@@ -114,14 +126,40 @@ impl Selector {
         if self.class.is_some() {
             score += 10;
         }
+        if self.pseudo_class.is_some() {
+            score += 10;
+        }
         if self.tag.is_some() {
             score += 1;
         }
         score
     }
 
-    /// Checks if this selector matches a DOM node.
+    /// Checks if this selector matches a DOM node in default state.
     pub fn matches(&self, node: &Node) -> bool {
+        if self.pseudo_class.is_some() {
+            return false;
+        }
+        self.matches_base(node)
+    }
+
+    /// Checks if this selector matches a DOM node given interactive states (:hover, :active).
+    pub fn matches_state(&self, node: &Node, is_hover: bool, is_active: bool) -> bool {
+        if !self.matches_base(node) {
+            return false;
+        }
+        if let Some(ref pc) = self.pseudo_class {
+            if pc == "hover" && !is_hover {
+                return false;
+            }
+            if pc == "active" && !is_active {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn matches_base(&self, node: &Node) -> bool {
         if let NodeType::Element { tag_name, .. } = &node.node_type {
             if let Some(ref req_tag) = self.tag {
                 if req_tag != "*" && !req_tag.eq_ignore_ascii_case(tag_name) {
@@ -273,7 +311,7 @@ impl StyleSheet {
     }
 }
 
-/// Parses a simple CSS selector string (e.g. "h1", ".box", "#main", "div.card").
+/// Parses a simple CSS selector string (e.g. "h1", ".box", "#main", "div.card", "a:hover", "button:active").
 pub fn parse_selector(s: &str) -> Selector {
     let s = s.trim();
     if s.is_empty() {
@@ -281,28 +319,35 @@ pub fn parse_selector(s: &str) -> Selector {
             tag: None,
             class: None,
             id: None,
+            pseudo_class: None,
         };
     }
+
+    let (base_s, pseudo_class) = if let Some(colon_idx) = s.find(':') {
+        (&s[..colon_idx], Some(s[colon_idx + 1..].trim().to_ascii_lowercase()))
+    } else {
+        (s, None)
+    };
 
     let mut tag = None;
     let mut class = None;
     let mut id = None;
 
-    if let Some(rest) = s.strip_prefix('.') {
+    if let Some(rest) = base_s.strip_prefix('.') {
         class = Some(rest.to_string());
-    } else if let Some(rest) = s.strip_prefix('#') {
+    } else if let Some(rest) = base_s.strip_prefix('#') {
         id = Some(rest.to_string());
-    } else if let Some(dot_idx) = s.find('.') {
-        tag = Some(s[..dot_idx].to_ascii_lowercase());
-        class = Some(s[dot_idx + 1..].to_string());
-    } else if let Some(hash_idx) = s.find('#') {
-        tag = Some(s[..hash_idx].to_ascii_lowercase());
-        id = Some(s[hash_idx + 1..].to_string());
-    } else {
-        tag = Some(s.to_ascii_lowercase());
+    } else if let Some(dot_idx) = base_s.find('.') {
+        tag = Some(base_s[..dot_idx].to_ascii_lowercase());
+        class = Some(base_s[dot_idx + 1..].to_string());
+    } else if let Some(hash_idx) = base_s.find('#') {
+        tag = Some(base_s[..hash_idx].to_ascii_lowercase());
+        id = Some(base_s[hash_idx + 1..].to_string());
+    } else if !base_s.is_empty() {
+        tag = Some(base_s.to_ascii_lowercase());
     }
 
-    Selector { tag, class, id }
+    Selector { tag, class, id, pseudo_class }
 }
 
 /// Parses a declarations block (e.g. `color: red; margin: 10px;`).
@@ -330,6 +375,11 @@ fn parse_property(key: &str, val: &str) -> Option<Property> {
             "block" => Some(Property::Display(Display::Block)),
             "inline" => Some(Property::Display(Display::Inline)),
             "none" => Some(Property::Display(Display::None)),
+            _ => None,
+        },
+        "box-sizing" => match val.to_ascii_lowercase().as_str() {
+            "border-box" => Some(Property::BoxSizing(BoxSizing::BorderBox)),
+            "content-box" => Some(Property::BoxSizing(BoxSizing::ContentBox)),
             _ => None,
         },
         "color" => parse_color(val).map(Property::Color),
@@ -474,13 +524,24 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &Property) {
         Property::FontSize(fs) => style.font_size = *fs,
         Property::FontWeight(fw) => style.font_weight = *fw,
         Property::TextAlign(ta) => style.text_align = *ta,
+        Property::BoxSizing(bs) => style.box_sizing = *bs,
     }
 }
 
-/// Resolves computed styles for every node in a DOM tree.
+/// Resolves computed styles for every node in a DOM tree in default state.
 pub fn resolve_styles(
     dom: &DomTree,
     author_stylesheet: &StyleSheet,
+) -> HashMap<NodeId, ComputedStyle> {
+    resolve_styles_with_state(dom, author_stylesheet, None, None)
+}
+
+/// Resolves computed styles for every node in a DOM tree with interactive pseudo-class awareness (:hover, :active).
+pub fn resolve_styles_with_state(
+    dom: &DomTree,
+    author_stylesheet: &StyleSheet,
+    hover_node: Option<NodeId>,
+    active_node: Option<NodeId>,
 ) -> HashMap<NodeId, ComputedStyle> {
     let ua_sheet = StyleSheet::default_user_agent();
     let mut computed_map: HashMap<NodeId, ComputedStyle> = HashMap::new();
@@ -491,6 +552,9 @@ pub fn resolve_styles(
             Some(n) => n,
             None => continue,
         };
+
+        let is_hover = Some(node_id) == hover_node;
+        let is_active = Some(node_id) == active_node;
 
         // Determine base style: inherit inherited properties from parent if present
         let mut style = if let Some(parent_id) = node.parent {
@@ -515,7 +579,7 @@ pub fn resolve_styles(
         let mut matched_props: Vec<(u32, Property)> = Vec::new();
 
         for rule in &ua_sheet.rules {
-            if rule.selector.matches(node) {
+            if rule.selector.matches_state(node, is_hover, is_active) {
                 let spec = rule.selector.specificity();
                 for prop in &rule.properties {
                     matched_props.push((spec, prop.clone()));
@@ -524,7 +588,7 @@ pub fn resolve_styles(
         }
 
         for rule in &author_stylesheet.rules {
-            if rule.selector.matches(node) {
+            if rule.selector.matches_state(node, is_hover, is_active) {
                 let spec = 1000 + rule.selector.specificity();
                 for prop in &rule.properties {
                     matched_props.push((spec, prop.clone()));
