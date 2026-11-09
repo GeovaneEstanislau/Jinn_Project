@@ -17,7 +17,7 @@ pub const EXT2_FT_REG_FILE: u8  = 1;
 pub const EXT2_FT_DIR: u8       = 2;
 
 pub const MAX_EXT2_BLOCK_SIZE: usize = 4096;
-const MAX_OPEN_FILES: usize = 8;
+const MAX_OPEN_FILES: usize = 32;
 
 #[derive(Clone, Copy)]
 pub struct Ext2Inode {
@@ -784,12 +784,32 @@ impl FileSystem for Ext2Fs {
     fn open(&self, path: &str, flags: u32) -> VfsResult<u64> {
         if !self.is_mounted { return Err(VfsError::IoError); }
 
-        // Rejeita qualquer tentativa de abertura com intenção de escrita (Ext2 é estritamente Read-Only)
-        if (flags & (crate::vfs::O_WRONLY | crate::vfs::O_RDWR | crate::vfs::O_CREAT | crate::vfs::O_TRUNC | crate::vfs::O_APPEND)) != 0 {
-            return Err(VfsError::PermissionDenied);
+        let (ino, mut inode) = match self.resolve_path(path) {
+            Ok(res) => res,
+            Err(VfsError::NotFound) if (flags & crate::vfs::O_CREAT) != 0 => {
+                self.create(path)?;
+                self.resolve_path(path)?
+            }
+            Err(e) => return Err(e),
+        };
+
+        if inode.is_dir() {
+            return Err(VfsError::IsADirectory);
         }
 
-        let (ino, inode) = self.resolve_path(path)?;
+        // Truncamento se solicitado via O_TRUNC
+        if (flags & crate::vfs::O_TRUNC) != 0 && inode.size > 0 {
+            for i in 0..12 {
+                let blk = inode.direct_blocks[i];
+                if blk != 0 {
+                    let _ = self.free_block(blk);
+                    inode.direct_blocks[i] = 0;
+                }
+            }
+            inode.size = 0;
+            inode.blocks = 0;
+            let _ = self.write_inode(ino, &inode);
+        }
 
         unsafe {
             let fs_ptr = core::ptr::addr_of_mut!(EXT2_GLOBAL);
@@ -877,9 +897,18 @@ impl FileSystem for Ext2Fs {
 
             // Suporte para escrita em blocos diretos (0..12)
             if block_index < 12 {
-                let phys_block = inode.direct_blocks[block_index];
+                let mut phys_block = inode.direct_blocks[block_index];
                 if phys_block == 0 {
-                    return Err(VfsError::NoSpace);
+                    phys_block = self.alloc_block()?;
+                    inode.direct_blocks[block_index] = phys_block;
+                    inode.blocks += (block_sz / 512) as u32;
+                    self.write_inode(inode_num, &inode).map_err(|_| VfsError::IoError)?;
+                    unsafe {
+                        let fs_ptr = core::ptr::addr_of_mut!(EXT2_GLOBAL);
+                        if let Some(slot) = (*fs_ptr).open_files.get_mut(handle as usize) {
+                            slot.inode = inode;
+                        }
+                    }
                 }
                 let mut block_buf = [0u8; MAX_EXT2_BLOCK_SIZE];
                 self.read_block(phys_block, &mut block_buf[..block_sz]).map_err(|_| VfsError::IoError)?;

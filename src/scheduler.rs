@@ -72,7 +72,7 @@ pub fn avg_sched_cycles() -> u64 {
 pub const MAX_TASKS: usize = 64;
 
 /// Número máximo de descritores de arquivos e sockets por tarefa.
-pub const MAX_TASK_FDS: usize = 8;
+pub const MAX_TASK_FDS: usize = 32;
 
 /// Número máximo de páginas dinâmicas que uma tarefa pode alocar via sys_alloc_page.
 /// Quantidade máxima de páginas dinâmicas rastreadas por processo de usuário (4 MiB).
@@ -94,7 +94,7 @@ pub const USER_DMA_MAX:  u64 = 0x0000_6000_0000;
 #[derive(Debug, Clone, Copy)]
 pub struct TaskFileDescriptor {
     pub vfs_handle: u64,
-    pub path: [u8; 64],
+    pub path: [u8; crate::vfs::MAX_PATH_LEN],
     pub path_len: usize,
     pub offset: u64,
     pub flags: u32,

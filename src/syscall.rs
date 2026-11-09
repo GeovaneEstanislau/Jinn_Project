@@ -465,6 +465,9 @@ pub extern "C" fn syscall_dispatch(
         68 => sys_dma_device_reset_status(arg0 as u64, arg1 as u32),
         69 => sys_getrandom(arg0 as *mut u8, arg1, arg2 as u32),
         70 => sys_clock_gettime(arg0 as u32, arg1 as *mut Timespec),
+        71 => sys_creat(arg0 as *const u8, arg1, arg2 as u32),
+        83 => sys_mkdir(arg0 as *const u8, arg1),
+        85 => sys_creat(arg0 as *const u8, arg1, arg2 as u32),
         _  => ENOSYS,
     }
 }
@@ -504,7 +507,7 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
             }
             len as isize
         }
-        3..=7 => {
+        _ if fd >= 3 && fd < scheduler::MAX_TASK_FDS => {
             let pid = scheduler::current_pid();
             let sched = scheduler::get();
             if let Some(Some(task)) = sched.tasks.get_mut(pid) {
@@ -573,7 +576,7 @@ fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
             }
             count as isize
         }
-        3..=7 => {
+        _ if fd >= 3 && fd < scheduler::MAX_TASK_FDS => {
             let pid = scheduler::current_pid();
             let sched = scheduler::get();
             if let Some(Some(task)) = sched.tasks.get_mut(pid) {
@@ -615,7 +618,7 @@ fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
 
 /// `open(path_ptr, path_len, flags)` — Open a file from VFS and assign a task FD.
 fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> isize {
-    if path_ptr.is_null() || path_len == 0 || path_len > 64 {
+    if path_ptr.is_null() || path_len == 0 || path_len > crate::vfs::MAX_PATH_LEN {
         return EINVAL;
     }
     if is_current_task_user() {
@@ -624,18 +627,18 @@ fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> isize {
         }
     }
 
-    let mut path_buf = [0u8; 64];
+    let mut path_buf = [0u8; crate::vfs::MAX_PATH_LEN];
     unsafe {
         core::ptr::copy_nonoverlapping(path_ptr, path_buf.as_mut_ptr(), path_len);
     }
     let path_str = match core::str::from_utf8(&path_buf[..path_len]) {
-        Ok(s) => s,
+        Ok(s) => s.trim_end_matches('\0'),
         Err(_) => return EINVAL,
     };
 
     let vfs_handle = match crate::vfs::open(path_str, flags) {
         Ok(h) => h,
-        Err(_) => return -2, // ENOENT
+        Err(e) => return vfs_error_to_errno(e),
     };
 
     let pid = scheduler::current_pid();
@@ -666,6 +669,16 @@ fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> isize {
         let _ = crate::vfs::close(path_str, vfs_handle);
         EPERM
     }
+}
+
+/// `creat(path_ptr, path_len, mode)` — Cria ou trunca um arquivo no VFS (Syscall 71 e alias POSIX 85).
+/// Equivalente a `open(path, O_CREAT | O_WRONLY | O_TRUNC, mode)`.
+fn sys_creat(path_ptr: *const u8, path_len: usize, _mode: u32) -> isize {
+    sys_open(
+        path_ptr,
+        path_len,
+        crate::vfs::O_CREAT | crate::vfs::O_WRONLY | crate::vfs::O_TRUNC,
+    )
 }
 
 /// `close(fd)` — Close a previously opened file or socket descriptor from the unified table.
@@ -2950,9 +2963,9 @@ fn sys_unlink(path_ptr: *const u8, path_len: usize) -> isize {
     }
 }
 
-/// `sys_mkdir` — Cria um novo diretório no VFS (Syscall 51).
+/// `sys_mkdir` — Cria um novo diretório no VFS (Syscall 51 e alias POSIX 83).
 fn sys_mkdir(path_ptr: *const u8, path_len: usize) -> isize {
-    if path_ptr.is_null() || path_len == 0 || path_len > 128 {
+    if path_ptr.is_null() || path_len == 0 || path_len > crate::vfs::MAX_PATH_LEN {
         return EINVAL;
     }
     if is_current_task_user() {
@@ -2960,7 +2973,7 @@ fn sys_mkdir(path_ptr: *const u8, path_len: usize) -> isize {
             return e;
         }
     }
-    let mut path_buf = [0u8; 128];
+    let mut path_buf = [0u8; crate::vfs::MAX_PATH_LEN];
     unsafe {
         core::ptr::copy_nonoverlapping(path_ptr, path_buf.as_mut_ptr(), path_len);
     }

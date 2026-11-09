@@ -534,6 +534,15 @@ pub unsafe fn sys_mkdir(path: &str) -> i64 {
     syscall3(51, path.as_ptr() as u64, path.len() as u64, 0)
 }
 
+// ── Syscall 71 — creat ────────────────────────────────────────────────────────
+
+/// Cria ou trunca um arquivo no VFS com permissões especificadas (Syscall 71 / POSIX 85).
+/// Equivalente a `sys_open(path, O_CREAT | O_WRONLY | O_TRUNC)`.
+#[inline(always)]
+pub unsafe fn sys_creat(path: &str, mode: u32) -> i64 {
+    syscall3(71, path.as_ptr() as u64, path.len() as u64, mode as u64)
+}
+
 // ── Syscall 52 — rename ───────────────────────────────────────────────────────
 
 /// Move ou renomeia um arquivo de forma atômica no VFS.

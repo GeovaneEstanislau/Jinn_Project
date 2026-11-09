@@ -102,6 +102,7 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
         "cat" => cmd_cat(w, args),
         "write" => cmd_write(w, args),
         "touch" => cmd_touch(w, args),
+        "mkdir" => cmd_mkdir(w, args),
         "rm" | "del" => cmd_rm(w, args),
         "df" => cmd_df(w),
         "disks" | "drives" => cmd_disks(w),
@@ -171,6 +172,7 @@ fn cmd_help(w: &mut Writer) {
     w.write_line("  cat <file>     — exibe conteudo de arquivo no VFS");
     w.write_line("  write <p> <txt>— escreve texto em arquivo no VFS/FAT32");
     w.write_line("  touch <file>   — cria um novo arquivo no VFS/FAT32");
+    w.write_line("  mkdir <dir>    — cria um novo diretorio no VFS/FAT32/Ext2");
     w.write_line("  rm <file>      — remove um arquivo do VFS/FAT32 (alias: del)");
     w.write_line("  df             — espaco e utilizacao dos sistemas de arquivos montados");
     w.write_line("  mounts         — lista pontos de montagem ativos no VFS");
@@ -1004,6 +1006,42 @@ fn cmd_touch(w: &mut Writer, args: &str) {
                 crate::vfs::VfsError::AlreadyExists => "Arquivo ja existe",
                 crate::vfs::VfsError::NoSpace => "Sem espaco no disco ou na tabela de diretorio",
                 crate::vfs::VfsError::InvalidPath => "Nome invalido (use formato 8.3 sem caracteres especiais)",
+                crate::vfs::VfsError::NotSupported => "Operacao nao suportada neste caminho",
+                _ => "Falha de E/S",
+            });
+            w.set_color(Color::LightGray, Color::Black);
+        }
+    }
+}
+
+/// `mkdir` — Cria um novo diretório no VFS.
+fn cmd_mkdir(w: &mut Writer, args: &str) {
+    let path = args.trim();
+    if path.is_empty() {
+        w.set_color(Color::Yellow, Color::Black);
+        w.write_line("Uso: mkdir <caminho_do_diretorio>");
+        w.set_color(Color::LightGray, Color::Black);
+        return;
+    }
+
+    match crate::vfs::mkdir(path) {
+        Ok(()) => {
+            w.set_color(Color::LightGreen, Color::Black);
+            w.write_string("[OK] Diretorio '");
+            w.write_string(path);
+            w.write_line("' criado com sucesso no VFS!");
+            w.set_color(Color::LightGray, Color::Black);
+        }
+        Err(e) => {
+            w.set_color(Color::LightRed, Color::Black);
+            w.write_string("Erro ao criar diretorio '");
+            w.write_string(path);
+            w.write_string("': ");
+            w.write_line(match e {
+                crate::vfs::VfsError::AlreadyExists => "Diretorio ja existe",
+                crate::vfs::VfsError::NoSpace => "Sem espaco no disco",
+                crate::vfs::VfsError::NotFound => "Caminho pai nao encontrado",
+                crate::vfs::VfsError::InvalidPath => "Nome invalido",
                 crate::vfs::VfsError::NotSupported => "Operacao nao suportada neste caminho",
                 _ => "Falha de E/S",
             });

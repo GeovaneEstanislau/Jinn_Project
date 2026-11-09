@@ -9,7 +9,7 @@
 use crate::vfs::{self, FileSystem, NodeType, Stat, VfsError, VfsResult};
 
 pub const FAT32_EOF: u32 = 0x0FFF_FFF8;
-const MAX_OPEN_FILES: usize = 16;
+const MAX_OPEN_FILES: usize = 32;
 
 // ── Estruturas de Dados do FAT32 ──────────────────────────────────────────────
 
@@ -17,6 +17,7 @@ const MAX_OPEN_FILES: usize = 16;
 pub struct FatDirEntry {
     pub name: [u8; 13], // Nome formatado 8.3 + terminador nulo
     pub name_len: usize,
+    pub raw_83: [u8; 11], // Nome 8.3 raw direto do setor de diretório (11 bytes)
     pub is_dir: bool,
     pub first_cluster: u32,
     pub size: u32,
@@ -29,6 +30,7 @@ impl FatDirEntry {
         Self {
             name: [0; 13],
             name_len: 0,
+            raw_83: [b' '; 11],
             is_dir: false,
             first_cluster: 0,
             size: 0,
@@ -194,7 +196,8 @@ impl Fat32Fs {
     where
         F: FnMut(FatDirEntry) -> bool, // Retorna true para continuar, false para parar
     {
-        let mut cur_cluster = dir_cluster;
+        // No padrão FAT32, cluster 0 em subdiretórios aponta para a raiz
+        let mut cur_cluster = if dir_cluster == 0 { self.root_cluster } else { dir_cluster };
         let mut sector_buf = [0u8; 512];
 
         while cur_cluster >= 2 && cur_cluster < FAT32_EOF {
@@ -222,6 +225,9 @@ impl Fat32Fs {
                         continue;
                     }
 
+                    let mut raw_83 = [b' '; 11];
+                    raw_83.copy_from_slice(&sector_buf[offset..offset + 11]);
+
                     // Extrai nome 8.3 formatado
                     let mut name = [0u8; 13];
                     let mut len = 0;
@@ -237,11 +243,11 @@ impl Fat32Fs {
 
                     let is_dir = (attr & 0x10) != 0;
 
-                    // Extensão (até 3 caracteres, se não for diretório)
+                    // Extensão (até 3 caracteres, preservada tanto para arquivos quanto diretórios com ponto)
                     let ext1 = sector_buf[offset + 8];
                     let ext2 = sector_buf[offset + 9];
                     let ext3 = sector_buf[offset + 10];
-                    if !is_dir && (ext1 != b' ' || ext2 != b' ' || ext3 != b' ') {
+                    if ext1 != b' ' || ext2 != b' ' || ext3 != b' ' {
                         name[len] = b'.';
                         len += 1;
                         for &c in &[ext1, ext2, ext3] {
@@ -264,6 +270,7 @@ impl Fat32Fs {
                     let entry = FatDirEntry {
                         name,
                         name_len: len,
+                        raw_83,
                         is_dir,
                         first_cluster,
                         size,
@@ -294,6 +301,7 @@ impl Fat32Fs {
             return Ok(FatDirEntry {
                 name: *b"/            ",
                 name_len: 1,
+                raw_83: *b"/          ",
                 is_dir: true,
                 first_cluster: self.root_cluster,
                 size: 0,
@@ -308,14 +316,25 @@ impl Fat32Fs {
         let mut found_entry: Option<FatDirEntry> = None;
 
         for seg in segments {
+            if seg.is_empty() || seg == "." {
+                continue;
+            }
+            let seg_83 = self.encode_83(seg).ok();
             let mut matched: Option<FatDirEntry> = None;
 
             let _ = self.for_each_entry(current_cluster, |entry| {
-                if let Ok(entry_name) = core::str::from_utf8(&entry.name[..entry.name_len]) {
-                    if entry_name.eq_ignore_ascii_case(seg) {
-                        matched = Some(entry);
-                        return false; // Encontrou, interrompe iteração
-                    }
+                let name_match = if let Ok(entry_name) = core::str::from_utf8(&entry.name[..entry.name_len]) {
+                    entry_name.eq_ignore_ascii_case(seg)
+                } else {
+                    false
+                };
+                let raw_match = match seg_83 {
+                    Some(s83) => entry.raw_83 == s83,
+                    None => false,
+                };
+                if name_match || raw_match {
+                    matched = Some(entry);
+                    return false; // Encontrou, interrompe iteração
                 }
                 true
             });
@@ -408,6 +427,15 @@ impl Fat32Fs {
         let mut fat_sector_buf = [0u8; 512];
         let max_sec = if self.sectors_per_fat > 0 { self.sectors_per_fat.min(512) } else { 64 };
 
+        let total_data_sectors = self.partition_sectors.saturating_sub(
+            (self.data_start_lba.saturating_sub(self.partition_lba)) as u64,
+        );
+        let max_cluster = if self.sectors_per_cluster > 0 {
+            (total_data_sectors / self.sectors_per_cluster as u64) as u32 + 2
+        } else {
+            0
+        };
+
         for sec in 0..max_sec {
             let fat_sec_lba = self.fat_start_lba + sec;
             if self.read_sec(fat_sec_lba, &mut fat_sector_buf).is_err() {
@@ -418,6 +446,10 @@ impl Fat32Fs {
                 let cluster_num = (sec * 128) + idx as u32;
                 if cluster_num < 3 {
                     continue; // 0 e 1 reservados; 2 é a raiz
+                }
+
+                if max_cluster > 2 && cluster_num >= max_cluster {
+                    return Err(VfsError::NoSpace);
                 }
 
                 let offset = idx * 4;
@@ -554,11 +586,12 @@ impl Fat32Fs {
         }
     }
 
-    /// Encontra um slot de diretÃ³rio de 32 bytes livre (0x00 ou 0xE5) na cadeia de clusters do diretÃ³rio pai.
+    /// Encontra um slot de diretório de 32 bytes livre (0x00 ou 0xE5) na cadeia de clusters do diretório pai.
     /// Se todos os clusters existentes estiverem cheios, aloca um novo cluster na FAT, encadeia-o e retorna o primeiro slot.
     pub fn find_free_dir_slot(&self, parent_cluster: u32) -> VfsResult<(u32, usize)> {
-        let mut cur_cluster = parent_cluster;
-        let mut last_cluster = parent_cluster;
+        let normalized_parent = if parent_cluster == 0 { self.root_cluster } else { parent_cluster };
+        let mut cur_cluster = normalized_parent;
+        let mut last_cluster = normalized_parent;
         let mut dir_buf = [0u8; 512];
 
         while cur_cluster >= 2 && cur_cluster < FAT32_EOF {
@@ -687,10 +720,15 @@ impl FileSystem for Fat32Fs {
         }
 
         let entry = self.find_file(path)?;
+        let inode = if entry.first_cluster != 0 {
+            entry.first_cluster as u64
+        } else {
+            ((entry.dir_sector_lba as u64) << 16) | (entry.dir_entry_offset as u64 | 0x8000_0000)
+        };
         Ok(Stat {
             node_type: if entry.is_dir { NodeType::Directory } else { NodeType::File },
             size: entry.size as u64,
-            inode: entry.first_cluster as u64,
+            inode,
         })
     }
 
@@ -1101,7 +1139,8 @@ impl FileSystem for Fat32Fs {
         }
 
         let (parent_cluster, leaf_name) = self.resolve_parent_and_leaf(clean_path)?;
-        let mut cur_cluster = parent_cluster;
+        let leaf_83 = self.encode_83(leaf_name).ok();
+        let mut cur_cluster = if parent_cluster == 0 { self.root_cluster } else { parent_cluster };
         let mut dir_buf = [0u8; 512];
 
         while cur_cluster >= 2 && cur_cluster < FAT32_EOF {
@@ -1118,16 +1157,19 @@ impl FileSystem for Fat32Fs {
                     let first = dir_buf[offset];
 
                     if first == 0x00 {
-                        return Err(VfsError::NotFound); // Fim do diretÃ³rio
+                        return Err(VfsError::NotFound); // Fim do diretório
                     }
                     if first == 0xE5 {
-                        continue; // Entrada excluÃ­da
+                        continue; // Entrada excluída
                     }
 
                     let attr = dir_buf[offset + 11];
                     if attr == 0x0F || (attr & 0x08) != 0 {
                         continue;
                     }
+
+                    let mut raw_83 = [b' '; 11];
+                    raw_83.copy_from_slice(&dir_buf[offset..offset + 11]);
 
                     // Extrai nome formatado 8.3
                     let mut name = [0u8; 13];
@@ -1140,60 +1182,71 @@ impl FileSystem for Fat32Fs {
                     let ext1 = dir_buf[offset + 8];
                     let ext2 = dir_buf[offset + 9];
                     let ext3 = dir_buf[offset + 10];
-                    if !is_dir && (ext1 != b' ' || ext2 != b' ' || ext3 != b' ') {
+                    if ext1 != b' ' || ext2 != b' ' || ext3 != b' ' {
                         name[len] = b'.'; len += 1;
                         for &c in &[ext1, ext2, ext3] {
                             if c != b' ' { name[len] = c.to_ascii_lowercase(); len += 1; }
                         }
                     }
 
-                    if let Ok(entry_str) = core::str::from_utf8(&name[..len]) {
-                        if entry_str.eq_ignore_ascii_case(leaf_name) {
-                            let fst_hi = (dir_buf[offset + 20] as u32) | ((dir_buf[offset + 21] as u32) << 8);
-                            let fst_lo = (dir_buf[offset + 26] as u32) | ((dir_buf[offset + 27] as u32) << 8);
-                            let first_cluster = (fst_hi << 16) | fst_lo;
+                    let name_match = if let Ok(entry_str) = core::str::from_utf8(&name[..len]) {
+                        entry_str.eq_ignore_ascii_case(leaf_name)
+                    } else {
+                        false
+                    };
+                    let raw_match = match leaf_83 {
+                        Some(l83) => raw_83 == l83,
+                        None => false,
+                    };
 
-                            // Se for diretÃ³rio, valida se estÃ¡ vazio (somente '.' e '..')
-                            if is_dir && first_cluster >= 2 && first_cluster < FAT32_EOF {
-                                let mut is_empty = true;
-                                let _ = self.for_each_entry(first_cluster, |e| {
-                                    if let Ok(n) = core::str::from_utf8(&e.name[..e.name_len]) {
-                                        if n != "." && n != ".." {
-                                            is_empty = false;
-                                            return false;
-                                        }
-                                    }
-                                    true
-                                });
-                                if !is_empty {
-                                    return Err(VfsError::Busy);
-                                }
-                            }
+                    if name_match || raw_match {
+                        let fst_hi = (dir_buf[offset + 20] as u32) | ((dir_buf[offset + 21] as u32) << 8);
+                        let fst_lo = (dir_buf[offset + 26] as u32) | ((dir_buf[offset + 27] as u32) << 8);
+                        let first_cluster = (fst_hi << 16) | fst_lo;
 
-                            // Marca a entrada como excluÃ­da com 0xE5
-                            dir_buf[offset] = 0xE5;
-                            if self.write_sec(sec_lba, &dir_buf).is_err() {
-                                return Err(VfsError::IoError);
-                            }
-
-                            // Libera cadeia de clusters alocados na FAT
-                            if first_cluster >= 2 && first_cluster < FAT32_EOF {
-                                let _ = self.free_cluster_chain(first_cluster);
-                            }
-
-                            // Invalida em open_files se estiver aberto
-                            unsafe {
-                                let fs_ptr = core::ptr::addr_of_mut!(FAT32_GLOBAL);
-                                for slot in (*fs_ptr).open_files.iter_mut() {
-                                    if slot.is_active && slot.entry.first_cluster == first_cluster {
-                                        slot.is_active = false;
+                        // Se for diretório, valida se está vazio (somente '.' e '..')
+                        if is_dir && first_cluster >= 2 && first_cluster < FAT32_EOF {
+                            let mut is_empty = true;
+                            let _ = self.for_each_entry(first_cluster, |e| {
+                                if let Ok(n) = core::str::from_utf8(&e.name[..e.name_len]) {
+                                    if n != "." && n != ".." {
+                                        is_empty = false;
+                                        return false;
                                     }
                                 }
+                                true
+                            });
+                            if !is_empty {
+                                return Err(VfsError::Busy);
                             }
-
-                            let _ = self.sync();
-                            return Ok(());
                         }
+
+                        // Marca a entrada como excluída com 0xE5
+                        dir_buf[offset] = 0xE5;
+                        if self.write_sec(sec_lba, &dir_buf).is_err() {
+                            return Err(VfsError::IoError);
+                        }
+
+                        // Libera cadeia de clusters alocados na FAT
+                        if first_cluster >= 2 && first_cluster < FAT32_EOF {
+                            let _ = self.free_cluster_chain(first_cluster);
+                        }
+
+                        // Invalida em open_files se estiver aberto
+                        unsafe {
+                            let fs_ptr = core::ptr::addr_of_mut!(FAT32_GLOBAL);
+                            for slot in (*fs_ptr).open_files.iter_mut() {
+                                if slot.is_active && (
+                                    (first_cluster >= 2 && slot.entry.first_cluster == first_cluster) ||
+                                    (slot.entry.dir_sector_lba == sec_lba && slot.entry.dir_entry_offset == offset)
+                                ) {
+                                    slot.is_active = false;
+                                }
+                            }
+                        }
+
+                        let _ = self.sync();
+                        return Ok(());
                     }
                 }
             }
