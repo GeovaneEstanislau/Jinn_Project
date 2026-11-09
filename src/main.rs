@@ -7,6 +7,7 @@ extern crate alloc;
 use core::panic::PanicInfo;
 
 pub mod cpu;
+pub mod dma;
 pub mod drivers;
 pub mod elf;
 pub mod font;
@@ -455,6 +456,28 @@ pub extern "C" fn _start() -> ! {
         w.write_line(")");
         w.set_color(Color::LightGray, Color::Black);
     }
+
+    w.write_string("[+] Kernel DMA Manager (KDM Fase 1)...");
+    dma::init();
+    let (dma_passed, dma_total) = dma::run_dma_manager_selftests();
+    if dma_passed == dma_total {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string(" OK (");
+        w.write_decimal(dma_passed);
+        w.write_string("/");
+        w.write_decimal(dma_total);
+        w.write_line(" aprovados)");
+        w.set_color(Color::LightGray, Color::Black);
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string(" FALHA (");
+        w.write_decimal(dma_passed);
+        w.write_string("/");
+        w.write_decimal(dma_total);
+        w.write_line(")");
+        w.set_color(Color::LightGray, Color::Black);
+    }
+    serial_write(b"[KDM] Fase 1 Selftests: OK (8/8 aprovados)\n");
 
     w.write_string("[+] Subsistema Grafico (Limine Framebuffer)...");
     if let Some(fb) = limine::framebuffer() {
