@@ -7,6 +7,7 @@ extern crate alloc;
 use core::panic::PanicInfo;
 
 pub mod cpu;
+pub mod crypto;
 pub mod dma;
 pub mod drivers;
 pub mod elf;
@@ -147,6 +148,12 @@ pub extern "C" fn _start() -> ! {
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
 
+    w.write_string("[+] RTC / CMOS Clock & UNIX Timestamp...");
+    drivers::rtc::init();
+    w.set_color(Color::LightGreen, Color::Black);
+    w.write_line(" OK");
+    w.set_color(Color::LightGray, Color::Black);
+
     w.write_string("[+] PS/2 Keyboard...");
     interrupts::ps2_keyboard::init_and_flush();
     w.set_color(Color::LightGreen, Color::Black);
@@ -193,6 +200,16 @@ pub extern "C" fn _start() -> ! {
     memory::heap::init();
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
+    w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string("[+] Criptografia & Entropia (CSPRNG)...");
+    crypto::init();
+    w.set_color(Color::LightGreen, Color::Black);
+    if crypto::entropy::has_rdrand() {
+        w.write_line(" OK (RDRAND Hardware + Jitter Pool)");
+    } else {
+        w.write_line(" OK (Jitter Pool ChaCha20 DRBG)");
+    }
     w.set_color(Color::LightGray, Color::Black);
 
     w.write_string("[+] Hardware Profiler & Resource Manager (JAHA 1.0)...");

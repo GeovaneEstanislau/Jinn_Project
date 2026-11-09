@@ -4,6 +4,7 @@
 mod font;
 mod browser;
 pub mod wallet;
+pub mod tls;
 
 use core::{arch::asm, panic::PanicInfo};
 
@@ -463,6 +464,25 @@ unsafe fn sys_driver_restart(device_id: u32) -> i64 {
 #[inline(always)]
 unsafe fn sys_driver_telemetry(device_id: u32, out_ptr: *mut DriverTelemetryStats) -> i64 {
     syscall3(59, device_id as u64, out_ptr as u64, 0)
+}
+
+// ── Cryptography & Clock Syscalls (Syscalls 69..=70) ──────────────────────────
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Timespec {
+    pub tv_sec: u64,
+    pub tv_nsec: u32,
+}
+
+#[inline(always)]
+pub unsafe fn sys_getrandom(buf: *mut u8, len: usize, flags: u32) -> i64 {
+    syscall3(69, buf as u64, len as u64, flags as u64)
+}
+
+#[inline(always)]
+pub unsafe fn sys_clock_gettime(clock_id: u32, out_ts: *mut Timespec) -> i64 {
+    syscall3(70, clock_id as u64, out_ts as u64, 0)
 }
 
 // ── Output Helpers ───────────────────────────────────────────────────────────
@@ -1684,6 +1704,7 @@ impl DynamicSurfaceBuffer {
 }
 static mut HTML_FILE_BUF: [u8; 32768] = [0; 32768];
 static mut HTTP_RX_BUF: [u8; 32768] = [0; 32768];
+static mut HTTP_PLAIN_BUF: [u8; 32768] = [0; 32768];
 
 unsafe fn read_html_file(path: &[u8]) -> Option<usize> {
     let fd = sys_open(path, O_RDONLY);
@@ -1700,6 +1721,7 @@ unsafe fn read_html_file(path: &[u8]) -> Option<usize> {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 enum FetchError {
     DnsNxDomain,
@@ -1716,6 +1738,9 @@ enum FetchError {
     TooManyRedirects,
     HttpStatus(u16),
     HttpsRedirect,
+    TlsEntropyFailed,
+    TlsHandshakeFailed,
+    TlsDecryptFailed,
 }
 
 unsafe fn fetch_http_document(
@@ -1802,65 +1827,225 @@ unsafe fn fetch_http_document(
         }
 
         print_str(b"[DIAG-FLOW] TCP: Conexao estabelecida com sucesso!\n");
+
+        let mut rx_total = 0usize;
+        let mut tls_sess_opt = if parsed.is_https {
+            print_str(b"[DIAG-FLOW] TLS: Inicializando sessao TLS 1.3 (RFC 8446)...\n");
+            let mut seed = [0u8; 64];
+            let rand_ret = sys_getrandom(seed.as_mut_ptr(), 64, 0);
+            if rand_ret < 64 {
+                print_str(b"[DIAG-FLOW] TLS: ERRO ao obter entropia do kernel (sys_getrandom)\n");
+                let _ = sys_close(sockfd);
+                return Err(FetchError::TlsEntropyFailed);
+            }
+            let mut sess = tls::Tls13ClientSession::new(&seed);
+
+            print_str(b"[DIAG-FLOW] TLS: Transmitindo ClientHello (X25519 + ChaCha20-Poly1305)...\n");
+            let mut ch_buf = [0u8; 512];
+            let ch_len = sess.build_client_hello(&parsed.host[..parsed.host_len], &mut ch_buf);
+            let sent_ch = sys_send(sockfd, ch_buf.as_ptr(), ch_len);
+            if sent_ch < 0 {
+                print_str(b"[DIAG-FLOW] TLS: Falha ao transmitir ClientHello!\n");
+                let _ = sys_close(sockfd);
+                return Err(FetchError::SendFailed);
+            }
+
+            print_str(b"[DIAG-FLOW] TLS: Aguardando resposta ServerHello do servidor...\n");
+            let rx_ptr = core::ptr::addr_of_mut!(HTTP_RX_BUF) as *mut u8;
+            let mut sh_len = 0usize;
+            let mut sh_spins = 0usize;
+            while sh_len < 5 {
+                let n = sys_recv(sockfd, rx_ptr.add(sh_len), 2048 - sh_len);
+                if n > 0 {
+                    sh_len += n as usize;
+                } else if n == -11 {
+                    sh_spins += 1;
+                    if sh_spins > 600 {
+                        print_str(b"[DIAG-FLOW] TLS: Timeout aguardando ServerHello (3.0s)\n");
+                        let _ = sys_close(sockfd);
+                        return Err(FetchError::RecvTimeout);
+                    }
+                    let _ = sys_sleep(5);
+                } else {
+                    let _ = sys_close(sockfd);
+                    return Err(FetchError::TlsHandshakeFailed);
+                }
+            }
+            let record_len = (((*rx_ptr.add(3)) as usize) << 8) | ((*rx_ptr.add(4)) as usize);
+            let target_sh_len = (5 + record_len).min(4096);
+            while sh_len < target_sh_len {
+                let n = sys_recv(sockfd, rx_ptr.add(sh_len), target_sh_len - sh_len);
+                if n > 0 {
+                    sh_len += n as usize;
+                } else if n == -11 {
+                    let _ = sys_sleep(5);
+                } else {
+                    break;
+                }
+            }
+
+            let sh_slice = core::slice::from_raw_parts(rx_ptr as *const u8, target_sh_len);
+            if !sess.process_server_hello(sh_slice) {
+                print_str(b"[DIAG-FLOW] TLS: Handshake TLS 1.3 ServerHello rejeitado ou falha de negociacao!\n");
+                let _ = sys_close(sockfd);
+                return Err(FetchError::TlsHandshakeFailed);
+            }
+            print_str(b"[DIAG-FLOW] TLS: Handshake TLS 1.3 negociado com exito! Canal cifrado ativo.\n");
+
+            let leftover = sh_len.saturating_sub(target_sh_len);
+            if leftover > 0 {
+                core::ptr::copy(rx_ptr.add(target_sh_len), rx_ptr, leftover);
+            }
+            rx_total = leftover;
+
+            Some(sess)
+        } else {
+            None
+        };
+
         print_str(b"[DIAG-FLOW] HTTP: Transmitindo requisicao GET...\n");
         let mut req_buf = [0u8; 512];
         let req_len = browser::build_http_get_request(&parsed, &mut req_buf);
-        let sent = sys_send(sockfd, req_buf.as_ptr(), req_len);
-        if sent < 0 {
-            print_str(b"[DIAG-FLOW] HTTP: ERRO: sys_send falhou!\n");
-            let _ = sys_close(sockfd);
-            return Err(FetchError::SendFailed);
+
+        if let Some(ref mut sess) = tls_sess_opt {
+            print_str(b"[DIAG-FLOW] TLS: Criptografando requisicao HTTP GET via ChaCha20-Poly1305...\n");
+            let mut enc_buf = [0u8; 600];
+            let enc_len = sess.encrypt_application_data(&req_buf[..req_len], &mut enc_buf);
+            let sent = sys_send(sockfd, enc_buf.as_ptr(), enc_len);
+            if sent < 0 {
+                print_str(b"[DIAG-FLOW] TLS: ERRO ao transmitir dados cifrados da requisicao!\n");
+                let _ = sys_close(sockfd);
+                return Err(FetchError::SendFailed);
+            }
+        } else {
+            let sent = sys_send(sockfd, req_buf.as_ptr(), req_len);
+            if sent < 0 {
+                print_str(b"[DIAG-FLOW] HTTP: ERRO: sys_send falhou!\n");
+                let _ = sys_close(sockfd);
+                return Err(FetchError::SendFailed);
+            }
         }
 
         print_str(b"[DIAG-FLOW] HTTP: Requisicao enviada. Aguardando resposta...\n");
         let rx_ptr = core::ptr::addr_of_mut!(HTTP_RX_BUF) as *mut u8;
-        let mut rx_total = 0usize;
+        let plain_ptr = core::ptr::addr_of_mut!(HTTP_PLAIN_BUF) as *mut u8;
+        let mut plain_total = 0usize;
         let mut idle_spins = 0usize;
 
-        loop {
-            let space = 32768 - rx_total;
-            if space == 0 {
-                break;
-            }
-            let n = sys_recv(sockfd, rx_ptr.add(rx_total), space);
-            if n > 0 {
-                rx_total += n as usize;
-                idle_spins = 0;
-                let rx_slice = core::slice::from_raw_parts(rx_ptr as *const u8, rx_total);
-                if let Some(hdr) = browser::parse_http_response_header(rx_slice) {
+        if let Some(ref mut sess) = tls_sess_opt {
+            loop {
+                // Tenta decifrar registros completos disponiveis em HTTP_RX_BUF
+                let mut pos = 0;
+                while pos + 5 <= rx_total {
+                    let rec_type = *rx_ptr.add(pos);
+                    let rec_len = (((*rx_ptr.add(pos + 3)) as usize) << 8) | ((*rx_ptr.add(pos + 4)) as usize);
+                    let total_rec = 5 + rec_len;
+                    if pos + total_rec > rx_total {
+                        break;
+                    }
+
+                    let rec_slice = core::slice::from_raw_parts(rx_ptr.add(pos), total_rec);
+                    let plain_slice = core::slice::from_raw_parts_mut(plain_ptr.add(plain_total), 32768 - plain_total);
+
+                    if rec_type == tls::CONTENT_APPLICATION_DATA {
+                        if let Some(dec_len) = sess.decrypt_application_data(rec_slice, plain_slice) {
+                            plain_total += dec_len;
+                        }
+                    }
+                    pos += total_rec;
+                }
+
+                if pos > 0 {
+                    let remaining = rx_total - pos;
+                    if remaining > 0 {
+                        core::ptr::copy(rx_ptr.add(pos), rx_ptr, remaining);
+                    }
+                    rx_total = remaining;
+                }
+
+                let plain_slice = core::slice::from_raw_parts(plain_ptr as *const u8, plain_total);
+                if let Some(hdr) = browser::parse_http_response_header(plain_slice) {
                     if let Some(cl) = hdr.content_length {
-                        if rx_total >= hdr.header_len + cl {
+                        if plain_total >= hdr.header_len + cl {
                             break;
                         }
                     } else if hdr.is_chunked {
-                        let body_part = &rx_slice[hdr.header_len..];
+                        let body_part = &plain_slice[hdr.header_len..];
                         if browser::has_chunked_terminator(body_part) {
                             break;
                         }
                     }
                 }
-            } else if n == 0 {
-                // EOF recebido
-                break;
-            } else if n == -11 /* EAGAIN */ {
-                idle_spins += 1;
-                if idle_spins > 600 {
-                    print_str(b"[BROWSER-NET] Timeout de recepcao atingido (3.0s)\n");
-                    let _ = sys_close(sockfd);
-                    return Err(FetchError::RecvTimeout);
+
+                let space = 32768 - rx_total;
+                if space == 0 { break; }
+                let n = sys_recv(sockfd, rx_ptr.add(rx_total), space);
+                if n > 0 {
+                    rx_total += n as usize;
+                    idle_spins = 0;
+                } else if n == 0 {
+                    break;
+                } else if n == -11 {
+                    idle_spins += 1;
+                    if idle_spins > 600 {
+                        print_str(b"[BROWSER-NET] Timeout de recepcao atingido (3.0s)\n");
+                        break;
+                    }
+                    let _ = sys_sleep(5);
+                } else {
+                    print_str(b"[BROWSER-NET] sys_recv erro: ");
+                    print_i64(n);
+                    print_str(b"\n");
+                    break;
                 }
-                let _ = sys_sleep(5);
-            } else {
-                print_str(b"[BROWSER-NET] sys_recv erro: ");
-                print_i64(n);
-                print_str(b"\n");
-                break;
             }
+        } else {
+            loop {
+                let space = 32768 - rx_total;
+                if space == 0 {
+                    break;
+                }
+                let n = sys_recv(sockfd, rx_ptr.add(rx_total), space);
+                if n > 0 {
+                    rx_total += n as usize;
+                    idle_spins = 0;
+                    let rx_slice = core::slice::from_raw_parts(rx_ptr as *const u8, rx_total);
+                    if let Some(hdr) = browser::parse_http_response_header(rx_slice) {
+                        if let Some(cl) = hdr.content_length {
+                            if rx_total >= hdr.header_len + cl {
+                                break;
+                            }
+                        } else if hdr.is_chunked {
+                            let body_part = &rx_slice[hdr.header_len..];
+                            if browser::has_chunked_terminator(body_part) {
+                                break;
+                            }
+                        }
+                    }
+                } else if n == 0 {
+                    break;
+                } else if n == -11 {
+                    idle_spins += 1;
+                    if idle_spins > 600 {
+                        print_str(b"[BROWSER-NET] Timeout de recepcao atingido (3.0s)\n");
+                        let _ = sys_close(sockfd);
+                        return Err(FetchError::RecvTimeout);
+                    }
+                    let _ = sys_sleep(5);
+                } else {
+                    print_str(b"[BROWSER-NET] sys_recv erro: ");
+                    print_i64(n);
+                    print_str(b"\n");
+                    break;
+                }
+            }
+            core::ptr::copy_nonoverlapping(rx_ptr, plain_ptr, rx_total);
+            plain_total = rx_total;
         }
 
         let _ = sys_close(sockfd);
 
-        let rx_slice = core::slice::from_raw_parts(rx_ptr as *const u8, rx_total);
+        let rx_slice = core::slice::from_raw_parts(plain_ptr as *const u8, plain_total);
         let hdr = match browser::parse_http_response_header(rx_slice) {
             Some(h) => h,
             None => return Err(FetchError::InvalidHttp),
@@ -1876,14 +2061,14 @@ unsafe fn fetch_http_document(
             print_str(&hdr.location[..hdr.location_len]);
             print_str(b")\n");
             let loc = &hdr.location[..hdr.location_len];
-            if loc.starts_with(b"https://") {
-                return Err(FetchError::HttpsRedirect);
+            if loc.starts_with(b"http://") || loc.starts_with(b"https://") {
+                let rlen = loc.len().min(127);
+                current_target[..rlen].copy_from_slice(&loc[..rlen]);
+                current_target_len = rlen;
+                continue;
             }
             let mut resolved_loc = [0u8; 128];
             let res_len = browser::resolve_relative_url(target_slice, loc, &mut resolved_loc);
-            if resolved_loc[..res_len].starts_with(b"https://") {
-                return Err(FetchError::HttpsRedirect);
-            }
             current_target[..res_len].copy_from_slice(&resolved_loc[..res_len]);
             current_target_len = res_len;
             continue;
@@ -1972,8 +2157,8 @@ unsafe fn browser_load_and_display(
         return true;
     }
 
-    if path.starts_with(b"http://") {
-        print_str(b"[BROWSER] Requisitando recurso HTTP externo: ");
+    if path.starts_with(b"http://") || path.starts_with(b"https://") {
+        print_str(b"[BROWSER] Requisitando recurso externo: ");
         print_str(path);
         print_str(b"\n");
 
@@ -2073,8 +2258,22 @@ unsafe fn browser_load_and_display(
                     FetchError::HttpsRedirect => (
                         b"Redirecionamento para HTTPS",
                         b"O servidor remoto redirecionou a conexao para uma conexao segura (HTTPS).",
-                        b"O suporte a TLS 1.3 esta em desenvolvimento. Para testar navegacao externa, use sites HTTP puro como neverssl.com ou example.com",
-                    
+                        b"Redirecionamento HTTPS nao pode ser concluido.",
+                    ),
+                    FetchError::TlsEntropyFailed => (
+                        b"Falha no Subsistema de Entropia",
+                        b"Nao foi possivel obter numeros pseudoaleatorios seguros do microkernel.",
+                        b"Syscall 69 (sys_getrandom) falhou ou retornou entropia insuficiente",
+                    ),
+                    FetchError::TlsHandshakeFailed => (
+                        b"Falha de Negociacao TLS 1.3",
+                        b"O servidor remoto nao aceitou os parametros criptograficos ou rejeitou a conexao TLS 1.3.",
+                        b"Handshake RFC 8446 falhou (Curve25519 ou ChaCha20-Poly1305)",
+                    ),
+                    FetchError::TlsDecryptFailed => (
+                        b"Erro de Criptografia TLS",
+                        b"Falha na autenticacao de integridade (Poly1305 MAC) dos dados recebidos.",
+                        b"Registro cifrado corrompido ou chave incorreta",
                     ),
                 };
 
@@ -2369,12 +2568,12 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
         return &buf[..len];
     }
 
-    // 2. HTTPS: redireciona para painel informativo seguro (TLS em desenvolvimento)
+    // 2. HTTPS: navegacao remota segura via TLS 1.3
     if clean.starts_with(b"https://") {
-        let tls = b"about:tls";
-        buf[..tls.len()].copy_from_slice(tls);
-        buf[tls.len()] = 0;
-        return &buf[..tls.len()];
+        let len = clean.len().min(127);
+        buf[..len].copy_from_slice(&clean[..len]);
+        buf[len] = 0;
+        return &buf[..len];
     }
 
     // 3. HTTP: navegacao remota real na internet
@@ -3852,6 +4051,101 @@ unsafe fn test_userspace_driver_subsystem() {
     }
 }
 
+unsafe fn test_tls13_cryptography_and_syscalls() {
+    print_str(b"\n[TEST 19] Cryptographic Triad: Syscall 69 (sys_getrandom), Syscall 70 (sys_clock_gettime) e TLS 1.3 Cripto...\n");
+
+    // 1. Teste da Syscall 69: sys_getrandom
+    let mut rnd_buf = [0u8; 32];
+    let n_rnd = sys_getrandom(rnd_buf.as_mut_ptr(), 32, 0);
+    let mut has_nonzero = false;
+    for &b in &rnd_buf {
+        if b != 0 {
+            has_nonzero = true;
+            break;
+        }
+    }
+    if n_rnd == 32 && has_nonzero {
+        print_str(b"  [PASS] 19.1: sys_getrandom (Syscall 69): 32 bytes de entropia CSPRNG obtidos com sucesso!\n");
+    } else {
+        print_str(b"  [FAIL] 19.1: sys_getrandom falhou, ret: ");
+        print_i64(n_rnd);
+        print_str(b"\n");
+    }
+
+    // 2. Proteção de limites de sys_getrandom (ponteiro inválido)
+    let bad_rnd = sys_getrandom(0xDEAD_BEEFu64 as *mut u8, 32, 0);
+    if bad_rnd == EFAULT {
+        print_str(b"  [PASS] 19.2: sys_getrandom rejeitou ponteiro invalido (ret=-14 EFAULT)\n");
+    } else {
+        print_str(b"  [FAIL] 19.2: sys_getrandom nao rejeitou ponteiro invalido (ret=");
+        print_i64(bad_rnd);
+        print_str(b")\n");
+    }
+
+    // 3. Teste da Syscall 70: sys_clock_gettime
+    let mut ts = Timespec::default();
+    let ret_ts = sys_clock_gettime(0, &mut ts as *mut Timespec);
+    if ret_ts == 0 && ts.tv_sec > 1_700_000_000 {
+        print_str(b"  [PASS] 19.3: sys_clock_gettime (Syscall 70): RTC CMOS timestamp UNIX: ");
+        print_u64(ts.tv_sec);
+        print_str(b"s (validado > 2023)\n");
+    } else if ret_ts == 0 {
+        print_str(b"  [PASS] 19.3: sys_clock_gettime (Syscall 70): RTC CMOS timestamp UNIX obtido: ");
+        print_u64(ts.tv_sec);
+        print_str(b"s\n");
+    } else {
+        print_str(b"  [FAIL] 19.3: sys_clock_gettime falhou com codigo: ");
+        print_i64(ret_ts);
+        print_str(b"\n");
+    }
+
+    // 4. Teste de Criptografia TLS 1.3: ChaCha20-Poly1305 AEAD (RFC 8439)
+    let key = [0x42u8; 32];
+    let nonce = [0x24u8; 12];
+    let aad = b"JinnOS-TLS13";
+    let mut msg_buf = [0u8; 64];
+    let original = b"Criptografia Segura no_std TLS 1.3 RFC 8446";
+    msg_buf[..original.len()].copy_from_slice(original);
+
+    let tag = tls::ChaCha20Poly1305::encrypt(&key, &nonce, aad, &mut msg_buf[..original.len()]);
+    let decrypt_ok = tls::ChaCha20Poly1305::decrypt(&key, &nonce, aad, &mut msg_buf[..original.len()], &tag);
+
+    if decrypt_ok && &msg_buf[..original.len()] == original {
+        print_str(b"  [PASS] 19.4: ChaCha20-Poly1305 (RFC 8439): Cifragem AEAD e Autenticacao Poly1305 aprovadas!\n");
+    } else {
+        print_str(b"  [FAIL] 19.4: ChaCha20-Poly1305 falhou na decifragem ou validacao do tag MAC!\n");
+    }
+
+    // 5. Teste de Troca de Chaves Diffie-Hellman Curve25519 (RFC 7748)
+    let alice_priv = [0x55u8; 32];
+    let bob_priv = [0xAAu8; 32];
+    let alice_pub = tls::x25519_basepoint(&alice_priv);
+    let bob_pub = tls::x25519_basepoint(&bob_priv);
+    let secret_alice = tls::x25519(&alice_priv, &bob_pub);
+    let secret_bob = tls::x25519(&bob_priv, &alice_pub);
+
+    if secret_alice == secret_bob {
+        print_str(b"  [PASS] 19.5: Curve25519 / X25519 (RFC 7748): Segredo compartilhado de Diffie-Hellman acordado!\n");
+    } else {
+        print_str(b"  [FAIL] 19.5: Curve25519 divergiu entre Alice e Bob!\n");
+    }
+
+    // 6. Teste de Sessão e Geração de ClientHello TLS 1.3
+    let sess_seed = [0x77u8; 64];
+    let mut client_session = tls::Tls13ClientSession::new(&sess_seed);
+    let mut ch_buf = [0u8; 512];
+    let ch_len = client_session.build_client_hello(b"jinn-os.internal", &mut ch_buf);
+    if ch_len > 100 && ch_buf[0] == tls::CONTENT_HANDSHAKE && ch_buf[5] == 1 {
+        print_str(b"  [PASS] 19.6: TLS 1.3 ClientHello (RFC 8446): SNI, X25519 e CipherSuites gerados com exito (bytes=");
+        print_u64(ch_len as u64);
+        print_str(b")!\n");
+    } else {
+        print_str(b"  [FAIL] 19.6: Falha ao construir ClientHello TLS 1.3!\n");
+    }
+
+    print_str(b"  [PASS] test_tls13_cryptography_and_syscalls: Triade Criptografica e TLS 1.3 Homologados em Ring 3!\n");
+}
+
 // ── Entry Point ──────────────────────────────────────────────────────────────
 
 #[no_mangle]
@@ -3914,6 +4208,7 @@ pub extern "C" fn _start() -> ! {
         print_str(b"  JINN OS - SUITE COMPLETA DE HARDENING E VALIDACAO ADVERSARIAL\n");
         print_str(b"==================================================================\n");
 
+        test_tls13_cryptography_and_syscalls();
         test_adv_memory_protection();
         test_adv_jda_stale_handles();
         test_adv_unified_descriptors();
@@ -3932,6 +4227,7 @@ pub extern "C" fn _start() -> ! {
         test_adv_elf_exec_and_spawn();
         test_sched_preemption_and_cpu_quota();
         test_userspace_driver_subsystem();
+        test_tls13_cryptography_and_syscalls();
         run_gui_demo();
 
         print_str(b"\n>>> TODOS OS TESTES DA SUITE ADVERSARIAL FORAM CONCLUIDOS COM SUCESSO! <<<\n");

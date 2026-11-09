@@ -1,0 +1,11 @@
+[package]
+name = "jbe-tls"
+version = "0.1.0"
+edition = "2021"
+description = "Pure Rust no_std TLS 1.3 cryptographic engine, RFC 8446 client handshake, and X.509 certificate validation"
+
+[features]
+default = ["std"]
+std = []
+
+[dependencies]

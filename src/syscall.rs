@@ -68,6 +68,10 @@
 ///   56 — driver_send_input(kind, code, x, y) Submit normalized input event to kernel
 ///   57 — driver_unregister(dev_id)    Unregister task as Ring 3 driver
 ///   58 — driver_restart(dev_id)       Restart Ring 3 driver with new generation
+///   59 — driver_telemetry(dev_id, out) Query Ring 3 driver telemetry
+///   60..=68 — dma_*                   Kernel DMA Manager (KDM) syscalls
+///   69 — getrandom(buf, len, flags)   Fill buffer with cryptographically secure random bytes
+///   70 — clock_gettime(clk_id, ts)    Get current UNIX timestamp from RTC
 
 use crate::ipc::{self, Message};
 use crate::memory;
@@ -247,6 +251,14 @@ pub struct JinnWallStats {
     pub dropped: u64,        // Total de pacotes descartados
     pub active_conns: u32,   // Conexões ativas no conntrack
     pub profile: u32,        // 0 = PublicSecure, 1 = Development
+}
+
+// ── Clock & Time (clock_gettime) ─────────────────────────────────────────────
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Timespec {
+    pub tv_sec: u64,
+    pub tv_nsec: u32,
 }
 
 pub const USER_SPACE_MIN: usize = 0x0000_0000_0001_0000; // 64 KiB NULL guard
@@ -451,6 +463,8 @@ pub extern "C" fn syscall_dispatch(
         66 => sys_dma_transfer_prepare(arg0 as u64, arg1 as *const u8, arg2, arg3),
         67 => sys_dma_transfer_complete(arg0 as u64, arg1 as *mut u8, arg2, arg3),
         68 => sys_dma_device_reset_status(arg0 as u64, arg1 as u32),
+        69 => sys_getrandom(arg0 as *mut u8, arg1, arg2 as u32),
+        70 => sys_clock_gettime(arg0 as u32, arg1 as *mut Timespec),
         _  => ENOSYS,
     }
 }
@@ -1620,6 +1634,41 @@ fn sys_dma_device_reset_status(handle: u64, reset_confirmed: u32) -> isize {
         EBUSY
     }
 }
+
+/// `sys_getrandom(buf, len, flags)` — Syscall 69
+/// Preenche um buffer de usuário com bytes pseudoaleatórios criptograficamente seguros (CSPRNG).
+fn sys_getrandom(buf: *mut u8, len: usize, _flags: u32) -> isize {
+    if buf.is_null() || len == 0 {
+        return EINVAL;
+    }
+    if len > 65536 {
+        return EINVAL;
+    }
+    if let Err(e) = validate_user_buffer(buf as *const u8, len, true) {
+        return e;
+    }
+    let slice = unsafe { core::slice::from_raw_parts_mut(buf, len) };
+    crate::crypto::entropy::fill_random_bytes(slice);
+    len as isize
+}
+
+/// `sys_clock_gettime(clock_id, out_ts)` — Syscall 70
+/// Retorna o tempo decorrido desde o Epoch UNIX (1970-01-01 00:00:00 UTC) obtido via RTC CMOS.
+fn sys_clock_gettime(_clock_id: u32, out_ts: *mut Timespec) -> isize {
+    if out_ts.is_null() {
+        return EINVAL;
+    }
+    if let Err(e) = validate_user_buffer(out_ts as *const u8, core::mem::size_of::<Timespec>(), true) {
+        return e;
+    }
+    let (sec, nsec) = crate::drivers::rtc::current_unix_time();
+    unsafe {
+        (*out_ts).tv_sec = sec;
+        (*out_ts).tv_nsec = nsec;
+    }
+    0
+}
+
 /// Retorna o identificador do buffer (handle >= 0), ou código de erro negativo.
 fn sys_jda_shm_alloc(is_read_only: bool) -> isize {
     let pid = scheduler::current_pid();

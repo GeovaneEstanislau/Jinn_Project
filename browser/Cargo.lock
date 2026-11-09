@@ -58,6 +58,7 @@ name = "jbe-net"
 version = "0.1.0"
 dependencies = [
  "jbe-core",
+ "jbe-tls",
  "jbe-url",
 ]
 
@@ -70,6 +71,10 @@ dependencies = [
  "jbe-dom",
  "jbe-layout",
 ]
+
+[[package]]
+name = "jbe-tls"
+version = "0.1.0"
 
 [[package]]
 name = "jbe-url"

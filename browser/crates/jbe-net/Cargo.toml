@@ -7,3 +7,4 @@ description = "Resource loader abstraction and local file transport for Jinn Bro
 [dependencies]
 jbe-core = { path = "../jbe-core" }
 jbe-url = { path = "../jbe-url" }
+jbe-tls = { path = "../jbe-tls" }

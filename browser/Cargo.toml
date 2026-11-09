@@ -9,6 +9,7 @@ members = [
     "crates/jbe-render",
     "crates/jbe-image",
     "crates/jbe-net",
+    "crates/jbe-tls",
     "crates/jbe-js",
     "jinn-browser",
 ]
