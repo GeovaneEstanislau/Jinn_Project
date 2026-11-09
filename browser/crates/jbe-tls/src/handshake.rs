@@ -12,7 +12,7 @@ use alloc::{string::{String, ToString}, vec::Vec, format};
 use crate::chacha20poly1305::ChaCha20Poly1305;
 use crate::curve25519::{x25519, x25519_basepoint};
 use crate::sha256::{derive_secret, hkdf_expand_label, hkdf_extract, hmac_sha256, Sha256};
-use crate::x509::{parse_der_certificate, validate_certificate, ParsedCertificate, TrustStore};
+use crate::x509::{parse_der_certificate, validate_chain, ParsedCertificate, TrustStore};
 
 pub const TLS_CHACHA20_POLY1305_SHA256: u16 = 0x1303;
 pub const TLS13_VERSION: u16 = 0x0304;
@@ -376,16 +376,29 @@ impl Tls13Client {
                     // Skip request context
                     let ctx_len = cert_data[0] as usize;
                     let mut p = 1 + ctx_len;
-                    let _cert_list_len = ((cert_data[p] as usize) << 16) | ((cert_data[p + 1] as usize) << 8) | (cert_data[p + 2] as usize);
+                    let cert_list_len = ((cert_data[p] as usize) << 16) | ((cert_data[p + 1] as usize) << 8) | (cert_data[p + 2] as usize);
                     p += 3;
-                    if p + 3 <= cert_data.len() {
+                    let list_end = p + cert_list_len;
+                    let mut chain = Vec::new();
+                    while p + 3 <= cert_data.len() && p < list_end {
                         let single_cert_len = ((cert_data[p] as usize) << 16) | ((cert_data[p + 1] as usize) << 8) | (cert_data[p + 2] as usize);
                         p += 3;
+                        if p + single_cert_len > cert_data.len() { break; }
                         let der = &cert_data[p..p + single_cert_len];
-                        if let Ok(cert) = parse_der_certificate(der) {
-                            validate_certificate(&cert, &self.hostname, current_unix_time, &self.trust_store)?;
-                            self.peer_cert = Some(cert);
+                        p += single_cert_len;
+                        // Skip certificate extensions in CertificateEntry (2 bytes len + ext bytes)
+                        if p + 2 <= cert_data.len() {
+                            let ext_len = ((cert_data[p] as usize) << 8) | (cert_data[p + 1] as usize);
+                            p += 2 + ext_len;
                         }
+                        if let Ok(cert) = parse_der_certificate(der) {
+                            chain.push(cert);
+                        }
+                    }
+                    if !chain.is_empty() {
+                        validate_chain(&chain, &self.hostname, current_unix_time, &self.trust_store)
+                            .map_err(|err| format!("{}", err))?;
+                        self.peer_cert = Some(chain[0].clone());
                     }
                 }
                 15 => { // CertificateVerify

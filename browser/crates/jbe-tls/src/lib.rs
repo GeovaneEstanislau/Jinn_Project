@@ -9,15 +9,24 @@
 extern crate alloc;
 
 pub mod sha256;
+pub mod bignum;
+pub mod rsa;
+pub mod p256;
 pub mod curve25519;
 pub mod chacha20poly1305;
 pub mod x509;
 pub mod handshake;
 
 pub use sha256::{Sha256, hmac_sha256, hkdf_extract, hkdf_expand, hkdf_expand_label, derive_secret};
+pub use bignum::BigUint;
+pub use rsa::{RSAPublicKey, parse_pkcs1_rsa_public_key};
+pub use p256::{P256PublicKey, parse_der_ecdsa_signature};
 pub use curve25519::{x25519, x25519_basepoint};
 pub use chacha20poly1305::{ChaCha20, Poly1305, ChaCha20Poly1305};
-pub use x509::{ParsedCertificate, TrustStore, validate_certificate, parse_der_certificate};
+pub use x509::{
+    ParsedCertificate, TrustStore, TrustAnchor, PublicKey, SignatureAlgorithm,
+    CertificateValidationError, validate_certificate, validate_chain, parse_der_certificate,
+};
 pub use handshake::{
     Tls13Client, HandshakeState,
     TLS_CHACHA20_POLY1305_SHA256, TLS13_VERSION,
@@ -138,28 +147,63 @@ mod tests {
 
     #[test]
     fn test_x509_certificate_validation() {
+        let root_der = include_bytes!("../tests/fixtures/root.crt");
+        let inter_der = include_bytes!("../tests/fixtures/inter.crt");
+        let leaf_der = include_bytes!("../tests/fixtures/leaf.crt");
+        let forged_der = include_bytes!("../tests/fixtures/forged.crt");
+        let non_ca_der = include_bytes!("../tests/fixtures/non_ca.crt");
+        let non_ca_child_der = include_bytes!("../tests/fixtures/non_ca_child.crt");
+
+        let root_cert = parse_der_certificate(root_der).expect("Root certificate parse must succeed");
+        let inter_cert = parse_der_certificate(inter_der).expect("Intermediate certificate parse must succeed");
+        let leaf_cert = parse_der_certificate(leaf_der).expect("Leaf certificate parse must succeed");
+        let forged_cert = parse_der_certificate(forged_der).expect("Forged certificate parse must succeed");
+        let non_ca_cert = parse_der_certificate(non_ca_der).expect("Non-CA certificate parse must succeed");
+        let non_ca_child_cert = parse_der_certificate(non_ca_child_der).expect("Non-CA child parse must succeed");
+
         let mut trust_store = TrustStore::new();
-        trust_store.add_root("ISRG Root X1");
+        trust_store.add_certificate(&root_cert).expect("Root self-signature must verify");
 
-        let cert = ParsedCertificate {
-            subject: "CN=example.com, O=Internet Security Research Group".into(),
-            issuer: "CN=ISRG Root X1, O=Internet Security Research Group".into(),
-            not_before: 1700000000,
-            not_after: 1800000000,
-            dns_names: vec!["example.com".into(), "www.example.com".into()],
-            public_key: vec![0u8; 32],
-        };
+        let chain = vec![leaf_cert.clone(), inter_cert.clone()];
+        let now = leaf_cert.not_before + 1000;
 
-        // Valida com hostname e tempo válidos
-        let res = validate_certificate(&cert, "example.com", 1750000000, &trust_store);
-        assert!(res.is_ok());
+        // 1. Sucesso com hostname exato
+        let res = validate_chain(&chain, "example.com", now, &trust_store);
+        assert!(res.is_ok(), "Chain validation failed: {:?}", res);
 
-        // Valida rejeição de hostname incorreto
-        let res_bad_host = validate_certificate(&cert, "evil.com", 1750000000, &trust_store);
-        assert!(res_bad_host.is_err());
+        // 2. Sucesso com wildcard match (*.jinn-os.org)
+        let res_wildcard = validate_chain(&chain, "test.jinn-os.org", now, &trust_store);
+        assert!(res_wildcard.is_ok(), "Wildcard validation failed: {:?}", res_wildcard);
 
-        // Valida rejeição de certificado expirado
-        let res_expired = validate_certificate(&cert, "example.com", 1900000000, &trust_store);
-        assert!(res_expired.is_err());
+        // 3. Rejeição de hostname não coincidente
+        let res_bad_host = validate_chain(&chain, "evil.com", now, &trust_store);
+        assert!(matches!(res_bad_host, Err(CertificateValidationError::HostnameMismatch { .. })));
+
+        // 4. Rejeição de certificado expirado
+        let res_expired = validate_chain(&chain, "example.com", leaf_cert.not_after + 1000, &trust_store);
+        assert!(matches!(res_expired, Err(CertificateValidationError::CertificateExpired { .. })));
+
+        // 5. Rejeição de certificado ainda não válido
+        let res_premature = validate_chain(&chain, "example.com", leaf_cert.not_before - 1000, &trust_store);
+        assert!(matches!(res_premature, Err(CertificateValidationError::CertificateNotYetValid { .. })));
+
+        // 6. REJEIÇÃO MANDATÓRIA DE CERTIFICADO FORJADO:
+        // Certificado forjado assinado por chave de atacante
+        let res_forged = validate_chain(&[forged_cert], "forged.com", now, &trust_store);
+        assert!(res_forged.is_err(), "Forged certificate MUST be rejected!");
+
+        // 7. REJEIÇÃO MANDATÓRIA DE INTERMEDIÁRIO NÃO-CA (basicConstraints cA=false)
+        let non_ca_chain = vec![non_ca_child_cert, non_ca_cert];
+        let res_non_ca = validate_chain(&non_ca_chain, "child.com", now, &trust_store);
+        assert!(matches!(res_non_ca, Err(CertificateValidationError::IntermediateNotCA { .. })),
+            "Non-CA intermediate MUST be rejected: {:?}", res_non_ca);
+
+        // 8. REJEIÇÃO MANDATÓRIA DE ASSINATURA CORROMPIDA
+        let mut corrupted_leaf = leaf_cert.clone();
+        corrupted_leaf.signature[10] ^= 0x55;
+        let corrupted_chain = vec![corrupted_leaf, inter_cert];
+        let res_corrupted = validate_chain(&corrupted_chain, "example.com", now, &trust_store);
+        assert!(matches!(res_corrupted, Err(CertificateValidationError::IntermediateSignatureVerificationFailed { .. })),
+            "Corrupted signature MUST be rejected: {:?}", res_corrupted);
     }
 }
