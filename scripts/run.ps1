@@ -1,8 +1,14 @@
-# run.ps1 - Gera a ISO com Limine e inicia o QEMU
+﻿# run.ps1 - Gera a ISO com Limine e inicia o QEMU
 param(
     [switch]$NoRun,
     [string]$IsoPath = "jinn.iso",
-    [int]$Smp = 4
+    [int]$Smp = 4,
+    [string]$Profile = "",
+    [string]$Cpu = "",
+    [string]$Mem = "",
+    [switch]$Headless,
+    [string]$SerialLog = "",
+    [switch]$SkipBuild
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,7 +26,7 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 # recente)
 # ------------------------------------------------------------------
 $buildScript = Join-Path $projectRoot "scripts\build.ps1"
-if (Test-Path $buildScript) {
+if ((-not $SkipBuild) -and (Test-Path $buildScript)) {
     Write-Host "Executando build do kernel: $buildScript"
     # Executa o script de build. Ele já faz Set-Location para o root do projeto.
     & powershell -NoProfile -ExecutionPolicy Bypass -File $buildScript
@@ -305,20 +311,105 @@ if (-not $NoRun) {
         Write-Error "qemu-system-x86_64 não encontrado. Adicione o QEMU ao PATH."
         exit 1
     }
+    # Resolucao de Perfis de Hardware / Matriz de Simulacao
+    $targetCpu = $Cpu
+    $targetMem = if ($Mem) { $Mem } else { "512M" }
+    $targetSmp = $Smp
+
+    if ($Profile) {
+        Write-Host "Aplicando Perfil de Hardware: $Profile"
+        switch -Regex ($Profile) {
+            "^(Athlon|athlon)$" {
+                Write-Warning "O modelo '-cpu athlon' no QEMU emula a arquitetura AMD Athlon K7 (32-bit / IA-32), que carece do bit Long Mode (lm) exigido pelo kernel x86_64 do Jinn. Para simular a classe K8 de 64-bits (Athlon 64), utilize o perfil 'Opteron' / 'Legacy64'."
+                $targetCpu = "athlon"
+                if (-not $Mem) { $targetMem = "256M" }
+                $targetSmp = 1
+            }
+            "^(Phenom|phenom)$" {
+                $targetCpu = "phenom"
+                if (-not $Mem) { $targetMem = "256M" }
+                $targetSmp = 1
+            }
+            "^(Core2Duo|core2duo)$" {
+                $targetCpu = "core2duo"
+                if (-not $Mem) { $targetMem = "256M" }
+                $targetSmp = 1
+            }
+            "^(Conroe|conroe)$" {
+                $targetCpu = "Conroe"
+                if (-not $Mem) { $targetMem = "256M" }
+                $targetSmp = 1
+            }
+            "^(Opteron|Opteron_G1|Legacy64)$" {
+                $targetCpu = "Opteron_G1"
+                if (-not $Mem) { $targetMem = "256M" }
+                $targetSmp = 1
+            }
+            "^(RAM32|ExtremeLow)$" {
+                $targetMem = "32M"
+            }
+            "^(RAM64|LegacyCompact)$" {
+                $targetMem = "64M"
+            }
+            "^(RAM128|LegacyBasic)$" {
+                $targetMem = "128M"
+            }
+            "^(RAM256|LegacyDesktop)$" {
+                $targetMem = "256M"
+            }
+            "^(RAM512|DesktopLegacy)$" {
+                $targetMem = "512M"
+            }
+            "^(RAM1024|RAM1G|DesktopIntermediate)$" {
+                $targetMem = "1024M"
+            }
+            "^(RAM2048|RAM2G|DesktopModern)$" {
+                $targetMem = "2048M"
+            }
+            "^(RAM4096|RAM4G|Server)$" {
+                $targetMem = "4096M"
+            }
+            "^(SMP1)$" {
+                $targetSmp = 1
+            }
+            "^(SMP2)$" {
+                $targetSmp = 2
+            }
+            "^(SMP4)$" {
+                $targetSmp = 4
+            }
+            default {
+                Write-Error "Perfil desconhecido: '$Profile'. Perfis suportados: Athlon, Phenom, Core2Duo, Conroe, Opteron, Legacy64, RAM32, RAM64, RAM128, RAM256, RAM512, RAM1024, RAM2048, RAM4096, SMP1, SMP2, SMP4."
+                exit 1
+            }
+        }
+    }
+
     $diskImg = Join-Path $projectRoot "disk.img"
     $qemuArgs = @(
         "-boot", "order=d",
         "-cdrom", $isoPath,
-        "-m", "512M",
-        "-smp", "$Smp",
+        "-m", "$targetMem",
+        "-smp", "$targetSmp",
         "-netdev", "user,id=net0",
-        "-device", "virtio-net-pci,netdev=net0",
-        "-serial", "stdio"
+        "-device", "virtio-net-pci,netdev=net0"
     )
+    if ($targetCpu) {
+        $qemuArgs += @("-cpu", "$targetCpu")
+    }
+    if ($Headless) {
+        $qemuArgs += @("-display", "none")
+    }
+    if ($SerialLog) {
+        $qemuArgs += @("-serial", "file:$SerialLog")
+    } else {
+        $qemuArgs += @("-serial", "stdio")
+    }
     if (Test-Path $diskImg) {
         Write-Host "Conectando disco virtual FAT32 ($diskImg)..."
         $qemuArgs += @("-drive", "file=$diskImg,format=raw,index=0,media=disk")
     }
+    Write-Host "Comando QEMU: $qemu $($qemuArgs -join ' ')"
     & $qemu @qemuArgs
 } else {
     Write-Host "ISO gerada; execução do QEMU ignorada por -NoRun."
