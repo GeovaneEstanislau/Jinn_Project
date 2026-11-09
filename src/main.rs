@@ -457,7 +457,7 @@ pub extern "C" fn _start() -> ! {
         w.set_color(Color::LightGray, Color::Black);
     }
 
-    w.write_string("[+] Kernel DMA Manager (KDM Fase 1 e 2)...");
+    w.write_string("[+] Kernel DMA Manager (KDM Fases 1, 2 e 3)...");
     dma::init();
     let (dma_passed, dma_total) = dma::run_dma_manager_selftests();
     if dma_passed == dma_total {
@@ -468,7 +468,7 @@ pub extern "C" fn _start() -> ! {
         w.write_decimal(dma_total);
         w.write_line(" aprovados)");
         w.set_color(Color::LightGray, Color::Black);
-        serial_write(b"[KDM] Fase 1 e 2 Selftests: OK (16/16 aprovados)\n");
+        serial_write(b"[KDM] Fases 1, 2 e 3 Selftests: OK (23/23 aprovados)\n");
     } else {
         w.set_color(Color::LightRed, Color::Black);
         w.write_string(" FALHA (");
@@ -477,7 +477,7 @@ pub extern "C" fn _start() -> ! {
         w.write_decimal(dma_total);
         w.write_line(")");
         w.set_color(Color::LightGray, Color::Black);
-        serial_write(b"[KDM] Fase 1 e 2 Selftests: FALHA\n");
+        serial_write(b"[KDM] Fases 1, 2 e 3 Selftests: FALHA\n");
     }
 
     w.write_string("[+] Subsistema Grafico (Limine Framebuffer)...");

@@ -337,3 +337,54 @@ A **Fase 2 (Alocação Física e Mediador de Bounce Buffers - Backend B)** foi i
 - **Aladdin Desktop Suite:** `43/43 aprovados`.
 - **Drivers de Rede (`src/drivers/net/`):** Permanecem 100% intocados e em Ring 0.
 
+---
+
+## 12. Conclusão e Homologação da Fase 3
+
+A **Fase 3 (Exposição das Syscalls 60..=68, DmaBufferRegistry e Validação de Permissões `DRIVER_CAP_DMA`)** foi implementada e homologada com sucesso integral:
+
+### 12.1 Artefatos de Código Desenvolvidos
+- `src/scheduler.rs`:
+  - Campo `pub driver_caps: u32` integrado formalmente no descritor de processo `Task`.
+  - Inicialização padronizada com `driver_caps: 0` em todas as rotinas de criação de processos.
+  - Funções auxiliares thread-safe:
+    - `scheduler::current_has_cap(cap: u32) -> bool` (PID 0 possui capacidade implícita).
+    - `scheduler::grant_driver_cap(pid: usize, cap: u32)`
+    - `scheduler::revoke_driver_cap(pid: usize, cap: u32)`
+  - Faixa virtual reservada para DMA em espaço de usuário: `USER_DMA_BASE = 0x0000_5000_0000` até `USER_DMA_MAX = 0x0000_6000_0000`.
+- `src/dma/manager.rs`:
+  - `DmaBufferRegistry`: Registro global gerenciador de até 64 buffers DMA concorrentes (`MAX_DMA_BUFFERS`).
+  - Tradução e validação de handles opacos de 64 bits `(slot_id << 32 | generation)` com verificação estrita de propriedade contra PID solicitante.
+  - Métodos `alloc_buffer`, `get_entry`, `get_entry_mut`, `release_buffer` e `cleanup_pool_buffers`.
+  - Rejeição estrita com `QuarantinedMemory` (`EBUSY`) de qualquer tentativa de liberação de buffers sob quarentena permanente.
+- `src/syscall.rs`:
+  - Exposição e roteamento central das 9 chamadas de sistema (Syscalls 60 a 68) em `syscall_dispatch`:
+    - **Syscall 60 (`sys_dma_pool_create`):** Criação de pool com barreira de 32 bits (< 4 GiB).
+    - **Syscall 61 (`sys_dma_pool_destroy`):** Destruição de pool e gatilho de quarentena em caso de vazamento.
+    - **Syscall 62 (`sys_dma_buffer_alloc`):** Alocação de buffer e emissão de handle de 64 bits.
+    - **Syscall 63 (`sys_dma_buffer_release`):** Liberação e devolução ao pool.
+    - **Syscall 64 (`sys_dma_buffer_map`):** Mapeamento para PML4 do processo chamador em `USER_DMA_BASE`.
+    - **Syscall 65 (`sys_dma_buffer_unmap`):** Desmapeamento virtual sem tocar memória física.
+    - **Syscall 66 (`sys_dma_transfer_prepare`):** Preparação via `BounceBufferMediator::prepare_tx` ou `prepare_rx`.
+    - **Syscall 67 (`sys_dma_transfer_complete`):** Sincronização pós-DMA via `complete_rx` ou finalização TX.
+    - **Syscall 68 (`sys_dma_device_reset_status`):** Verificação de status de reset; se `reset_confirmed == 0`, dispara quarentena permanente de todos os frames e retorna `EBUSY`.
+  - Todas as chamadas validam `current_has_cap(DRIVER_CAP_DMA)` e retornam `EPERM` (-1) para processos não autorizados.
+- `src/dma/bounce.rs`:
+  - Validação adaptativa de ponteiros em `validate_user_memory`: processos de usuário têm ponteiros validados por `validate_user_buffer`, enquanto invocações de Ring 0 (kernel/selftests) operam sem falsos positivos.
+- `src/dma/tests.rs` & `tests/kdm_host_tests.rs`:
+  - Expandido de 16 para 23 testes unitários e de integração (7 novos testes na Fase 3).
+  - Suíte de host com 7 baterias aprovadas (100% de sucesso).
+  - Selftests de boot do kernel com 23/23 testes aprovados.
+
+### 12.2 Resultados da Homologação em Execução Real (QEMU 256M)
+- **KDM Selftests (Fases 1, 2 e 3):** `23/23 aprovados` (100% de sucesso no boot).
+- **Host Unit Tests (`tests/kdm_host_tests.rs`):** `7/7 aprovados` (100% de sucesso).
+- **Driver Manager (Etapa 1):** `12/12 aprovados` (PS/2 User-Space, fallback de Ring 0 validado).
+- **Driver Supervisor:** `5/5 aprovados`.
+- **ELF Loader Security:** `16/16 aprovados`.
+- **Reconciliação de Memória JAHA 1.2:** `0 bytes de discrepância`.
+- **Testes de Rede / JinnWall / TCP:** `38/38 aprovados`.
+- **Aladdin Desktop Suite:** `43/43 aprovados`.
+- **Drivers de Rede (`src/drivers/net/`):** Permanecem 100% intocados e em Ring 0.
+
+

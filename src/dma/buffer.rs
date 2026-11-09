@@ -126,7 +126,7 @@ impl QuarantineRegistry {
 }
 
 /// Metadados de controle de um buffer DMA gerenciado pelo KDM.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DmaBuffer {
     /// Identificador único / índice de slot do buffer
     pub id: u64,

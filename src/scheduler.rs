@@ -86,6 +86,10 @@ pub const USER_HEAP_MAX:  u64 = 0x0000_2000_0000;
 pub const USER_JDA_BASE: u64 = 0x0000_3000_0000;
 pub const USER_JDA_MAX:  u64 = 0x0000_4000_0000;
 
+/// Faixa de endereçamento virtual reservada para mapeamentos de buffers do Kernel DMA Manager (KDM).
+pub const USER_DMA_BASE: u64 = 0x0000_5000_0000;
+pub const USER_DMA_MAX:  u64 = 0x0000_6000_0000;
+
 /// Descritor de arquivo aberto por uma tarefa no VFS.
 #[derive(Debug, Clone, Copy)]
 pub struct TaskFileDescriptor {
@@ -134,6 +138,46 @@ pub fn current_pid() -> usize {
     } else {
         let idx = CURRENT_TASK.load(Ordering::SeqCst);
         if idx < 0 { 0 } else { idx as usize }
+    }
+}
+
+/// Verifica se o processo atual possui a capacidade de driver informada.
+/// Tarefa 0 (kernel / threads de sistema) possui todas as capacidades implicitamente.
+pub fn current_has_cap(cap: u32) -> bool {
+    let pid = current_pid();
+    if pid == 0 {
+        return true;
+    }
+    let _guard = SCHED_LOCK.lock();
+    let sched = unsafe { &*core::ptr::addr_of!(SCHEDULER) };
+    if let Some(Some(ref task)) = sched.tasks.get(pid) {
+        (task.driver_caps & cap) != 0
+    } else {
+        false
+    }
+}
+
+/// Concede uma capacidade de driver ao processo especificado por PID.
+pub fn grant_driver_cap(pid: usize, cap: u32) {
+    if pid >= MAX_TASKS {
+        return;
+    }
+    let _guard = SCHED_LOCK.lock();
+    let sched = unsafe { &mut *core::ptr::addr_of_mut!(SCHEDULER) };
+    if let Some(Some(ref mut task)) = sched.tasks.get_mut(pid) {
+        task.driver_caps |= cap;
+    }
+}
+
+/// Revoga uma capacidade de driver do processo especificado por PID.
+pub fn revoke_driver_cap(pid: usize, cap: u32) {
+    if pid >= MAX_TASKS {
+        return;
+    }
+    let _guard = SCHED_LOCK.lock();
+    let sched = unsafe { &mut *core::ptr::addr_of_mut!(SCHEDULER) };
+    if let Some(Some(ref mut task)) = sched.tasks.get_mut(pid) {
+        task.driver_caps &= !cap;
     }
 }
 
@@ -282,6 +326,8 @@ pub struct Task {
     pub parent_pid: Option<usize>,
     /// Token de geração do PID para proteção contra reaproveitamento de slot.
     pub generation: u64,
+    /// Máscara de bits de capacidades concedidas a este processo (ex: DRIVER_CAP_DMA).
+    pub driver_caps: u32,
 }
 
 // ── Estrutura do escalonador ──────────────────────────────────────────────────
@@ -519,6 +565,7 @@ impl Scheduler {
                 running_on_cpu: None,
                 parent_pid,
                 generation: gen,
+                driver_caps: 0,
             });
             let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
             self.next_id = (id + 1) % max_alloc;
@@ -644,6 +691,7 @@ impl Scheduler {
                 running_on_cpu: None,
                 parent_pid,
                 generation: gen,
+                driver_caps: 0,
             });
             let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
             self.next_id = (id + 1) % max_alloc;
@@ -812,6 +860,7 @@ impl Scheduler {
             running_on_cpu: None,
             parent_pid,
             generation: gen,
+            driver_caps: 0,
         });
         let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
         self.next_id = (id + 1) % max_alloc;
@@ -925,6 +974,7 @@ impl Scheduler {
             running_on_cpu: None,
             parent_pid: None,
             generation: gen,
+            driver_caps: 0,
         });
 
         if cpu_id < crate::gdt::MAX_CPUS {
@@ -1004,6 +1054,7 @@ impl Scheduler {
                 running_on_cpu: None,
                 parent_pid,
                 generation: gen,
+                driver_caps: 0,
             });
             let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
             self.next_id = (id + 1) % max_alloc;

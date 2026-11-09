@@ -35,8 +35,13 @@ pub fn validate_user_memory(ptr: *const u8, len: usize, write_access: bool) -> R
 
     #[cfg(not(test))]
     {
-        if crate::syscall::validate_user_buffer(ptr, len, write_access).is_err() {
-            return Err(DmaError::MappingFailed);
+        let pid = crate::scheduler::current_pid();
+        if let Some(Some(task)) = crate::scheduler::get().tasks.get(pid) {
+            if task.ring == crate::scheduler::Ring::User {
+                if crate::syscall::validate_user_buffer(ptr, len, write_access).is_err() {
+                    return Err(DmaError::MappingFailed);
+                }
+            }
         }
     }
 

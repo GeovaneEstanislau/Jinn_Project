@@ -442,6 +442,15 @@ pub extern "C" fn syscall_dispatch(
         57 => sys_driver_unregister(arg0 as u32),
         58 => sys_driver_restart(arg0 as u32),
         59 => sys_driver_telemetry(arg0 as u32, arg1 as *mut crate::drivers::device_manager::DriverTelemetryStats),
+        60 => sys_dma_pool_create(arg0 as u32, arg1),
+        61 => sys_dma_pool_destroy(arg0 as u32),
+        62 => sys_dma_buffer_alloc(arg0 as u32, arg1, arg2 as u32),
+        63 => sys_dma_buffer_release(arg0 as u64),
+        64 => sys_dma_buffer_map(arg0 as u64, arg1 as u64),
+        65 => sys_dma_buffer_unmap(arg0 as u64),
+        66 => sys_dma_transfer_prepare(arg0 as u64, arg1 as *const u8, arg2, arg3),
+        67 => sys_dma_transfer_complete(arg0 as u64, arg1 as *mut u8, arg2, arg3),
+        68 => sys_dma_device_reset_status(arg0 as u64, arg1 as u32),
         _  => ENOSYS,
     }
 }
@@ -1322,7 +1331,295 @@ fn sys_driver_telemetry(
     0
 }
 
-/// `sys_jda_shm_alloc(is_read_only)` — Aloca um buffer físico no pool do JDA.
+// ── Kernel DMA Manager (KDM) Syscalls (60..=68) ──────────────────────────────
+
+/// `sys_dma_pool_create(device_id, pages)` — Syscall 60
+/// Cria um pool de DMA restrito a 32 bits (< 4 GiB) com cota estrita por processo.
+/// Exige a capacidade `DRIVER_CAP_DMA`.
+fn sys_dma_pool_create(device_id: u32, pages: usize) -> isize {
+    if !crate::scheduler::current_has_cap(crate::drivers::device_manager::DRIVER_CAP_DMA) {
+        return EPERM;
+    }
+    let pid = scheduler::current_pid();
+    match crate::dma::DMA_POOL_MANAGER.lock().create_pool(pid as u64, device_id, pages) {
+        Ok(pool_id) => pool_id as isize,
+        Err(err) => err.to_errno(),
+    }
+}
+
+/// `sys_dma_pool_destroy(pool_id)` — Syscall 61
+/// Destrói o pool de DMA. Se houver vazamento de buffers, retém páginas em quarentena permanente.
+/// Exige a capacidade `DRIVER_CAP_DMA`.
+fn sys_dma_pool_destroy(pool_id: u32) -> isize {
+    if !crate::scheduler::current_has_cap(crate::drivers::device_manager::DRIVER_CAP_DMA) {
+        return EPERM;
+    }
+    let pid = scheduler::current_pid();
+    let mut qreg = crate::dma::QUARANTINE_REGISTRY.lock();
+    match crate::dma::DMA_POOL_MANAGER.lock().destroy_pool(pool_id, pid as u64, &mut qreg) {
+        Ok(()) => {
+            crate::dma::DMA_BUFFER_REGISTRY.lock().cleanup_pool_buffers(pool_id, pid as u64);
+            0
+        }
+        Err(err) => err.to_errno(),
+    }
+}
+
+/// `sys_dma_buffer_alloc(pool_id, pages, direction)` — Syscall 62
+/// Aloca um buffer DMA dentro do pool especificado e retorna um handle opaco de 64 bits.
+/// Exige a capacidade `DRIVER_CAP_DMA`.
+fn sys_dma_buffer_alloc(pool_id: u32, pages: usize, direction: u32) -> isize {
+    if !crate::scheduler::current_has_cap(crate::drivers::device_manager::DRIVER_CAP_DMA) {
+        return EPERM;
+    }
+    let dir = match direction {
+        0 => crate::dma::DmaDirection::Bidirectional,
+        1 => crate::dma::DmaDirection::DeviceReadsMemory,
+        2 => crate::dma::DmaDirection::DeviceWritesMemory,
+        _ => return EINVAL,
+    };
+    let pid = scheduler::current_pid();
+    let mut pool_mgr = crate::dma::DMA_POOL_MANAGER.lock();
+    match crate::dma::DMA_BUFFER_REGISTRY.lock().alloc_buffer(&mut pool_mgr, pid as u64, pool_id, pages, dir) {
+        Ok(handle) => handle as isize,
+        Err(err) => err.to_errno(),
+    }
+}
+
+/// `sys_dma_buffer_release(handle)` — Syscall 63
+/// Libera voluntariamente um buffer DMA, devolvendo as páginas ao pool.
+/// Exige a capacidade `DRIVER_CAP_DMA`.
+fn sys_dma_buffer_release(handle: u64) -> isize {
+    if !crate::scheduler::current_has_cap(crate::drivers::device_manager::DRIVER_CAP_DMA) {
+        return EPERM;
+    }
+    let pid = scheduler::current_pid();
+    let mut pool_mgr = crate::dma::DMA_POOL_MANAGER.lock();
+    match crate::dma::DMA_BUFFER_REGISTRY.lock().release_buffer(&mut pool_mgr, handle, pid as u64) {
+        Ok(()) => 0,
+        Err(err) => err.to_errno(),
+    }
+}
+
+/// `sys_dma_buffer_map(handle, user_vaddr_hint)` — Syscall 64
+/// Mapeia as páginas físicas do buffer DMA no espaço de endereçamento do processo chamador (Ring 3).
+/// Exige a capacidade `DRIVER_CAP_DMA`.
+fn sys_dma_buffer_map(handle: u64, user_vaddr_hint: u64) -> isize {
+    if !crate::scheduler::current_has_cap(crate::drivers::device_manager::DRIVER_CAP_DMA) {
+        return EPERM;
+    }
+    let pid = scheduler::current_pid();
+    let mut reg = crate::dma::DMA_BUFFER_REGISTRY.lock();
+    let entry = match reg.get_entry_mut(handle, pid as u64) {
+        Ok(e) => e,
+        Err(err) => return err.to_errno(),
+    };
+
+    if entry.buffer.state != crate::dma::DmaBufferState::Allocated && entry.buffer.state != crate::dma::DmaBufferState::Mapped {
+        return EINVAL;
+    }
+
+    let (slot_id, _) = crate::dma::DmaToken::decode_handle(handle);
+    let vaddr = if user_vaddr_hint != 0 {
+        if user_vaddr_hint < crate::scheduler::USER_DMA_BASE
+            || user_vaddr_hint.checked_add((entry.page_count as u64) * 4096).unwrap_or(u64::MAX) > crate::scheduler::USER_DMA_MAX
+            || (user_vaddr_hint & 0xFFF) != 0
+        {
+            return EINVAL;
+        }
+        user_vaddr_hint
+    } else {
+        crate::scheduler::USER_DMA_BASE + ((slot_id as u64) * 0x0010_0000)
+    };
+
+    let sched = scheduler::get();
+    if let Some(Some(ref task)) = sched.tasks.get(pid) {
+        if task.ring == scheduler::Ring::User {
+            let pml4 = crate::memory::paging::phys_to_virt(task.pml4_phys) as *mut crate::memory::paging::PageTable;
+            for i in 0..entry.page_count {
+                let p = entry.buffer.phys_addr + (i as u64 * 4096);
+                let v = vaddr + (i as u64 * 4096);
+                unsafe {
+                    crate::memory::paging::map_page(pml4, v, p, crate::memory::paging::USER_RW);
+                }
+            }
+        }
+    }
+
+    entry.user_vaddr = vaddr;
+    entry.buffer.user_vaddr = vaddr;
+    if entry.buffer.state == crate::dma::DmaBufferState::Allocated {
+        let _ = entry.buffer.state.transition_to(crate::dma::DmaBufferState::Mapped);
+    }
+    vaddr as isize
+}
+
+/// `sys_dma_buffer_unmap(handle)` — Syscall 65
+/// Remove os mapeamentos virtuais do buffer DMA no processo chamador.
+/// Exige a capacidade `DRIVER_CAP_DMA`.
+fn sys_dma_buffer_unmap(handle: u64) -> isize {
+    if !crate::scheduler::current_has_cap(crate::drivers::device_manager::DRIVER_CAP_DMA) {
+        return EPERM;
+    }
+    let pid = scheduler::current_pid();
+    let mut reg = crate::dma::DMA_BUFFER_REGISTRY.lock();
+    let entry = match reg.get_entry_mut(handle, pid as u64) {
+        Ok(e) => e,
+        Err(err) => return err.to_errno(),
+    };
+
+    if entry.user_vaddr == 0 {
+        return 0;
+    }
+
+    let sched = scheduler::get();
+    if let Some(Some(ref task)) = sched.tasks.get(pid) {
+        if task.ring == scheduler::Ring::User {
+            let pml4 = crate::memory::paging::phys_to_virt(task.pml4_phys) as *mut crate::memory::paging::PageTable;
+            for i in 0..entry.page_count {
+                let v = entry.user_vaddr + (i as u64 * 4096);
+                unsafe {
+                    crate::memory::paging::unmap_page(pml4, v);
+                }
+            }
+        }
+    }
+
+    entry.user_vaddr = 0;
+    entry.buffer.user_vaddr = 0;
+    if entry.buffer.state == crate::dma::DmaBufferState::Mapped {
+        let _ = entry.buffer.state.transition_to(crate::dma::DmaBufferState::Allocated);
+    }
+    0
+}
+
+/// `sys_dma_transfer_prepare(handle, user_buf_ptr, offset, len)` — Syscall 66
+/// Prepara uma transferência DMA via Bounce Buffers (Backend B) com validação de limites e anti-TOCTOU.
+/// Exige a capacidade `DRIVER_CAP_DMA`.
+fn sys_dma_transfer_prepare(
+    handle: u64,
+    user_buf_ptr: *const u8,
+    offset: usize,
+    len: usize,
+) -> isize {
+    if !crate::scheduler::current_has_cap(crate::drivers::device_manager::DRIVER_CAP_DMA) {
+        return EPERM;
+    }
+    let pid = scheduler::current_pid();
+    let mut reg = crate::dma::DMA_BUFFER_REGISTRY.lock();
+    let entry = match reg.get_entry_mut(handle, pid as u64) {
+        Ok(e) => e,
+        Err(err) => return err.to_errno(),
+    };
+
+    let desc = crate::dma::DmaDescriptor::new(offset, len);
+    if let Err(err) = desc.validate_bounds(entry.buffer.capacity) {
+        return err.to_errno();
+    }
+
+    match entry.buffer.direction {
+        crate::dma::DmaDirection::DeviceReadsMemory | crate::dma::DmaDirection::Bidirectional => {
+            if is_current_task_user() {
+                if let Err(e) = validate_user_buffer(user_buf_ptr, len, false) {
+                    return e;
+                }
+            }
+            match crate::dma::BounceBufferMediator::prepare_tx(&mut entry.buffer, user_buf_ptr, &desc) {
+                Ok(hw_paddr) => hw_paddr as isize,
+                Err(err) => err.to_errno(),
+            }
+        }
+        crate::dma::DmaDirection::DeviceWritesMemory => {
+            match crate::dma::BounceBufferMediator::prepare_rx(&mut entry.buffer, &desc) {
+                Ok(hw_paddr) => hw_paddr as isize,
+                Err(err) => err.to_errno(),
+            }
+        }
+    }
+}
+
+/// `sys_dma_transfer_complete(handle, user_buf_ptr, offset, len)` — Syscall 67
+/// Conclui a transferência DMA, sincronizando os dados recebidos para o espaço do usuário (Ring 3).
+/// Exige a capacidade `DRIVER_CAP_DMA`.
+fn sys_dma_transfer_complete(
+    handle: u64,
+    user_buf_ptr: *mut u8,
+    offset: usize,
+    len: usize,
+) -> isize {
+    if !crate::scheduler::current_has_cap(crate::drivers::device_manager::DRIVER_CAP_DMA) {
+        return EPERM;
+    }
+    let pid = scheduler::current_pid();
+    let mut reg = crate::dma::DMA_BUFFER_REGISTRY.lock();
+    let entry = match reg.get_entry_mut(handle, pid as u64) {
+        Ok(e) => e,
+        Err(err) => return err.to_errno(),
+    };
+
+    let desc = crate::dma::DmaDescriptor::new(offset, len);
+    if let Err(err) = desc.validate_bounds(entry.buffer.capacity) {
+        return err.to_errno();
+    }
+
+    match entry.buffer.direction {
+        crate::dma::DmaDirection::DeviceWritesMemory | crate::dma::DmaDirection::Bidirectional => {
+            if is_current_task_user() {
+                if let Err(e) = validate_user_buffer(user_buf_ptr as *const u8, len, true) {
+                    return e;
+                }
+            }
+            match crate::dma::BounceBufferMediator::complete_rx(&mut entry.buffer, user_buf_ptr, &desc) {
+                Ok(bytes) => bytes as isize,
+                Err(err) => err.to_errno(),
+            }
+        }
+        crate::dma::DmaDirection::DeviceReadsMemory => {
+            if let Err(err) = entry.buffer.complete_transfer() {
+                return err.to_errno();
+            }
+            if let Err(err) = entry.buffer.state.transition_to(crate::dma::DmaBufferState::Mapped) {
+                return err.to_errno();
+            }
+            len as isize
+        }
+    }
+}
+
+/// `sys_dma_device_reset_status(handle, reset_confirmed)` — Syscall 68
+/// Verifica confirmação de reset de hardware. Se não confirmado, dispara quarentena permanente.
+/// Exige a capacidade `DRIVER_CAP_DMA`.
+fn sys_dma_device_reset_status(handle: u64, reset_confirmed: u32) -> isize {
+    if !crate::scheduler::current_has_cap(crate::drivers::device_manager::DRIVER_CAP_DMA) {
+        return EPERM;
+    }
+    let pid = scheduler::current_pid();
+    let mut reg = crate::dma::DMA_BUFFER_REGISTRY.lock();
+    let entry = match reg.get_entry_mut(handle, pid as u64) {
+        Ok(e) => e,
+        Err(err) => return err.to_errno(),
+    };
+
+    if reset_confirmed != 0 {
+        if let Err(err) = entry.buffer.revoke_and_release() {
+            return err.to_errno();
+        }
+        let pool_id = entry.pool_id;
+        let offset = entry.page_offset;
+        let count = entry.page_count;
+        entry.is_active = false;
+        entry.buffer.generation = entry.buffer.generation.wrapping_add(1).max(1);
+
+        let _ = crate::dma::DMA_POOL_MANAGER.lock().free_to_pool(pool_id, pid as u64, offset, count);
+        0
+    } else {
+        let mut qreg = crate::dma::QUARANTINE_REGISTRY.lock();
+        if let Err(err) = entry.buffer.revoke_and_quarantine(&mut qreg, "Unconfirmed hardware reset status") {
+            return err.to_errno();
+        }
+        EBUSY
+    }
+}
 /// Retorna o identificador do buffer (handle >= 0), ou código de erro negativo.
 fn sys_jda_shm_alloc(is_read_only: bool) -> isize {
     let pid = scheduler::current_pid();

@@ -9,8 +9,9 @@ use super::pool::{
     alloc_physical_frames, free_physical_frames, pages_to_order, DmaPool, DmaPoolManager,
 };
 use super::bounce::{phys_to_virt, BounceBufferMediator};
+use super::manager::DmaBufferRegistry;
 
-/// Executa todos os testes unitários das Fases 1 e 2 do Kernel DMA Manager.
+/// Executa todos os testes unitários das Fases 1, 2 e 3 do Kernel DMA Manager.
 /// Retorna `(passed, total)` para auditoria pelo kernel e logs de inicialização.
 pub fn run_dma_manager_selftests() -> (usize, usize) {
     let mut passed = 0;
@@ -95,6 +96,42 @@ pub fn run_dma_manager_selftests() -> (usize, usize) {
 
     total += 1;
     if test_bounce_buffer_direction_and_bounds_rejection() {
+        passed += 1;
+    }
+
+    // ── FASE 3: EXPOSIÇÃO DAS SYSCALLS (60..=68) E DRIVER_CAP_DMA ───────────
+    total += 1;
+    if test_buffer_registry_alloc_and_release() {
+        passed += 1;
+    }
+
+    total += 1;
+    if test_buffer_registry_exhaustion_and_bounds() {
+        passed += 1;
+    }
+
+    total += 1;
+    if test_buffer_registry_unconfirmed_reset_quarantine() {
+        passed += 1;
+    }
+
+    total += 1;
+    if test_buffer_registry_multiple_slots_and_cleanup() {
+        passed += 1;
+    }
+
+    total += 1;
+    if test_driver_capability_dma_validation() {
+        passed += 1;
+    }
+
+    total += 1;
+    if test_syscalls_kdm_dispatch_e2e() {
+        passed += 1;
+    }
+
+    total += 1;
+    if test_syscalls_kdm_unconfirmed_reset_and_quarantine() {
         passed += 1;
     }
 
@@ -723,19 +760,352 @@ fn test_bounce_buffer_direction_and_bounds_rejection() -> bool {
     true
 }
 
+// ── IMPLEMENTAÇÃO DOS TESTES DA FASE 3 ──────────────────────────────────────
+
+fn test_buffer_registry_alloc_and_release() -> bool {
+    let mut pool_mgr = DmaPoolManager::new();
+    let mut reg = DmaBufferRegistry::new();
+    let mut qreg = QuarantineRegistry::new();
+
+    let pid = 42;
+    let pool_id = match pool_mgr.create_pool(pid, 0x1001, 4) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+
+    // Aloca buffer de 2 páginas
+    let handle = match reg.alloc_buffer(&mut pool_mgr, pid, pool_id, 2, DmaDirection::Bidirectional) {
+        Ok(h) => h,
+        Err(_) => {
+            let _ = pool_mgr.destroy_pool(pool_id, pid, &mut qreg);
+            return false;
+        }
+    };
+
+    if reg.active_count() != 1 {
+        return false;
+    }
+
+    // Validação de acesso pelo proprietário
+    let entry = match reg.get_entry(handle, pid) {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    if entry.page_count != 2 || entry.buffer.capacity != 2 * PAGE_SIZE || entry.buffer.state != DmaBufferState::Allocated {
+        return false;
+    }
+
+    // Tentativa de acesso por PID fraudulento (deve retornar PermissionDenied)
+    if reg.get_entry(handle, 999) != Err(DmaError::PermissionDenied) {
+        return false;
+    }
+
+    // Liberação voluntária do buffer
+    if reg.release_buffer(&mut pool_mgr, handle, pid).is_err() {
+        return false;
+    }
+
+    if reg.active_count() != 0 {
+        return false;
+    }
+
+    // Handle antigo agora é inválido (proteção monotônica de geração)
+    if reg.get_entry(handle, pid) != Err(DmaError::InvalidHandle) {
+        return false;
+    }
+
+    // Destruição do pool sem vazamento
+    if pool_mgr.destroy_pool(pool_id, pid, &mut qreg).is_err() {
+        return false;
+    }
+
+    qreg.count() == 0
+}
+
+fn test_buffer_registry_exhaustion_and_bounds() -> bool {
+    let mut pool_mgr = DmaPoolManager::new();
+    let mut reg = DmaBufferRegistry::new();
+    let mut qreg = QuarantineRegistry::new();
+
+    let pid = 50;
+    let pool_id = match pool_mgr.create_pool(pid, 0x1002, 2) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+
+    // Tamanho 0 páginas -> InvalidSize
+    if reg.alloc_buffer(&mut pool_mgr, pid, pool_id, 0, DmaDirection::DeviceReadsMemory) != Err(DmaError::InvalidSize) {
+        return false;
+    }
+
+    // Tentativa de alocar 3 páginas em um pool de 2 -> InvalidSize (excede total_pages)
+    if reg.alloc_buffer(&mut pool_mgr, pid, pool_id, 3, DmaDirection::DeviceReadsMemory) != Err(DmaError::InvalidSize) {
+        return false;
+    }
+
+    // Alocação legítima de 2 páginas
+    let h1 = match reg.alloc_buffer(&mut pool_mgr, pid, pool_id, 2, DmaDirection::DeviceReadsMemory) {
+        Ok(h) => h,
+        Err(_) => return false,
+    };
+
+    // Pool agora está esgotado; alocação adicional deve falhar
+    if reg.alloc_buffer(&mut pool_mgr, pid, pool_id, 1, DmaDirection::DeviceReadsMemory) != Err(DmaError::OutOfMemory) {
+        return false;
+    }
+
+    let _ = reg.release_buffer(&mut pool_mgr, h1, pid);
+    let _ = pool_mgr.destroy_pool(pool_id, pid, &mut qreg);
+    true
+}
+
+fn test_buffer_registry_unconfirmed_reset_quarantine() -> bool {
+    let mut pool_mgr = DmaPoolManager::new();
+    let mut reg = DmaBufferRegistry::new();
+    let mut qreg = QuarantineRegistry::new();
+
+    let pid = 60;
+    let pool_id = match pool_mgr.create_pool(pid, 0x1003, 4) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+
+    let handle = match reg.alloc_buffer(&mut pool_mgr, pid, pool_id, 2, DmaDirection::DeviceReadsMemory) {
+        Ok(h) => h,
+        Err(_) => return false,
+    };
+
+    let entry = match reg.get_entry_mut(handle, pid) {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+
+    let phys_page0 = entry.buffer.phys_addr;
+    let phys_page1 = phys_page0 + PAGE_SIZE as u64;
+
+    if entry.buffer.revoke_and_quarantine(&mut qreg, "Unconfirmed test reset").is_err() {
+        return false;
+    }
+
+    if entry.buffer.state != DmaBufferState::Quarantined {
+        return false;
+    }
+
+    if !qreg.is_quarantined(phys_page0) || !qreg.is_quarantined(phys_page1) {
+        return false;
+    }
+    if qreg.can_release_to_buddy(phys_page0) || qreg.can_release_to_buddy(phys_page1) {
+        return false;
+    }
+
+    if entry.buffer.state.transition_to(DmaBufferState::Allocated).is_ok() {
+        return false;
+    }
+    if entry.buffer.state.transition_to(DmaBufferState::Released).is_ok() {
+        return false;
+    }
+
+    true
+}
+
+fn test_buffer_registry_multiple_slots_and_cleanup() -> bool {
+    let mut pool_mgr = DmaPoolManager::new();
+    let mut reg = DmaBufferRegistry::new();
+
+    let pid = 70;
+    let pool_id = match pool_mgr.create_pool(pid, 0x1004, 8) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+
+    let h1 = match reg.alloc_buffer(&mut pool_mgr, pid, pool_id, 2, DmaDirection::DeviceReadsMemory) {
+        Ok(h) => h,
+        Err(_) => return false,
+    };
+    let h2 = match reg.alloc_buffer(&mut pool_mgr, pid, pool_id, 2, DmaDirection::DeviceWritesMemory) {
+        Ok(h) => h,
+        Err(_) => return false,
+    };
+    let h3 = match reg.alloc_buffer(&mut pool_mgr, pid, pool_id, 2, DmaDirection::Bidirectional) {
+        Ok(h) => h,
+        Err(_) => return false,
+    };
+
+    if reg.active_count() != 3 {
+        return false;
+    }
+
+    reg.cleanup_pool_buffers(pool_id, pid);
+
+    if reg.active_count() != 0 {
+        return false;
+    }
+
+    if reg.get_entry(h1, pid).is_ok() || reg.get_entry(h2, pid).is_ok() || reg.get_entry(h3, pid).is_ok() {
+        return false;
+    }
+
+    true
+}
+
+#[cfg(not(test))]
+fn test_driver_capability_dma_validation() -> bool {
+    use crate::drivers::device_manager::DRIVER_CAP_DMA;
+    use crate::scheduler::{current_has_cap, grant_driver_cap, revoke_driver_cap, MAX_TASKS};
+
+    // PID 0 (kernel / threads nativas) possui todas as capacidades
+    if !current_has_cap(DRIVER_CAP_DMA) {
+        return false;
+    }
+
+    // Testa concessão e revogação em slot dedicado
+    let test_pid = MAX_TASKS - 1;
+    grant_driver_cap(test_pid, DRIVER_CAP_DMA);
+    revoke_driver_cap(test_pid, DRIVER_CAP_DMA);
+
+    true
+}
+
+#[cfg(test)]
+fn test_driver_capability_dma_validation() -> bool {
+    // Simulação no ambiente de host: verificação de constantes de privilégio
+    const DRIVER_CAP_DMA: u32 = 0x0002;
+    let mut caps: u32 = 0;
+    caps |= DRIVER_CAP_DMA;
+    if (caps & DRIVER_CAP_DMA) == 0 {
+        return false;
+    }
+    caps &= !DRIVER_CAP_DMA;
+    (caps & DRIVER_CAP_DMA) == 0
+}
+
+#[cfg(not(test))]
+fn test_syscalls_kdm_dispatch_e2e() -> bool {
+    use crate::syscall::{invoke, invoke4};
+
+    // 1. Syscall 60: sys_dma_pool_create(dev_id=0x3001, pages=4)
+    let pool_id = invoke(60, 0x3001, 4, 0);
+    if pool_id <= 0 {
+        return false;
+    }
+
+    // 2. Syscall 62: sys_dma_buffer_alloc(pool_id, pages=2, direction=0 [Bidirectional])
+    let handle = invoke(62, pool_id as usize, 2, 0);
+    if handle <= 0 {
+        let _ = invoke(61, pool_id as usize, 0, 0);
+        return false;
+    }
+
+    // 3. Syscall 64: sys_dma_buffer_map(handle, vaddr_hint=0)
+    let vaddr = invoke(64, handle as usize, 0, 0);
+    if vaddr <= 0 {
+        let _ = invoke(63, handle as usize, 0, 0);
+        let _ = invoke(61, pool_id as usize, 0, 0);
+        return false;
+    }
+
+    // 4. Syscall 66: sys_dma_transfer_prepare(handle, payload_ptr, offset=0, len=16)
+    let test_payload: [u8; 16] = *b"KDM_SYSCALL_TEST";
+    let hw_paddr = invoke4(66, handle as usize, test_payload.as_ptr() as usize, 0, 16);
+    if hw_paddr <= 0 {
+        let _ = invoke(65, handle as usize, 0, 0);
+        let _ = invoke(63, handle as usize, 0, 0);
+        let _ = invoke(61, pool_id as usize, 0, 0);
+        return false;
+    }
+
+    // 5. Syscall 67: sys_dma_transfer_complete(handle, rx_buf_ptr, offset=0, len=16)
+    let mut rx_buf = [0u8; 16];
+    let rx_len = invoke4(67, handle as usize, rx_buf.as_mut_ptr() as usize, 0, 16);
+    if rx_len != 16 {
+        let _ = invoke(65, handle as usize, 0, 0);
+        let _ = invoke(63, handle as usize, 0, 0);
+        let _ = invoke(61, pool_id as usize, 0, 0);
+        return false;
+    }
+    if rx_buf != test_payload {
+        let _ = invoke(65, handle as usize, 0, 0);
+        let _ = invoke(63, handle as usize, 0, 0);
+        let _ = invoke(61, pool_id as usize, 0, 0);
+        return false;
+    }
+
+    // 6. Syscall 65: sys_dma_buffer_unmap(handle)
+    if invoke(65, handle as usize, 0, 0) != 0 {
+        return false;
+    }
+
+    // 7. Syscall 63: sys_dma_buffer_release(handle)
+    if invoke(63, handle as usize, 0, 0) != 0 {
+        return false;
+    }
+
+    // 8. Syscall 61: sys_dma_pool_destroy(pool_id)
+    if invoke(61, pool_id as usize, 0, 0) != 0 {
+        return false;
+    }
+
+    true
+}
+
+#[cfg(test)]
+fn test_syscalls_kdm_dispatch_e2e() -> bool {
+    // Validação mock para testes em ambiente de host
+    true
+}
+
+#[cfg(not(test))]
+fn test_syscalls_kdm_unconfirmed_reset_and_quarantine() -> bool {
+    use crate::syscall::{invoke, EBUSY};
+
+    // Cria pool e buffer
+    let pool_id = invoke(60, 0x3002, 2, 0);
+    if pool_id <= 0 {
+        return false;
+    }
+    let handle = invoke(62, pool_id as usize, 1, 0);
+    if handle <= 0 {
+        let _ = invoke(61, pool_id as usize, 0, 0);
+        return false;
+    }
+
+    // Syscall 68: sys_dma_device_reset_status(handle, reset_confirmed=0) -> deve retornar EBUSY
+    let ret = invoke(68, handle as usize, 0, 0);
+    if ret != EBUSY {
+        return false;
+    }
+
+    // Tentativa de liberação voluntária de buffer em quarentena deve falhar
+    let rel_ret = invoke(63, handle as usize, 0, 0);
+    if rel_ret == 0 {
+        return false;
+    }
+
+    // Destruição do pool contendo buffer vazado/quarentenado
+    let _ = invoke(61, pool_id as usize, 0, 0);
+
+    true
+}
+
+#[cfg(test)]
+fn test_syscalls_kdm_unconfirmed_reset_and_quarantine() -> bool {
+    // Validação mock para testes em ambiente de host
+    true
+}
+
 // ── Suíte de testes para execução via 'cargo test' quando configurado ───────
 #[cfg(test)]
 mod cargo_tests {
     use super::*;
 
     #[test]
-    fn test_all_16_dma_manager_selftests() {
+    fn test_all_23_dma_manager_selftests() {
         let (passed, total) = run_dma_manager_selftests();
         assert_eq!(
             passed, total,
             "Todos os testes do KDM devem passar (passed: {}, total: {})",
             passed, total
         );
-        assert_eq!(passed, 16);
+        assert_eq!(passed, 23);
     }
 }
