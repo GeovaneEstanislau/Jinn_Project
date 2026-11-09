@@ -356,6 +356,78 @@ impl DomTree {
         Err(EngineError::InvalidNodeId(node_id.index()))
     }
 
+    /// Query single element matching CSS selector (#id, .class, or tag) from root.
+    pub fn query_selector(&self, selector: &str) -> Option<NodeId> {
+        self.query_selector_from(self.root, selector)
+    }
+
+    /// Query all elements matching CSS selector (#id, .class, or tag) from root.
+    pub fn query_selector_all(&self, selector: &str) -> Vec<NodeId> {
+        self.query_selector_all_from(self.root, selector)
+    }
+
+    /// Query single element matching CSS selector from specified subtree root.
+    pub fn query_selector_from(&self, start: NodeId, selector: &str) -> Option<NodeId> {
+        let sel = selector.trim();
+        if sel.is_empty() {
+            return None;
+        }
+
+        let mut queue = Vec::new();
+        queue.push(start);
+
+        while let Some(current) = queue.pop() {
+            if let Some(node) = self.get(current) {
+                if current != self.root && Self::matches_selector(node, sel) {
+                    return Some(current);
+                }
+                for &child in node.children.iter().rev() {
+                    queue.push(child);
+                }
+            }
+        }
+        None
+    }
+
+    /// Query all elements matching CSS selector from specified subtree root.
+    pub fn query_selector_all_from(&self, start: NodeId, selector: &str) -> Vec<NodeId> {
+        let sel = selector.trim();
+        if sel.is_empty() {
+            return Vec::new();
+        }
+
+        let mut results = Vec::new();
+        let mut queue = Vec::new();
+        queue.push(start);
+
+        while let Some(current) = queue.pop() {
+            if let Some(node) = self.get(current) {
+                if current != self.root && Self::matches_selector(node, sel) {
+                    results.push(current);
+                }
+                for &child in node.children.iter().rev() {
+                    queue.push(child);
+                }
+            }
+        }
+        results
+    }
+
+    fn matches_selector(node: &Node, selector: &str) -> bool {
+        if let NodeType::Element { tag_name, .. } = &node.node_type {
+            if selector.starts_with('#') {
+                let id_target = &selector[1..];
+                return node.id_attr() == Some(id_target);
+            } else if selector.starts_with('.') {
+                let class_target = &selector[1..];
+                return node.has_class(class_target);
+            } else {
+                return tag_name.eq_ignore_ascii_case(selector);
+            }
+        }
+        false
+    }
+
     /// Preorder traversal returning all NodeIds starting from root.
     pub fn preorder(&self) -> Vec<NodeId> {
         let mut res = Vec::new();
@@ -453,5 +525,27 @@ mod tests {
         dom.append_child(n2, n3).unwrap(); // depth 3
         let res = dom.append_child(n3, n4); // depth 4 -> error!
         assert!(matches!(res, Err(EngineError::DomLimitExceeded(_))));
+    }
+
+    #[test]
+    fn test_query_selector_and_query_selector_all() {
+        let mut dom = DomTree::new(EngineLimits::default());
+        let header = dom.create_element("header", vec![("id".into(), "main-header".into())]).unwrap();
+        let video = dom.create_element("video", vec![("class".into(), "player active".into())]).unwrap();
+        let audio = dom.create_element("audio", vec![("class".into(), "player".into())]).unwrap();
+
+        dom.append_child(dom.root(), header).unwrap();
+        dom.append_child(dom.root(), video).unwrap();
+        dom.append_child(dom.root(), audio).unwrap();
+
+        assert_eq!(dom.query_selector("#main-header"), Some(header));
+        assert_eq!(dom.query_selector("video"), Some(video));
+        assert_eq!(dom.query_selector("audio"), Some(audio));
+        assert_eq!(dom.query_selector(".active"), Some(video));
+
+        let players = dom.query_selector_all(".player");
+        assert_eq!(players.len(), 2);
+        assert_eq!(players[0], video);
+        assert_eq!(players[1], audio);
     }
 }

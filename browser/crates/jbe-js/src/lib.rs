@@ -15,6 +15,8 @@ pub enum JsValue {
     Boolean(bool),
     Number(f64),
     String(String),
+    Array(Vec<JsValue>),
+    Object(HashMap<String, JsValue>),
     Element(NodeId),
 }
 
@@ -32,6 +34,11 @@ impl JsValue {
                 }
             }
             JsValue::String(s) => s.clone(),
+            JsValue::Array(items) => {
+                let s: Vec<String> = items.iter().map(|i| i.to_string_val()).collect();
+                format!("[{}]", s.join(","))
+            }
+            JsValue::Object(_) => "[object Object]".to_string(),
             JsValue::Element(id) => format!("[object Element#{}]", id.index()),
         }
     }
@@ -43,6 +50,14 @@ impl JsValue {
             JsValue::Boolean(b) => if *b { 1.0 } else { 0.0 },
             JsValue::Number(n) => *n,
             JsValue::String(s) => s.trim().parse::<f64>().unwrap_or(f64::NAN),
+            JsValue::Array(items) => {
+                if items.len() == 1 {
+                    items[0].to_number()
+                } else {
+                    f64::NAN
+                }
+            }
+            JsValue::Object(_) => f64::NAN,
             JsValue::Element(_) => f64::NAN,
         }
     }
@@ -53,6 +68,8 @@ impl JsValue {
             JsValue::Boolean(b) => *b,
             JsValue::Number(n) => *n != 0.0 && !n.is_nan(),
             JsValue::String(s) => !s.is_empty(),
+            JsValue::Array(_) => true,
+            JsValue::Object(_) => true,
             JsValue::Element(_) => true,
         }
     }
@@ -89,6 +106,9 @@ pub enum BinaryOp {
 pub enum Expr {
     Literal(JsValue),
     Ident(String),
+    Array(Vec<Expr>),
+    Index(Box<Expr>, Box<Expr>),
+    New(String, Vec<Expr>),
     Binary(Box<Expr>, BinaryOp, Box<Expr>),
     Assign(String, Box<Expr>),
     Member(Box<Expr>, String),
@@ -139,8 +159,11 @@ enum Token {
     GtEq,
     LParen,
     RParen,
+    LBracket,
+    RBracket,
     LBrace,
     RBrace,
+    New,
     Semicolon,
     Comma,
     Dot,
@@ -204,6 +227,8 @@ impl<'a> Tokenizer<'a> {
         match ch {
             b'(' => Ok(Token::LParen),
             b')' => Ok(Token::RParen),
+            b'[' => Ok(Token::LBracket),
+            b']' => Ok(Token::RBracket),
             b'{' => Ok(Token::LBrace),
             b'}' => Ok(Token::RBrace),
             b';' => Ok(Token::Semicolon),
@@ -304,6 +329,7 @@ impl<'a> Tokenizer<'a> {
                     "false" => Ok(Token::False),
                     "null" => Ok(Token::Null),
                     "undefined" => Ok(Token::Undefined),
+                    "new" => Ok(Token::New),
                     other => Ok(Token::Ident(other.to_string())),
                 }
             }
@@ -571,6 +597,11 @@ impl JsParser {
                 }
                 self.expect(Token::RParen)?;
                 expr = Expr::Call(Box::new(expr), args);
+            } else if self.peek() == &Token::LBracket {
+                self.next();
+                let idx_expr = self.parse_expression()?;
+                self.expect(Token::RBracket)?;
+                expr = Expr::Index(Box::new(expr), Box::new(idx_expr));
             } else {
                 break;
             }
@@ -592,6 +623,41 @@ impl JsParser {
                 self.expect(Token::RParen)?;
                 Ok(expr)
             }
+            Token::LBracket => {
+                let mut elements = Vec::new();
+                if self.peek() != &Token::RBracket {
+                    loop {
+                        elements.push(self.parse_expression()?);
+                        if self.peek() == &Token::Comma {
+                            self.next();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.expect(Token::RBracket)?;
+                Ok(Expr::Array(elements))
+            }
+            Token::New => {
+                let ctor = match self.next() {
+                    Token::Ident(s) => s,
+                    other => return Err(JsError::ParseError(format!("Expected constructor name after new, got {:?}", other))),
+                };
+                self.expect(Token::LParen)?;
+                let mut args = Vec::new();
+                if self.peek() != &Token::RParen {
+                    loop {
+                        args.push(self.parse_expression()?);
+                        if self.peek() == &Token::Comma {
+                            self.next();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.expect(Token::RParen)?;
+                Ok(Expr::New(ctor, args))
+            }
             other => Err(JsError::ParseError(format!("Unexpected token in primary expression: {:?}", other))),
         }
     }
@@ -608,6 +674,7 @@ pub struct JsRuntime {
     logs: Vec<String>,
     step_count: usize,
     max_steps: usize,
+    rng_state: u64,
 }
 
 impl Default for JsRuntime {
@@ -621,6 +688,12 @@ impl JsRuntime {
         let mut globals = HashMap::new();
         globals.insert("document".to_string(), JsValue::String("[object Document]".into()));
         globals.insert("console".to_string(), JsValue::String("[object Console]".into()));
+        globals.insert("JSON".to_string(), JsValue::String("[object JSON]".into()));
+
+        let mut math = HashMap::new();
+        math.insert("PI".to_string(), JsValue::Number(core::f64::consts::PI));
+        math.insert("E".to_string(), JsValue::Number(core::f64::consts::E));
+        globals.insert("Math".to_string(), JsValue::Object(math));
 
         Self {
             globals,
@@ -630,6 +703,7 @@ impl JsRuntime {
             logs: Vec::new(),
             step_count: 0,
             max_steps: 10_000,
+            rng_state: 0x853c49e6748fea9b,
         }
     }
 
@@ -778,6 +852,141 @@ impl JsRuntime {
         }
     }
 
+    pub fn json_stringify(val: &JsValue) -> String {
+        match val {
+            JsValue::Undefined | JsValue::Null => "null".to_string(),
+            JsValue::Boolean(b) => if *b { "true".to_string() } else { "false".to_string() },
+            JsValue::Number(n) => {
+                if n.fract() == 0.0 {
+                    format!("{:.0}", n)
+                } else {
+                    format!("{}", n)
+                }
+            }
+            JsValue::String(s) => {
+                format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+            }
+            JsValue::Array(items) => {
+                let s: Vec<String> = items.iter().map(Self::json_stringify).collect();
+                format!("[{}]", s.join(","))
+            }
+            JsValue::Object(map) => {
+                let mut entries: Vec<String> = map.iter().map(|(k, v)| {
+                    format!("\"{}\":{}", k, Self::json_stringify(v))
+                }).collect();
+                entries.sort();
+                format!("{{{}}}", entries.join(","))
+            }
+            JsValue::Element(id) => format!("\"[object Element#{}]\"", id.index()),
+        }
+    }
+
+    pub fn json_parse(input: &str) -> JsValue {
+        let bytes = input.trim().as_bytes();
+        let mut pos = 0;
+        Self::parse_json_value(bytes, &mut pos).unwrap_or(JsValue::Null)
+    }
+
+    fn parse_json_value(bytes: &[u8], pos: &mut usize) -> Option<JsValue> {
+        Self::skip_json_whitespace(bytes, pos);
+        if *pos >= bytes.len() {
+            return None;
+        }
+
+        match bytes[*pos] {
+            b'{' => {
+                *pos += 1;
+                let mut map = HashMap::new();
+                loop {
+                    Self::skip_json_whitespace(bytes, pos);
+                    if *pos < bytes.len() && bytes[*pos] == b'}' {
+                        *pos += 1;
+                        break;
+                    }
+                    // Parse key string
+                    if let Some(JsValue::String(key)) = Self::parse_json_value(bytes, pos) {
+                        Self::skip_json_whitespace(bytes, pos);
+                        if *pos < bytes.len() && bytes[*pos] == b':' {
+                            *pos += 1;
+                            if let Some(val) = Self::parse_json_value(bytes, pos) {
+                                map.insert(key, val);
+                            }
+                        }
+                    }
+                    Self::skip_json_whitespace(bytes, pos);
+                    if *pos < bytes.len() && bytes[*pos] == b',' {
+                        *pos += 1;
+                    }
+                }
+                Some(JsValue::Object(map))
+            }
+            b'[' => {
+                *pos += 1;
+                let mut list = Vec::new();
+                loop {
+                    Self::skip_json_whitespace(bytes, pos);
+                    if *pos < bytes.len() && bytes[*pos] == b']' {
+                        *pos += 1;
+                        break;
+                    }
+                    if let Some(val) = Self::parse_json_value(bytes, pos) {
+                        list.push(val);
+                    }
+                    Self::skip_json_whitespace(bytes, pos);
+                    if *pos < bytes.len() && bytes[*pos] == b',' {
+                        *pos += 1;
+                    }
+                }
+                Some(JsValue::Array(list))
+            }
+            b'"' => {
+                *pos += 1;
+                let start = *pos;
+                while *pos < bytes.len() && bytes[*pos] != b'"' {
+                    if bytes[*pos] == b'\\' {
+                        *pos += 1;
+                    }
+                    *pos += 1;
+                }
+                let s = String::from_utf8_lossy(&bytes[start..*pos]).into_owned();
+                if *pos < bytes.len() && bytes[*pos] == b'"' {
+                    *pos += 1;
+                }
+                Some(JsValue::String(s))
+            }
+            b't' if bytes[*pos..].starts_with(b"true") => {
+                *pos += 4;
+                Some(JsValue::Boolean(true))
+            }
+            b'f' if bytes[*pos..].starts_with(b"false") => {
+                *pos += 5;
+                Some(JsValue::Boolean(false))
+            }
+            b'n' if bytes[*pos..].starts_with(b"null") => {
+                *pos += 4;
+                Some(JsValue::Null)
+            }
+            _ => {
+                // Number
+                let start = *pos;
+                if *pos < bytes.len() && bytes[*pos] == b'-' {
+                    *pos += 1;
+                }
+                while *pos < bytes.len() && (bytes[*pos].is_ascii_digit() || bytes[*pos] == b'.') {
+                    *pos += 1;
+                }
+                let num_str = std::str::from_utf8(&bytes[start..*pos]).ok()?;
+                num_str.parse::<f64>().ok().map(JsValue::Number)
+            }
+        }
+    }
+
+    fn skip_json_whitespace(bytes: &[u8], pos: &mut usize) {
+        while *pos < bytes.len() && (bytes[*pos] == b' ' || bytes[*pos] == b'\t' || bytes[*pos] == b'\r' || bytes[*pos] == b'\n') {
+            *pos += 1;
+        }
+    }
+
     fn eval_expr(&mut self, expr: &Expr, dom: &mut DomTree) -> Result<JsValue, JsError> {
         self.check_step()?;
         match expr {
@@ -787,6 +996,67 @@ impl JsRuntime {
                     Ok(val.clone())
                 } else {
                     Ok(JsValue::Undefined)
+                }
+            }
+            Expr::Array(items) => {
+                let mut evaluated = Vec::with_capacity(items.len());
+                for it in items {
+                    evaluated.push(self.eval_expr(it, dom)?);
+                }
+                Ok(JsValue::Array(evaluated))
+            }
+            Expr::Index(obj_expr, idx_expr) => {
+                let obj = self.eval_expr(obj_expr, dom)?;
+                let idx = self.eval_expr(idx_expr, dom)?;
+                match obj {
+                    JsValue::Array(items) => {
+                        let i = idx.to_number();
+                        if !i.is_nan() && i >= 0.0 && (i as usize) < items.len() {
+                            Ok(items[i as usize].clone())
+                        } else {
+                            Ok(JsValue::Undefined)
+                        }
+                    }
+                    JsValue::Object(map) => {
+                        let key = idx.to_string_val();
+                        Ok(map.get(&key).cloned().unwrap_or(JsValue::Undefined))
+                    }
+                    _ => Ok(JsValue::Undefined),
+                }
+            }
+            Expr::New(ctor, args) => {
+                let mut eval_args = Vec::new();
+                for a in args {
+                    eval_args.push(self.eval_expr(a, dom)?);
+                }
+                match ctor.as_str() {
+                    "Audio" => {
+                        let src = eval_args.first().map(|v| v.to_string_val()).unwrap_or_default();
+                        let mut map = HashMap::new();
+                        map.insert("src".to_string(), JsValue::String(src));
+                        map.insert("currentTime".to_string(), JsValue::Number(0.0));
+                        map.insert("duration".to_string(), JsValue::Number(0.0));
+                        map.insert("volume".to_string(), JsValue::Number(1.0));
+                        map.insert("paused".to_string(), JsValue::Boolean(true));
+                        map.insert("type".to_string(), JsValue::String("Audio".into()));
+                        Ok(JsValue::Object(map))
+                    }
+                    "PDFDocument" => {
+                        let src = eval_args.first().map(|v| v.to_string_val()).unwrap_or_default();
+                        let mut map = HashMap::new();
+                        map.insert("src".to_string(), JsValue::String(src));
+                        map.insert("pageCount".to_string(), JsValue::Number(1.0));
+                        map.insert("type".to_string(), JsValue::String("PDFDocument".into()));
+                        Ok(JsValue::Object(map))
+                    }
+                    "Array" => {
+                        Ok(JsValue::Array(eval_args))
+                    }
+                    _ => {
+                        let mut map = HashMap::new();
+                        map.insert("type".to_string(), JsValue::String(ctor.clone()));
+                        Ok(JsValue::Object(map))
+                    }
                 }
             }
             Expr::Assign(name, rhs_expr) => {
@@ -823,6 +1093,16 @@ impl JsRuntime {
             Expr::Member(obj_expr, prop) => {
                 let obj = self.eval_expr(obj_expr, dom)?;
                 match obj {
+                    JsValue::Array(ref items) => {
+                        if prop == "length" {
+                            Ok(JsValue::Number(items.len() as f64))
+                        } else {
+                            Ok(JsValue::Undefined)
+                        }
+                    }
+                    JsValue::Object(ref map) => {
+                        Ok(map.get(prop.as_str()).cloned().unwrap_or(JsValue::Undefined))
+                    }
                     JsValue::Element(id) => {
                         if prop == "innerText" || prop == "textContent" {
                             let text = dom.text_content(id);
@@ -883,52 +1163,169 @@ impl JsRuntime {
                 Ok(val)
             }
             Expr::Call(callee, args) => {
-                // Check for document.getElementById("id")
                 if let Expr::Member(obj_expr, method_name) = callee.as_ref() {
                     let obj = self.eval_expr(obj_expr, dom)?;
-                    if let JsValue::String(s) = &obj {
-                        if s == "[object Document]" && method_name == "getElementById" {
-                            if let Some(first_arg) = args.first() {
-                                let id_val = self.eval_expr(first_arg, dom)?.to_string_val();
-                                if let Some(node_id) = dom.find_by_id(&id_val) {
-                                    return Ok(JsValue::Element(node_id));
+
+                    match obj {
+                        JsValue::String(s) => {
+                            if s == "[object Document]" {
+                                if method_name == "getElementById" {
+                                    if let Some(first_arg) = args.first() {
+                                        let id_val = self.eval_expr(first_arg, dom)?.to_string_val();
+                                        if let Some(node_id) = dom.find_by_id(&id_val) {
+                                            return Ok(JsValue::Element(node_id));
+                                        } else {
+                                            return Ok(JsValue::Null);
+                                        }
+                                    }
+                                } else if method_name == "querySelector" {
+                                    if let Some(first_arg) = args.first() {
+                                        let sel = self.eval_expr(first_arg, dom)?.to_string_val();
+                                        if let Some(node_id) = dom.query_selector(&sel) {
+                                            return Ok(JsValue::Element(node_id));
+                                        } else {
+                                            return Ok(JsValue::Null);
+                                        }
+                                    }
+                                } else if method_name == "querySelectorAll" {
+                                    if let Some(first_arg) = args.first() {
+                                        let sel = self.eval_expr(first_arg, dom)?.to_string_val();
+                                        let nodes = dom.query_selector_all(&sel);
+                                        let arr = nodes.into_iter().map(JsValue::Element).collect();
+                                        return Ok(JsValue::Array(arr));
+                                    }
+                                }
+                            } else if s == "[object Console]" && method_name == "log" {
+                                let mut line = String::new();
+                                for (i, a) in args.iter().enumerate() {
+                                    if i > 0 { line.push(' '); }
+                                    line.push_str(&self.eval_expr(a, dom)?.to_string_val());
+                                }
+                                self.logs.push(line);
+                                return Ok(JsValue::Undefined);
+                            } else if s == "[object JSON]" {
+                                if method_name == "stringify" {
+                                    if let Some(first_arg) = args.first() {
+                                        let val = self.eval_expr(first_arg, dom)?;
+                                        return Ok(JsValue::String(Self::json_stringify(&val)));
+                                    }
+                                    return Ok(JsValue::Undefined);
+                                } else if method_name == "parse" {
+                                    if let Some(first_arg) = args.first() {
+                                        let str_val = self.eval_expr(first_arg, dom)?.to_string_val();
+                                        return Ok(Self::json_parse(&str_val));
+                                    }
+                                    return Ok(JsValue::Undefined);
+                                }
+                            }
+                        }
+                        JsValue::Array(mut items) => {
+                            if method_name == "push" {
+                                for a in args {
+                                    items.push(self.eval_expr(a, dom)?);
+                                }
+                                let len = items.len() as f64;
+                                if let Expr::Ident(var_name) = obj_expr.as_ref() {
+                                    self.set_var(var_name, JsValue::Array(items));
+                                }
+                                return Ok(JsValue::Number(len));
+                            } else if method_name == "pop" {
+                                let popped = items.pop().unwrap_or(JsValue::Undefined);
+                                if let Expr::Ident(var_name) = obj_expr.as_ref() {
+                                    self.set_var(var_name, JsValue::Array(items));
+                                }
+                                return Ok(popped);
+                            } else if method_name == "join" {
+                                let sep = if let Some(first_arg) = args.first() {
+                                    self.eval_expr(first_arg, dom)?.to_string_val()
+                                } else {
+                                    ",".to_string()
+                                };
+                                let strings: Vec<String> = items.iter().map(|i| i.to_string_val()).collect();
+                                return Ok(JsValue::String(strings.join(&sep)));
+                            }
+                        }
+                        JsValue::Object(mut map) => {
+                            // Check Math methods
+                            if let Expr::Ident(id_name) = obj_expr.as_ref() {
+                                if id_name == "Math" {
+                                    let n1 = args.first().map(|a| self.eval_expr(a, dom)).transpose()?.map(|v| v.to_number()).unwrap_or(0.0);
+                                    let n2 = args.get(1).map(|a| self.eval_expr(a, dom)).transpose()?.map(|v| v.to_number()).unwrap_or(0.0);
+                                    match method_name.as_str() {
+                                        "floor" => return Ok(JsValue::Number(n1.floor())),
+                                        "ceil" => return Ok(JsValue::Number(n1.ceil())),
+                                        "round" => return Ok(JsValue::Number(n1.round())),
+                                        "abs" => return Ok(JsValue::Number(n1.abs())),
+                                        "min" => return Ok(JsValue::Number(n1.min(n2))),
+                                        "max" => return Ok(JsValue::Number(n1.max(n2))),
+                                        "sqrt" => return Ok(JsValue::Number(n1.sqrt())),
+                                        "sin" => return Ok(JsValue::Number(n1.sin())),
+                                        "cos" => return Ok(JsValue::Number(n1.cos())),
+                                        "random" => {
+                                            self.rng_state = self.rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                                            let val = ((self.rng_state >> 33) as f64) / 2147483648.0;
+                                            return Ok(JsValue::Number(val));
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+
+                            if method_name == "play" {
+                                map.insert("paused".to_string(), JsValue::Boolean(false));
+                                if let Expr::Ident(var_name) = obj_expr.as_ref() {
+                                    self.set_var(var_name, JsValue::Object(map));
+                                }
+                                return Ok(JsValue::Undefined);
+                            } else if method_name == "pause" {
+                                map.insert("paused".to_string(), JsValue::Boolean(true));
+                                if let Expr::Ident(var_name) = obj_expr.as_ref() {
+                                    self.set_var(var_name, JsValue::Object(map));
+                                }
+                                return Ok(JsValue::Undefined);
+                            } else if method_name == "getPageCount" {
+                                return Ok(map.get("pageCount").cloned().unwrap_or(JsValue::Number(1.0)));
+                            }
+                        }
+                        JsValue::Element(elem_id) => {
+                            if method_name == "addEventListener" && args.len() >= 2 {
+                                let ev = self.eval_expr(&args[0], dom)?.to_string_val();
+                                let handler = match &args[1] {
+                                    Expr::Ident(id_name) => id_name.clone(),
+                                    other => self.eval_expr(other, dom)?.to_string_val(),
+                                };
+                                self.event_listeners.insert((elem_id, ev), handler);
+                                return Ok(JsValue::Undefined);
+                            }
+                            if method_name == "setAttribute" && args.len() >= 2 {
+                                let attr_name = self.eval_expr(&args[0], dom)?.to_string_val();
+                                let attr_val = self.eval_expr(&args[1], dom)?.to_string_val();
+                                let _ = dom.set_attribute(elem_id, &attr_name, &attr_val);
+                                return Ok(JsValue::Undefined);
+                            }
+                            if method_name == "getAttribute" && !args.is_empty() {
+                                let attr_name = self.eval_expr(&args[0], dom)?.to_string_val();
+                                let val = dom.get(elem_id).and_then(|n| n.get_attribute(&attr_name)).unwrap_or("").to_string();
+                                return Ok(JsValue::String(val));
+                            }
+                            if method_name == "querySelector" && !args.is_empty() {
+                                let sel = self.eval_expr(&args[0], dom)?.to_string_val();
+                                if let Some(sub_id) = dom.query_selector_from(elem_id, &sel) {
+                                    return Ok(JsValue::Element(sub_id));
                                 } else {
                                     return Ok(JsValue::Null);
                                 }
                             }
-                        } else if s == "[object Console]" && method_name == "log" {
-                            let mut line = String::new();
-                            for (i, a) in args.iter().enumerate() {
-                                if i > 0 { line.push(' '); }
-                                line.push_str(&self.eval_expr(a, dom)?.to_string_val());
+                            if method_name == "querySelectorAll" && !args.is_empty() {
+                                let sel = self.eval_expr(&args[0], dom)?.to_string_val();
+                                let nodes = dom.query_selector_all_from(elem_id, &sel);
+                                return Ok(JsValue::Array(nodes.into_iter().map(JsValue::Element).collect()));
                             }
-                            self.logs.push(line);
-                            return Ok(JsValue::Undefined);
+                            if method_name == "play" || method_name == "pause" {
+                                return Ok(JsValue::Undefined);
+                            }
                         }
-                    }
-
-                    // Check for element.addEventListener("click", handler), setAttribute, getAttribute
-                    if let JsValue::Element(elem_id) = obj {
-                        if method_name == "addEventListener" && args.len() >= 2 {
-                            let ev = self.eval_expr(&args[0], dom)?.to_string_val();
-                            let handler = match &args[1] {
-                                Expr::Ident(id_name) => id_name.clone(),
-                                other => self.eval_expr(other, dom)?.to_string_val(),
-                            };
-                            self.event_listeners.insert((elem_id, ev), handler);
-                            return Ok(JsValue::Undefined);
-                        }
-                        if method_name == "setAttribute" && args.len() >= 2 {
-                            let attr_name = self.eval_expr(&args[0], dom)?.to_string_val();
-                            let attr_val = self.eval_expr(&args[1], dom)?.to_string_val();
-                            let _ = dom.set_attribute(elem_id, &attr_name, &attr_val);
-                            return Ok(JsValue::Undefined);
-                        }
-                        if method_name == "getAttribute" && !args.is_empty() {
-                            let attr_name = self.eval_expr(&args[0], dom)?.to_string_val();
-                            let val = dom.get(elem_id).and_then(|n| n.get_attribute(&attr_name)).unwrap_or("").to_string();
-                            return Ok(JsValue::String(val));
-                        }
+                        _ => {}
                     }
                 }
 
@@ -1057,5 +1454,89 @@ mod tests {
         let code = "while (true) {}";
         let err = rt.eval(code, &mut dom);
         assert_eq!(err, Err(JsError::StepLimitExceeded));
+    }
+
+    #[test]
+    fn test_js_math_builtins() {
+        let mut dom = DomTree::new(EngineLimits::default());
+        let mut rt = JsRuntime::new();
+        let code = r#"
+            var f = Math.floor(4.9);
+            var c = Math.ceil(4.1);
+            var m = Math.max(10, 25);
+            var s = Math.sqrt(16);
+            var p = Math.PI;
+            var r = Math.random();
+        "#;
+        rt.eval(code, &mut dom).unwrap();
+        assert_eq!(rt.get_var("f"), Some(&JsValue::Number(4.0)));
+        assert_eq!(rt.get_var("c"), Some(&JsValue::Number(5.0)));
+        assert_eq!(rt.get_var("m"), Some(&JsValue::Number(25.0)));
+        assert_eq!(rt.get_var("s"), Some(&JsValue::Number(4.0)));
+        assert_eq!(rt.get_var("p"), Some(&JsValue::Number(core::f64::consts::PI)));
+        if let Some(JsValue::Number(rand_val)) = rt.get_var("r") {
+            assert!(*rand_val >= 0.0 && *rand_val < 1.0);
+        } else {
+            panic!("Expected random number");
+        }
+    }
+
+    #[test]
+    fn test_js_json_parse_and_stringify() {
+        let mut dom = DomTree::new(EngineLimits::default());
+        let mut rt = JsRuntime::new();
+        let code = r#"
+            var jsonStr = '{"title":"Jinn Browser","version":1}';
+            var parsed = JSON.parse(jsonStr);
+            var str = JSON.stringify(parsed);
+        "#;
+        rt.eval(code, &mut dom).unwrap();
+        let str_val = rt.get_var("str").unwrap().to_string_val();
+        assert!(str_val.contains("\"title\":\"Jinn Browser\""));
+        assert!(str_val.contains("\"version\":1"));
+    }
+
+    #[test]
+    fn test_js_array_operations() {
+        let mut dom = DomTree::new(EngineLimits::default());
+        let mut rt = JsRuntime::new();
+        let code = r#"
+            var list = [10, 20, 30];
+            var len = list.length;
+            list.push(40);
+            var joined = list.join("-");
+            var last = list.pop();
+        "#;
+        rt.eval(code, &mut dom).unwrap();
+        assert_eq!(rt.get_var("len"), Some(&JsValue::Number(3.0)));
+        assert_eq!(rt.get_var("joined"), Some(&JsValue::String("10-20-30-40".into())));
+        assert_eq!(rt.get_var("last"), Some(&JsValue::Number(40.0)));
+    }
+
+    #[test]
+    fn test_js_query_selector_and_media_apis() {
+        let mut dom = DomTree::new(EngineLimits::default());
+        let video = dom.create_element("video", vec![("id".into(), "player".into()), ("class".into(), "hero".into())]).unwrap();
+        dom.append_child(dom.root(), video).unwrap();
+
+        let mut rt = JsRuntime::new();
+        let code = r##"
+            var v = document.querySelector("#player");
+            var heroes = document.querySelectorAll(".hero");
+            var audio = new Audio("startup.wav");
+            audio.play();
+            var pdf = new PDFDocument("spec.pdf");
+            var pages = pdf.getPageCount();
+        "##;
+        rt.eval(code, &mut dom).unwrap();
+        assert_eq!(rt.get_var("v"), Some(&JsValue::Element(video)));
+        assert_eq!(rt.get_var("heroes"), Some(&JsValue::Array(vec![JsValue::Element(video)])));
+        assert_eq!(rt.get_var("pages"), Some(&JsValue::Number(1.0)));
+        if let Some(JsValue::Object(map)) = rt.get_var("audio") {
+            assert_eq!(map.get("paused"), Some(&JsValue::Boolean(false)));
+            assert_eq!(map.get("src"), Some(&JsValue::String("startup.wav".into())));
+        } else {
+            panic!("Expected Audio object");
+        }
     }
 }

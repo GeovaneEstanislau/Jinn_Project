@@ -14,7 +14,47 @@ pub enum Display {
     Block,
     #[default]
     Inline,
+    Flex,
     None,
+}
+
+/// CSS flex direction property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FlexDirection {
+    #[default]
+    Row,
+    Column,
+}
+
+/// CSS justify-content property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum JustifyContent {
+    #[default]
+    FlexStart,
+    Center,
+    FlexEnd,
+    SpaceBetween,
+    SpaceAround,
+}
+
+/// CSS align-items property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AlignItems {
+    #[default]
+    Stretch,
+    FlexStart,
+    Center,
+    FlexEnd,
+}
+
+/// CSS overflow property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Overflow {
+    #[default]
+    Visible,
+    Hidden,
+    Scroll,
+    Auto,
 }
 
 /// CSS font weight property.
@@ -32,6 +72,7 @@ pub enum TextAlign {
     Left,
     Center,
     Right,
+    Justify,
 }
 
 /// CSS box-sizing property value (W3C Box Model).
@@ -47,6 +88,12 @@ pub enum BoxSizing {
 pub struct ComputedStyle {
     pub display: Display,
     pub box_sizing: BoxSizing,
+    pub flex_direction: FlexDirection,
+    pub justify_content: JustifyContent,
+    pub align_items: AlignItems,
+    pub overflow: Overflow,
+    pub border_radius: f32,
+    pub opacity: f32,
     pub color: Color,
     pub background_color: Option<Color>,
     pub width: Option<f32>,
@@ -65,6 +112,12 @@ impl Default for ComputedStyle {
         Self {
             display: Display::Inline,
             box_sizing: BoxSizing::ContentBox,
+            flex_direction: FlexDirection::Row,
+            justify_content: JustifyContent::FlexStart,
+            align_items: AlignItems::Stretch,
+            overflow: Overflow::Visible,
+            border_radius: 0.0,
+            opacity: 1.0,
             color: Color::WHITE,
             background_color: None,
             width: None,
@@ -85,6 +138,12 @@ impl Default for ComputedStyle {
 pub enum Property {
     Display(Display),
     BoxSizing(BoxSizing),
+    FlexDirection(FlexDirection),
+    JustifyContent(JustifyContent),
+    AlignItems(AlignItems),
+    Overflow(Overflow),
+    BorderRadius(f32),
+    Opacity(f32),
     Color(Color),
     BackgroundColor(Option<Color>),
     Width(Option<f32>),
@@ -302,6 +361,13 @@ impl StyleSheet {
                 margin: 6 0;
                 padding: 0 0 0 16;
             }
+            header, footer, nav, article, section, aside, main, figure, figcaption, summary, details, component, template {
+                display: block;
+            }
+            audio, video, native-pdf {
+                display: block;
+                margin: 8 0;
+            }
             li {
                 display: block;
                 margin: 2 0;
@@ -374,9 +440,35 @@ fn parse_property(key: &str, val: &str) -> Option<Property> {
         "display" => match val.to_ascii_lowercase().as_str() {
             "block" => Some(Property::Display(Display::Block)),
             "inline" => Some(Property::Display(Display::Inline)),
+            "flex" => Some(Property::Display(Display::Flex)),
             "none" => Some(Property::Display(Display::None)),
             _ => None,
         },
+        "flex-direction" => match val.to_ascii_lowercase().as_str() {
+            "column" => Some(Property::FlexDirection(FlexDirection::Column)),
+            _ => Some(Property::FlexDirection(FlexDirection::Row)),
+        },
+        "justify-content" => match val.to_ascii_lowercase().as_str() {
+            "center" => Some(Property::JustifyContent(JustifyContent::Center)),
+            "flex-end" => Some(Property::JustifyContent(JustifyContent::FlexEnd)),
+            "space-between" => Some(Property::JustifyContent(JustifyContent::SpaceBetween)),
+            "space-around" => Some(Property::JustifyContent(JustifyContent::SpaceAround)),
+            _ => Some(Property::JustifyContent(JustifyContent::FlexStart)),
+        },
+        "align-items" => match val.to_ascii_lowercase().as_str() {
+            "flex-start" => Some(Property::AlignItems(AlignItems::FlexStart)),
+            "center" => Some(Property::AlignItems(AlignItems::Center)),
+            "flex-end" => Some(Property::AlignItems(AlignItems::FlexEnd)),
+            _ => Some(Property::AlignItems(AlignItems::Stretch)),
+        },
+        "overflow" => match val.to_ascii_lowercase().as_str() {
+            "hidden" => Some(Property::Overflow(Overflow::Hidden)),
+            "scroll" => Some(Property::Overflow(Overflow::Scroll)),
+            "auto" => Some(Property::Overflow(Overflow::Auto)),
+            _ => Some(Property::Overflow(Overflow::Visible)),
+        },
+        "border-radius" => parse_length(val).map(Property::BorderRadius),
+        "opacity" => val.trim().parse::<f32>().ok().filter(|&v| (0.0..=1.0).contains(&v)).map(Property::Opacity),
         "box-sizing" => match val.to_ascii_lowercase().as_str() {
             "border-box" => Some(Property::BoxSizing(BoxSizing::BorderBox)),
             "content-box" => Some(Property::BoxSizing(BoxSizing::ContentBox)),
@@ -482,6 +574,16 @@ pub fn parse_color(val: &str) -> Option<Color> {
         if parts.len() == 3 {
             return Some(Color::rgb(parts[0], parts[1], parts[2]));
         }
+    } else if s.starts_with("rgba(") && s.ends_with(')') {
+        let inside = &s[5..s.len() - 1];
+        let parts: Vec<&str> = inside.split(',').map(|p| p.trim()).collect();
+        if parts.len() == 4 {
+            let r = parts[0].parse::<u8>().ok()?;
+            let g = parts[1].parse::<u8>().ok()?;
+            let b = parts[2].parse::<u8>().ok()?;
+            let a = parts[3].parse::<f32>().ok().map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8)?;
+            return Some(Color::rgba(r, g, b, a));
+        }
     } else {
         match s.to_ascii_lowercase().as_str() {
             "black" => return Some(Color::BLACK),
@@ -493,6 +595,20 @@ pub fn parse_color(val: &str) -> Option<Color> {
             "yellow" => return Some(Color::rgb(255, 255, 0)),
             "cyan" => return Some(Color::rgb(0, 255, 255)),
             "magenta" => return Some(Color::rgb(255, 0, 255)),
+            "orange" => return Some(Color::rgb(255, 165, 0)),
+            "purple" => return Some(Color::rgb(128, 0, 128)),
+            "darkgray" | "darkgrey" => return Some(Color::rgb(64, 64, 64)),
+            "lightgray" | "lightgrey" => return Some(Color::rgb(211, 211, 211)),
+            "navy" => return Some(Color::rgb(0, 0, 128)),
+            "teal" => return Some(Color::rgb(0, 128, 128)),
+            "lime" => return Some(Color::rgb(0, 255, 0)),
+            "gold" => return Some(Color::rgb(255, 215, 0)),
+            "pink" => return Some(Color::rgb(255, 192, 203)),
+            "coral" => return Some(Color::rgb(255, 127, 80)),
+            "brown" => return Some(Color::rgb(165, 42, 42)),
+            "indigo" => return Some(Color::rgb(75, 0, 130)),
+            "violet" => return Some(Color::rgb(238, 130, 238)),
+            "silver" => return Some(Color::rgb(192, 192, 192)),
             "transparent" => return Some(Color::TRANSPARENT),
             _ => {}
         }
@@ -504,6 +620,12 @@ pub fn parse_color(val: &str) -> Option<Color> {
 pub fn apply_property(style: &mut ComputedStyle, prop: &Property) {
     match prop {
         Property::Display(d) => style.display = *d,
+        Property::FlexDirection(fd) => style.flex_direction = *fd,
+        Property::JustifyContent(jc) => style.justify_content = *jc,
+        Property::AlignItems(ai) => style.align_items = *ai,
+        Property::Overflow(o) => style.overflow = *o,
+        Property::BorderRadius(r) => style.border_radius = *r,
+        Property::Opacity(op) => style.opacity = *op,
         Property::Color(c) => style.color = *c,
         Property::BackgroundColor(bg) => style.background_color = *bg,
         Property::Width(w) => style.width = *w,
@@ -696,5 +818,25 @@ mod tests {
 
         let span_style = styles.get(&span).unwrap();
         assert_eq!(span_style.color, Color::rgb(0x12, 0x34, 0x56));
+    }
+
+    #[test]
+    fn test_flexbox_and_advanced_css_properties() {
+        let decls = parse_declarations(
+            "display: flex; flex-direction: column; justify-content: space-between; align-items: center; overflow: hidden; border-radius: 8px; opacity: 0.85; color: rgba(255, 100, 50, 0.5);"
+        );
+        let mut style = ComputedStyle::default();
+        for prop in &decls {
+            apply_property(&mut style, prop);
+        }
+
+        assert_eq!(style.display, Display::Flex);
+        assert_eq!(style.flex_direction, FlexDirection::Column);
+        assert_eq!(style.justify_content, JustifyContent::SpaceBetween);
+        assert_eq!(style.align_items, AlignItems::Center);
+        assert_eq!(style.overflow, Overflow::Hidden);
+        assert_eq!(style.border_radius, 8.0);
+        assert!((style.opacity - 0.85).abs() < 0.01);
+        assert_eq!(style.color, Color::rgba(255, 100, 50, 127));
     }
 }

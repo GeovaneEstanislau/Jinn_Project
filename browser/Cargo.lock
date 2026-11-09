@@ -54,12 +54,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "jbe-media"
+version = "0.1.0"
+dependencies = [
+ "jbe-core",
+]
+
+[[package]]
 name = "jbe-net"
 version = "0.1.0"
 dependencies = [
  "jbe-core",
  "jbe-tls",
  "jbe-url",
+]
+
+[[package]]
+name = "jbe-pdf"
+version = "0.1.0"
+dependencies = [
+ "jbe-core",
 ]
 
 [[package]]
@@ -94,7 +108,10 @@ dependencies = [
  "jbe-image",
  "jbe-js",
  "jbe-layout",
+ "jbe-media",
  "jbe-net",
+ "jbe-pdf",
  "jbe-render",
+ "jbe-tls",
  "jbe-url",
 ]

@@ -634,4 +634,49 @@ mod tests {
         let res = parse_html("<div>This document exceeds 20 bytes limit</div>", &limits);
         assert!(matches!(res, Err(EngineError::ResourceTooLarge { .. })));
     }
+
+    #[test]
+    fn test_html5_and_html6_elements() {
+        let limits = EngineLimits::default();
+        let html = r#"
+            <main>
+                <header><nav><a href="/">Home</a></nav></header>
+                <article>
+                    <section>
+                        <h2>Media Title</h2>
+                        <audio src="audio.wav" controls autoplay></audio>
+                        <video src="video.jmvd" width="640" height="360" controls>
+                            <source src="fallback.ppm" type="image/ppm">
+                        </video>
+                    </section>
+                    <figure>
+                        <native-pdf src="manual.pdf" page="1"></native-pdf>
+                        <figcaption>Guia do Usuario</figcaption>
+                    </figure>
+                </article>
+                <component name="sidebar-widget">
+                    <template id="widget-tpl"><span>Widget Content</span></template>
+                </component>
+                <footer><p>&copy; 2026 Jinn OS</p></footer>
+            </main>
+        "#;
+        let dom = parse_html(html, &limits).unwrap();
+        assert!(dom.find_first_by_tag("main").is_some());
+        assert!(dom.find_first_by_tag("header").is_some());
+        assert!(dom.find_first_by_tag("nav").is_some());
+        assert!(dom.find_first_by_tag("article").is_some());
+        assert!(dom.find_first_by_tag("section").is_some());
+        assert!(dom.find_first_by_tag("audio").is_some());
+        assert!(dom.find_first_by_tag("video").is_some());
+        assert!(dom.find_first_by_tag("source").is_some());
+        assert!(dom.find_first_by_tag("native-pdf").is_some());
+        assert!(dom.find_first_by_tag("component").is_some());
+        assert!(dom.find_first_by_tag("template").is_some());
+        assert!(dom.find_first_by_tag("footer").is_some());
+
+        let pdf = dom.find_first_by_tag("native-pdf").unwrap();
+        let pdf_node = dom.get(pdf).unwrap();
+        assert_eq!(pdf_node.get_attribute("src"), Some("manual.pdf"));
+        assert_eq!(pdf_node.get_attribute("page"), Some("1"));
+    }
 }

@@ -9,6 +9,14 @@ pub use fullscreen::{
 };
 
 pub use jbe_js::{JsError, JsRuntime, JsValue};
+pub use jbe_media::{
+    AudioClip, AudioError, AudioFormat, AudioMixer, AudioPlayer, MixerTrack, MotionVideoContainer,
+    PlaybackState, VideoError, VideoFrame, VideoPlayer, VideoState, WavDecoder, WaveformSynthesizer,
+};
+pub use jbe_pdf::{
+    DocumentError, DrawCommand, GraphicsState, PdfDocument, PdfInterpreter, PdfPage, PdfRasterizer,
+    PdfSurface,
+};
 
 pub use tab::{
     AudioFocusManager, AudioPlaybackState, BrcrMetricsBreakdown, BrowserResourceManager, KernelTaskStateMapping,

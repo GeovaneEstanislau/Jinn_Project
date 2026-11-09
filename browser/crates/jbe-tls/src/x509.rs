@@ -349,3 +349,4 @@ fn parse_extension(ext_data: &[u8], dns_names: &mut Vec<String>) {
         }
     }
 }
+

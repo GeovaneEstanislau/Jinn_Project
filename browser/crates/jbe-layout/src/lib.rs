@@ -14,6 +14,7 @@ use jbe_dom::{DomTree, NodeType};
 pub enum BoxType {
     Block,
     Inline,
+    Flex,
     AnonymousBlock,
     Text(String),
 }
@@ -139,6 +140,7 @@ fn build_box_tree(
             let box_type = match style.display {
                 Display::Block => BoxType::Block,
                 Display::Inline => BoxType::Inline,
+                Display::Flex => BoxType::Flex,
                 Display::None => return None,
             };
 
@@ -215,6 +217,51 @@ pub fn layout_box(box_node: &mut LayoutBox, containing_block: &Rect) {
 
     if let Some(text) = maybe_text {
         layout_text_lines(box_node, &text, content_width);
+    } else if box_node.style.display == Display::Flex && box_node.style.flex_direction == jbe_css::FlexDirection::Row {
+        let num_children = box_node.children.len();
+        let mut total_child_width: f32 = 0.0;
+        let mut max_child_height: f32 = 0.0;
+
+        for child in &mut box_node.children {
+            let child_cb = Rect::new(box_node.dimensions.content.x, box_node.dimensions.content.y, content_width, 0.0);
+            layout_box(child, &child_cb);
+            let mb = child.dimensions.margin_box();
+            total_child_width += mb.width;
+            max_child_height = max_child_height.max(mb.height);
+        }
+
+        let free_space = (content_width - total_child_width).max(0.0);
+        let mut cur_x = box_node.dimensions.content.x;
+
+        let spacing = match box_node.style.justify_content {
+            jbe_css::JustifyContent::Center => {
+                cur_x += free_space / 2.0;
+                0.0
+            }
+            jbe_css::JustifyContent::FlexEnd => {
+                cur_x += free_space;
+                0.0
+            }
+            jbe_css::JustifyContent::SpaceBetween if num_children > 1 => {
+                free_space / (num_children - 1) as f32
+            }
+            jbe_css::JustifyContent::SpaceAround if num_children > 0 => {
+                let s = free_space / num_children as f32;
+                cur_x += s / 2.0;
+                s
+            }
+            _ => 0.0,
+        };
+
+        for child in &mut box_node.children {
+            let dx = cur_x - child.dimensions.content.x;
+            child.dimensions.content.x += dx;
+            offset_box_x(child, dx);
+            let mb = child.dimensions.margin_box();
+            cur_x += mb.width + spacing;
+        }
+
+        box_node.dimensions.content.height = box_node.style.height.unwrap_or(max_child_height);
     } else {
         let mut cursor_y = 0.0;
         // Collect inline text from children or layout block children
@@ -249,6 +296,17 @@ pub fn layout_box(box_node: &mut LayoutBox, containing_block: &Rect) {
         } else {
             box_node.dimensions.content.height = cursor_y;
         }
+    }
+}
+
+/// Recursively offsets all lines and descendant boxes by `dx`.
+fn offset_box_x(layout_box: &mut LayoutBox, dx: f32) {
+    for line in &mut layout_box.lines {
+        line.rect.x += dx;
+    }
+    for child in &mut layout_box.children {
+        child.dimensions.content.x += dx;
+        offset_box_x(child, dx);
     }
 }
 
@@ -301,7 +359,7 @@ fn layout_text_lines(layout_box: &mut LayoutBox, text: &str, available_width: f3
 
         // Alignment offset
         let x_offset = match layout_box.style.text_align {
-            TextAlign::Left => 0.0,
+            TextAlign::Left | TextAlign::Justify => 0.0,
             TextAlign::Center => ((available_width - line_w) / 2.0).max(0.0),
             TextAlign::Right => (available_width - line_w).max(0.0),
         };
@@ -383,5 +441,55 @@ mod tests {
         // With width 60px, it should wrap across multiple lines!
         assert!(txt_box.lines.len() > 1);
         assert!(txt_box.dimensions.content.height > LayoutBox::line_height(10.0));
+    }
+
+    #[test]
+    fn test_flexbox_horizontal_layout() {
+        let limits = EngineLimits::default();
+        let mut dom = DomTree::new(limits);
+        let container = dom
+            .create_element(
+                "div",
+                vec![("style".into(), "display: flex; flex-direction: row; width: 300px; justify-content: space-between;".into())],
+            )
+            .unwrap();
+        let item1 = dom
+            .create_element(
+                "div",
+                vec![("style".into(), "width: 50px; height: 40px;".into())],
+            )
+            .unwrap();
+        let item2 = dom
+            .create_element(
+                "div",
+                vec![("style".into(), "width: 50px; height: 60px;".into())],
+            )
+            .unwrap();
+
+        dom.append_child(dom.root(), container).unwrap();
+        dom.append_child(container, item1).unwrap();
+        dom.append_child(container, item2).unwrap();
+
+        let sheet = StyleSheet::new();
+        let styles = jbe_css::resolve_styles(&dom, &sheet);
+        let root_box = build_and_layout_tree(&dom, &styles, 800.0).unwrap();
+
+        let flex_box = &root_box.children[0];
+        assert_eq!(flex_box.dimensions.content.width, 300.0);
+        assert_eq!(flex_box.children.len(), 2);
+
+        let c1 = &flex_box.children[0];
+        let c2 = &flex_box.children[1];
+
+        // First item starts at 0.0
+        assert_eq!(c1.dimensions.content.x, flex_box.dimensions.content.x);
+        assert_eq!(c1.dimensions.content.width, 50.0);
+
+        // Second item is spaced at the right edge: 300 - 50 = 250.0
+        assert_eq!(c2.dimensions.content.x, flex_box.dimensions.content.x + 250.0);
+        assert_eq!(c2.dimensions.content.width, 50.0);
+
+        // Height is max child height: 60.0
+        assert_eq!(flex_box.dimensions.content.height, 60.0);
     }
 }

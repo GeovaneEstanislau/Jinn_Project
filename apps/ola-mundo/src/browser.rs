@@ -939,6 +939,9 @@ pub enum BlockKind {
     ListItem,
     Link,
     HorizontalRule,
+    AudioPlayer,
+    VideoPlayer,
+    PdfViewer,
 }
 
 #[derive(Clone, Copy)]
@@ -1138,8 +1141,14 @@ pub fn parse_html(html: &[u8], page: &mut ParsedPage) {
                     active_block_kind = Some(BlockKind::Heading2);
                 } else if tag_name == b"h3" {
                     active_block_kind = Some(BlockKind::Heading3);
-                } else if tag_name == b"p" || tag_name == b"div" {
+                } else if tag_name == b"p" || tag_name == b"div" || tag_name == b"header" || tag_name == b"footer" || tag_name == b"nav" || tag_name == b"article" || tag_name == b"section" || tag_name == b"main" || tag_name == b"aside" || tag_name == b"details" || tag_name == b"summary" {
                     active_block_kind = Some(BlockKind::Paragraph);
+                } else if tag_name == b"audio" {
+                    active_block_kind = Some(BlockKind::AudioPlayer);
+                } else if tag_name == b"video" {
+                    active_block_kind = Some(BlockKind::VideoPlayer);
+                } else if tag_name == b"native-pdf" {
+                    active_block_kind = Some(BlockKind::PdfViewer);
                 } else if tag_name == b"li" {
                     active_block_kind = Some(BlockKind::ListItem);
                 } else if tag_name == b"a" {
@@ -1148,7 +1157,7 @@ pub fn parse_html(html: &[u8], page: &mut ParsedPage) {
                     flush_block(page, BlockKind::HorizontalRule, b"", b"");
                 }
             } else {
-                if tag_name == b"h1" || tag_name == b"h2" || tag_name == b"h3" || tag_name == b"p" || tag_name == b"div" || tag_name == b"li" || tag_name == b"a" {
+                if tag_name == b"h1" || tag_name == b"h2" || tag_name == b"h3" || tag_name == b"p" || tag_name == b"div" || tag_name == b"header" || tag_name == b"footer" || tag_name == b"nav" || tag_name == b"article" || tag_name == b"section" || tag_name == b"main" || tag_name == b"aside" || tag_name == b"details" || tag_name == b"summary" || tag_name == b"li" || tag_name == b"a" || tag_name == b"audio" || tag_name == b"video" || tag_name == b"native-pdf" {
                     active_block_kind = None;
                 }
             }
@@ -1450,6 +1459,28 @@ impl DocumentLayout {
                     let text = &blk.text[..blk.text_len];
                     let href = &blk.link_target[..blk.link_target_len];
                     self.add_wrapped_text(text, 8, &mut curr_y, max_chars_per_line, COLOR_LINK, true, Some(href));
+                    curr_y += 4;
+                }
+                BlockKind::AudioPlayer => {
+                    curr_y += 3;
+                    let text = b"[ > AUDIO ] 0:00 [====----] 100%";
+                    self.add_wrapped_text(text, 8, &mut curr_y, max_chars_per_line, 0x0089_DCEB, false, None);
+                    curr_y += 4;
+                }
+                BlockKind::VideoPlayer => {
+                    curr_y += 3;
+                    let text = b"[ VIDEO ] Native Motion JMVD";
+                    self.add_wrapped_text(text, 8, &mut curr_y, max_chars_per_line, 0x00A6_E3A1, false, None);
+                    let ctrl = b"[ > PLAY ] [=======---] 1080p";
+                    self.add_wrapped_text(ctrl, 8, &mut curr_y, max_chars_per_line, 0x00CD_D6F4, false, None);
+                    curr_y += 4;
+                }
+                BlockKind::PdfViewer => {
+                    curr_y += 3;
+                    let text = b"[ PDF ] Native Vector Document";
+                    self.add_wrapped_text(text, 8, &mut curr_y, max_chars_per_line, 0x00F9_E2AF, false, None);
+                    let page_str = b"[ Page 1/1 ] [ 100% Vector OK ]";
+                    self.add_wrapped_text(page_str, 8, &mut curr_y, max_chars_per_line, 0x00CD_D6F4, false, None);
                     curr_y += 4;
                 }
             }
@@ -2619,4 +2650,133 @@ pub fn format_tls_info_html(url: &[u8], out: &mut [u8]) -> usize {
     append(out, &mut pos, b"</p><p><b>Navegacao Web Aberta: </b>Conexoes HTTPS nativas habilitadas na porta 443</p>");
     append(out, &mut pos, b"<hr/><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>");
     pos
+}
+
+// ── Decodificadores Nativos de Audio e Documentos Ring 3 (no_std, zero-alloc) ─
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeWavInfo {
+    pub channels: u16,
+    pub sample_rate: u32,
+    pub bits_per_sample: u16,
+    pub data_len: usize,
+    pub duration_ms: u32,
+}
+
+#[allow(dead_code)]
+pub fn parse_wav_header(bytes: &[u8]) -> Option<NativeWavInfo> {
+    if bytes.len() < 44 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return None;
+    }
+    let mut offset = 12;
+    let mut channels = 0u16;
+    let mut sample_rate = 0u32;
+    let mut bits_per_sample = 0u16;
+    let mut data_len = 0usize;
+
+    while offset + 8 <= bytes.len() {
+        let chunk_id = &bytes[offset..offset + 4];
+        let chunk_size = u32::from_le_bytes([
+            bytes[offset + 4],
+            bytes[offset + 5],
+            bytes[offset + 6],
+            bytes[offset + 7],
+        ]) as usize;
+        offset += 8;
+
+        if chunk_id == b"fmt " && chunk_size >= 16 && offset + 16 <= bytes.len() {
+            channels = u16::from_le_bytes([bytes[offset + 2], bytes[offset + 3]]);
+            sample_rate = u32::from_le_bytes([
+                bytes[offset + 4],
+                bytes[offset + 5],
+                bytes[offset + 6],
+                bytes[offset + 7],
+            ]);
+            bits_per_sample = u16::from_le_bytes([bytes[offset + 14], bytes[offset + 15]]);
+        } else if chunk_id == b"data" {
+            data_len = chunk_size.min(bytes.len().saturating_sub(offset));
+        }
+
+        offset += chunk_size;
+        if chunk_size % 2 != 0 {
+            offset += 1;
+        }
+    }
+
+    if channels == 0 || sample_rate == 0 || bits_per_sample == 0 {
+        return None;
+    }
+
+    let bytes_per_frame = (channels as usize) * ((bits_per_sample as usize) / 8);
+    let frames = if bytes_per_frame > 0 { data_len / bytes_per_frame } else { 0 };
+    let duration_ms = ((frames as u64 * 1000) / sample_rate as u64) as u32;
+
+    Some(NativeWavInfo {
+        channels,
+        sample_rate,
+        bits_per_sample,
+        data_len,
+        duration_ms,
+    })
+}
+
+#[allow(dead_code)]
+pub fn synthesize_alert_pcm(freq_hz: u32, duration_ms: u32, sample_rate: u32, out: &mut [u8]) -> usize {
+    let num_samples = ((duration_ms as u64 * sample_rate as u64) / 1000) as usize;
+    let max_samples = out.len() / 2;
+    let count = num_samples.min(max_samples);
+
+    let period = if freq_hz > 0 { sample_rate / freq_hz } else { 1 };
+    let half_period = (period / 2).max(1);
+
+    for i in 0..count {
+        let sample_val: i16 = if (i as u32 % period) < half_period {
+            12000
+        } else {
+            -12000
+        };
+        let b = sample_val.to_le_bytes();
+        out[i * 2] = b[0];
+        out[i * 2 + 1] = b[1];
+    }
+
+    count * 2
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativePdfInfo {
+    pub version_major: u8,
+    pub version_minor: u8,
+    pub page_count: usize,
+}
+
+#[allow(dead_code)]
+pub fn parse_pdf_info(bytes: &[u8]) -> Option<NativePdfInfo> {
+    if bytes.len() < 8 || !bytes.starts_with(b"%PDF-") {
+        return None;
+    }
+    let maj = bytes[5].saturating_sub(b'0');
+    let min = bytes.get(7).copied().unwrap_or(b'4').saturating_sub(b'0');
+
+    // Conta ocorrências de "/Type /Page"
+    let mut page_count = 0usize;
+    let target = b"/Type /Page";
+    if bytes.len() >= target.len() {
+        for w in bytes.windows(target.len()) {
+            if w == target {
+                page_count += 1;
+            }
+        }
+    }
+    if page_count == 0 {
+        page_count = 1;
+    }
+
+    Some(NativePdfInfo {
+        version_major: maj,
+        version_minor: min,
+        page_count,
+    })
 }

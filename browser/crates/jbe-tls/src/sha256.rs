@@ -242,3 +242,4 @@ pub fn derive_secret(secret: &[u8; 32], label: &[u8], transcript_hash: &[u8]) ->
     hkdf_expand_label(secret, label, transcript_hash, &mut out);
     out
 }
+
