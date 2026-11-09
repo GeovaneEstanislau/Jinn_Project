@@ -177,17 +177,66 @@ impl CsprngState {
             true
         }
     }
+
+    /// Teste de Saúde NIST SP 800-90B: Repetition Count Test (RCT básico)
+    pub fn health_check_rct(&mut self, sample: u64) -> bool {
+        self.check_rct(sample, false)
+    }
+
+    /// Injeção de Entropia via HKDF-Extract e acumulador seguro de min-entropia
+    pub fn feed_entropy(&mut self, samples: &[u8]) {
+        self.mix_entropy(samples, samples.len() * 8);
+    }
+
+    /// Verificador de semente para atendimento à Syscall 69
+    pub fn check_ready(&mut self, nonblock: bool) -> Result<(), i32> {
+        if self.is_seeded {
+            Ok(())
+        } else if nonblock {
+            Err(-11) // -EAGAIN
+        } else {
+            Err(-11)
+        }
+    }
+
+    /// Preenchimento de buffer de destino com números pseudoaleatórios (ChaCha20 DRBG)
+    pub fn fill_bytes(&mut self, dest: &mut [u8]) {
+        let mut offset = 0;
+        let mut block = [0u8; 64];
+
+        while offset < dest.len() {
+            self.generate_block(&mut block);
+            let chunk = (dest.len() - offset).min(64);
+            dest[offset..offset + chunk].copy_from_slice(&block[..chunk]);
+            offset += chunk;
+        }
+
+        unsafe {
+            core::ptr::write_volatile(&mut block as *mut _ as *mut u8, 0);
+        }
+
+        if self.bytes_generated >= RESEED_INTERVAL_BYTES {
+            self.reseed_internal();
+        }
+    }
+
+    pub fn reseed_internal(&mut self) {
+        self.nonce[0] = self.nonce[0].wrapping_add(1);
+        self.bytes_generated = 0;
+    }
 }
 
 #[inline(always)]
 fn qr(st: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
     st[a] = st[a].wrapping_add(st[b]); st[d] ^= st[a]; st[d] = st[d].rotate_left(16);
     st[c] = st[c].wrapping_add(st[d]); st[b] ^= st[c]; st[b] = st[b].rotate_left(12);
-    st[a] = st[a].wrapping_add(st[b]); st[d] ^= st[a]; st[d] = st[d].rotate_left(8);
+    st[a] = st[a].wrapping_add(st[b]); st[d] ^= st[d].rotate_left(8);
     st[c] = st[c].wrapping_add(st[d]); st[b] ^= st[c]; st[b] = st[b].rotate_left(7);
 }
 
-static CSPRNG: SpinLock<CsprngState> = SpinLock::new(CsprngState::new());
+/// Instância global estática protegida por SpinLock (segura contra condições de corrida em SMP)
+pub static GLOBAL_CSPRNG: SpinLock<CsprngState> = SpinLock::new(CsprngState::new());
+static CSPRNG: &SpinLock<CsprngState> = &GLOBAL_CSPRNG;
 
 /// Executa RDRAND em hardware x86_64 se suportado e ativo
 #[inline]
