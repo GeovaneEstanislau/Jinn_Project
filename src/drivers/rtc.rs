@@ -192,18 +192,49 @@ pub fn read_cmos_raw() -> RtcDateTime {
     }
 }
 
-/// Configura o deslocamento de fuso horário e a base do relógio CMOS (UTC vs Hora Local)
-pub fn set_timezone(offset_seconds: i32, is_local_time: bool) {
-    TIMEZONE_OFFSET_SECONDS.store(offset_seconds, Ordering::SeqCst);
-    RTC_IS_LOCAL_TIME.store(is_local_time, Ordering::SeqCst);
+/// Base temporal de referência do relógio RTC do CMOS
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum RtcTimeBase {
+    /// O relógio do CMOS armazena horário em Tempo Universal Coordenado (UTC / GMT)
+    Utc = 0,
+    /// O relógio do CMOS armazena horário local; requer aplicação de deslocamento de fuso (offset)
+    LocalTime = 1,
 }
 
-/// Retorna a configuração de fuso horário atual (offset em segundos, flag de hora local)
+/// Configura a base de tempo do RTC (UTC ou LocalTime) e o deslocamento de fuso horário em segundos
+pub fn configure_time_base(base: RtcTimeBase, offset_seconds: i32) {
+    let is_local = base == RtcTimeBase::LocalTime;
+    RTC_IS_LOCAL_TIME.store(is_local, Ordering::SeqCst);
+    TIMEZONE_OFFSET_SECONDS.store(offset_seconds, Ordering::SeqCst);
+}
+
+/// Retorna a configuração da base de tempo do RTC e o deslocamento em segundos
+pub fn get_time_base() -> (RtcTimeBase, i32) {
+    let is_local = RTC_IS_LOCAL_TIME.load(Ordering::Relaxed);
+    let offset = TIMEZONE_OFFSET_SECONDS.load(Ordering::Relaxed);
+    let base = if is_local {
+        RtcTimeBase::LocalTime
+    } else {
+        RtcTimeBase::Utc
+    };
+    (base, offset)
+}
+
+/// Configura o deslocamento de fuso horário e a base do relógio CMOS (UTC vs Hora Local) — Retrocompatibilidade
+pub fn set_timezone(offset_seconds: i32, is_local_time: bool) {
+    let base = if is_local_time {
+        RtcTimeBase::LocalTime
+    } else {
+        RtcTimeBase::Utc
+    };
+    configure_time_base(base, offset_seconds);
+}
+
+/// Retorna a configuração de fuso horário atual (offset em segundos, flag de hora local) — Retrocompatibilidade
 pub fn get_timezone() -> (i32, bool) {
-    (
-        TIMEZONE_OFFSET_SECONDS.load(Ordering::Relaxed),
-        RTC_IS_LOCAL_TIME.load(Ordering::Relaxed),
-    )
+    let (base, offset) = get_time_base();
+    (offset, base == RtcTimeBase::LocalTime)
 }
 
 /// Informa se o relógio RTC foi lido com sucesso e calibrado
@@ -240,22 +271,29 @@ pub fn current_unix_time() -> (u64, u32) {
     let elapsed_secs = elapsed_ticks / hz;
     let elapsed_nanos = ((elapsed_ticks % hz) * (1_000_000_000 / hz)) as u32;
 
-    // Se o CMOS opera em hora local, converte para UTC descontando o offset
-    let boot_unix = if RTC_IS_LOCAL_TIME.load(Ordering::Relaxed) {
-        let offset = TIMEZONE_OFFSET_SECONDS.load(Ordering::Relaxed) as i64;
-        if offset >= 0 {
-            raw_boot_unix.saturating_sub(offset as u64)
-        } else {
-            raw_boot_unix.saturating_add((-offset) as u64)
+    // Se o CMOS opera em hora local, converte para UTC com semântica explícita:
+    // T_utc = T_local - offset (ex: UTC-3 => offset = -10800s, T_utc = T_local - (-10800) = T_local + 10800)
+    let (base, offset_secs) = get_time_base();
+    let boot_unix = match base {
+        RtcTimeBase::Utc => raw_boot_unix,
+        RtcTimeBase::LocalTime => {
+            let offset = offset_secs as i64;
+            if offset >= 0 {
+                raw_boot_unix.saturating_sub(offset as u64)
+            } else {
+                raw_boot_unix.saturating_add((-offset) as u64)
+            }
         }
-    } else {
-        raw_boot_unix
     };
 
     (boot_unix.saturating_add(elapsed_secs), elapsed_nanos)
 }
 
-/// Retorna o tempo monotônico estritamente crescente desde o boot do microkernel (segundos, nanos)
+/// Retorna o tempo monotônico estritamente crescente desde o boot do microkernel (segundos, nanossegundos)
+///
+/// Totalmente independente do relógio CMOS RTC e imune a alterações de fuso horário, saltos de época
+/// ou ajustes manuais de data/hora pelo usuário.
+/// Utiliza a contagem pura de ticks do hardware timer convertida com base na frequência configurada (`crate::timer::HZ`).
 pub fn monotonic_time() -> (u64, u32) {
     let now_ticks = crate::timer::ticks();
     let hz = crate::timer::HZ.max(1);

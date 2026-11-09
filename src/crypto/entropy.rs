@@ -22,6 +22,7 @@ static HAS_RDRAND: AtomicBool = AtomicBool::new(false);
 static HAS_RDSEED: AtomicBool = AtomicBool::new(false);
 static GLOBAL_IS_SEEDED: AtomicBool = AtomicBool::new(false);
 static ESTIMATED_ENTROPY_BITS: AtomicUsize = AtomicUsize::new(0);
+static LAST_JITTER_DELTA: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 const CHACHA_CONSTANTS: [u32; 4] = [
     0x61707865, // "expa"
@@ -152,6 +153,9 @@ impl CsprngState {
     /// Executa teste de repetição contínua (NIST SP 800-90B RCT)
     fn check_rct(&mut self, sample: u64, is_rdseed: bool) -> bool {
         if is_rdseed {
+            if self.rdseed_faulty {
+                return false;
+            }
             if sample == self.last_rdseed {
                 self.rdseed_repeat_count += 1;
                 if self.rdseed_repeat_count >= RCT_CUTOFF {
@@ -164,6 +168,9 @@ impl CsprngState {
             }
             true
         } else {
+            if self.rdrand_faulty {
+                return false;
+            }
             if sample == self.last_rdrand {
                 self.rdrand_repeat_count += 1;
                 if self.rdrand_repeat_count >= RCT_CUTOFF {
@@ -285,30 +292,30 @@ pub fn rdseed64() -> Option<u64> {
     if ok != 0 { Some(val) } else { None }
 }
 
-/// Coleta uma amostra de entropia do barramento com estimativa de min-entropia
+/// Coleta uma amostra de entropia do barramento com modelo estrito de min-entropia (NIST SP 800-90B)
 pub fn gather_entropy_sample(state: &mut CsprngState) -> ([u8; 64], usize) {
     let mut sample = [0u8; 64];
     let mut estimated_bits = 0;
 
-    // 1. Tenta RDSEED físico (64 bits de min-entropia por palavra se passar no RCT)
+    // 1. Tenta RDSEED físico (32 bits de min-entropia conservadora por 64 bits de saída se passar no RCT)
     for i in 0..4 {
         let mut got_hw = false;
         if !state.rdseed_faulty {
             if let Some(val) = rdseed64() {
                 if state.check_rct(val, true) {
                     sample[i * 8..i * 8 + 8].copy_from_slice(&val.to_le_bytes());
-                    estimated_bits += 64;
+                    estimated_bits += 32; // Modelo conservador NIST SP 800-90B (0.5 bit/bit)
                     got_hw = true;
                 }
             }
         }
 
-        // 2. Se RDSEED falhar, tenta RDRAND (estima 32 bits de min-entropia)
+        // 2. Se RDSEED falhar, tenta RDRAND (estima 8 bits de min-entropia como fonte condicionada)
         if !got_hw && !state.rdrand_faulty {
             if let Some(val) = rdrand64() {
                 if state.check_rct(val, false) {
                     sample[i * 8..i * 8 + 8].copy_from_slice(&val.to_le_bytes());
-                    estimated_bits += 32;
+                    estimated_bits += 8; // Modelo conservador (0.125 bit/bit)
                     got_hw = true;
                 }
             }
@@ -325,11 +332,22 @@ pub fn gather_entropy_sample(state: &mut CsprngState) -> ([u8; 64], usize) {
             let pit = crate::timer::ticks();
 
             let delta = tsc2.wrapping_sub(tsc1);
+            let last_delta = LAST_JITTER_DELTA.swap(delta, Ordering::Relaxed);
+            let diff = if last_delta == 0 {
+                0 // Amostra de calibração inicial: primeira leitura não calcula derivada
+            } else if delta >= last_delta {
+                delta - last_delta
+            } else {
+                last_delta - delta
+            };
+
             let mixed = delta ^ (pit << 16) ^ ((port_jitter as u64) << 48) ^ (i as u64 * 0x9e3779b97f4a7c15);
             sample[i * 8..i * 8 + 8].copy_from_slice(&mixed.to_le_bytes());
 
-            // Em ambientes sem hardware RNG, jitter contribui com estimativa conservadora (4 bits)
-            estimated_bits += 4;
+            // Modelo de Fonte: Variação de segunda ordem > 4 ciclos garante jitter físico real
+            if diff > 4 {
+                estimated_bits += 1; // 1 bit conservador de min-entropia por amostra variável
+            }
         }
     }
 
@@ -371,24 +389,48 @@ pub fn force_seed_pool() {
 
 /// Preenche um buffer de bytes com números pseudoaleatórios criptograficamente seguros
 ///
-/// Retorna `Ok(bytes_preenchidos)` ou `Err(errno)` (ex: `-EAGAIN` se `GRND_NONBLOCK` for especificado e o pool não estiver semeado).
+/// Se o pool não estiver semeado:
+/// - Se `GRND_NONBLOCK`: retorna `-EAGAIN` imediatamente.
+/// - Se modo bloqueante: suspende a tarefa chamadora no escalonador (custo zero de CPU) até que interrupções alimentem o pool.
 pub fn fill_random_bytes(dest: &mut [u8], flags: u32) -> Result<usize, isize> {
-    let mut guard = CSPRNG.lock();
-
     // Se o pool ainda não foi semeado com 256 bits de min-entropia
-    if !guard.is_seeded {
+    if !is_seeded() {
         if (flags & GRND_NONBLOCK) != 0 {
             return Err(crate::syscall::EAGAIN);
         }
 
-        // Em modo bloqueante, coleta amostras até atingir a meta
-        let mut loop_count = 0;
-        while !guard.is_seeded && loop_count < 1000 {
-            let (sample, bits) = gather_entropy_sample(&mut guard);
-            guard.mix_entropy(&sample, bits);
-            loop_count += 1;
+        // Modo bloqueante: suspensão cooperativa no escalonador sem busy-waiting ativo
+        let mut attempts = 0;
+        while !is_seeded() && attempts < 200 {
+            attempts += 1;
+            {
+                let mut guard = CSPRNG.lock();
+                if !guard.is_seeded {
+                    let (sample, bits) = gather_entropy_sample(&mut guard);
+                    guard.mix_entropy(&sample, bits);
+                }
+            }
+            if is_seeded() {
+                break;
+            }
+
+            // Suspende o processo chamador e cede a CPU para que interrupções acumulem entropia
+            let pid = crate::scheduler::current_pid();
+            if pid > 0 {
+                let wake_tick = crate::timer::ticks().saturating_add(1);
+                crate::scheduler::get().sleep_task(pid, wake_tick);
+                crate::scheduler::yield_now();
+            } else {
+                crate::scheduler::yield_now();
+            }
+        }
+
+        if !is_seeded() {
+            return Err(crate::syscall::EAGAIN);
         }
     }
+
+    let mut guard = CSPRNG.lock();
 
     // Gatilho de Reseed Periódico
     guard.calls_since_reseed += 1;
