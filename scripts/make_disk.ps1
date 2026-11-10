@@ -1,4 +1,4 @@
-﻿# scripts/make_disk.ps1 - Gera um disco virtual RAW (disk.img) de 64 MiB formatado com MBR Dual-Partition (FAT32 + Ext2)
+# scripts/make_disk.ps1 - Gera um disco virtual RAW (disk.img) de 64 MiB formatado com MBR Dual-Partition (FAT32 + Ext2)
 param(
     [string]$DiskPath = "disk.img",
     [string]$AppElfPath = "iso_root\apps\ola-mundo.elf",
