@@ -51,6 +51,12 @@ pub struct ComputedStyle {
     pub font_size: usize,
     pub margin_top: usize,
     pub margin_bottom: usize,
+    pub margin_left: usize,
+    pub margin_right: usize,
+    pub padding_top: usize,
+    pub padding_bottom: usize,
+    pub padding_left: usize,
+    pub padding_right: usize,
     pub is_bold: bool,
     pub display_block: bool,
 }
@@ -64,11 +70,19 @@ impl ComputedStyle {
             font_size: 12,
             margin_top: 2,
             margin_bottom: 4,
+            margin_left: 0,
+            margin_right: 0,
+            padding_top: 0,
+            padding_bottom: 0,
+            padding_left: 0,
+            padding_right: 0,
             is_bold: false,
             display_block: true,
         }
     }
 }
+
+pub const MAX_DOM_CHILDREN: usize = 16;
 
 #[allow(dead_code)]
 #[derive(Clone, Copy)]
@@ -87,10 +101,10 @@ pub struct DomNode {
     pub href_len: usize,
     pub onclick_attr: [u8; 128],
     pub onclick_len: usize,
-    pub text: [u8; 128],
+    pub text: [u8; 256],
     pub text_len: usize,
     pub parent: Option<usize>,
-    pub children: [usize; 8],
+    pub children: [usize; MAX_DOM_CHILDREN],
     pub child_count: usize,
     pub computed_style: ComputedStyle,
 }
@@ -112,10 +126,10 @@ impl DomNode {
             href_len: 0,
             onclick_attr: [0; 128],
             onclick_len: 0,
-            text: [0; 128],
+            text: [0; 256],
             text_len: 0,
             parent: None,
-            children: [0; 8],
+            children: [0; MAX_DOM_CHILDREN],
             child_count: 0,
             computed_style: ComputedStyle::default(),
         }
@@ -165,7 +179,7 @@ impl DomArena {
 
     pub fn set_text_content(&mut self, idx: usize, new_text: &[u8]) {
         if idx < self.node_count {
-            let len = new_text.len().min(127);
+            let len = new_text.len().min(255);
             self.nodes[idx].text[..len].copy_from_slice(&new_text[..len]);
             self.nodes[idx].text_len = len;
         }
@@ -206,7 +220,14 @@ pub struct CssRule {
     pub bg_color: Option<u32>,
     pub border_color: Option<u32>,
     pub font_size: Option<usize>,
-    pub margin: Option<usize>,
+    pub margin_top: Option<usize>,
+    pub margin_bottom: Option<usize>,
+    pub margin_left: Option<usize>,
+    pub margin_right: Option<usize>,
+    pub padding_top: Option<usize>,
+    pub padding_bottom: Option<usize>,
+    pub padding_left: Option<usize>,
+    pub padding_right: Option<usize>,
     pub is_bold: Option<bool>,
     pub display_block: Option<bool>,
 }
@@ -221,7 +242,14 @@ impl CssRule {
             bg_color: None,
             border_color: None,
             font_size: None,
-            margin: None,
+            margin_top: None,
+            margin_bottom: None,
+            margin_left: None,
+            margin_right: None,
+            padding_top: None,
+            padding_bottom: None,
+            padding_left: None,
+            padding_right: None,
             is_bold: None,
             display_block: None,
         }
@@ -299,7 +327,35 @@ impl MiniCss {
                     } else if prop.eq_ignore_ascii_case(b"border-color") {
                         rule.border_color = parse_hex_color(val);
                     } else if prop.eq_ignore_ascii_case(b"margin") {
-                        rule.margin = parse_px(val);
+                        if let Some((v, h)) = parse_one_or_two_px(val) {
+                            rule.margin_top = Some(v);
+                            rule.margin_bottom = Some(v);
+                            rule.margin_left = Some(h);
+                            rule.margin_right = Some(h);
+                        }
+                    } else if prop.eq_ignore_ascii_case(b"margin-top") {
+                        rule.margin_top = parse_px(val);
+                    } else if prop.eq_ignore_ascii_case(b"margin-bottom") {
+                        rule.margin_bottom = parse_px(val);
+                    } else if prop.eq_ignore_ascii_case(b"margin-left") {
+                        rule.margin_left = parse_px(val);
+                    } else if prop.eq_ignore_ascii_case(b"margin-right") {
+                        rule.margin_right = parse_px(val);
+                    } else if prop.eq_ignore_ascii_case(b"padding") {
+                        if let Some((v, h)) = parse_one_or_two_px(val) {
+                            rule.padding_top = Some(v);
+                            rule.padding_bottom = Some(v);
+                            rule.padding_left = Some(h);
+                            rule.padding_right = Some(h);
+                        }
+                    } else if prop.eq_ignore_ascii_case(b"padding-top") {
+                        rule.padding_top = parse_px(val);
+                    } else if prop.eq_ignore_ascii_case(b"padding-bottom") {
+                        rule.padding_bottom = parse_px(val);
+                    } else if prop.eq_ignore_ascii_case(b"padding-left") {
+                        rule.padding_left = parse_px(val);
+                    } else if prop.eq_ignore_ascii_case(b"padding-right") {
+                        rule.padding_right = parse_px(val);
                     } else if prop.eq_ignore_ascii_case(b"font-weight") {
                         if val.eq_ignore_ascii_case(b"bold") {
                             rule.is_bold = Some(true);
@@ -355,45 +411,76 @@ impl MiniCss {
             node.computed_style.border_color = Some(0x0045_475A);
             node.computed_style.margin_top = 3;
             node.computed_style.margin_bottom = 3;
+            node.computed_style.margin_left = 2;
+            node.computed_style.margin_right = 2;
+            node.computed_style.padding_top = 2;
+            node.computed_style.padding_bottom = 2;
+            node.computed_style.padding_left = 6;
+            node.computed_style.padding_right = 6;
             node.computed_style.display_block = false;
         } else if tag == b"div" {
             node.computed_style.display_block = true;
+            node.computed_style.margin_top = 0;
+            node.computed_style.margin_bottom = 0;
+        } else if tag == b"hr" {
+            node.computed_style.display_block = true;
+            node.computed_style.margin_top = 6;
+            node.computed_style.margin_bottom = 6;
+        } else if tag == b"b" || tag == b"strong" {
+            node.computed_style.is_bold = true;
+            node.computed_style.display_block = false;
+        } else if tag == b"ul" {
+            node.computed_style.display_block = true;
+            node.computed_style.margin_top = 4;
+            node.computed_style.margin_bottom = 4;
+            node.computed_style.padding_left = 8;
+        } else if tag == b"li" {
+            node.computed_style.display_block = true;
+            node.computed_style.margin_top = 2;
+            node.computed_style.margin_bottom = 2;
+        } else if tag == b"span" {
+            node.computed_style.display_block = false;
         }
 
+        let apply_rule = |node: &mut DomNode, r: &CssRule| {
+            if let Some(c) = r.color { node.computed_style.color = c; }
+            if let Some(bg) = r.bg_color { node.computed_style.bg_color = Some(bg); }
+            if let Some(bc) = r.border_color { node.computed_style.border_color = Some(bc); }
+            if let Some(mt) = r.margin_top { node.computed_style.margin_top = mt; }
+            if let Some(mb) = r.margin_bottom { node.computed_style.margin_bottom = mb; }
+            if let Some(ml) = r.margin_left { node.computed_style.margin_left = ml; }
+            if let Some(mr) = r.margin_right { node.computed_style.margin_right = mr; }
+            if let Some(pt) = r.padding_top { node.computed_style.padding_top = pt; }
+            if let Some(pb) = r.padding_bottom { node.computed_style.padding_bottom = pb; }
+            if let Some(pl) = r.padding_left { node.computed_style.padding_left = pl; }
+            if let Some(pr) = r.padding_right { node.computed_style.padding_right = pr; }
+            if let Some(b) = r.is_bold { node.computed_style.is_bold = b; }
+            if let Some(d) = r.display_block { node.computed_style.display_block = d; }
+        };
+
+        // 1. Tag rules
         for i in 0..self.rule_count {
             let r = &self.rules[i];
-            let r_sel = &r.selector[..r.selector_len];
-            let mut matches = false;
-
-            match r.kind {
-                SelectorKind::Tag => {
-                    if node.tag_len == r.selector_len && &node.tag[..node.tag_len] == r_sel {
-                        matches = true;
-                    }
-                }
-                SelectorKind::Class => {
-                    let class_slice = &node.class_attr[..node.class_len];
-                    if class_slice.contains_ignore_ascii_case(r_sel) {
-                        matches = true;
-                    }
-                }
-                SelectorKind::Id => {
-                    if node.id_len == r.selector_len && &node.id_attr[..node.id_len] == r_sel {
-                        matches = true;
-                    }
+            if r.kind == SelectorKind::Tag && node.tag_len == r.selector_len && &node.tag[..node.tag_len] == &r.selector[..r.selector_len] {
+                apply_rule(node, r);
+            }
+        }
+        // 2. Class rules
+        for i in 0..self.rule_count {
+            let r = &self.rules[i];
+            if r.kind == SelectorKind::Class {
+                let class_slice = &node.class_attr[..node.class_len];
+                let r_sel = &r.selector[..r.selector_len];
+                if class_slice.contains_ignore_ascii_case(r_sel) {
+                    apply_rule(node, r);
                 }
             }
-
-            if matches {
-                if let Some(c) = r.color { node.computed_style.color = c; }
-                if let Some(bg) = r.bg_color { node.computed_style.bg_color = Some(bg); }
-                if let Some(bc) = r.border_color { node.computed_style.border_color = Some(bc); }
-                if let Some(m) = r.margin {
-                    node.computed_style.margin_top = m;
-                    node.computed_style.margin_bottom = m;
-                }
-                if let Some(b) = r.is_bold { node.computed_style.is_bold = b; }
-                if let Some(d) = r.display_block { node.computed_style.display_block = d; }
+        }
+        // 3. ID rules
+        for i in 0..self.rule_count {
+            let r = &self.rules[i];
+            if r.kind == SelectorKind::Id && node.id_len == r.selector_len && &node.id_attr[..node.id_len] == &r.selector[..r.selector_len] {
+                apply_rule(node, r);
             }
         }
 
@@ -408,6 +495,50 @@ impl MiniCss {
                         if let Some(c) = parse_hex_color(val) { node.computed_style.color = c; }
                     } else if prop.eq_ignore_ascii_case(b"background-color") || prop.eq_ignore_ascii_case(b"background") {
                         if let Some(bg) = parse_hex_color(val) { node.computed_style.bg_color = Some(bg); }
+                    } else if prop.eq_ignore_ascii_case(b"border-color") {
+                        if let Some(bc) = parse_hex_color(val) { node.computed_style.border_color = Some(bc); }
+                    } else if prop.eq_ignore_ascii_case(b"margin") {
+                        if let Some((v, h)) = parse_one_or_two_px(val) {
+                            node.computed_style.margin_top = v;
+                            node.computed_style.margin_bottom = v;
+                            node.computed_style.margin_left = h;
+                            node.computed_style.margin_right = h;
+                        }
+                    } else if prop.eq_ignore_ascii_case(b"margin-top") {
+                        if let Some(m) = parse_px(val) { node.computed_style.margin_top = m; }
+                    } else if prop.eq_ignore_ascii_case(b"margin-bottom") {
+                        if let Some(m) = parse_px(val) { node.computed_style.margin_bottom = m; }
+                    } else if prop.eq_ignore_ascii_case(b"margin-left") {
+                        if let Some(m) = parse_px(val) { node.computed_style.margin_left = m; }
+                    } else if prop.eq_ignore_ascii_case(b"margin-right") {
+                        if let Some(m) = parse_px(val) { node.computed_style.margin_right = m; }
+                    } else if prop.eq_ignore_ascii_case(b"padding") {
+                        if let Some((v, h)) = parse_one_or_two_px(val) {
+                            node.computed_style.padding_top = v;
+                            node.computed_style.padding_bottom = v;
+                            node.computed_style.padding_left = h;
+                            node.computed_style.padding_right = h;
+                        }
+                    } else if prop.eq_ignore_ascii_case(b"padding-top") {
+                        if let Some(p) = parse_px(val) { node.computed_style.padding_top = p; }
+                    } else if prop.eq_ignore_ascii_case(b"padding-bottom") {
+                        if let Some(p) = parse_px(val) { node.computed_style.padding_bottom = p; }
+                    } else if prop.eq_ignore_ascii_case(b"padding-left") {
+                        if let Some(p) = parse_px(val) { node.computed_style.padding_left = p; }
+                    } else if prop.eq_ignore_ascii_case(b"padding-right") {
+                        if let Some(p) = parse_px(val) { node.computed_style.padding_right = p; }
+                    } else if prop.eq_ignore_ascii_case(b"font-weight") {
+                        if val.eq_ignore_ascii_case(b"bold") {
+                            node.computed_style.is_bold = true;
+                        }
+                    } else if prop.eq_ignore_ascii_case(b"display") {
+                        if val.eq_ignore_ascii_case(b"none") {
+                            node.computed_style.display_block = false;
+                        } else if val.eq_ignore_ascii_case(b"block") {
+                            node.computed_style.display_block = true;
+                        } else if val.eq_ignore_ascii_case(b"inline") {
+                            node.computed_style.display_block = false;
+                        }
                     }
                 }
             }
@@ -638,6 +769,19 @@ pub fn parse_px(val: &[u8]) -> Option<usize> {
     if found { Some(num) } else { None }
 }
 
+pub fn parse_one_or_two_px(val: &[u8]) -> Option<(usize, usize)> {
+    let s = val.trim_ascii();
+    if s.is_empty() { return None; }
+    if let Some(pos) = s.iter().position(|&b| b == b' ' || b == b'\t') {
+        let first = parse_px(&s[..pos])?;
+        let second = parse_px(&s[pos + 1..])?;
+        Some((first, second))
+    } else {
+        let one = parse_px(s)?;
+        Some((one, one))
+    }
+}
+
 pub fn parse_int(val: &[u8]) -> Option<i64> {
     let s = val.trim_ascii();
     if s.is_empty() { return None; }
@@ -730,19 +874,72 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
     let mut i = 0usize;
     let len = html.len();
 
+    let mut parent_stack = [0usize; 16];
+    let mut stack_depth = 0usize;
+
     while i < len {
         if html[i] == b'<' {
             i += 1;
-            if i < len && html[i] == b'/' {
-                // Tag de fechamento, avança até '>'
+
+            // 1. Comentário HTML <!-- ... -->
+            if i + 2 < len && html[i] == b'!' && html[i + 1] == b'-' && html[i + 2] == b'-' {
+                i += 3;
+                while i + 2 < len && !(html[i] == b'-' && html[i + 1] == b'-' && html[i + 2] == b'>') {
+                    i += 1;
+                }
+                if i + 2 < len { i += 3; }
+                continue;
+            }
+
+            // 2. DOCTYPE <!DOCTYPE ... >
+            if i < len && html[i] == b'!' {
                 while i < len && html[i] != b'>' { i += 1; }
                 if i < len { i += 1; }
                 continue;
             }
 
-            // Lê nome da tag
+            // 3. Tag de fechamento </tag>
+            if i < len && html[i] == b'/' {
+                i += 1;
+                let ctag_start = i;
+                while i < len && html[i] != b'>' && html[i] != b' ' && html[i] != b'\t' && html[i] != b'\r' && html[i] != b'\n' {
+                    i += 1;
+                }
+                let raw_ctag = &html[ctag_start..i];
+                let mut ctag_buf = [0u8; 16];
+                let ctag_len = raw_ctag.len().min(15);
+                for idx in 0..ctag_len {
+                    let mut c = raw_ctag[idx];
+                    if c >= b'A' && c <= b'Z' { c += 32; }
+                    ctag_buf[idx] = c;
+                }
+                let ctag_name = &ctag_buf[..ctag_len];
+
+                while i < len && html[i] != b'>' { i += 1; }
+                if i < len { i += 1; }
+
+                if stack_depth > 0 {
+                    let mut match_idx = None;
+                    for s in (0..stack_depth).rev() {
+                        let pid = parent_stack[s];
+                        let ptag = &dom.nodes[pid].tag[..dom.nodes[pid].tag_len];
+                        if ptag == ctag_name {
+                            match_idx = Some(s);
+                            break;
+                        }
+                    }
+                    if let Some(m) = match_idx {
+                        stack_depth = m;
+                    } else {
+                        stack_depth -= 1;
+                    }
+                }
+                continue;
+            }
+
+            // 4. Tag de abertura <tag ...>
             let tag_start = i;
-            while i < len && html[i] != b' ' && html[i] != b'>' && html[i] != b'/' {
+            while i < len && html[i] != b' ' && html[i] != b'>' && html[i] != b'/' && html[i] != b'\t' && html[i] != b'\r' && html[i] != b'\n' {
                 i += 1;
             }
             let mut tag_buf = [0u8; 16];
@@ -801,10 +998,16 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                 continue;
             }
 
-            // Elemento normal
+            // Ignora tags estruturais não-visuais
+            if tag_name == b"html" || tag_name == b"head" || tag_name == b"body" || tag_name == b"meta" || tag_name == b"link" {
+                while i < len && html[i] != b'>' { i += 1; }
+                if i < len { i += 1; }
+                continue;
+            }
+
+            // Elemento normal do DOM
             let node_id_opt = dom.alloc_node(DomNodeType::Element);
             if node_id_opt.is_none() {
-                // Arena cheia
                 break;
             }
             let node_id = node_id_opt.unwrap();
@@ -812,14 +1015,20 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
             dom.nodes[node_id].tag_len = tag_len;
 
             // Lê atributos: id, class, style, href, onclick
+            let mut is_self_closing = false;
             while i < len && html[i] != b'>' {
+                if html[i] == b'/' && i + 1 < len && html[i + 1] == b'>' {
+                    is_self_closing = true;
+                    i += 1;
+                    break;
+                }
                 if i + 3 < len && html[i..i + 3].eq_ignore_ascii_case(b"id=") {
                     i += 3;
                     let quote = if i < len && (html[i] == b'"' || html[i] == b'\'') { let q = html[i]; i += 1; Some(q) } else { None };
                     let a_start = i;
                     while i < len {
                         let c = html[i];
-                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' { break; }
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' || c == b'/' { break; }
                         i += 1;
                     }
                     let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
@@ -832,7 +1041,7 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                     let a_start = i;
                     while i < len {
                         let c = html[i];
-                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' { break; }
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' || c == b'/' { break; }
                         i += 1;
                     }
                     let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
@@ -845,7 +1054,7 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                     let a_start = i;
                     while i < len {
                         let c = html[i];
-                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' { break; }
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' || c == b'/' { break; }
                         i += 1;
                     }
                     let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
@@ -858,7 +1067,7 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                     let a_start = i;
                     while i < len {
                         let c = html[i];
-                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' { break; }
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' || c == b'/' { break; }
                         i += 1;
                     }
                     let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
@@ -871,7 +1080,7 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                     let a_start = i;
                     while i < len {
                         let c = html[i];
-                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' { break; }
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' || c == b'/' { break; }
                         i += 1;
                     }
                     let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
@@ -887,31 +1096,51 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                 i += 1;
             }
 
-            // Lê texto até '<'
-            let mut text_buf = [0u8; 128];
+            // Link parent-child hierarchy
+            if stack_depth > 0 {
+                let pid = parent_stack[stack_depth - 1];
+                dom.nodes[node_id].parent = Some(pid);
+                if dom.nodes[pid].child_count < MAX_DOM_CHILDREN {
+                    let c = dom.nodes[pid].child_count;
+                    dom.nodes[pid].children[c] = node_id;
+                    dom.nodes[pid].child_count += 1;
+                }
+            }
+
+            let is_void = tag_name == b"hr" || tag_name == b"br" || tag_name == b"img" || tag_name == b"input";
+            if !is_void && !is_self_closing && stack_depth < 16 {
+                parent_stack[stack_depth] = node_id;
+                stack_depth += 1;
+            }
+
+            // Lê texto até próximo '<'
+            let mut text_buf = [0u8; 256];
             let mut t_idx = 0usize;
             while i < len && html[i] != b'<' {
                 let b = html[i];
-                if b == b'\n' || b == b'\r' || b == b'\t' {
-                    if t_idx > 0 && text_buf[t_idx - 1] != b' ' && t_idx < 127 {
+                if b == b' ' || b == b'\n' || b == b'\r' || b == b'\t' {
+                    if t_idx > 0 && text_buf[t_idx - 1] != b' ' && t_idx < 255 {
                         text_buf[t_idx] = b' ';
                         t_idx += 1;
                     }
                 } else if b == b'&' {
                     if i + 3 < len && &html[i..i + 4] == b"&lt;" {
-                        if t_idx < 127 { text_buf[t_idx] = b'<'; t_idx += 1; }
+                        if t_idx < 255 { text_buf[t_idx] = b'<'; t_idx += 1; }
                         i += 3;
                     } else if i + 3 < len && &html[i..i + 4] == b"&gt;" {
-                        if t_idx < 127 { text_buf[t_idx] = b'>'; t_idx += 1; }
+                        if t_idx < 255 { text_buf[t_idx] = b'>'; t_idx += 1; }
                         i += 3;
                     } else if i + 4 < len && &html[i..i + 5] == b"&amp;" {
-                        if t_idx < 127 { text_buf[t_idx] = b'&'; t_idx += 1; }
+                        if t_idx < 255 { text_buf[t_idx] = b'&'; t_idx += 1; }
                         i += 4;
+                    } else if i + 5 < len && &html[i..i + 6] == b"&nbsp;" {
+                        if t_idx < 255 { text_buf[t_idx] = b' '; t_idx += 1; }
+                        i += 5;
                     } else {
-                        if t_idx < 127 { text_buf[t_idx] = b; t_idx += 1; }
+                        if t_idx < 255 { text_buf[t_idx] = b; t_idx += 1; }
                     }
                 } else {
-                    if t_idx < 127 {
+                    if t_idx < 255 {
                         text_buf[t_idx] = b;
                         t_idx += 1;
                     }
@@ -919,8 +1148,19 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                 i += 1;
             }
 
-            dom.nodes[node_id].text = text_buf;
-            dom.nodes[node_id].text_len = t_idx;
+            while t_idx > 0 && text_buf[t_idx - 1] == b' ' {
+                t_idx -= 1;
+            }
+            let mut t_start = 0usize;
+            while t_start < t_idx && text_buf[t_start] == b' ' {
+                t_start += 1;
+            }
+            let actual_t_len = t_idx - t_start;
+            if actual_t_len > 0 {
+                dom.nodes[node_id].text[..actual_t_len].copy_from_slice(&text_buf[t_start..t_idx]);
+                dom.nodes[node_id].text_len = actual_t_len;
+            }
+
             css.resolve(&mut dom.nodes[node_id]);
         } else {
             i += 1;
@@ -1010,7 +1250,7 @@ pub struct BoxRect {
 
 #[derive(Clone, Copy)]
 pub struct RenderLine {
-    pub text: [u8; 64],
+    pub text: [u8; 96],
     pub text_len: usize,
     pub x: usize,
     pub y: usize,
@@ -1205,12 +1445,16 @@ pub fn parse_html(html: &[u8], page: &mut ParsedPage) {
 
 // ── Motor de Layout e Quebra de Linhas ────────────────────────────────────────
 
+pub const MAX_RENDER_LINES: usize = 128;
+pub const MAX_RENDER_BOXES: usize = 32;
+pub const MAX_CLICK_REGIONS: usize = 32;
+
 pub struct DocumentLayout {
-    pub lines: [RenderLine; 64],
+    pub lines: [RenderLine; MAX_RENDER_LINES],
     pub line_count: usize,
-    pub boxes: [BoxRect; 16],
+    pub boxes: [BoxRect; MAX_RENDER_BOXES],
     pub box_count: usize,
-    pub click_regions: [ClickRegion; 16],
+    pub click_regions: [ClickRegion; MAX_CLICK_REGIONS],
     pub click_count: usize,
     pub total_height: usize,
 }
@@ -1219,14 +1463,14 @@ impl DocumentLayout {
     pub const fn new() -> Self {
         Self {
             lines: [RenderLine {
-                text: [0; 64],
+                text: [0; 96],
                 text_len: 0,
                 x: 0,
                 y: 0,
                 color: 0,
                 is_link: false,
                 is_hr: false,
-            }; 64],
+            }; MAX_RENDER_LINES],
             line_count: 0,
             boxes: [BoxRect {
                 x: 0,
@@ -1235,7 +1479,7 @@ impl DocumentLayout {
                 h: 0,
                 bg_color: 0,
                 border_color: None,
-            }; 16],
+            }; MAX_RENDER_BOXES],
             box_count: 0,
             click_regions: [ClickRegion {
                 x: 0,
@@ -1246,7 +1490,7 @@ impl DocumentLayout {
                 target_len: 0,
                 is_js: false,
                 node_idx: 0,
-            }; 16],
+            }; MAX_CLICK_REGIONS],
             click_count: 0,
             total_height: 0,
         }
@@ -1257,75 +1501,189 @@ impl DocumentLayout {
         self.click_count = 0;
         self.box_count = 0;
 
-        let max_chars_per_line = (content_width / font::FONT_WIDTH).min(50);
         let mut curr_y = 6usize;
+        let mut laid_out = [false; MAX_DOM_NODES];
 
+        // 1. Traverse all root-level nodes (nodes with parent == None)
         for i in 0..dom.node_count {
-            let node = &dom.nodes[i];
-            let tag = &node.tag[..node.tag_len];
-
-            if tag == b"hr" {
-                if self.line_count < self.lines.len() {
-                    self.lines[self.line_count] = RenderLine {
-                        text: [0; 64],
-                        text_len: 0,
-                        x: 8,
-                        y: curr_y + 4,
-                        color: COLOR_HR,
-                        is_link: false,
-                        is_hr: true,
-                    };
-                    self.line_count += 1;
-                }
-                curr_y += 10;
-                continue;
+            if dom.nodes[i].parent.is_none() {
+                self.layout_subtree(dom, i, 4, &mut curr_y, content_width, &mut laid_out);
             }
+        }
 
-            if node.text_len == 0 && node.computed_style.bg_color.is_none() {
-                continue;
-            }
-
-            if node.computed_style.display_block {
-                curr_y += node.computed_style.margin_top;
-            }
-
-            let start_y = curr_y;
-            let text = &node.text[..node.text_len];
-            let is_interactive = tag == b"button" || node.onclick_len > 0;
-            let is_link = tag == b"a" && node.href_len > 0;
-            let start_x = if is_interactive || node.computed_style.bg_color.is_some() { 12 } else { 8 };
-
-            if is_interactive {
-                self.add_wrapped_text_interactive(text, start_x, &mut curr_y, max_chars_per_line, node.computed_style.color, true, node.id);
-            } else if is_link {
-                let href = &node.href_attr[..node.href_len];
-                self.add_wrapped_text(text, start_x, &mut curr_y, max_chars_per_line, node.computed_style.color, true, Some(href));
-            } else {
-                self.add_wrapped_text(text, start_x, &mut curr_y, max_chars_per_line, node.computed_style.color, false, None);
-            }
-
-            if let Some(bg) = node.computed_style.bg_color {
-                if self.box_count < self.boxes.len() {
-                    let box_h = (curr_y.saturating_sub(start_y) + 4).max(font::FONT_HEIGHT + 6);
-                    let box_w = if node.computed_style.display_block { content_width } else { (node.text_len * font::FONT_WIDTH + 12).min(content_width) };
-                    self.boxes[self.box_count] = BoxRect {
-                        x: start_x.saturating_sub(4),
-                        y: start_y.saturating_sub(2),
-                        w: box_w,
-                        h: box_h,
-                        bg_color: bg,
-                        border_color: node.computed_style.border_color,
-                    };
-                    self.box_count += 1;
-                }
-            }
-
-            if node.computed_style.display_block {
-                curr_y += node.computed_style.margin_bottom;
+        // 2. Fallback: layout any orphaned nodes that were not reached by root traversal
+        for i in 0..dom.node_count {
+            if !laid_out[i] {
+                self.layout_subtree(dom, i, 4, &mut curr_y, content_width, &mut laid_out);
             }
         }
 
         self.total_height = curr_y + 10;
+    }
+
+    fn layout_subtree(
+        &mut self,
+        dom: &DomArena,
+        node_idx: usize,
+        base_x: usize,
+        curr_y: &mut usize,
+        avail_width: usize,
+        laid_out: &mut [bool; MAX_DOM_NODES],
+    ) {
+        if node_idx >= dom.node_count || laid_out[node_idx] {
+            return;
+        }
+        laid_out[node_idx] = true;
+        let node = &dom.nodes[node_idx];
+        let tag = &node.tag[..node.tag_len];
+
+        if tag == b"hr" {
+            if self.line_count < self.lines.len() {
+                self.lines[self.line_count] = RenderLine {
+                    text: [0; 96],
+                    text_len: 0,
+                    x: base_x + 8,
+                    y: *curr_y + 4,
+                    color: COLOR_HR,
+                    is_link: false,
+                    is_hr: true,
+                };
+                self.line_count += 1;
+            }
+            *curr_y += 10;
+            return;
+        }
+
+        // Container element with children
+        if node.child_count > 0 {
+            if node.computed_style.display_block {
+                *curr_y += node.computed_style.margin_top;
+            }
+            let box_start_y = *curr_y;
+            let pad_left = node.computed_style.padding_left;
+            let pad_right = node.computed_style.padding_right;
+            let pad_top = if node.computed_style.bg_color.is_some() || node.computed_style.border_color.is_some() {
+                node.computed_style.padding_top.max(4)
+            } else {
+                node.computed_style.padding_top
+            };
+            let pad_bottom = if node.computed_style.bg_color.is_some() || node.computed_style.border_color.is_some() {
+                node.computed_style.padding_bottom.max(4)
+            } else {
+                node.computed_style.padding_bottom
+            };
+            let mar_left = node.computed_style.margin_left;
+            let mar_right = node.computed_style.margin_right;
+
+            let has_box = node.computed_style.bg_color.is_some() || node.computed_style.border_color.is_some();
+            let box_slot = if has_box && self.box_count < self.boxes.len() {
+                let slot = self.box_count;
+                self.box_count += 1;
+                Some(slot)
+            } else {
+                None
+            };
+
+            *curr_y += pad_top;
+
+            // Direct text of container if any
+            if node.text_len > 0 {
+                let max_chars = (avail_width.saturating_sub(mar_left + mar_right + pad_left + pad_right) / font::FONT_WIDTH).max(1);
+                let text_x = base_x + mar_left + pad_left + 4;
+                self.add_wrapped_text(&node.text[..node.text_len], text_x, curr_y, max_chars, node.computed_style.color, false, None);
+            }
+
+            // Lay out all children
+            let child_base_x = base_x + mar_left + pad_left;
+            let child_width = avail_width.saturating_sub(mar_left + mar_right + pad_left + pad_right);
+            for c in 0..node.child_count {
+                let child_id = node.children[c];
+                self.layout_subtree(dom, child_id, child_base_x, curr_y, child_width, laid_out);
+            }
+
+            *curr_y += pad_bottom;
+
+            if let Some(slot) = box_slot {
+                let box_h = curr_y.saturating_sub(box_start_y).max(font::FONT_HEIGHT + pad_top + pad_bottom);
+                let box_w = avail_width.saturating_sub(mar_left + mar_right);
+                self.boxes[slot] = BoxRect {
+                    x: base_x + mar_left,
+                    y: box_start_y,
+                    w: box_w,
+                    h: box_h,
+                    bg_color: node.computed_style.bg_color.unwrap_or(0),
+                    border_color: node.computed_style.border_color,
+                };
+            }
+
+            if node.computed_style.display_block {
+                *curr_y += node.computed_style.margin_bottom;
+            }
+            return;
+        }
+
+        // Leaf element (child_count == 0)
+        if node.text_len == 0 && node.computed_style.bg_color.is_none() && node.computed_style.border_color.is_none() {
+            return;
+        }
+
+        if node.computed_style.display_block {
+            *curr_y += node.computed_style.margin_top;
+        }
+
+        let is_interactive = tag == b"button" || node.onclick_len > 0;
+        let is_link = tag == b"a" && node.href_len > 0;
+        let has_box = node.computed_style.bg_color.is_some() || node.computed_style.border_color.is_some();
+
+        let pad_left = node.computed_style.padding_left;
+        let pad_right = node.computed_style.padding_right;
+        let pad_top = node.computed_style.padding_top;
+        let pad_bottom = node.computed_style.padding_bottom;
+        let mar_left = node.computed_style.margin_left;
+        let mar_right = node.computed_style.margin_right;
+
+        let elem_x = base_x + mar_left + pad_left + if is_interactive || has_box { 4 } else { 0 };
+        let avail_for_text = avail_width.saturating_sub(mar_left + mar_right + pad_left + pad_right + 8);
+        let max_chars = (avail_for_text / font::FONT_WIDTH).max(1);
+
+        let box_start_y = *curr_y;
+        *curr_y += pad_top;
+
+        let text = &node.text[..node.text_len];
+        if is_interactive {
+            self.add_wrapped_text_interactive(text, elem_x, curr_y, max_chars, node.computed_style.color, true, node.id);
+        } else if is_link {
+            let href = &node.href_attr[..node.href_len];
+            self.add_wrapped_text(text, elem_x, curr_y, max_chars, node.computed_style.color, true, Some(href));
+        } else if node.text_len > 0 {
+            self.add_wrapped_text(text, elem_x, curr_y, max_chars, node.computed_style.color, false, None);
+        }
+
+        *curr_y += pad_bottom;
+
+        if has_box {
+            if self.box_count < self.boxes.len() {
+                let box_h = curr_y.saturating_sub(box_start_y).max(font::FONT_HEIGHT + pad_top + pad_bottom + 2);
+                let box_w = if node.computed_style.display_block {
+                    avail_width.saturating_sub(mar_left + mar_right)
+                } else {
+                    (node.text_len * font::FONT_WIDTH + pad_left + pad_right + 12).min(avail_width)
+                };
+                self.boxes[self.box_count] = BoxRect {
+                    x: (base_x + mar_left).max(2),
+                    y: box_start_y,
+                    w: box_w,
+                    h: box_h,
+                    bg_color: node.computed_style.bg_color.unwrap_or(0x0031_3244),
+                    border_color: node.computed_style.border_color,
+                };
+                self.box_count += 1;
+            }
+        }
+
+        if node.computed_style.display_block {
+            *curr_y += node.computed_style.margin_bottom;
+        }
     }
 
     fn add_wrapped_text_interactive(
@@ -1354,14 +1712,14 @@ impl DocumentLayout {
                 if break_idx == 0 { max_chars } else { break_idx }
             };
 
-            let mut line_buf = [0u8; 64];
-            let actual_take = take.min(63);
+            let mut line_buf = [0u8; 96];
+            let actual_take = take.min(95);
             line_buf[..actual_take].copy_from_slice(&text[offset..offset + actual_take]);
 
             if is_interactive {
                 if self.click_count < self.click_regions.len() {
                     let reg = ClickRegion {
-                        x: start_x,
+                        x: start_x.saturating_sub(2),
                         y: *curr_y,
                         w: actual_take * font::FONT_WIDTH + 8,
                         h: font::FONT_HEIGHT + 4,
@@ -1408,7 +1766,7 @@ impl DocumentLayout {
                 BlockKind::HorizontalRule => {
                     if self.line_count < self.lines.len() {
                         self.lines[self.line_count] = RenderLine {
-                            text: [0; 64],
+                            text: [0; 96],
                             text_len: 0,
                             x: 8,
                             y: curr_y + 4,
@@ -1517,8 +1875,8 @@ impl DocumentLayout {
                 if break_idx == 0 { max_chars } else { break_idx }
             };
 
-            let mut line_buf = [0u8; 64];
-            let actual_take = take.min(63);
+            let mut line_buf = [0u8; 96];
+            let actual_take = take.min(95);
             line_buf[..actual_take].copy_from_slice(&text[offset..offset + actual_take]);
 
             // Se for link, registra a região clicável desta linha
@@ -2041,12 +2399,21 @@ impl BrowserSession {
         // 2.5. Renderiza caixas estilizadas (backgrounds de .card, buttons, etc.)
         for i in 0..self.layout.box_count {
             let bx = &self.layout.boxes[i];
-            if bx.y + bx.h >= self.scroll_y {
-                let actual_y = (bx.y.saturating_sub(self.scroll_y)) + clip_top;
-                if actual_y >= clip_top && actual_y <= clip_bottom {
-                    fill_rect(buf, w, h, bx.x, actual_y, bx.w, bx.h, bx.bg_color);
-                    if let Some(bc) = bx.border_color {
-                        draw_rect_border(buf, w, h, bx.x, actual_y, bx.w, bx.h, bc);
+            if bx.y + bx.h > self.scroll_y {
+                let box_top = if bx.y >= self.scroll_y {
+                    (bx.y - self.scroll_y) + clip_top
+                } else {
+                    clip_top
+                };
+                let box_bottom = ((bx.y + bx.h).saturating_sub(self.scroll_y)) + clip_top;
+                if box_top < clip_bottom && box_bottom > clip_top {
+                    let draw_y = box_top.max(clip_top);
+                    let draw_h = box_bottom.min(clip_bottom).saturating_sub(draw_y);
+                    if draw_h > 0 {
+                        fill_rect(buf, w, h, bx.x, draw_y, bx.w, draw_h, bx.bg_color);
+                        if let Some(bc) = bx.border_color {
+                            draw_rect_border(buf, w, h, bx.x, draw_y, bx.w, draw_h, bc);
+                        }
                     }
                 }
             }

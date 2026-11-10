@@ -17,6 +17,7 @@
 *.tmp
 *.swp
 *~
+*.ppm
 
 # IDE/editor
 .vscode/
