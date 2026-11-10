@@ -1,4 +1,4 @@
-# scripts/make_disk.ps1 - Gera um disco virtual RAW (disk.img) de 64 MiB formatado com MBR Dual-Partition (FAT32 + Ext2)
+﻿# scripts/make_disk.ps1 - Gera um disco virtual RAW (disk.img) de 64 MiB formatado com MBR Dual-Partition (FAT32 + Ext2)
 param(
     [string]$DiskPath = "disk.img",
     [string]$AppElfPath = "iso_root\apps\ola-mundo.elf",
@@ -79,6 +79,11 @@ Executaveis disponiveis nesta particao:
   - /disk/ola_graf.elf (App Grafico Independente Ring 3 Aladdin SDK)
   - /disk/contador.elf (App Grafico Concorrente Ring 3 Aladdin SDK)
   - /disk/browser.elf (Jinn Browser Engine v0.5.0)
+
+Papeis de Parede em Dominio Publico (CC0 / NASA Public Domain):
+  - /disk/nebula.ppm (NASA Carina Cosmic Nebula - Dominio Publico)
+  - /disk/landscp.ppm (Mount Fuji Sunset Silhouette - Dominio Publico CC0)
+  - /disk/cosmos.ppm (JWST Deep Cosmic Field - Dominio Publico)
 
 Experimente executar no terminal do Aladdin:
   spawn /disk/ola.elf
@@ -188,11 +193,91 @@ $bpb[510] = 0x55; $bpb[511] = 0xAA
 Write-BytesAt $part1ByteOffset $bpb
 Write-BytesAt ($part1ByteOffset + 6 * $sectorSize) $bpb
 
+# Geração de Papéis de Parede em Domínio Público (Formato Netpbm PPM P6 200x120)
+$ppmW = 200; $ppmH = 120
+$ppmHeader = [System.Text.Encoding]::ASCII.GetBytes("P6`n$ppmW $ppmH`n255`n")
+
+# 1. NEBULA.PPM (NASA Carina Cosmic Nebula - Domínio Público)
+$nebulaBytes = [byte[]]::new($ppmHeader.Length + $ppmW * $ppmH * 3)
+[System.Array]::Copy($ppmHeader, $nebulaBytes, $ppmHeader.Length)
+$idx = $ppmHeader.Length
+for ($y = 0; $y -lt $ppmH; $y++) {
+    for ($x = 0; $x -lt $ppmW; $x++) {
+        $dx = $x - ($ppmW * 0.45); $dy = $y - ($ppmH * 0.5)
+        $d = [Math]::Sqrt($dx*$dx + $dy*$dy)
+        $r = [byte][Math]::Min(255, [Math]::Max(8, 180 - $d*1.2 + ($y*0.3)))
+        $g = [byte][Math]::Min(255, [Math]::Max(5, 70 - $d*0.7 + (($ppmW-$x)*0.4)))
+        $b = [byte][Math]::Min(255, [Math]::Max(25, 230 - $d*0.9))
+        $nebulaBytes[$idx++] = $r
+        $nebulaBytes[$idx++] = $g
+        $nebulaBytes[$idx++] = $b
+    }
+}
+
+# 2. LANDSCP.PPM (Mount Fuji Sunset Silhouette - Domínio Público CC0)
+$landscpBytes = [byte[]]::new($ppmHeader.Length + $ppmW * $ppmH * 3)
+[System.Array]::Copy($ppmHeader, $landscpBytes, $ppmHeader.Length)
+$idx = $ppmHeader.Length
+$horizon = [int]($ppmH * 0.65)
+for ($y = 0; $y -lt $ppmH; $y++) {
+    for ($x = 0; $x -lt $ppmW; $x++) {
+        if ($y -lt $horizon) {
+            $t = $y / [double]$horizon
+            $r = [byte](30 + (220 * $t))
+            $g = [byte](20 + (120 * $t))
+            $b = [byte](60 + (30 * (1.0 - $t)))
+            $cx = $ppmW * 0.5; $peak_y = [int]($ppmH * 0.25)
+            if ($y -ge $peak_y) {
+                $half_w = ($y - $peak_y) * 0.7
+                if ([Math]::Abs($x - $cx) -lt $half_w) {
+                    if ($y -lt ($peak_y + 18)) {
+                        $r = 230; $g = 235; $b = 245
+                    } else {
+                        $r = 25; $g = 20; $b = 40
+                    }
+                }
+            }
+        } else {
+            $t = ($y - $horizon) / [double]($ppmH - $horizon)
+            $r = [byte](80 - (50 * $t))
+            $g = [byte](50 - (30 * $t))
+            $b = [byte](70 - (40 * $t))
+        }
+        $landscpBytes[$idx++] = $r
+        $landscpBytes[$idx++] = $g
+        $landscpBytes[$idx++] = $b
+    }
+}
+
+# 3. COSMOS.PPM (JWST Deep Cosmic Field - Domínio Público)
+$cosmosBytes = [byte[]]::new($ppmHeader.Length + $ppmW * $ppmH * 3)
+[System.Array]::Copy($ppmHeader, $cosmosBytes, $ppmHeader.Length)
+$idx = $ppmHeader.Length
+for ($y = 0; $y -lt $ppmH; $y++) {
+    for ($x = 0; $x -lt $ppmW; $x++) {
+        $r = [byte]4; $g = [byte]6; $b = [byte]12
+        $g1_dx = $x - ($ppmW * 0.3); $g1_dy = $y - ($ppmH * 0.4)
+        $d1 = [Math]::Sqrt($g1_dx*$g1_dx + $g1_dy*$g1_dy)
+        if ($d1 -lt 15) {
+            $f = (15 - $d1) / 15.0
+            $r = [byte][Math]::Min(255, $r + [int](220 * $f))
+            $g = [byte][Math]::Min(255, $g + [int](180 * $f))
+            $b = [byte][Math]::Min(255, $b + [int](80 * $f))
+        }
+        $cosmosBytes[$idx++] = $r
+        $cosmosBytes[$idx++] = $g
+        $cosmosBytes[$idx++] = $b
+    }
+}
+
 $clusterBytes = 8 * 512 # 4096 bytes
 $olaClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($elfBytes.Length / $clusterBytes))
 $browserClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($browserBytes.Length / $clusterBytes))
 $graficoClustersNeeded = if ($graficoBytes.Length -gt 0) { [Math]::Max(1, [int][Math]::Ceiling($graficoBytes.Length / $clusterBytes)) } else { 0 }
 $contadorClustersNeeded = if ($contadorBytes.Length -gt 0) { [Math]::Max(1, [int][Math]::Ceiling($contadorBytes.Length / $clusterBytes)) } else { 0 }
+$nebulaClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($nebulaBytes.Length / $clusterBytes))
+$landscpClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($landscpBytes.Length / $clusterBytes))
+$cosmosClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($cosmosBytes.Length / $clusterBytes))
 
 $olaStartClus = 4
 $browserStartClus = $olaStartClus + $olaClustersNeeded
@@ -202,13 +287,18 @@ $graficoStartClus = if ($graficoClustersNeeded -gt 0) { $aboutClus + 1 } else { 
 $contadorStartClus = if ($contadorClustersNeeded -gt 0) {
     if ($graficoClustersNeeded -gt 0) { $graficoStartClus + $graficoClustersNeeded } else { $aboutClus + 1 }
 } else { 0 }
-$nextFreeClus = if ($contadorClustersNeeded -gt 0) {
+$prevEnd = if ($contadorClustersNeeded -gt 0) {
     $contadorStartClus + $contadorClustersNeeded
 } elseif ($graficoClustersNeeded -gt 0) {
     $graficoStartClus + $graficoClustersNeeded
 } else {
     $aboutClus + 1
 }
+
+$nebulaStartClus = $prevEnd
+$landscpStartClus = $nebulaStartClus + $nebulaClustersNeeded
+$cosmosStartClus = $landscpStartClus + $landscpClustersNeeded
+$nextFreeClus = $cosmosStartClus + $cosmosClustersNeeded
 
 # FSInfo Sector (Setor 1 da partição FAT32)
 $fsinfo = [byte[]]::new(512)
@@ -276,6 +366,36 @@ if ($contadorClustersNeeded -gt 0) {
     }
 }
 
+# Cadeia NEBULA.PPM
+for ($i = 0; $i -lt $nebulaClustersNeeded; $i++) {
+    $currentClus = $nebulaStartClus + $i
+    if ($i -eq $nebulaClustersNeeded - 1) {
+        Set-FatEntry $currentClus 0x0FFFFFFF
+    } else {
+        Set-FatEntry $currentClus ([uint32]($currentClus + 1))
+    }
+}
+
+# Cadeia LANDSCP.PPM
+for ($i = 0; $i -lt $landscpClustersNeeded; $i++) {
+    $currentClus = $landscpStartClus + $i
+    if ($i -eq $landscpClustersNeeded - 1) {
+        Set-FatEntry $currentClus 0x0FFFFFFF
+    } else {
+        Set-FatEntry $currentClus ([uint32]($currentClus + 1))
+    }
+}
+
+# Cadeia COSMOS.PPM
+for ($i = 0; $i -lt $cosmosClustersNeeded; $i++) {
+    $currentClus = $cosmosStartClus + $i
+    if ($i -eq $cosmosClustersNeeded - 1) {
+        Set-FatEntry $currentClus 0x0FFFFFFF
+    } else {
+        Set-FatEntry $currentClus ([uint32]($currentClus + 1))
+    }
+}
+
 $fat1Offset = $part1ByteOffset + [long]32 * $sectorSize
 $fat2Offset = $part1ByteOffset + [long](32 + $sectorsPerFat) * $sectorSize
 Write-BytesAt $fat1Offset $fatTable
@@ -327,6 +447,11 @@ $indexHtmlText = @"
   <p>- <a href="http://neverssl.com">Testar Internet Real (neverssl.com)</a></p>
   <p>- <a href="http://example.com">Dominio de Teste (example.com)</a></p>
   <p>- <a href="about.htm">Sobre o Jinn Microkernel</a></p>
+  <hr/>
+  <p><b>Papeis de Parede em Dominio Publico (PPM):</b></p>
+  <p>- <a href="nebula.ppm">NASA Carina Cosmic Nebula</a></p>
+  <p>- <a href="landscp.ppm">Mount Fuji Sunset Silhouette</a></p>
+  <p>- <a href="cosmos.ppm">JWST Deep Cosmic Field</a></p>
 </body>
 </html>
 "@
@@ -357,6 +482,9 @@ if ($graficoBytes.Length -gt 0) {
 if ($contadorBytes.Length -gt 0) {
     Add-DirEntry 7 "CONTADORELF" 0x20 $contadorStartClus ($contadorBytes.Length)
 }
+Add-DirEntry 8 "NEBULA  PPM" 0x20 $nebulaStartClus ($nebulaBytes.Length)
+Add-DirEntry 9 "LANDSCP PPM" 0x20 $landscpStartClus ($landscpBytes.Length)
+Add-DirEntry 10 "COSMOS  PPM" 0x20 $cosmosStartClus ($cosmosBytes.Length)
 
 Write-BytesAt $dataStartByteOffset1 $rootDir
 Write-BytesAt ($dataStartByteOffset1 + [long](3 - 2) * $clusterBytes) $readmeBytes
@@ -370,6 +498,9 @@ if ($graficoBytes.Length -gt 0) {
 if ($contadorBytes.Length -gt 0) {
     Write-BytesAt ($dataStartByteOffset1 + [long]($contadorStartClus - 2) * $clusterBytes) $contadorBytes
 }
+Write-BytesAt ($dataStartByteOffset1 + [long]($nebulaStartClus - 2) * $clusterBytes) $nebulaBytes
+Write-BytesAt ($dataStartByteOffset1 + [long]($landscpStartClus - 2) * $clusterBytes) $landscpBytes
+Write-BytesAt ($dataStartByteOffset1 + [long]($cosmosStartClus - 2) * $clusterBytes) $cosmosBytes
 
 # ======================================================================
 # 3. FORMATAÇÃO DA PARTIÇÃO 2: Ext2 (/ext2)
@@ -476,5 +607,5 @@ $bw.Close()
 $fs.Close()
 
 Write-Host "Disco virtual criado com sucesso em: $targetDisk"
-Write-Host "  - Particao 1 (FAT32): LBA $startLba1 (31 MiB) -> Arquivos: README.TXT, OLA.ELF, BROWSER.ELF, OLA_GRAF.ELF, CONTADOR.ELF, INDEX.HTM, ABOUT.HTM"
+Write-Host "  - Particao 1 (FAT32): LBA $startLba1 (31 MiB) -> Arquivos: README.TXT, OLA.ELF, BROWSER.ELF, OLA_GRAF.ELF, CONTADOR.ELF, INDEX.HTM, ABOUT.HTM, NEBULA.PPM, LANDSCP.PPM, COSMOS.PPM"
 Write-Host "  - Particao 2 (Ext2):  LBA $startLba2 (31 MiB) -> Arquivos: SERVER.TXT (Read-Only)"
