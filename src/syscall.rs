@@ -315,6 +315,36 @@ pub fn validate_user_buffer(ptr: *const u8, len: usize, write_access: bool) -> R
     Ok(())
 }
 
+/// Copia com segurança dados de um buffer de espaço de usuário (Ring 3) para um slice de kernel.
+/// Valida limites canônicos, mapeamento no PML4 ativo e permissão de leitura.
+pub fn copy_from_user(dst: &mut [u8], src: *const u8, len: usize) -> Result<(), isize> {
+    if src.is_null() || len == 0 || dst.len() < len {
+        return Err(EINVAL);
+    }
+    if is_current_task_user() {
+        validate_user_buffer(src, len, false)?;
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(src, dst.as_mut_ptr(), len);
+    }
+    Ok(())
+}
+
+/// Copia com segurança dados de um slice de kernel para um buffer de espaço de usuário (Ring 3).
+/// Valida limites canônicos, mapeamento no PML4 ativo e permissão de escrita.
+pub fn copy_to_user(dst: *mut u8, src: &[u8], len: usize) -> Result<(), isize> {
+    if dst.is_null() || len == 0 || src.len() < len {
+        return Err(EINVAL);
+    }
+    if is_current_task_user() {
+        validate_user_buffer(dst as *const u8, len, true)?;
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(src.as_ptr(), dst, len);
+    }
+    Ok(())
+}
+
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 
 /// Chamado diretamente por `isr128_stub` com o ponteiro do frame completo de registradores.
@@ -621,15 +651,9 @@ fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> isize {
     if path_ptr.is_null() || path_len == 0 || path_len > crate::vfs::MAX_PATH_LEN {
         return EINVAL;
     }
-    if is_current_task_user() {
-        if let Err(e) = validate_user_buffer(path_ptr, path_len, false) {
-            return e;
-        }
-    }
-
     let mut path_buf = [0u8; crate::vfs::MAX_PATH_LEN];
-    unsafe {
-        core::ptr::copy_nonoverlapping(path_ptr, path_buf.as_mut_ptr(), path_len);
+    if let Err(e) = copy_from_user(&mut path_buf[..path_len], path_ptr, path_len) {
+        return e;
     }
     let path_str = match core::str::from_utf8(&path_buf[..path_len]) {
         Ok(s) => s.trim_end_matches('\0'),
@@ -753,17 +777,9 @@ fn sys_stat(path_ptr: *const u8, path_len: usize, stat_ptr: *mut FileStat) -> is
     if path_ptr.is_null() || stat_ptr.is_null() || path_len == 0 || path_len > crate::vfs::MAX_PATH_LEN {
         return EINVAL;
     }
-    if is_current_task_user() {
-        if let Err(e) = validate_user_buffer(path_ptr, path_len, false) {
-            return e;
-        }
-        if let Err(e) = validate_user_buffer(stat_ptr as *const u8, core::mem::size_of::<FileStat>(), true) {
-            return e;
-        }
-    }
     let mut path_buf = [0u8; crate::vfs::MAX_PATH_LEN];
-    unsafe {
-        core::ptr::copy_nonoverlapping(path_ptr, path_buf.as_mut_ptr(), path_len);
+    if let Err(e) = copy_from_user(&mut path_buf[..path_len], path_ptr, path_len) {
+        return e;
     }
     let raw_str = match core::str::from_utf8(&path_buf[..path_len]) {
         Ok(s) => s,
@@ -777,8 +793,11 @@ fn sys_stat(path_ptr: *const u8, path_len: usize, stat_ptr: *mut FileStat) -> is
     match crate::vfs::stat(path_str) {
         Ok(vfs_stat) => {
             let fstat = map_vfs_stat_to_filestat(&vfs_stat);
-            unsafe {
-                core::ptr::write_unaligned(stat_ptr, fstat);
+            let fstat_bytes = unsafe {
+                core::slice::from_raw_parts(&fstat as *const FileStat as *const u8, core::mem::size_of::<FileStat>())
+            };
+            if let Err(e) = copy_to_user(stat_ptr as *mut u8, fstat_bytes, core::mem::size_of::<FileStat>()) {
+                return e;
             }
             0
         }
@@ -977,10 +996,8 @@ fn sys_ipc_send(to_pid: u32, tag: u32, payload: *const u8) -> isize {
 
 /// `ipc_recv(buf, len)` — Receive a pending IPC message. Returns bytes written.
 fn sys_ipc_recv(buf: *mut u8, len: usize) -> isize {
-    if is_current_task_user() {
-        if let Err(e) = validate_user_buffer(buf as *const u8, len, true) {
-            return e;
-        }
+    if buf.is_null() || len == 0 {
+        return EINVAL;
     }
     let pid = scheduler::current_pid();
     match ipc::recv(pid) {
@@ -988,11 +1005,10 @@ fn sys_ipc_recv(buf: *mut u8, len: usize) -> isize {
         Some(msg) => {
             let copy_len = len.min(core::mem::size_of::<Message>());
             let msg_bytes = unsafe {
-                core::slice::from_raw_parts(&msg as *const Message as *const u8, core::mem::size_of::<Message>())
+                core::slice::from_raw_parts(&msg as *const Message as *const u8, copy_len)
             };
-            unsafe {
-                core::slice::from_raw_parts_mut(buf, copy_len)
-                    .copy_from_slice(&msg_bytes[..copy_len]);
+            if let Err(e) = copy_to_user(buf, msg_bytes, copy_len) {
+                return e;
             }
             copy_len as isize
         }
@@ -1657,8 +1673,10 @@ fn sys_getrandom(buf: *mut u8, len: usize, flags: u32) -> isize {
     if len > 65536 {
         return EINVAL;
     }
-    if let Err(e) = validate_user_buffer(buf as *const u8, len, true) {
-        return e;
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(buf as *const u8, len, true) {
+            return e;
+        }
     }
     let slice = unsafe { core::slice::from_raw_parts_mut(buf, len) };
     match crate::crypto::entropy::fill_random_bytes(slice, flags) {
@@ -1674,17 +1692,20 @@ fn sys_clock_gettime(clock_id: u32, out_ts: *mut Timespec) -> isize {
     if out_ts.is_null() {
         return EINVAL;
     }
-    if let Err(e) = validate_user_buffer(out_ts as *const u8, core::mem::size_of::<Timespec>(), true) {
-        return e;
-    }
     let (sec, nsec) = match clock_id {
         crate::drivers::rtc::CLOCK_REALTIME => crate::drivers::rtc::current_unix_time(),
         crate::drivers::rtc::CLOCK_MONOTONIC => crate::drivers::rtc::monotonic_time(),
         _ => return EINVAL,
     };
-    unsafe {
-        (*out_ts).tv_sec = sec;
-        (*out_ts).tv_nsec = nsec;
+    let ts = Timespec {
+        tv_sec: sec,
+        tv_nsec: nsec,
+    };
+    let ts_bytes = unsafe {
+        core::slice::from_raw_parts(&ts as *const Timespec as *const u8, core::mem::size_of::<Timespec>())
+    };
+    if let Err(e) = copy_to_user(out_ts as *mut u8, ts_bytes, core::mem::size_of::<Timespec>()) {
+        return e;
     }
     0
 }
@@ -2941,14 +2962,9 @@ fn sys_unlink(path_ptr: *const u8, path_len: usize) -> isize {
     if path_ptr.is_null() || path_len == 0 || path_len > 128 {
         return EINVAL;
     }
-    if is_current_task_user() {
-        if let Err(e) = validate_user_buffer(path_ptr, path_len, false) {
-            return e;
-        }
-    }
     let mut path_buf = [0u8; 128];
-    unsafe {
-        core::ptr::copy_nonoverlapping(path_ptr, path_buf.as_mut_ptr(), path_len);
+    if let Err(e) = copy_from_user(&mut path_buf[..path_len], path_ptr, path_len) {
+        return e;
     }
     let path = match core::str::from_utf8(&path_buf[..path_len]) {
         Ok(s) => s.trim_end_matches('\0'),
@@ -2968,14 +2984,9 @@ fn sys_mkdir(path_ptr: *const u8, path_len: usize) -> isize {
     if path_ptr.is_null() || path_len == 0 || path_len > crate::vfs::MAX_PATH_LEN {
         return EINVAL;
     }
-    if is_current_task_user() {
-        if let Err(e) = validate_user_buffer(path_ptr, path_len, false) {
-            return e;
-        }
-    }
     let mut path_buf = [0u8; crate::vfs::MAX_PATH_LEN];
-    unsafe {
-        core::ptr::copy_nonoverlapping(path_ptr, path_buf.as_mut_ptr(), path_len);
+    if let Err(e) = copy_from_user(&mut path_buf[..path_len], path_ptr, path_len) {
+        return e;
     }
     let path = match core::str::from_utf8(&path_buf[..path_len]) {
         Ok(s) => s.trim_end_matches('\0'),
@@ -2992,29 +3003,22 @@ fn sys_rename(args_ptr: *const RenameArgs) -> isize {
     if args_ptr.is_null() {
         return EINVAL;
     }
-    if is_current_task_user() {
-        if let Err(e) = validate_user_buffer(args_ptr as *const u8, core::mem::size_of::<RenameArgs>(), false) {
-            return e;
-        }
+    let mut args_raw = [0u8; core::mem::size_of::<RenameArgs>()];
+    if let Err(e) = copy_from_user(&mut args_raw, args_ptr as *const u8, core::mem::size_of::<RenameArgs>()) {
+        return e;
     }
-    let args = unsafe { core::ptr::read_unaligned(args_ptr) };
+    let args: RenameArgs = unsafe { core::ptr::read_unaligned(args_raw.as_ptr() as *const RenameArgs) };
     if args.old_ptr.is_null() || args.old_len == 0 || args.old_len > 128 ||
        args.new_ptr.is_null() || args.new_len == 0 || args.new_len > 128 {
         return EINVAL;
     }
-    if is_current_task_user() {
-        if let Err(e) = validate_user_buffer(args.old_ptr, args.old_len, false) {
-            return e;
-        }
-        if let Err(e) = validate_user_buffer(args.new_ptr, args.new_len, false) {
-            return e;
-        }
-    }
     let mut old_buf = [0u8; 128];
     let mut new_buf = [0u8; 128];
-    unsafe {
-        core::ptr::copy_nonoverlapping(args.old_ptr, old_buf.as_mut_ptr(), args.old_len);
-        core::ptr::copy_nonoverlapping(args.new_ptr, new_buf.as_mut_ptr(), args.new_len);
+    if let Err(e) = copy_from_user(&mut old_buf[..args.old_len], args.old_ptr, args.old_len) {
+        return e;
+    }
+    if let Err(e) = copy_from_user(&mut new_buf[..args.new_len], args.new_ptr, args.new_len) {
+        return e;
     }
     let old_path = match core::str::from_utf8(&old_buf[..args.old_len]) {
         Ok(s) => s.trim_end_matches('\0'),
