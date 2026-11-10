@@ -13,6 +13,15 @@ pub const SYS_WINDOW_BLIT:       u64 = 21;
 pub const SYS_WINDOW_CLOSE:      u64 = 22;
 pub const SYS_WINDOW_POLL_EVENT: u64 = 24;
 
+pub const SYS_GRAPHICS_REGISTER:              u64 = 72;
+pub const SYS_GRAPHICS_GET_FB_INFO:          u64 = 73;
+pub const SYS_GRAPHICS_PRESENT:              u64 = 74;
+pub const SYS_GRAPHICS_POLL_INPUT:           u64 = 75;
+pub const SYS_GRAPHICS_UNREGISTER:           u64 = 76;
+pub const SYS_GRAPHICS_READ_CLIENT_SURFACE:   u64 = 77;
+pub const SYS_GRAPHICS_DISPATCH_CLIENT_EVENT: u64 = 78;
+pub const SYS_GRAPHICS_LIST_CLIENT_WINDOWS:   u64 = 79;
+
 /// Syscall sem argumentos
 #[inline(always)]
 pub unsafe fn syscall0(nr: u64) -> i64 {

@@ -207,11 +207,11 @@ fn cmd_gui(w: &mut Writer) {
     }
 
     w.set_color(Color::LightCyan, Color::Black);
-    w.write_line("Iniciando sessao grafica Aladdin Desktop...");
+    w.write_line("Iniciando sessao grafica Aladdin Desktop em Ring 3...");
     w.set_color(Color::DarkGray, Color::Black);
     w.write_line("  Dica: Pressione [ESC] ou clique em [X Sair] para retornar ao console.");
     w.set_color(Color::LightGray, Color::Black);
-    crate::gui::run_desktop();
+    crate::gui::launch_ring3_desktop();
 }
 
 /// `uname` — Nome e versão do kernel.
@@ -1963,7 +1963,7 @@ pub fn task_entry() {
     w.set_position(21, 0);
     let prof = crate::profile::get_system_profile();
     if !prof.is_headless() && crate::gui::is_available() {
-        crate::gui::run_desktop();
+        crate::gui::launch_ring3_desktop();
     } else {
         // Inicializacao dos servicos de infraestrutura do Simbad Server
         crate::supervisor::get_supervisor().start_all_target_server();

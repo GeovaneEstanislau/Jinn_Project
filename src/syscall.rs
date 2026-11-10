@@ -90,6 +90,7 @@ pub const EAGAIN:       isize = -11;  // Resource temporarily unavailable / Woul
 pub const ENOMEM:       isize = -12;  // Out of memory
 pub const EFAULT:       isize = -14;  // Bad address
 pub const EBUSY:        isize = -16;  // Device or resource busy
+pub const ENODEV:       isize = -19;  // No such device
 pub const EINVAL:       isize = -22;  // Invalid argument
 pub const EMFILE:       isize = -24;  // Too many open files
 pub const ENOSPC:       isize = -28;  // No space left on device
@@ -496,6 +497,14 @@ pub extern "C" fn syscall_dispatch(
         69 => sys_getrandom(arg0 as *mut u8, arg1, arg2 as u32),
         70 => sys_clock_gettime(arg0 as u32, arg1 as *mut Timespec),
         71 => sys_creat(arg0 as *const u8, arg1, arg2 as u32),
+        72 => sys_graphics_register(arg0 as u32),
+        73 => sys_graphics_get_fb_info(arg0 as *mut crate::gui::GraphicsFbInfo),
+        74 => sys_graphics_present(arg0 as *const crate::gui::PresentRect, arg1 as *const u32, arg2),
+        75 => sys_graphics_poll_input(arg0 as *mut crate::gui::InputHardwareEvent),
+        76 => sys_graphics_unregister(),
+        77 => sys_graphics_read_client_surface(arg0, arg1 as *mut u32, arg2),
+        78 => sys_graphics_dispatch_client_event(arg0, arg1 as *const crate::gui::ClientWindowEvent),
+        79 => sys_graphics_list_client_windows(arg0 as *mut crate::gui::ClientWindowInfoUser, arg1),
         83 => sys_mkdir(arg0 as *const u8, arg1),
         85 => sys_creat(arg0 as *const u8, arg1, arg2 as u32),
         _  => ENOSYS,
@@ -1980,6 +1989,142 @@ fn sys_window_poll_event(win_id: usize, event_ptr: *mut crate::gui::ClientWindow
         }
         Ok(None) => 0,
         Err(err) => err,
+    }
+}
+
+// ── Graphics Display Server Syscalls (72..79) ────────────────────────────────
+
+fn sys_graphics_register(flags: u32) -> isize {
+    let pid = scheduler::current_pid();
+    match crate::gui::register_graphics_server(pid, flags) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
+}
+
+fn sys_graphics_get_fb_info(out_info: *mut crate::gui::GraphicsFbInfo) -> isize {
+    if out_info.is_null() {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(out_info as *const u8, core::mem::size_of::<crate::gui::GraphicsFbInfo>(), true) {
+            return e;
+        }
+    }
+    match crate::gui::get_fb_info() {
+        Ok(info) => {
+            unsafe {
+                core::ptr::write_unaligned(out_info, info);
+            }
+            0
+        }
+        Err(e) => e,
+    }
+}
+
+fn sys_graphics_present(rect_ptr: *const crate::gui::PresentRect, buffer_ptr: *const u32, buffer_len_bytes: usize) -> isize {
+    let pid = scheduler::current_pid();
+    if rect_ptr.is_null() || buffer_ptr.is_null() || buffer_len_bytes == 0 || (buffer_len_bytes % 4) != 0 {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(rect_ptr as *const u8, core::mem::size_of::<crate::gui::PresentRect>(), false) {
+            return e;
+        }
+        if let Err(e) = validate_user_buffer(buffer_ptr as *const u8, buffer_len_bytes, false) {
+            return e;
+        }
+    }
+    let rect = unsafe { core::ptr::read_unaligned(rect_ptr) };
+    let pixel_count = buffer_len_bytes / 4;
+    let pixel_slice = unsafe { core::slice::from_raw_parts(buffer_ptr, pixel_count) };
+
+    match crate::gui::present_rect(pid, &rect, pixel_slice) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
+}
+
+fn sys_graphics_poll_input(out_event: *mut crate::gui::InputHardwareEvent) -> isize {
+    let pid = scheduler::current_pid();
+    if out_event.is_null() {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(out_event as *const u8, core::mem::size_of::<crate::gui::InputHardwareEvent>(), true) {
+            return e;
+        }
+    }
+    match crate::gui::poll_hardware_input(pid) {
+        Ok(Some(ev)) => {
+            unsafe {
+                core::ptr::write_unaligned(out_event, ev);
+            }
+            1
+        }
+        Ok(None) => 0,
+        Err(e) => e,
+    }
+}
+
+fn sys_graphics_unregister() -> isize {
+    let pid = scheduler::current_pid();
+    match crate::gui::unregister_graphics_server(pid) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
+}
+
+fn sys_graphics_read_client_surface(win_id: usize, dst_buf_ptr: *mut u32, max_bytes: usize) -> isize {
+    let pid = scheduler::current_pid();
+    if dst_buf_ptr.is_null() || max_bytes == 0 || (max_bytes % 4) != 0 {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(dst_buf_ptr as *const u8, max_bytes, true) {
+            return e;
+        }
+    }
+    let pixel_count = max_bytes / 4;
+    let dst_slice = unsafe { core::slice::from_raw_parts_mut(dst_buf_ptr, pixel_count) };
+    match crate::gui::graphics_read_client_surface(pid, win_id, dst_slice) {
+        Ok(bytes) => bytes as isize,
+        Err(e) => e,
+    }
+}
+
+fn sys_graphics_dispatch_client_event(win_id: usize, event_ptr: *const crate::gui::ClientWindowEvent) -> isize {
+    let pid = scheduler::current_pid();
+    if event_ptr.is_null() {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(event_ptr as *const u8, core::mem::size_of::<crate::gui::ClientWindowEvent>(), false) {
+            return e;
+        }
+    }
+    let ev = unsafe { core::ptr::read_unaligned(event_ptr) };
+    match crate::gui::graphics_dispatch_client_event(pid, win_id, &ev) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
+}
+
+fn sys_graphics_list_client_windows(out_ptr: *mut crate::gui::ClientWindowInfoUser, max_count: usize) -> isize {
+    let pid = scheduler::current_pid();
+    if out_ptr.is_null() || max_count == 0 {
+        return EINVAL;
+    }
+    let bytes = max_count * core::mem::size_of::<crate::gui::ClientWindowInfoUser>();
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(out_ptr as *const u8, bytes, true) {
+            return e;
+        }
+    }
+    let out_slice = unsafe { core::slice::from_raw_parts_mut(out_ptr, max_count) };
+    match crate::gui::graphics_list_client_windows(pid, out_slice) {
+        Ok(count) => count as isize,
+        Err(e) => e,
     }
 }
 

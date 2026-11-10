@@ -85,6 +85,23 @@ if (-not (Test-Path $contElfPath)) {
 }
 Copy-Item -Path $contElfPath -Destination (Join-Path $isoAppsDir "contador.elf") -Force
 
+# --- Build aladdin-server (Ring 3 Graphics Display Server) ---
+Write-Host "Building aladdin-server (Ring 3 Graphics Service)..."
+Push-Location "apps\aladdin-server"
+& cargo +nightly build --release -Zjson-target-spec '-Zbuild-std=core,alloc' -Zbuild-std-features=compiler-builtins-mem
+if ($LASTEXITCODE -ne 0) {
+    Pop-Location
+    throw "Aladdin Server build failed."
+}
+Pop-Location
+
+$serverElfPath = "apps\aladdin-server\target\x86_64-jinn-user\release\aladdin-server"
+if (-not (Test-Path $serverElfPath)) {
+    throw "Aladdin Server ELF not found: $serverElfPath"
+}
+Copy-Item -Path $serverElfPath -Destination (Join-Path $isoAppsDir "aladdin-server.elf") -Force
+Copy-Item -Path $serverElfPath -Destination (Join-Path $isoAppsDir "aladdin.elf") -Force
+
 # --- Gera imagem de disco virtual FAT32 com MBR ---
 $makeDiskScript = Join-Path -Path (Get-Location) "scripts\make_disk.ps1"
 if (Test-Path $makeDiskScript) {

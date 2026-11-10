@@ -1148,6 +1148,9 @@ impl Scheduler {
             // Notifica encerramento e limpa autorizações de drivers em Ring 3 para este PID
             crate::drivers::device_manager::notify_driver_pid_exit(pid);
 
+            // Notifica encerramento do Graphics Display Server em Ring 3 (restaura console e libera PID)
+            crate::gui::notify_graphics_server_exit(pid);
+
             // Libera a memória de páginas de usuário e o próprio PML4
             if task.ring == Ring::User {
                 unsafe { paging::free_user_pml4(task.pml4_phys); }

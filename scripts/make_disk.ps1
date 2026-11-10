@@ -1,10 +1,11 @@
-# scripts/make_disk.ps1 - Gera um disco virtual RAW (disk.img) de 64 MiB formatado com MBR Dual-Partition (FAT32 + Ext2)
+﻿# scripts/make_disk.ps1 - Gera um disco virtual RAW (disk.img) de 64 MiB formatado com MBR Dual-Partition (FAT32 + Ext2)
 param(
     [string]$DiskPath = "disk.img",
     [string]$AppElfPath = "iso_root\apps\ola-mundo.elf",
     [string]$BrowserElfPath = "iso_root\apps\browser.elf",
     [string]$GraficoElfPath = "iso_root\apps\ola-grafico.elf",
-    [string]$ContadorElfPath = "iso_root\apps\contador.elf"
+    [string]$ContadorElfPath = "iso_root\apps\contador.elf",
+    [string]$AladdinElfPath = "iso_root\apps\aladdin.elf"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -64,6 +65,16 @@ if (Test-Path $resolvedContador) {
     Write-Host "Aviso: $resolvedContador não encontrado."
 }
 
+# Lê o binário do Aladdin Server (aladdin.elf)
+$aladdinBytes = @()
+$resolvedAladdin = Join-Path $projectRoot $AladdinElfPath
+if (Test-Path $resolvedAladdin) {
+    $aladdinBytes = [System.IO.File]::ReadAllBytes($resolvedAladdin)
+    Write-Host "Binário aladdin encontrado: $resolvedAladdin ($($aladdinBytes.Length) bytes)"
+} else {
+    Write-Host "Aviso: $resolvedAladdin não encontrado."
+}
+
 # Texto do README.TXT da partição FAT32 (/disk)
 $readmeText = @"
 =====================================================
@@ -75,6 +86,7 @@ Este arquivo README.TXT foi lido diretamente dos clusters
 do disco rigido virtual usando o driver de VFS.
 
 Executaveis disponiveis nesta particao:
+  - /disk/aladdin.elf (Servidor Grafico e Compositor Ring 3 Aladdin)
   - /disk/ola.elf (Processo de espaco de usuario Ring 3 - Console)
   - /disk/ola_graf.elf (App Grafico Independente Ring 3 Aladdin SDK)
   - /disk/contador.elf (App Grafico Concorrente Ring 3 Aladdin SDK)
@@ -278,6 +290,7 @@ $contadorClustersNeeded = if ($contadorBytes.Length -gt 0) { [Math]::Max(1, [int
 $nebulaClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($nebulaBytes.Length / $clusterBytes))
 $landscpClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($landscpBytes.Length / $clusterBytes))
 $cosmosClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($cosmosBytes.Length / $clusterBytes))
+$aladdinClustersNeeded = if ($aladdinBytes.Length -gt 0) { [Math]::Max(1, [int][Math]::Ceiling($aladdinBytes.Length / $clusterBytes)) } else { 0 }
 
 $olaStartClus = 4
 $browserStartClus = $olaStartClus + $olaClustersNeeded
@@ -298,7 +311,8 @@ $prevEnd = if ($contadorClustersNeeded -gt 0) {
 $nebulaStartClus = $prevEnd
 $landscpStartClus = $nebulaStartClus + $nebulaClustersNeeded
 $cosmosStartClus = $landscpStartClus + $landscpClustersNeeded
-$nextFreeClus = $cosmosStartClus + $cosmosClustersNeeded
+$aladdinStartClus = if ($aladdinClustersNeeded -gt 0) { $cosmosStartClus + $cosmosClustersNeeded } else { 0 }
+$nextFreeClus = if ($aladdinClustersNeeded -gt 0) { $aladdinStartClus + $aladdinClustersNeeded } else { $cosmosStartClus + $cosmosClustersNeeded }
 
 # FSInfo Sector (Setor 1 da partição FAT32)
 $fsinfo = [byte[]]::new(512)
@@ -396,6 +410,18 @@ for ($i = 0; $i -lt $cosmosClustersNeeded; $i++) {
     }
 }
 
+# Cadeia ALADDIN.ELF
+if ($aladdinClustersNeeded -gt 0) {
+    for ($i = 0; $i -lt $aladdinClustersNeeded; $i++) {
+        $currentClus = $aladdinStartClus + $i
+        if ($i -eq $aladdinClustersNeeded - 1) {
+            Set-FatEntry $currentClus 0x0FFFFFFF
+        } else {
+            Set-FatEntry $currentClus ([uint32]($currentClus + 1))
+        }
+    }
+}
+
 $fat1Offset = $part1ByteOffset + [long]32 * $sectorSize
 $fat2Offset = $part1ByteOffset + [long](32 + $sectorsPerFat) * $sectorSize
 Write-BytesAt $fat1Offset $fatTable
@@ -485,6 +511,9 @@ if ($contadorBytes.Length -gt 0) {
 Add-DirEntry 8 "NEBULA  PPM" 0x20 $nebulaStartClus ($nebulaBytes.Length)
 Add-DirEntry 9 "LANDSCP PPM" 0x20 $landscpStartClus ($landscpBytes.Length)
 Add-DirEntry 10 "COSMOS  PPM" 0x20 $cosmosStartClus ($cosmosBytes.Length)
+if ($aladdinBytes.Length -gt 0) {
+    Add-DirEntry 11 "ALADDIN ELF" 0x20 $aladdinStartClus ($aladdinBytes.Length)
+}
 
 Write-BytesAt $dataStartByteOffset1 $rootDir
 Write-BytesAt ($dataStartByteOffset1 + [long](3 - 2) * $clusterBytes) $readmeBytes
@@ -501,6 +530,9 @@ if ($contadorBytes.Length -gt 0) {
 Write-BytesAt ($dataStartByteOffset1 + [long]($nebulaStartClus - 2) * $clusterBytes) $nebulaBytes
 Write-BytesAt ($dataStartByteOffset1 + [long]($landscpStartClus - 2) * $clusterBytes) $landscpBytes
 Write-BytesAt ($dataStartByteOffset1 + [long]($cosmosStartClus - 2) * $clusterBytes) $cosmosBytes
+if ($aladdinBytes.Length -gt 0) {
+    Write-BytesAt ($dataStartByteOffset1 + [long]($aladdinStartClus - 2) * $clusterBytes) $aladdinBytes
+}
 
 # ======================================================================
 # 3. FORMATAÇÃO DA PARTIÇÃO 2: Ext2 (/ext2)

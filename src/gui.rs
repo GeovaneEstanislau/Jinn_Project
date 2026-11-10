@@ -12,6 +12,453 @@ use aladdin::contracts::system::{SystemHost, SystemStats};
 use aladdin::contracts::vfs::VfsHost;
 use aladdin::contracts::process::ProcessHost;
 use aladdin::desktop::session::AladdinSession;
+use core::sync::atomic::{AtomicUsize, Ordering};
+use crate::memory::SpinLock;
+use alloc::vec::Vec;
+
+pub static GRAPHICS_SERVER_PID: AtomicUsize = AtomicUsize::new(0);
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GraphicsFbInfo {
+    pub width: u32,
+    pub height: u32,
+    pub pitch: u32,
+    pub bpp: u32,
+    pub format: u32, // 0 = 0x00RRGGBB / BGRX
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PresentRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InputHardwareEvent {
+    pub kind: u32, // 0 = None, 1 = KeyDown, 2 = KeyUp, 3 = MouseMove, 4 = MouseDown, 5 = MouseUp, 6 = Scroll
+    pub code: u32, // ASCII / Scancode / Button
+    pub x: i32,    // Coordenada absoluta X
+    pub y: i32,    // Coordenada absoluta Y
+    pub modifiers: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClientWindowInfoUser {
+    pub win_id: u32,
+    pub owner_pid: u32,
+    pub width: u32,
+    pub height: u32,
+    pub is_open: u32,
+    pub damaged: u32,
+    pub title_len: u32,
+    pub title: [u8; 48],
+}
+
+pub struct KernelClientWindow {
+    pub id: usize,
+    pub owner_pid: usize,
+    pub width: usize,
+    pub height: usize,
+    pub title: [u8; 48],
+    pub title_len: usize,
+    pub buffer: Vec<u32>,
+    pub events: [ClientWindowEvent; 16],
+    pub ev_head: usize,
+    pub ev_tail: usize,
+    pub damaged: bool,
+    pub is_open: bool,
+}
+
+pub static CLIENT_WINDOWS: SpinLock<[Option<KernelClientWindow>; 32]> = SpinLock::new([
+    None, None, None, None, None, None, None, None,
+    None, None, None, None, None, None, None, None,
+    None, None, None, None, None, None, None, None,
+    None, None, None, None, None, None, None, None,
+]);
+
+static LAST_MOUSE_STATE: SpinLock<(usize, usize, u8)> = SpinLock::new((512, 384, 0));
+
+pub fn register_graphics_server(pid: usize, _flags: u32) -> Result<(), isize> {
+    let current = GRAPHICS_SERVER_PID.load(Ordering::SeqCst);
+    if current != 0 && current != pid {
+        return Err(crate::syscall::EBUSY);
+    }
+    GRAPHICS_SERVER_PID.store(pid, Ordering::SeqCst);
+    crate::interrupts::ps2_mouse::init();
+    Ok(())
+}
+
+pub fn unregister_graphics_server(pid: usize) -> Result<(), isize> {
+    let current = GRAPHICS_SERVER_PID.load(Ordering::SeqCst);
+    if current != pid {
+        return Err(crate::syscall::EPERM);
+    }
+    GRAPHICS_SERVER_PID.store(0, Ordering::SeqCst);
+    restore_text_console();
+    Ok(())
+}
+
+pub fn notify_graphics_server_exit(pid: usize) {
+    if GRAPHICS_SERVER_PID.load(Ordering::SeqCst) == pid {
+        GRAPHICS_SERVER_PID.store(0, Ordering::SeqCst);
+        restore_text_console();
+    }
+}
+
+pub fn restore_text_console() {
+    let mut writer = crate::vga::Writer::new();
+    writer.clear_screen();
+    writer.set_color(crate::vga::Color::LightCyan, crate::vga::Color::Black);
+    writer.write_line("Retornou ao Shell do Kernel [Ring 0].");
+    writer.set_color(crate::vga::Color::LightGray, crate::vga::Color::Black);
+}
+
+pub fn get_fb_info() -> Result<GraphicsFbInfo, isize> {
+    if let Some(fb) = limine::framebuffer() {
+        Ok(GraphicsFbInfo {
+            width: fb.width as u32,
+            height: fb.height as u32,
+            pitch: fb.pitch as u32,
+            bpp: fb.bpp as u32,
+            format: 0,
+        })
+    } else {
+        Err(crate::syscall::ENODEV)
+    }
+}
+
+pub fn present_rect(caller_pid: usize, rect: &PresentRect, buffer: &[u32]) -> Result<(), isize> {
+    let s_pid = GRAPHICS_SERVER_PID.load(Ordering::SeqCst);
+    if s_pid != 0 && caller_pid != s_pid {
+        return Err(crate::syscall::EPERM);
+    }
+    let fb = match limine::framebuffer() {
+        Some(fb) => fb,
+        None => return Err(crate::syscall::ENODEV),
+    };
+
+    if rect.x as usize >= fb.width as usize || rect.y as usize >= fb.height as usize {
+        return Err(crate::syscall::EINVAL);
+    }
+    let max_w = (fb.width as usize).saturating_sub(rect.x as usize);
+    let max_h = (fb.height as usize).saturating_sub(rect.y as usize);
+    let rw = (rect.width as usize).min(max_w);
+    let rh = (rect.height as usize).min(max_h);
+    if rw == 0 || rh == 0 {
+        return Ok(());
+    }
+
+    let min_len = (rect.width as usize) * (rect.height as usize);
+    if buffer.len() < min_len {
+        return Err(crate::syscall::EINVAL);
+    }
+
+    let bytes_to_copy = rw * 4;
+    let pitch = fb.pitch as usize;
+    let fb_addr = fb.address;
+
+    for row in 0..rh {
+        let src_offset = row * (rect.width as usize);
+        let dst_offset = (rect.y as usize + row) * pitch + (rect.x as usize) * 4;
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                buffer.as_ptr().add(src_offset) as *const u8,
+                fb_addr.add(dst_offset),
+                bytes_to_copy,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+pub fn poll_hardware_input(caller_pid: usize) -> Result<Option<InputHardwareEvent>, isize> {
+    let s_pid = GRAPHICS_SERVER_PID.load(Ordering::SeqCst);
+    if s_pid != 0 && caller_pid != s_pid {
+        return Err(crate::syscall::EPERM);
+    }
+
+    // 1. Prioriza eventos de teclado
+    let status: u8;
+    unsafe {
+        core::arch::asm!("in al, dx", out("al") status, in("dx") 0x64u16, options(nomem, nostack));
+    }
+    if (status & 1) != 0 && (status & 0x20) == 0 {
+        let sc: u8;
+        unsafe {
+            core::arch::asm!("in al, dx", out("al") sc, in("dx") 0x60u16, options(nomem, nostack));
+        }
+        if sc == 0x01 { // ESC
+            return Ok(Some(InputHardwareEvent {
+                kind: 1, // KeyDown
+                code: 0x1B,
+                x: 0,
+                y: 0,
+                modifiers: 0,
+            }));
+        }
+        if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_KBD0, 1, sc) {
+            crate::interrupts::ps2_keyboard::process_scancode(sc);
+        }
+    }
+    if let Some(ch) = crate::keyboard_buffer::pop() {
+        return Ok(Some(InputHardwareEvent {
+            kind: 1, // KeyDown
+            code: ch as u32,
+            x: 0,
+            y: 0,
+            modifiers: 0,
+        }));
+    }
+
+    // 2. Eventos de mouse
+    crate::interrupts::ps2_mouse::poll();
+    let (cur_x, cur_y, cur_btn) = crate::interrupts::ps2_mouse::get_state();
+    let mut last = LAST_MOUSE_STATE.lock();
+    if (cur_x, cur_y, cur_btn) != *last {
+        let (_lx, _ly, lbtn) = *last;
+        *last = (cur_x, cur_y, cur_btn);
+
+        let kind = if (cur_btn & 1) != (lbtn & 1) {
+            if (cur_btn & 1) != 0 { 4 } else { 5 } // MouseDown / MouseUp
+        } else if (cur_btn & 2) != (lbtn & 2) {
+            if (cur_btn & 2) != 0 { 4 } else { 5 }
+        } else {
+            3 // MouseMove
+        };
+
+        return Ok(Some(InputHardwareEvent {
+            kind,
+            code: cur_btn as u32,
+            x: cur_x as i32,
+            y: cur_y as i32,
+            modifiers: 0,
+        }));
+    }
+
+    Ok(None)
+}
+
+pub fn client_window_create(owner_pid: usize, title: &str, width: usize, height: usize) -> Result<usize, isize> {
+    if width == 0 || height == 0 || width > 1024 || height > 768 {
+        return Err(crate::syscall::EINVAL);
+    }
+    if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(owner_pid) {
+        if let Err(e) = task.resources.check_and_open_window(&task.limits) {
+            return Err(e);
+        }
+    }
+
+    let mut windows = CLIENT_WINDOWS.lock();
+    for (idx, slot) in windows.iter_mut().enumerate() {
+        if slot.is_none() {
+            let win_id = idx + 1;
+            let mut title_buf = [0u8; 48];
+            let t_bytes = title.as_bytes();
+            let t_len = t_bytes.len().min(48);
+            title_buf[..t_len].copy_from_slice(&t_bytes[..t_len]);
+
+            let total_pixels = width * height;
+            let mut buf = alloc::vec::Vec::new();
+            if buf.try_reserve_exact(total_pixels).is_err() {
+                if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(owner_pid) {
+                    task.resources.close_window();
+                }
+                return Err(crate::syscall::ENOMEM);
+            }
+            buf.resize(total_pixels, 0u32);
+
+            *slot = Some(KernelClientWindow {
+                id: win_id,
+                owner_pid,
+                width,
+                height,
+                title: title_buf,
+                title_len: t_len,
+                buffer: buf,
+                events: [ClientWindowEvent::empty(); 16],
+                ev_head: 0,
+                ev_tail: 0,
+                damaged: true,
+                is_open: true,
+            });
+
+            // Se o SESSION em kernel estiver ativo, também registra para compatibilidade
+            unsafe {
+                if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
+                    let is_browser = if let Some(task) = crate::scheduler::get().tasks.get(owner_pid).and_then(|t| t.as_ref()) {
+                        task.name.contains("browser")
+                    } else {
+                        false
+                    };
+                    if is_browser {
+                        session.register_browser_pid(owner_pid);
+                    }
+                    let _ = session.create_client_window(owner_pid, title, width, height);
+                }
+            }
+
+            return Ok(win_id);
+        }
+    }
+    if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(owner_pid) {
+        task.resources.close_window();
+    }
+    Err(crate::syscall::EMFILE)
+}
+
+pub fn client_window_update(owner_pid: usize, win_id: usize, buffer: &[u32]) -> Result<(), isize> {
+    let mut windows = CLIENT_WINDOWS.lock();
+    for slot in windows.iter_mut() {
+        if let Some(w) = slot {
+            if w.id == win_id {
+                if w.owner_pid != owner_pid {
+                    return Err(crate::syscall::EPERM);
+                }
+                let expected = w.width * w.height;
+                if buffer.len() != expected {
+                    return Err(crate::syscall::EINVAL);
+                }
+                w.buffer.copy_from_slice(buffer);
+                w.damaged = true;
+
+                unsafe {
+                    if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
+                        let _ = session.update_client_buffer(owner_pid, win_id, buffer);
+                    }
+                }
+                return Ok(());
+            }
+        }
+    }
+    Err(crate::syscall::EBADF)
+}
+
+pub fn client_window_close(owner_pid: usize, win_id: usize) -> Result<(), isize> {
+    let mut windows = CLIENT_WINDOWS.lock();
+    for slot in windows.iter_mut() {
+        if let Some(w) = slot {
+            if w.id == win_id {
+                if w.owner_pid != owner_pid {
+                    return Err(crate::syscall::EPERM);
+                }
+                *slot = None;
+                if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(owner_pid) {
+                    task.resources.close_window();
+                }
+                unsafe {
+                    if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
+                        let _ = session.close_client_window(owner_pid, win_id);
+                    }
+                }
+                return Ok(());
+            }
+        }
+    }
+    Err(crate::syscall::EBADF)
+}
+
+pub fn client_window_poll_event(owner_pid: usize, win_id: usize) -> Result<Option<ClientWindowEvent>, isize> {
+    let mut windows = CLIENT_WINDOWS.lock();
+    for slot in windows.iter_mut() {
+        if let Some(w) = slot {
+            if w.id == win_id {
+                if w.owner_pid != owner_pid {
+                    return Err(crate::syscall::EPERM);
+                }
+                if w.ev_head != w.ev_tail {
+                    let ev = w.events[w.ev_head % 16];
+                    w.ev_head = w.ev_head.wrapping_add(1);
+                    return Ok(Some(ev));
+                }
+                unsafe {
+                    if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
+                        if let Ok(ev_opt) = session.poll_client_event(owner_pid, win_id) {
+                            if ev_opt.is_some() {
+                                return Ok(ev_opt);
+                            }
+                        }
+                    }
+                }
+                return Ok(None);
+            }
+        }
+    }
+    Err(crate::syscall::EBADF)
+}
+
+pub fn graphics_read_client_surface(caller_pid: usize, win_id: usize, dst_buf: &mut [u32]) -> Result<usize, isize> {
+    let s_pid = GRAPHICS_SERVER_PID.load(Ordering::SeqCst);
+    if s_pid != 0 && caller_pid != s_pid {
+        return Err(crate::syscall::EPERM);
+    }
+    let mut windows = CLIENT_WINDOWS.lock();
+    for slot in windows.iter_mut() {
+        if let Some(w) = slot {
+            if w.id == win_id {
+                let to_copy = w.buffer.len().min(dst_buf.len());
+                dst_buf[..to_copy].copy_from_slice(&w.buffer[..to_copy]);
+                w.damaged = false;
+                return Ok(to_copy * 4);
+            }
+        }
+    }
+    Err(crate::syscall::EBADF)
+}
+
+pub fn graphics_dispatch_client_event(caller_pid: usize, win_id: usize, event: &ClientWindowEvent) -> Result<(), isize> {
+    let s_pid = GRAPHICS_SERVER_PID.load(Ordering::SeqCst);
+    if s_pid != 0 && caller_pid != s_pid {
+        return Err(crate::syscall::EPERM);
+    }
+    let mut windows = CLIENT_WINDOWS.lock();
+    for slot in windows.iter_mut() {
+        if let Some(w) = slot {
+            if w.id == win_id {
+                let next_tail = w.ev_tail.wrapping_add(1);
+                if (next_tail - w.ev_head) <= 16 {
+                    w.events[w.ev_tail % 16] = *event;
+                    w.ev_tail = next_tail;
+                }
+                return Ok(());
+            }
+        }
+    }
+    Err(crate::syscall::EBADF)
+}
+
+pub fn graphics_list_client_windows(caller_pid: usize, out_slice: &mut [ClientWindowInfoUser]) -> Result<usize, isize> {
+    let s_pid = GRAPHICS_SERVER_PID.load(Ordering::SeqCst);
+    if s_pid != 0 && caller_pid != s_pid {
+        return Err(crate::syscall::EPERM);
+    }
+    let windows = CLIENT_WINDOWS.lock();
+    let mut count = 0usize;
+    for slot in windows.iter() {
+        if let Some(w) = slot {
+            if count < out_slice.len() {
+                out_slice[count] = ClientWindowInfoUser {
+                    win_id: w.id as u32,
+                    owner_pid: w.owner_pid as u32,
+                    width: w.width as u32,
+                    height: w.height as u32,
+                    is_open: if w.is_open { 1 } else { 0 },
+                    damaged: if w.damaged { 1 } else { 0 },
+                    title_len: w.title_len as u32,
+                    title: w.title,
+                };
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
+}
 
 pub struct JinnFramebuffer {
     pub address: *mut u8,
@@ -433,92 +880,22 @@ pub fn is_available() -> bool {
 /// `title`: título exibido na barra da janela.
 /// `width`, `height`: dimensões da área cliente de desenho em pixels.
 pub fn window_create(owner_pid: usize, title: &str, width: usize, height: usize) -> Result<usize, isize> {
-    if width == 0 || height == 0 || width > 1024 || height > 768 {
-        return Err(crate::syscall::EINVAL);
-    }
-    // Verifica limites de recursos configurados para a tarefa
-    if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(owner_pid) {
-        if let Err(e) = task.resources.check_and_open_window(&task.limits) {
-            return Err(e);
-        }
-    }
-    unsafe {
-        if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
-            let is_browser = if let Some(task) = crate::scheduler::get().tasks.get(owner_pid).and_then(|t| t.as_ref()) {
-                task.name.contains("browser")
-            } else {
-                false
-            };
-            if is_browser {
-                session.register_browser_pid(owner_pid);
-            }
-            match session.create_client_window(owner_pid, title, width, height) {
-                Ok(win_id) => Ok(win_id),
-                Err(_) => {
-                    if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(owner_pid) {
-                        task.resources.close_window();
-                    }
-                    Err(crate::syscall::EMFILE)
-                }
-            }
-        } else {
-            Err(crate::syscall::ENOSYS)
-        }
-    }
+    client_window_create(owner_pid, title, width, height)
 }
 
 /// Atualiza o conteúdo gráfico da janela `win_id` com os pixels do `buffer` (formato 0x00RRGGBB).
 pub fn window_update(owner_pid: usize, win_id: usize, buffer: &[u32]) -> Result<(), isize> {
-    unsafe {
-        if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
-            session.update_client_buffer(owner_pid, win_id, buffer)
-                .map_err(|e| match e {
-                    aladdin::wm::WindowOpError::NotFound => crate::syscall::EBADF,
-                    aladdin::wm::WindowOpError::PermissionDenied => crate::syscall::EPERM,
-                    aladdin::wm::WindowOpError::InvalidDimensions => crate::syscall::EINVAL,
-                })
-        } else {
-            Err(crate::syscall::ENOSYS)
-        }
-    }
+    client_window_update(owner_pid, win_id, buffer)
 }
 
 /// Fecha a janela `win_id` pertencente ao processo `owner_pid`.
 pub fn window_close(owner_pid: usize, win_id: usize) -> Result<(), isize> {
-    unsafe {
-        if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
-            let res = session.close_client_window(owner_pid, win_id)
-                .map_err(|e| match e {
-                    aladdin::wm::WindowOpError::NotFound => crate::syscall::EBADF,
-                    aladdin::wm::WindowOpError::PermissionDenied => crate::syscall::EPERM,
-                    aladdin::wm::WindowOpError::InvalidDimensions => crate::syscall::EINVAL,
-                });
-            if res.is_ok() {
-                if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(owner_pid) {
-                    task.resources.close_window();
-                }
-            }
-            res
-        } else {
-            Err(crate::syscall::ENOSYS)
-        }
-    }
+    client_window_close(owner_pid, win_id)
 }
 
 /// Consulta o próximo evento de entrada pendente para a janela `win_id` do processo `owner_pid`.
 pub fn window_poll_event(owner_pid: usize, win_id: usize) -> Result<Option<ClientWindowEvent>, isize> {
-    unsafe {
-        if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
-            session.poll_client_event(owner_pid, win_id)
-                .map_err(|e| match e {
-                    aladdin::wm::WindowOpError::NotFound => crate::syscall::EBADF,
-                    aladdin::wm::WindowOpError::PermissionDenied => crate::syscall::EPERM,
-                    aladdin::wm::WindowOpError::InvalidDimensions => crate::syscall::EINVAL,
-                })
-        } else {
-            Err(crate::syscall::ENOSYS)
-        }
-    }
+    client_window_poll_event(owner_pid, win_id)
 }
 
 /// Fecha todas as janelas do processo `pid` (chamado no encerramento da tarefa).
@@ -531,6 +908,14 @@ pub fn register_browser_pid(pid: usize) {
 }
 
 pub fn close_windows_for_pid(pid: usize) {
+    let mut windows = CLIENT_WINDOWS.lock();
+    for slot in windows.iter_mut() {
+        if let Some(w) = slot {
+            if w.owner_pid == pid {
+                *slot = None;
+            }
+        }
+    }
     unsafe {
         if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
             session.close_windows_for_pid(pid);
@@ -542,6 +927,15 @@ pub fn close_windows_for_pid(pid: usize) {
 }
 
 pub fn open_window(win_id: usize) {
+    let mut windows = CLIENT_WINDOWS.lock();
+    for slot in windows.iter_mut() {
+        if let Some(w) = slot {
+            if w.id == win_id {
+                w.is_open = true;
+                w.damaged = true;
+            }
+        }
+    }
     unsafe {
         if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
             if let Some(w) = session.wm.windows.get_mut(win_id).and_then(|w| w.as_mut()) {
@@ -552,6 +946,51 @@ pub fn open_window(win_id: usize) {
             }
         }
     }
+}
+
+/// Inicia o serviço gráfico do Aladdin Desktop em Ring 3 como processo de usuário independente.
+pub fn launch_ring3_desktop() {
+    let path = "/disk/aladdin.elf";
+    let argv = [path, "server"];
+    
+    // 1. Tenta carregar do disco FAT32
+    let spawn_res = crate::scheduler::get().spawn_user_task_from_vfs(path, &argv, &[]);
+    let pid = match spawn_res {
+        Ok(p) => p,
+        Err(_) => {
+            // Tenta variante de caixa /disk/ALADDIN.ELF
+            match crate::scheduler::get().spawn_user_task_from_vfs("/disk/ALADDIN.ELF", &argv, &[]) {
+                Ok(p) => p,
+                Err(_) => {
+                    // Fallback para módulos Limine em memória
+                    if let Some(elf_bytes) = limine::get_module_by_name("aladdin").or_else(|| limine::get_module_by_name("aladdin-server")) {
+                        match crate::scheduler::get().spawn_user_task_from_memory("aladdin[U3]", elf_bytes, &argv, &[]) {
+                            Ok(p) => p,
+                            Err(_) => {
+                                run_desktop();
+                                return;
+                            }
+                        }
+                    } else {
+                        run_desktop();
+                        return;
+                    }
+                }
+            }
+        }
+    };
+
+    crate::ipc::register(pid);
+    loop {
+        if crate::scheduler::get().collect_zombie(pid).is_some() {
+            break;
+        }
+        if pid >= crate::scheduler::MAX_TASKS || crate::scheduler::get().tasks[pid].is_none() {
+            break;
+        }
+        crate::scheduler::yield_now();
+    }
+    restore_text_console();
 }
 
 pub fn run_desktop() {
@@ -610,10 +1049,5 @@ pub fn run_desktop() {
         }
     }
 
-    // Ao sair, limpa a tela para restaurar o console de texto VGA
-    let mut writer = crate::vga::Writer::new();
-    writer.clear_screen();
-    writer.set_color(crate::vga::Color::LightCyan, crate::vga::Color::Black);
-    writer.write_line("Retornou ao Shell do Kernel [Ring 0].");
-    writer.set_color(crate::vga::Color::LightGray, crate::vga::Color::Black);
+    restore_text_console();
 }

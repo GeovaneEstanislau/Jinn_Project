@@ -565,3 +565,53 @@ pub unsafe fn sys_rename(old_path: &str, new_path: &str) -> i64 {
 pub unsafe fn sys_task_set_state(target_pid: usize, state: u32, token: u64) -> i64 {
     syscall3(53, target_pid as u64, state as u64, token)
 }
+
+// ── Syscalls 72..79 — Graphics Display Server ────────────────────────────────
+
+/// Registra o processo chamador como servidor gráfico exclusivo do sistema.
+#[inline(always)]
+pub unsafe fn sys_graphics_register(flags: u32) -> i64 {
+    syscall3(72, flags as u64, 0, 0)
+}
+
+/// Obtém os metadados do framebuffer ativo (largura, altura, pitch, bpp).
+#[inline(always)]
+pub unsafe fn sys_graphics_get_fb_info(out_info: *mut crate::gui::GraphicsFbInfo) -> i64 {
+    syscall3(73, out_info as u64, 0, 0)
+}
+
+/// Submete um retângulo sujo (dirty rect) ou frame completo para apresentação na VRAM física.
+#[inline(always)]
+pub unsafe fn sys_graphics_present(rect: &crate::gui::PresentRect, buffer: *const u32, len_bytes: usize) -> i64 {
+    syscall3(74, rect as *const _ as u64, buffer as u64, len_bytes as u64)
+}
+
+/// Coleta o próximo evento bruto de hardware (teclado ou mouse) sem causar #GP em Ring 3.
+#[inline(always)]
+pub unsafe fn sys_graphics_poll_input(out_event: *mut crate::gui::InputHardwareEvent) -> i64 {
+    syscall3(75, out_event as u64, 0, 0)
+}
+
+/// Desregistra o servidor gráfico e restaura o console VGA de texto.
+#[inline(always)]
+pub unsafe fn sys_graphics_unregister() -> i64 {
+    syscall0(76)
+}
+
+/// Lê a superfície de pixels de uma janela cliente.
+#[inline(always)]
+pub unsafe fn sys_graphics_read_client_surface(win_id: usize, dst_buf: *mut u32, max_bytes: usize) -> i64 {
+    syscall3(77, win_id as u64, dst_buf as u64, max_bytes as u64)
+}
+
+/// Despacha um evento de janela para uma aplicação cliente.
+#[inline(always)]
+pub unsafe fn sys_graphics_dispatch_client_event(win_id: usize, event: &crate::gui::ClientWindowEvent) -> i64 {
+    syscall3(78, win_id as u64, event as *const _ as u64, 0)
+}
+
+/// Lista todas as janelas cliente registradas no broker do kernel.
+#[inline(always)]
+pub unsafe fn sys_graphics_list_client_windows(out_ptr: *mut crate::gui::ClientWindowInfoUser, max_count: usize) -> i64 {
+    syscall3(79, out_ptr as u64, max_count as u64, 0)
+}
