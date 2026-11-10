@@ -3,6 +3,39 @@
 use crate::events::ClientWindowEvent;
 use crate::syscall::*;
 
+/// Códigos de erro estruturados para operações de janela
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowError {
+    /// Dimensões inválidas (largura ou altura zero, ou excedendo 1024x768)
+    InvalidDimensions,
+    /// Título vazio ou superior a 48 bytes
+    InvalidTitle,
+    /// Compositor rejeitou a criação (limite de janelas atingido ou falta de memória)
+    CompositorRejected,
+    /// Buffer fornecido tem tamanho incompatível com a área da janela
+    BufferMismatch,
+    /// Permissão negada para atualizar ou fechar a janela
+    PermissionDenied,
+    /// Identificador de janela inválido ou inexistente
+    InvalidHandle,
+    /// Erro de syscall genérico retornado pelo kernel
+    SyscallFailed(i64),
+}
+
+impl WindowError {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            WindowError::InvalidDimensions => "Dimensoes invalidas (maximo suportado 1024x768)",
+            WindowError::InvalidTitle => "Titulo de janela invalido ou muito longo (maximo 48 bytes)",
+            WindowError::CompositorRejected => "Compositor rejeitou a alocacao da janela (limite atingido ou erro interno)",
+            WindowError::BufferMismatch => "Tamanho do buffer incompativel com dimensoes da janela",
+            WindowError::PermissionDenied => "Permissao negada para a janela",
+            WindowError::InvalidHandle => "Identificador de janela invalido",
+            WindowError::SyscallFailed(_) => "Syscall de janela falhou",
+        }
+    }
+}
+
 /// Configuração declarativa para criação de janela
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowConfig<'a> {
@@ -27,10 +60,10 @@ pub struct WindowHandle {
 
 impl WindowHandle {
     /// Apresenta o buffer de pixels na janela do compositor (sys_window_blit)
-    pub fn blit(&self, buffer: &[u32]) -> Result<(), &'static str> {
+    pub fn blit(&self, buffer: &[u32]) -> Result<(), WindowError> {
         let expected_len = (self.width as usize) * (self.height as usize);
         if buffer.len() != expected_len {
-            return Err("Tamanho do buffer incompativel com dimensoes da janela");
+            return Err(WindowError::BufferMismatch);
         }
         let size_bytes = buffer.len() * 4;
         let ret = unsafe {
@@ -43,8 +76,12 @@ impl WindowHandle {
         };
         if ret >= 0 {
             Ok(())
+        } else if ret == -1 {
+            Err(WindowError::PermissionDenied)
+        } else if ret == -9 {
+            Err(WindowError::InvalidHandle)
         } else {
-            Err("sys_window_blit falhou")
+            Err(WindowError::SyscallFailed(ret))
         }
     }
 
@@ -66,23 +103,55 @@ impl WindowHandle {
         }
     }
 
+    /// Aguarda o próximo evento de entrada, cedendo a CPU voluntariamente (`yield_now`) enquanto a fila estiver vazia.
+    pub fn wait_event(&self) -> ClientWindowEvent {
+        loop {
+            if let Some(ev) = self.poll_event() {
+                return ev;
+            }
+            crate::process::yield_now();
+        }
+    }
+
+    /// Aguarda o próximo evento de entrada com timeout em milissegundos.
+    pub fn wait_event_timeout(&self, timeout_ms: u64) -> Option<ClientWindowEvent> {
+        let mut waited = 0u64;
+        loop {
+            if let Some(ev) = self.poll_event() {
+                return Some(ev);
+            }
+            if waited >= timeout_ms {
+                return None;
+            }
+            crate::time::sleep(5);
+            waited = waited.saturating_add(5);
+        }
+    }
+
     /// Encerra a janela e libera todos os buffers no compositor (sys_window_close)
-    pub fn close(self) -> Result<(), &'static str> {
+    pub fn close(self) -> Result<(), WindowError> {
         let ret = unsafe { syscall1(SYS_WINDOW_CLOSE, self.id as u64) };
         if ret >= 0 {
             Ok(())
+        } else if ret == -1 {
+            Err(WindowError::PermissionDenied)
+        } else if ret == -9 {
+            Err(WindowError::InvalidHandle)
         } else {
-            Err("sys_window_close falhou")
+            Err(WindowError::SyscallFailed(ret))
         }
     }
 }
 
 /// Cria uma nova janela de cliente no Aladdin Desktop
-pub fn open_window(title: &str, width: u32, height: u32) -> Result<WindowHandle, &'static str> {
+pub fn open_window(title: &str, width: u32, height: u32) -> Result<WindowHandle, WindowError> {
     if width == 0 || height == 0 || width > 1024 || height > 768 {
-        return Err("Dimensoes invalidas (maximo suportado 1024x768)");
+        return Err(WindowError::InvalidDimensions);
     }
     let title_bytes = title.as_bytes();
+    if title_bytes.is_empty() || title_bytes.len() > 48 {
+        return Err(WindowError::InvalidTitle);
+    }
     let ret = unsafe {
         syscall4(
             SYS_WINDOW_CREATE,
@@ -99,7 +168,8 @@ pub fn open_window(title: &str, width: u32, height: u32) -> Result<WindowHandle,
             height,
         })
     } else {
-        Err("Compositor rejeitou a alocacao da janela (limite atingido ou erro interno)")
+        Err(WindowError::CompositorRejected)
     }
 }
+
 

@@ -9,6 +9,8 @@ pub const EVENT_KEY_UP:        u32 = 5;
 pub const EVENT_SCROLL:        u32 = 6;
 pub const EVENT_WINDOW_CLOSE:  u32 = 7;
 pub const EVENT_WINDOW_RESIZE: u32 = 8;
+pub const EVENT_FOCUS_GAINED:  u32 = 9;
+pub const EVENT_FOCUS_LOST:    u32 = 10;
 
 /// Estrutura de evento transmitida entre o compositor do Aladdin e o processo Ring 3 (32 bytes).
 #[repr(C)]
@@ -76,6 +78,30 @@ impl ClientWindowEvent {
     #[inline]
     pub fn mouse_coords(&self) -> Option<(u32, u32)> {
         if self.is_mouse_down() || self.is_mouse_up() || self.is_mouse_move() {
+            Some((self.param1, self.param2))
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn is_resize(&self) -> bool {
+        self.event_type == EVENT_WINDOW_RESIZE
+    }
+
+    #[inline]
+    pub fn is_focus_gained(&self) -> bool {
+        self.event_type == EVENT_FOCUS_GAINED
+    }
+
+    #[inline]
+    pub fn is_focus_lost(&self) -> bool {
+        self.event_type == EVENT_FOCUS_LOST
+    }
+
+    #[inline]
+    pub fn resize_dims(&self) -> Option<(u32, u32)> {
+        if self.is_resize() {
             Some((self.param1, self.param2))
         } else {
             None

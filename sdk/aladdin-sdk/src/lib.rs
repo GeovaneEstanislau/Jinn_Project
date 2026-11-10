@@ -40,9 +40,10 @@ pub use events::{
     ClientWindowEvent,
     EVENT_NONE, EVENT_MOUSE_DOWN, EVENT_MOUSE_UP, EVENT_MOUSE_MOVE,
     EVENT_KEY_DOWN, EVENT_KEY_UP, EVENT_SCROLL, EVENT_WINDOW_CLOSE, EVENT_WINDOW_RESIZE,
+    EVENT_FOCUS_GAINED, EVENT_FOCUS_LOST,
 };
 
-pub use window::{WindowHandle, WindowConfig, open_window};
+pub use window::{WindowHandle, WindowConfig, WindowError, open_window};
 pub use graphics::{Color, Canvas};
 pub use process::{exit, getpid, yield_now};
 pub use console::{print, println, print_num, print_hex};
@@ -50,9 +51,13 @@ pub use time::sleep;
 
 /// Prelúdio com tipos e funções essenciais para rápida inicialização
 pub mod prelude {
-    pub use crate::window::{open_window, WindowHandle, WindowConfig};
+    pub use crate::window::{open_window, WindowHandle, WindowConfig, WindowError};
     pub use crate::graphics::{Color, Canvas};
-    pub use crate::events::{ClientWindowEvent, EVENT_WINDOW_CLOSE, EVENT_KEY_DOWN, EVENT_MOUSE_DOWN};
+    pub use crate::events::{
+        ClientWindowEvent, EVENT_WINDOW_CLOSE, EVENT_WINDOW_RESIZE,
+        EVENT_KEY_DOWN, EVENT_KEY_UP, EVENT_MOUSE_DOWN, EVENT_MOUSE_UP,
+        EVENT_FOCUS_GAINED, EVENT_FOCUS_LOST,
+    };
     pub use crate::process::{exit, getpid, yield_now};
     pub use crate::console::{print, println, print_num, print_hex};
     pub use crate::time::sleep;
