@@ -3025,6 +3025,73 @@ where
             len = aladdin::compositor::format_num(free, &mut buf);
             if let Ok(s) = core::str::from_utf8(&buf[..len]) { output(s, 0x0038_BDF8); }
         }
+        "res" | "sysmon" => {
+            output("=== Monitor de Recursos e Memoria ===", 0x00F5_9E0B);
+            let total_mb = crate::memory::total_bytes() / (1024 * 1024);
+            let used_mb = crate::memory::used_bytes() / (1024 * 1024);
+            let frames_used = crate::memory::used_bytes() / 4096;
+            let frames_total = crate::memory::total_bytes() / 4096;
+            let dyn_alloc = crate::memory::allocated_dynamic_pages() as usize;
+            let dyn_freed = crate::memory::freed_dynamic_pages() as usize;
+            let dyn_active = dyn_alloc.saturating_sub(dyn_freed);
+
+            let sched = crate::scheduler::get();
+            let mut open_fds = 0usize;
+            for t in sched.tasks.iter().flatten() {
+                open_fds += t.resources.open_fds;
+            }
+            let vols = crate::vfs::volume::VOLUME_MANAGER.lock().count;
+
+            let mut buf = [0u8; 64];
+            let mut pos = 0;
+            buf[..14].copy_from_slice(b"RAM Utilizada:");
+            pos += 14;
+            let mut num_b = [0u8; 16];
+            let l1 = aladdin::compositor::format_num(used_mb, &mut num_b);
+            buf[pos] = b' '; pos += 1;
+            buf[pos..pos + l1].copy_from_slice(&num_b[..l1]); pos += l1;
+            buf[pos..pos + 6].copy_from_slice(b" MB / "); pos += 6;
+            let l2 = aladdin::compositor::format_num(total_mb, &mut num_b);
+            buf[pos..pos + l2].copy_from_slice(&num_b[..l2]); pos += l2;
+            buf[pos..pos + 3].copy_from_slice(b" MB"); pos += 3;
+            if let Ok(s) = core::str::from_utf8(&buf[..pos]) { output(s, 0x0022_C55E); }
+
+            pos = 0;
+            buf[..14].copy_from_slice(b"Frames Fisicos");
+            pos += 14;
+            buf[pos..pos + 3].copy_from_slice(b": ["); pos += 3;
+            let l3 = aladdin::compositor::format_num(frames_used, &mut num_b);
+            buf[pos..pos + l3].copy_from_slice(&num_b[..l3]); pos += l3;
+            buf[pos..pos + 3].copy_from_slice(b" / "); pos += 3;
+            let l4 = aladdin::compositor::format_num(frames_total, &mut num_b);
+            buf[pos..pos + l4].copy_from_slice(&num_b[..l4]); pos += l4;
+            buf[pos..pos + 10].copy_from_slice(b" (4K pag)]"); pos += 10;
+            if let Ok(s) = core::str::from_utf8(&buf[..pos]) { output(s, 0x0038_BDF8); }
+
+            pos = 0;
+            buf[..14].copy_from_slice(b"Heap Dinamico ");
+            pos += 14;
+            buf[pos..pos + 3].copy_from_slice(b": "); pos += 3;
+            let l5 = aladdin::compositor::format_num(dyn_active, &mut num_b);
+            buf[pos..pos + l5].copy_from_slice(&num_b[..l5]); pos += l5;
+            buf[pos..pos + 10].copy_from_slice(b" ativas ("); pos += 10;
+            let l6 = aladdin::compositor::format_num(dyn_freed, &mut num_b);
+            buf[pos..pos + l6].copy_from_slice(&num_b[..l6]); pos += l6;
+            buf[pos..pos + 11].copy_from_slice(b" liberadas)"); pos += 11;
+            if let Ok(s) = core::str::from_utf8(&buf[..pos]) { output(s, 0x00F8_FAFC); }
+
+            pos = 0;
+            buf[..14].copy_from_slice(b"VFS / Arquivos");
+            pos += 14;
+            buf[pos..pos + 3].copy_from_slice(b": "); pos += 3;
+            let l7 = aladdin::compositor::format_num(open_fds, &mut num_b);
+            buf[pos..pos + l7].copy_from_slice(&num_b[..l7]); pos += l7;
+            buf[pos..pos + 14].copy_from_slice(b" FDs | Volumes"); pos += 14;
+            let l8 = aladdin::compositor::format_num(vols, &mut num_b);
+            buf[pos] = b' '; pos += 1;
+            buf[pos..pos + l8].copy_from_slice(&num_b[..l8]); pos += l8;
+            if let Ok(s) = core::str::from_utf8(&buf[..pos]) { output(s, 0x00A8_55F7); }
+        }
         "ps" | "tasks" => {
             output("Tarefas Ativas no Escalonador:", 0x00F5_9E0B);
             let sched = crate::scheduler::get();

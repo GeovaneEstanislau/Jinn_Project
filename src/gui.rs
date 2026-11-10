@@ -86,9 +86,16 @@ impl SystemHost for JinnSystem {
             crate::net::jinnwall::FirewallProfile::Development => JinnWallProfile::Development,
         };
 
+        let mut total_open_fds = 0usize;
+        let sched = crate::scheduler::get();
+        for t in sched.tasks.iter().flatten() {
+            total_open_fds += t.resources.open_fds;
+        }
+        let total_vols = crate::vfs::volume::VOLUME_MANAGER.lock().count;
+
         SystemStats {
             uptime_secs: (ticks / 100) as usize,
-            task_count: crate::scheduler::get().task_count(),
+            task_count: sched.task_count(),
             sched_ticks: crate::scheduler::sched_ticks(),
             used_ram_mb: crate::memory::used_bytes() / (1024 * 1024),
             total_ram_mb: crate::memory::total_bytes() / (1024 * 1024),
@@ -101,6 +108,12 @@ impl SystemHost for JinnSystem {
             jinnwall_inspected,
             jinnwall_accepted,
             jinnwall_profile,
+            physical_frames_used: crate::memory::used_bytes() / 4096,
+            physical_frames_total: crate::memory::total_bytes() / 4096,
+            dynamic_pages_allocated: crate::memory::allocated_dynamic_pages() as usize,
+            dynamic_pages_freed: crate::memory::freed_dynamic_pages() as usize,
+            vfs_open_fds: total_open_fds,
+            vfs_mounted_volumes: total_vols,
         }
     }
 
