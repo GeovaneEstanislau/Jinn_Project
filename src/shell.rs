@@ -1,4 +1,4 @@
-﻿/// Jinn OS — Shell do Kernel (Ring 0)
+/// Jinn OS — Shell do Kernel (Ring 0)
 ///
 /// Executa no contexto do kernel (Ring 0) com acesso direto às APIs internas.
 /// Este shell NÃO usa syscalls — ele chama as funções do kernel diretamente,
