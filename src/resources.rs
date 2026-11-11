@@ -3,7 +3,7 @@
 //! Controla e monitora de forma previsível o uso de CPU, memória física,
 //! descritores de arquivos, conexões de rede, buffers JDA e janelas do compositor.
 
-use crate::syscall::{EMFILE, ENOBUFS, ENOMEM};
+use crate::syscall::{EDQUOT, EMFILE, ENOBUFS};
 use crate::hardware_profiler::HardwareProfile;
 use crate::memory::SpinLock;
 
@@ -126,8 +126,8 @@ impl ProcessResources {
         let new_total = self.allocated_frames.saturating_add(count);
         if new_total > limits.max_frames {
             self.limit_violations = self.limit_violations.saturating_add(1);
-            self.last_violation_code = ENOMEM as i32;
-            return Err(ENOMEM);
+            self.last_violation_code = EDQUOT as i32;
+            return Err(EDQUOT);
         }
         self.allocated_frames = new_total;
         if self.allocated_frames > self.peak_allocated_frames {
@@ -161,8 +161,8 @@ impl ProcessResources {
     pub fn check_and_open_window(&mut self, limits: &ResourceLimits) -> Result<(), isize> {
         if self.open_windows >= limits.max_windows {
             self.limit_violations = self.limit_violations.saturating_add(1);
-            self.last_violation_code = EMFILE as i32;
-            return Err(EMFILE);
+            self.last_violation_code = EDQUOT as i32;
+            return Err(EDQUOT);
         }
         self.open_windows += 1;
         Ok(())
@@ -367,10 +367,16 @@ pub fn current_pressure() -> MemoryPressureState {
 pub fn audit_memory_reconciliation() -> (u64, u64, u64, u64, u64, u64, u64) {
     let usable = crate::memory::total_bytes() as u64;
     let free = crate::memory::alloc::free_frames() as u64 * 4096;
-    let kernel = 21_181_235u64;
-    let services = 4_194_304u64;
-    let compositor = 4_299_161u64;
-    let tracked = kernel + services + compositor;
-    let discrepancy = usable.saturating_sub(tracked + free);
-    (usable, kernel, services, compositor, free, discrepancy, 13_156_410_368u64)
+    let used = crate::memory::used_bytes() as u64;
+    let kernel = crate::memory::heap::used() as u64;
+    let compositor = if let Some(fb) = crate::limine::framebuffer() {
+        (fb.width * fb.height * 4) as u64
+    } else {
+        4_299_161u64
+    };
+    let services = used.saturating_sub(kernel + compositor);
+    let _tracked = kernel + services + compositor;
+    let discrepancy = usable.saturating_sub(used + free);
+    let total_cap = usable.max(13_156_410_368u64);
+    (usable, kernel, services, compositor, free, discrepancy, total_cap)
 }

@@ -75,8 +75,8 @@ pub const MAX_TASKS: usize = 64;
 pub const MAX_TASK_FDS: usize = 32;
 
 /// Número máximo de páginas dinâmicas que uma tarefa pode alocar via sys_alloc_page.
-/// Quantidade máxima de páginas dinâmicas rastreadas por processo de usuário (4 MiB).
-pub const MAX_DYNAMIC_PAGES: usize = 1024;
+/// Quantidade máxima de páginas dinâmicas rastreadas por processo de usuário (16 MiB no perfil Standard).
+pub const MAX_DYNAMIC_PAGES: usize = 4096;
 
 /// Faixa de endereçamento virtual reservada para o heap de usuário.
 pub const USER_HEAP_BASE: u64 = 0x0000_1000_0000;
@@ -769,6 +769,12 @@ impl Scheduler {
         // Libera buffers Zero-Copy criados pela imagem antiga
         crate::jda::shmem::SHARED_BUFFER_POOL.lock().release_all_for_pid(pid);
 
+        // Contabiliza páginas dinâmicas liberadas da imagem antiga
+        let dynamic_count = task.dynamic_pages.iter().filter(|&&p| p != 0).count();
+        if dynamic_count > 0 {
+            crate::memory::FREED_DYNAMIC_PAGES.fetch_add(dynamic_count as u64, core::sync::atomic::Ordering::Relaxed);
+        }
+
         // Zera o registro de páginas dinâmicas antigas
         task.dynamic_pages = [0; MAX_DYNAMIC_PAGES];
 
@@ -1153,6 +1159,10 @@ impl Scheduler {
 
             // Libera a memória de páginas de usuário e o próprio PML4
             if task.ring == Ring::User {
+                let dynamic_count = task.dynamic_pages.iter().filter(|&&p| p != 0).count();
+                if dynamic_count > 0 {
+                    crate::memory::FREED_DYNAMIC_PAGES.fetch_add(dynamic_count as u64, core::sync::atomic::Ordering::Relaxed);
+                }
                 unsafe { paging::free_user_pml4(task.pml4_phys); }
                 task.resources.allocated_frames = 0;
             }

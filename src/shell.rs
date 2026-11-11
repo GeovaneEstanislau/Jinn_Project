@@ -223,39 +223,102 @@ fn cmd_uname(w: &mut Writer) {
     w.set_color(Color::LightGray, Color::Black);
 }
 
-/// `meminfo` — Estatísticas de memória física e heap.
+/// `meminfo` — Estatísticas de memória física, heap e processos.
 fn cmd_meminfo(w: &mut Writer) {
     w.set_color(Color::Yellow, Color::Black);
-    w.write_line("=== Informacoes de Memoria ===");
+    w.write_line("=== Informacoes de Memoria e Telemetria ===");
     w.set_color(Color::LightGray, Color::Black);
 
-    w.write_string("  Mem. fisica  : ");
-    w.write_memory_size(memory::total_bytes() as u64);
+    let total_bytes = memory::total_bytes();
+    let used_phys = memory::used_bytes();
+    let free_phys = total_bytes.saturating_sub(used_phys);
+
+    let kheap_used = memory::heap::used();
+    let kheap_total = memory::heap::total();
+
+    // Calcula memória de processos de usuário (Ring 3) e tarefas do kernel (Ring 0)
+    let sched = scheduler::get();
+    let mut user_frames = 0usize;
+    let mut kernel_task_frames = 0usize;
+    for slot in sched.tasks.iter().flatten() {
+        if slot.ring == scheduler::Ring::User {
+            user_frames += slot.resources.allocated_frames;
+        } else {
+            kernel_task_frames += slot.resources.allocated_frames;
+        }
+    }
+    let user_bytes = user_frames * 4096;
+
+    // Buffer gráfico (framebuffer Limine / backbuffer)
+    let fb_bytes = if let Some(fb) = crate::limine::framebuffer() {
+        (fb.width * fb.height * 4) as usize
+    } else {
+        0
+    };
+
+    w.write_string("  RAM Fisica Total : ");
+    w.write_memory_size(total_bytes as u64);
     w.write_line("");
 
-    w.write_string("  Heap usado   : ");
-    w.write_memory_size(memory::used_bytes() as u64);
+    w.write_string("  RAM Fisica Usada : ");
+    w.write_memory_size(used_phys as u64);
+    w.write_string(" (");
+    w.write_decimal(memory::used_frames());
+    w.write_line(" frames de 4 KiB)");
+
+    w.write_string("  RAM Fisica Livre : ");
+    w.write_memory_size(free_phys as u64);
+    w.write_string(" (");
+    w.write_decimal(memory::free_frames());
+    w.write_line(" frames livres)");
+
+    w.write_line("--------------------------------------------------");
+    w.write_string("  Kernel Heap (R0) : ");
+    w.write_memory_size(kheap_used as u64);
+    w.write_string(" / ");
+    w.write_memory_size(kheap_total as u64);
     w.write_line("");
 
-    let free = memory::total_bytes().saturating_sub(memory::used_bytes());
-    w.write_string("  Heap livre   : ");
-    w.write_memory_size(free as u64);
+    w.write_string("  Tarefas Ring 0   : ");
+    w.write_decimal(kernel_task_frames);
+    w.write_line(" frames");
+
+    w.write_string("  Tarefas Ring 3   : ");
+    w.write_memory_size(user_bytes as u64);
+    w.write_string(" (");
+    w.write_decimal(user_frames);
+    w.write_line(" frames mapeados)");
+
+    w.write_string("  Buffer Grafico   : ");
+    w.write_memory_size(fb_bytes as u64);
     w.write_line("");
+
+    let dyn_alloc = memory::allocated_dynamic_pages();
+    let dyn_freed = memory::freed_dynamic_pages();
+    let dyn_active = dyn_alloc.saturating_sub(dyn_freed);
+
+    w.write_string("  Paginas Dinamicas: ");
+    w.write_decimal(dyn_active as usize);
+    w.write_string(" ativas (");
+    w.write_decimal(dyn_alloc as usize);
+    w.write_string(" alocadas, ");
+    w.write_decimal(dyn_freed as usize);
+    w.write_line(" liberadas)");
 
     w.set_color(Color::DarkGray, Color::Black);
-    w.write_line("  [Ring 0: acesso direto sem syscall]");
+    w.write_line("  [Ring 0: diagnostico com precisao de quadros fisicos]");
     w.set_color(Color::LightGray, Color::Black);
 }
 
-/// `ps` / `tasks` — Lista todas as tarefas do escalonador.
+/// `ps` / `tasks` — Lista todas as tarefas do escalonador com telemetria de memória.
 ///
 /// Acessa `scheduler::get()` diretamente — só possível em Ring 0.
 fn cmd_ps(w: &mut Writer) {
     let sched = scheduler::get();
 
     w.set_color(Color::Yellow, Color::Black);
-    w.write_line("PID  NOME                RING  PRIO      ESTADO");
-    w.write_line("---  ------------------  ----  --------  ----------");
+    w.write_line("PID  NOME                RING  PRIO      MEM (KiB)  FRAMES  ESTADO");
+    w.write_line("---  ------------------  ----  --------  ---------  ------  ----------");
     w.set_color(Color::LightGray, Color::Black);
 
     let current_pid = scheduler::current_pid();
@@ -304,6 +367,15 @@ fn cmd_ps(w: &mut Writer) {
             scheduler::TaskPriority::RealTime => "RealTime",
         };
         w.write_string(prio_str);
+        w.write_string("  ");
+
+        // Memória em KiB (alinhado a 9 caracteres)
+        let mem_kib = task.resources.allocated_frames * 4;
+        write_padded_decimal(w, mem_kib, 8);
+        w.write_string("  ");
+
+        // Frames físicos (alinhado a 6 caracteres)
+        write_padded_decimal(w, task.resources.allocated_frames, 6);
         w.write_string("  ");
 
         // Estado (com marcador se for a tarefa atual)

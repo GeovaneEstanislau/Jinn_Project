@@ -110,3 +110,4 @@ Para validação no Oracle VirtualBox:
    - Porta IDE 0: `disk.vdi` (Partição 1: FAT32 com apps e recursos visuais; Partição 2: Ext2)
    - Porta IDE 1: `jinn.iso` (Mídia de boot Limine)
    - Porta Serial 1 redirecionada para `vbox_serial.log` para captura contínua de logs e telemetria.
+

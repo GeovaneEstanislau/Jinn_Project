@@ -20,8 +20,9 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 pub const HEAP_START: usize = 0xFFFF_C000_0000_0000;
-pub const HEAP_SIZE:  usize = 16 * 1024 * 1024; // 16 MiB kernel heap
-const HEAP_END:       usize = HEAP_START + HEAP_SIZE;
+pub const HEAP_SIZE:  usize = 16 * 1024 * 1024; // 16 MiB mapeados inicialmente no boot
+pub const MAX_HEAP_SIZE: usize = 128 * 1024 * 1024; // Teto dinâmico de até 128 MiB para buffers gráficos e abas
+const HEAP_END:       usize = HEAP_START + MAX_HEAP_SIZE;
 const MIN_ALIGN:      usize = 16;
 
 // ── Free List Node ────────────────────────────────────────────────────────────
@@ -34,6 +35,7 @@ struct FreeNode {
 // ── Heap Allocator ────────────────────────────────────────────────────────────
 pub struct KernelHeap {
     bump_ptr: UnsafeCell<usize>,
+    mapped_ptr: UnsafeCell<usize>,
     free_list: UnsafeCell<*mut FreeNode>,
     lock: AtomicBool,
 }
@@ -44,6 +46,7 @@ impl KernelHeap {
     pub const fn new() -> Self {
         Self {
             bump_ptr: UnsafeCell::new(HEAP_START),
+            mapped_ptr: UnsafeCell::new(HEAP_START),
             free_list: UnsafeCell::new(core::ptr::null_mut()),
             lock: AtomicBool::new(false),
         }
@@ -74,9 +77,15 @@ impl KernelHeap {
                 unsafe { paging::map_page(pml4, virt, phys, paging::KERNEL_RW); }
             }
         }
+        unsafe {
+            *self.mapped_ptr.get() = HEAP_START + HEAP_SIZE;
+        }
     }
 
     unsafe fn alloc_bump(&self, layout: Layout) -> *mut u8 {
+        use crate::memory;
+        use crate::memory::paging;
+
         let bump = &mut *self.bump_ptr.get();
         let align = layout.align().max(MIN_ALIGN);
         let start = (*bump + align - 1) & !(align - 1);
@@ -84,6 +93,23 @@ impl KernelHeap {
         if end > HEAP_END {
             return core::ptr::null_mut();
         }
+
+        let mapped = &mut *self.mapped_ptr.get();
+        if end > *mapped {
+            // Expande sob demanda a memória física mapeada para o heap do kernel
+            let master_pml4_phys = paging::kernel_pml4_phys();
+            let pml4 = paging::phys_to_virt(master_pml4_phys) as *mut paging::PageTable;
+
+            while *mapped < end {
+                if let Some(phys) = memory::alloc_frame() {
+                    paging::map_page(pml4, *mapped as u64, phys, paging::KERNEL_RW);
+                    *mapped += 4096;
+                } else {
+                    return core::ptr::null_mut(); // Exaustão real de RAM física
+                }
+            }
+        }
+
         *bump = end;
         start as *mut u8
     }
@@ -148,12 +174,14 @@ unsafe impl GlobalAlloc for KernelHeap {
         let node = ptr as *mut FreeNode;
         (*node).size = size.max(core::mem::size_of::<FreeNode>());
 
-        // Insert into free list (sorted by address, coalesce adjacent blocks)
+        // Insert into free list (sorted by address, coalesce adjacent blocks bidirectionally)
         let head = &mut *self.free_list.get();
+        let mut prev_node: Option<*mut FreeNode> = None;
         let mut prev: *mut *mut FreeNode = head as *mut _;
         let mut cur  = *head;
 
         while !cur.is_null() && (cur as usize) < (ptr as usize) {
+            prev_node = Some(cur);
             prev = &mut (*cur).next as *mut _;
             cur  = (*cur).next;
         }
@@ -161,12 +189,21 @@ unsafe impl GlobalAlloc for KernelHeap {
         (*node).next = cur;
         *prev = node;
 
-        // Coalesce with next block if adjacent
+        // 1. Coalesce com próximo bloco se adjacente
         if !cur.is_null() {
             let node_end = ptr as usize + (*node).size;
             if node_end == cur as usize {
                 (*node).size += (*cur).size;
                 (*node).next  = (*cur).next;
+            }
+        }
+
+        // 2. Coalesce com bloco anterior se adjacente (bidirecional)
+        if let Some(p_node) = prev_node {
+            let p_end = (p_node as usize) + (*p_node).size;
+            if p_end == (node as usize) {
+                (*p_node).size += (*node).size;
+                (*p_node).next  = (*node).next;
             }
         }
 
@@ -183,8 +220,17 @@ pub fn init() {
     KERNEL_HEAP.init();
 }
 
-/// Return total heap size.
-pub fn total() -> usize { HEAP_SIZE }
+/// Return total heap size currently mapped and committed.
+pub fn total() -> usize {
+    unsafe {
+        let mapped = *KERNEL_HEAP.mapped_ptr.get();
+        if mapped > HEAP_START {
+            mapped - HEAP_START
+        } else {
+            HEAP_SIZE
+        }
+    }
+}
 
 /// Approximate used bytes (bump pointer offset).
 pub fn used() -> usize {
