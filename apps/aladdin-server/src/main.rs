@@ -476,40 +476,66 @@ pub extern "C" fn _start() -> ! {
         GLOBAL_SESSION = &mut session as *mut AladdinSession;
     }
 
-    // 3. Funções de captura de eventos de hardware e sincronização de janelas
-    static PENDING_KEY: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-    let mut current_mouse = (512usize, 384usize, 0u8);
+    // 3. Fila de entrada resiliente para teclado e mouse (evita descarte de eventos e congelamento)
+    static mut KEY_QUEUE: [u8; 64] = [0u8; 64];
+    static mut KEY_HEAD: usize = 0;
+    static mut KEY_TAIL: usize = 0;
+    static mut KEY_COUNT: usize = 0;
+
+    let enqueue_key = |k: u8| unsafe {
+        if KEY_COUNT < 64 {
+            KEY_QUEUE[KEY_HEAD] = k;
+            KEY_HEAD = (KEY_HEAD + 1) % 64;
+            KEY_COUNT += 1;
+        }
+    };
+
+    let dequeue_key = || -> Option<u8> {
+        unsafe {
+            if KEY_COUNT == 0 {
+                None
+            } else {
+                let k = KEY_QUEUE[KEY_TAIL];
+                KEY_TAIL = (KEY_TAIL + 1) % 64;
+                KEY_COUNT -= 1;
+                Some(k)
+            }
+        }
+    };
+
+    static mut CURRENT_MOUSE: (usize, usize, u8) = (512usize, 384usize, 0u8);
     let mut client_cache_buf: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
     let mut client_info_list = [ClientWindowInfoUser {
         win_id: 0, owner_pid: 0, width: 0, height: 0, is_open: 0, damaged: 0, title_len: 0, title: [0u8; 48],
     }; 16];
 
-    let mut poll_key = || -> Option<u8> {
-        let pk = PENDING_KEY.swap(0, Ordering::Relaxed);
-        if pk != 0 {
-            return Some(pk as u8);
-        }
+    let drain_hardware_events = || {
         let mut ev = InputHardwareEvent { kind: 0, code: 0, x: 0, y: 0, modifiers: 0 };
-        let ret = unsafe { sys_poll_input(&mut ev) };
-        if ret == 1 && ev.kind == 1 {
-            return Some(ev.code as u8);
-        }
-        None
-    };
-
-    let mut poll_mouse = || -> (usize, usize, u8) {
-        let mut ev = InputHardwareEvent { kind: 0, code: 0, x: 0, y: 0, modifiers: 0 };
-        let ret = unsafe { sys_poll_input(&mut ev) };
-        if ret == 1 {
+        for _ in 0..16 {
+            let ret = unsafe { sys_poll_input(&mut ev) };
+            if ret != 1 {
+                break;
+            }
             if ev.kind == 1 {
-                PENDING_KEY.store(ev.code as usize, Ordering::Relaxed);
+                enqueue_key(ev.code as u8);
             } else if ev.kind >= 3 {
                 let mx = (ev.x as usize).min(1023);
                 let my = (ev.y as usize).min(767);
                 let btn = ev.code as u8;
-                current_mouse = (mx, my, btn);
+                unsafe {
+                    CURRENT_MOUSE = (mx, my, btn);
+                }
             }
         }
+    };
+
+    let mut poll_key = || -> Option<u8> {
+        drain_hardware_events();
+        dequeue_key()
+    };
+
+    let mut poll_mouse = || -> (usize, usize, u8) {
+        drain_hardware_events();
 
         // Sincroniza janelas de clientes Ring 3 ativas
         unsafe {
@@ -545,7 +571,7 @@ pub extern "C" fn _start() -> ! {
             }
         }
 
-        current_mouse
+        unsafe { CURRENT_MOUSE }
     };
 
     aladdin_sdk::console::println("[aladdin-server] [OK] Servidor grafico em execucao!");

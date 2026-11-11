@@ -27,27 +27,33 @@ unsafe fn outb(port: u16, val: u8) {
 /// Aguarda o buffer de ENTRADA do controlador esvaziar (bit 1 = 0).
 /// Deve ser chamado ANTES de escrever em 0x60 ou 0x64.
 #[inline]
-unsafe fn ps2_wait_write() {
+unsafe fn ps2_wait_write() -> bool {
     let mut timeout = 100_000usize;
     while timeout > 0 {
         let s = inb(KBD_CMD);
-        if (s & 2) == 0 { return; }
+        if (s & 2) == 0 { return true; }
         core::hint::spin_loop();
         timeout -= 1;
     }
+    // Timeout de escrita: drena eventual dado pendente que possa estar travando o controlador
+    let _ = inb(KBD_DATA);
+    false
 }
 
 /// Aguarda o buffer de SAÍDA ter dado (bit 0 = 1).
 /// Deve ser chamado ANTES de ler de 0x60.
 #[inline]
-unsafe fn ps2_wait_read() {
+unsafe fn ps2_wait_read() -> bool {
     let mut timeout = 100_000usize;
     while timeout > 0 {
         let s = inb(KBD_CMD);
-        if (s & 1) != 0 { return; }
+        if (s & 1) != 0 { return true; }
         core::hint::spin_loop();
         timeout -= 1;
     }
+    // Timeout de leitura: limpa buffer de status (OBF) descartando byte travado
+    let _ = inb(KBD_DATA);
+    false
 }
 
 /// US-QWERTY Scancode Set 1 → ASCII.
@@ -211,10 +217,15 @@ pub fn set_shift_down(val: bool) {
 #[no_mangle]
 pub extern "C" fn kbd_irq_handler() {
     unsafe {
-        let sc = inb(KBD_DATA);
-        pic::send_eoi(1);
-        if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_KBD0, 1, sc) {
-            process_scancode(sc);
+        let status = inb(KBD_CMD);
+        if (status & 1) != 0 {
+            let sc = inb(KBD_DATA);
+            pic::send_eoi(1);
+            if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_KBD0, 1, sc) {
+                process_scancode(sc);
+            }
+        } else {
+            pic::send_eoi(1);
         }
     }
 }

@@ -11,6 +11,7 @@ pub mod jinnwall;
 pub mod pki;
 pub mod socket;
 pub mod tcp;
+pub mod tls13;
 pub mod udp;
 pub mod x509;
 

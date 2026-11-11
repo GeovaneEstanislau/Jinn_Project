@@ -147,3 +147,4 @@ Com a conclusão desta tarefa:
 1. O compositor gráfico **Aladdin Desktop (Ring 3)** inicializa de forma completamente autônoma e imediata a partir do boot do microkernel Jinn OS.
 2. O sistema respeita rigorosamente o teto estrito de **64 MB de memória RAM**, mantendo uma margem segura de mais de 25 MB livres no Buddy Allocator após a inicialização completa de drivers e da interface gráfica.
 3. Não existem mais vazamentos contínuos de memória no laço de composição gráfica de retângulos sujos (*dirty rects*), garantindo estabilidade operacional contínua.
+
