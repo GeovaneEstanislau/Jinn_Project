@@ -252,18 +252,42 @@ impl MountTable {
 
         for e in self.entries.iter().flatten() {
             let prefix = core::str::from_utf8(&e.prefix[..e.prefix_len]).unwrap_or("");
-            if path.starts_with(prefix) && e.prefix_len > best_len {
+            if prefix.is_empty() { continue; }
+            let matches = if prefix == "/" {
+                path.starts_with('/')
+            } else if path.starts_with(prefix) {
+                path.len() == prefix.len() || path.as_bytes().get(prefix.len()) == Some(&b'/')
+            } else {
+                false
+            };
+            if matches && e.prefix_len > best_len {
                 best_len = e.prefix_len;
                 best_fs  = Some(e.fs);
             }
         }
 
-        best_fs.map(|fs| {
+        if let Some(fs) = best_fs {
             let rel = path.get(best_len..).unwrap_or("/");
             let rel = if rel.is_empty() { "/" } else { rel };
             let pfx = path.get(..best_len).unwrap_or("");
-            (fs, rel, pfx)
-        })
+            Some((fs, rel, pfx))
+        } else {
+            // Se nenhum prefixo coincidir (ex: caminho relativo "arquivo.txt" ou raiz não prefixada),
+            // faz fallback para o volume primário ("/disk" ou "/")
+            let mut fallback: Option<(&'static dyn FileSystem, &'static str)> = None;
+            for e in self.entries.iter().flatten() {
+                let p = core::str::from_utf8(&e.prefix[..e.prefix_len]).unwrap_or("");
+                if p == "/disk" {
+                    fallback = Some((e.fs, "/disk"));
+                    break;
+                } else if p == "/" {
+                    fallback = Some((e.fs, "/"));
+                }
+            }
+            fallback.map(|(fs, pfx)| {
+                (fs, path, pfx)
+            })
+        }
     }
 }
 
@@ -417,14 +441,21 @@ pub fn read_file(path: &str, buf: &mut [u8]) -> VfsResult<usize> {
     Ok(total)
 }
 
-/// Escreve dados em um arquivo existente no VFS a partir do offset 0.
+/// Escreve dados em um arquivo existente ou recém-criado no VFS a partir do offset 0.
 /// Retorna o número total de bytes gravados no filesystem.
 pub fn write_file(path: &str, buf: &[u8]) -> VfsResult<usize> {
-    let stat = stat(path)?;
-    if stat.node_type != NodeType::File {
-        return Err(VfsError::IsADirectory);
+    match stat(path) {
+        Ok(s) => {
+            if s.node_type == NodeType::Directory {
+                return Err(VfsError::IsADirectory);
+            }
+        }
+        Err(VfsError::NotFound) => {
+            create(path)?;
+        }
+        Err(e) => return Err(e),
     }
-    let handle = open(path, O_WRONLY)?;
+    let handle = open(path, O_WRONLY | O_TRUNC)?;
     let mut total = 0;
     while total < buf.len() {
         let n = write(path, handle, total as u64, &buf[total..])?;

@@ -145,8 +145,19 @@ impl Fat32Fs {
         let fat_start = partition_lba + reserved_sectors as u32;
         let data_start = fat_start + (num_fats as u32 * sectors_per_fat32);
 
+        let total_sectors_32 = (bpb[32] as u32)
+            | ((bpb[33] as u32) << 8)
+            | ((bpb[34] as u32) << 16)
+            | ((bpb[35] as u32) << 24);
+        let effective_sectors = if partition_sectors == 0 && total_sectors_32 > 0 {
+            total_sectors_32 as u64
+        } else {
+            partition_sectors
+        };
+
         self.drive = drive;
         self.partition_lba = partition_lba;
+        self.partition_sectors = effective_sectors;
         self.bytes_per_sector = bytes_per_sector;
         self.sectors_per_cluster = sectors_per_cluster;
         self.fat_start_lba = fat_start;
@@ -355,11 +366,30 @@ impl Fat32Fs {
     /// Clampa nomes de base longos para até 8 caracteres e extensões para até 3 caracteres de forma resiliente.
     fn encode_83(&self, name_str: &str) -> Result<[u8; 11], VfsError> {
         let mut res = [b' '; 11];
-        let mut parts = name_str.splitn(2, '.');
-        let base = parts.next().unwrap_or("");
-        let ext = parts.next().unwrap_or("");
+        let trimmed = name_str.trim();
+        if trimmed.is_empty() {
+            return Err(VfsError::InvalidPath);
+        }
 
-        if base.is_empty() {
+        if trimmed == "." {
+            res[0] = b'.';
+            return Ok(res);
+        }
+        if trimmed == ".." {
+            res[0] = b'.';
+            res[1] = b'.';
+            return Ok(res);
+        }
+        if trimmed.starts_with('.') {
+            return Err(VfsError::InvalidPath);
+        }
+
+        let (base, ext) = match trimmed.rsplit_once('.') {
+            Some((b, e)) => (b, e),
+            None => (trimmed, ""),
+        };
+
+        if base.is_empty() && ext.is_empty() {
             return Err(VfsError::InvalidPath);
         }
 
@@ -399,6 +429,10 @@ impl Fat32Fs {
         let fat_offset = cluster * 4;
         let fat_sector = fat_offset / 512;
         let entry_offset = (fat_offset % 512) as usize;
+
+        if self.sectors_per_fat > 0 && fat_sector >= self.sectors_per_fat {
+            return Err(VfsError::NoSpace);
+        }
 
         let mut sector_buf = [0u8; 512];
         let lba0 = self.fat_start_lba + fat_sector;
@@ -452,6 +486,11 @@ impl Fat32Fs {
                     return Err(VfsError::NoSpace);
                 }
 
+                let data_lba = self.cluster_to_lba(cluster_num);
+                if self.partition_sectors > 0 && ((data_lba + self.sectors_per_cluster as u32) as u64) > (self.partition_lba as u64 + self.partition_sectors) {
+                    return Err(VfsError::NoSpace);
+                }
+
                 let offset = idx * 4;
                 let val = (fat_sector_buf[offset] as u32)
                     | ((fat_sector_buf[offset + 1] as u32) << 8)
@@ -475,7 +514,6 @@ impl Fat32Fs {
                     }
 
                     // Zera os setores de dados do cluster alocado
-                    let data_lba = self.cluster_to_lba(cluster_num);
                     let zero_buf = [0u8; 512];
                     for s in 0..self.sectors_per_cluster {
                         let _ = self.write_sec(data_lba + s as u32, &zero_buf);
@@ -493,8 +531,15 @@ impl Fat32Fs {
     fn free_cluster_chain(&self, start_cluster: u32) -> Result<(), VfsError> {
         let mut cur = start_cluster;
         let mut sector_buf = [0u8; 512];
+        let mut steps = 0usize;
+        let max_steps = if self.sectors_per_fat > 0 { self.sectors_per_fat as usize * 128 } else { 65536 };
 
         while cur >= 2 && cur < FAT32_EOF {
+            steps += 1;
+            if steps > max_steps {
+                break;
+            }
+
             let fat_offset = cur * 4;
             let fat_sector = fat_offset / 512;
             let entry_offset = (fat_offset % 512) as usize;

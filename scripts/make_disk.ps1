@@ -1,4 +1,4 @@
-# scripts/make_disk.ps1 - Gera um disco virtual RAW (disk.img) de 64 MiB formatado com MBR Dual-Partition (FAT32 + Ext2)
+﻿# scripts/make_disk.ps1 - Gera um disco virtual RAW (disk.img) de 64 MiB formatado com MBR Dual-Partition (FAT32 + Ext2)
 param(
     [string]$DiskPath = "disk.img",
     [string]$AppElfPath = "iso_root\apps\ola-mundo.elf",
@@ -574,6 +574,21 @@ $gd = [byte[]]::new(32)
 [System.BitConverter]::GetBytes([uint16]500).CopyTo($gd, 14)                  # bg_free_inodes_count
 [System.BitConverter]::GetBytes([uint16]1).CopyTo($gd, 16)                    # bg_used_dirs_count = 1
 Write-BytesAt ($part2ByteOffset + 2048) $gd
+
+# 3.2.1. Block Bitmap (Bloco 3 -> Offset 3 * 1024 = 3072 da partição)
+# Marca blocos 0..71 como ocupados (9 bytes com 0xFF)
+$blockBitmap = [byte[]]::new($ext2BlockSize)
+for ($b = 0; $b -lt 9; $b++) {
+    $blockBitmap[$b] = 0xFF
+}
+Write-BytesAt ($part2ByteOffset + 3 * $ext2BlockSize) $blockBitmap
+
+# 3.2.2. Inode Bitmap (Bloco 4 -> Offset 4 * 1024 = 4096 da partição)
+# Marca Inodes 1..11 como ocupados (byte 0 = 0xFF para inodes 1..8, byte 1 = 0x07 para inodes 9..11)
+$inodeBitmap = [byte[]]::new($ext2BlockSize)
+$inodeBitmap[0] = 0xFF
+$inodeBitmap[1] = 0x07
+Write-BytesAt ($part2ByteOffset + 4 * $ext2BlockSize) $inodeBitmap
 
 # 3.3. Inode Table (Bloco 5 -> Offset 5 * 1024 = 5120 da partição)
 $inodeTableOffset = $part2ByteOffset + 5120

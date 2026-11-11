@@ -70,11 +70,30 @@ pub fn vfs_error_to_errno(err: VfsError) -> i64 {
 
 fn encode_83(name_str: &str) -> Result<[u8; 11], VfsError> {
     let mut res = [b' '; 11];
-    let mut parts = name_str.splitn(2, '.');
-    let base = parts.next().unwrap_or("");
-    let ext = parts.next().unwrap_or("");
+    let trimmed = name_str.trim();
+    if trimmed.is_empty() {
+        return Err(VfsError::InvalidPath);
+    }
 
-    if base.is_empty() {
+    if trimmed == "." {
+        res[0] = b'.';
+        return Ok(res);
+    }
+    if trimmed == ".." {
+        res[0] = b'.';
+        res[1] = b'.';
+        return Ok(res);
+    }
+    if trimmed.starts_with('.') {
+        return Err(VfsError::InvalidPath);
+    }
+
+    let (base, ext) = match trimmed.rsplit_once('.') {
+        Some((b, e)) => (b, e),
+        None => (trimmed, ""),
+    };
+
+    if base.is_empty() && ext.is_empty() {
         return Err(VfsError::InvalidPath);
     }
 
@@ -1720,5 +1739,181 @@ mod tests {
         assert_eq!(vfs_error_to_errno(VfsError::NoSpace), ENOSPC);
         assert_eq!(vfs_error_to_errno(VfsError::Busy), EBUSY);
         assert_eq!(vfs_error_to_errno(VfsError::InvalidPath), EINVAL);
+    }
+
+    #[test]
+    fn test_13_fat32_deeply_nested_directories_and_file_crud() {
+        let mut fs = SimulatedFat32::new(1024);
+
+        // Cria hierarquia profunda de subdiretórios
+        fs.mkdir("/var").expect("mkdir /var");
+        fs.mkdir("/var/log").expect("mkdir /var/log");
+        fs.mkdir("/var/log/audit").expect("mkdir /var/log/audit");
+        fs.mkdir("/var/log/audit/daily").expect("mkdir /var/log/audit/daily");
+
+        // Cria arquivo na profundidade máxima
+        let path = "/var/log/audit/daily/report.txt";
+        fs.create(path).expect("create deeply nested file");
+
+        let fd = fs.open(path, O_WRONLY).expect("open for write");
+        let sample_data = b"JINN_AUDIT_2026_TEST_LOG_ENTRY_OK";
+        fs.write(fd, 0, sample_data).expect("write data");
+        fs.close(fd).expect("close");
+
+        // Reabre para leitura e valida integridade
+        let rfd = fs.open(path, O_RDONLY).expect("open for read");
+        let mut buf = vec![0u8; sample_data.len()];
+        let n = fs.read(rfd, 0, &mut buf).expect("read");
+        assert_eq!(n, sample_data.len());
+        assert_eq!(&buf, sample_data);
+        fs.close(rfd).expect("close");
+
+        // Remover pasta com conteúdo deve retornar EBUSY
+        let busy_err = fs.remove("/var/log/audit").unwrap_err();
+        assert_eq!(busy_err, VfsError::Busy);
+        assert_eq!(vfs_error_to_errno(busy_err), EBUSY);
+
+        // Remove o arquivo e valida remoção
+        fs.remove(path).expect("remove report.txt");
+        assert_eq!(fs.find_file(path).unwrap_err(), VfsError::NotFound);
+
+        // Agora a pasta pode ser removida
+        fs.remove("/var/log/audit/daily").expect("remove daily");
+    }
+
+    #[test]
+    fn test_14_fat32_directory_cluster_chain_expansion() {
+        // Disco com 2048 setores para acomodar crescimento dinâmico de diretórios
+        let mut fs = SimulatedFat32::new(2048);
+
+        fs.mkdir("/stress").expect("mkdir /stress");
+
+        // 1 cluster FAT32 = 1 setor = 512 bytes = 16 entradas de 32 bytes
+        // Entradas '.' e '..' consomem 2 slots.
+        // Criar 30 arquivos força a alocação de pelo menos 2 clusters adicionais para o diretório!
+        for i in 0..30 {
+            let file_path = format!("/stress/f{:02}.dat", i);
+            fs.create(&file_path).expect("create file in stress dir");
+
+            let fd = fs.open(&file_path, O_WRONLY).expect("open file");
+            let data = format!("CONTENT_{:04}", i);
+            fs.write(fd, 0, data.as_bytes()).expect("write content");
+            fs.close(fd).expect("close file");
+        }
+
+        // Valida que TODOS os 30 arquivos são encontrados e seus conteúdos estão corretos
+        for i in 0..30 {
+            let file_path = format!("/stress/f{:02}.dat", i);
+            let entry = fs.find_file(&file_path).expect("find file in expanded dir");
+            assert!(!entry.is_dir);
+
+            let rfd = fs.open(&file_path, O_RDONLY).expect("open read");
+            let mut read_buf = [0u8; 12];
+            let n = fs.read(rfd, 0, &mut read_buf).expect("read");
+            assert_eq!(n, 12);
+            let expected = format!("CONTENT_{:04}", i);
+            assert_eq!(&read_buf[..n], expected.as_bytes());
+            fs.close(rfd).expect("close read");
+        }
+    }
+
+    #[test]
+    fn test_15_ext2_multi_block_directory_expansion_and_stress() {
+        let mut ext2 = SimulatedExt2::new(512);
+
+        ext2.mkdir("/database").expect("mkdir /database");
+
+        // Em Ext2 (bloco 1024 bytes), entradas de diretório ocupam ~16-24 bytes cada.
+        // Criar 30 arquivos testa a expansão de slots de diretório com split de rec_len
+        for i in 0..30 {
+            let path = format!("/database/rec_{:02}.db", i);
+            ext2.create(&path).expect("ext2 create in dir");
+
+            let fd = ext2.open(&path, O_WRONLY).expect("ext2 open write");
+            let payload = format!("DB_RECORD_INDEX_{:03}", i);
+            ext2.write(fd, 0, payload.as_bytes()).expect("write payload");
+            ext2.close(fd).expect("close fd");
+        }
+
+        // Valida leitura de todos os 30 arquivos
+        for i in 0..30 {
+            let path = format!("/database/rec_{:02}.db", i);
+            let (ino, inode) = ext2.resolve_path(&path).expect("resolve in ext2");
+            assert!(ino >= 11, "Inodes normais devem ser >= 11");
+            assert_eq!(inode.size, 19);
+
+            let rfd = ext2.open(&path, O_RDONLY).expect("open read");
+            let mut buf = [0u8; 19];
+            let n = ext2.read(rfd, 0, &mut buf).expect("read db");
+            assert_eq!(n, 19);
+            let expected = format!("DB_RECORD_INDEX_{:03}", i);
+            assert_eq!(&buf, expected.as_bytes());
+            ext2.close(rfd).expect("close read");
+        }
+    }
+
+    #[test]
+    fn test_16_read_modify_write_unaligned_offsets_and_cluster_spans() {
+        let mut fs = SimulatedFat32::new(1024);
+
+        let path = "/unaligned.bin";
+        fs.create(path).expect("create");
+
+        let fd = fs.open(path, O_WRONLY).expect("open");
+
+        // 1. Escrita inicial de 1000 bytes (abrange cluster 0 e parte de cluster 1)
+        let initial_payload = vec![0xAAu8; 1000];
+        fs.write(fd, 0, &initial_payload).expect("write initial");
+
+        // 2. Escrita em offset desalinhado (offset 300, 200 bytes com 0xBB)
+        let patch = vec![0xBBu8; 200];
+        fs.write(fd, 300, &patch).expect("write patch");
+        fs.close(fd).expect("close");
+
+        // 3. Lê de volta e confere se a região anterior e posterior ao patch permaneceu intocada
+        let rfd = fs.open(path, O_RDONLY).expect("open read");
+        let mut final_buf = vec![0u8; 1000];
+        let n = fs.read(rfd, 0, &mut final_buf).expect("read all");
+        assert_eq!(n, 1000);
+
+        // 0..300 deve ser 0xAA
+        assert_eq!(&final_buf[0..300], &vec![0xAAu8; 300][..]);
+        // 300..500 deve ser 0xBB
+        assert_eq!(&final_buf[300..500], &vec![0xBBu8; 200][..]);
+        // 500..1000 deve ser 0xAA
+        assert_eq!(&final_buf[500..1000], &vec![0xAAu8; 500][..]);
+        fs.close(rfd).expect("close read");
+    }
+
+    #[test]
+    fn test_17_posix_negative_error_codes_stress() {
+        let mut fs = SimulatedFat32::new(512);
+
+        // ENOTDIR: tentar criar pasta abaixo de um arquivo comum
+        fs.create("/file.txt").expect("create file");
+        let notdir_err = fs.mkdir("/file.txt/sub").unwrap_err();
+        assert_eq!(notdir_err, VfsError::NotADirectory);
+        assert_eq!(vfs_error_to_errno(notdir_err), ENOTDIR);
+
+        // EISDIR: tentar abrir diretório para escrita
+        fs.mkdir("/docs").expect("mkdir docs");
+        let isdir_err = fs.open("/docs", O_WRONLY).unwrap_err();
+        assert_eq!(isdir_err, VfsError::IsADirectory);
+        assert_eq!(vfs_error_to_errno(isdir_err), EISDIR);
+
+        // EEXIST: tentar recriar diretório já existente
+        let exist_err = fs.mkdir("/docs").unwrap_err();
+        assert_eq!(exist_err, VfsError::AlreadyExists);
+        assert_eq!(vfs_error_to_errno(exist_err), EEXIST);
+
+        // ENOENT: caminho inexistente
+        let noent_err = fs.open("/missing_folder/file.bin", O_RDONLY).unwrap_err();
+        assert_eq!(noent_err, VfsError::NotFound);
+        assert_eq!(vfs_error_to_errno(noent_err), ENOENT);
+
+        // EINVAL: caminho vazio ou inválido
+        let inval_err = fs.create("").unwrap_err();
+        assert_eq!(inval_err, VfsError::InvalidPath);
+        assert_eq!(vfs_error_to_errno(inval_err), EINVAL);
     }
 }

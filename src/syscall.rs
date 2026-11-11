@@ -346,6 +346,48 @@ pub fn copy_to_user(dst: *mut u8, src: &[u8], len: usize) -> Result<(), isize> {
     Ok(())
 }
 
+/// Obtém com segurança uma string de caminho a partir do espaço de usuário, suportando:
+/// 1. Chamadas no padrão Jinn com fat pointer / slice `(path_ptr, path_len)`
+/// 2. Chamadas no padrão POSIX com string C null-terminated `(path_ptr, mode/flags)`
+pub fn get_user_path<'a>(
+    path_ptr: *const u8,
+    path_len: usize,
+    buf: &'a mut [u8; crate::vfs::MAX_PATH_LEN],
+) -> Result<&'a str, isize> {
+    if path_ptr.is_null() {
+        return Err(EINVAL);
+    }
+    let effective_len = if path_len > 0 && path_len <= crate::vfs::MAX_PATH_LEN {
+        path_len
+    } else {
+        // Se path_len for 0 ou maior que MAX_PATH_LEN (ex: quando arg1 é mode em sys_mkdir/sys_creat POSIX),
+        // calcula o comprimento buscando o terminador nulo '\0' até MAX_PATH_LEN
+        let mut len = 0usize;
+        while len < crate::vfs::MAX_PATH_LEN {
+            let mut byte = 0u8;
+            copy_from_user(core::slice::from_mut(&mut byte), unsafe { path_ptr.add(len) }, 1)?;
+            if byte == 0 {
+                break;
+            }
+            len += 1;
+        }
+        if len == 0 || len >= crate::vfs::MAX_PATH_LEN {
+            return Err(EINVAL);
+        }
+        len
+    };
+
+    copy_from_user(&mut buf[..effective_len], path_ptr, effective_len)?;
+    let slice = match buf[..effective_len].iter().position(|&b| b == 0) {
+        Some(pos) => &buf[..pos],
+        None => &buf[..effective_len],
+    };
+    if slice.is_empty() {
+        return Err(EINVAL);
+    }
+    core::str::from_utf8(slice).map_err(|_| EINVAL)
+}
+
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 
 /// Chamado diretamente por `isr128_stub` com o ponteiro do frame completo de registradores.
@@ -560,13 +602,7 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
                                         fd_entry.offset += n as u64;
                                         n as isize
                                     }
-                                    Err(e) => match e {
-                                        crate::vfs::VfsError::NoSpace => ENOSPC,
-                                        crate::vfs::VfsError::PermissionDenied => EPERM,
-                                        crate::vfs::VfsError::InvalidPath => EINVAL,
-                                        crate::vfs::VfsError::IoError => EIO,
-                                        _ => EIO,
-                                    },
+                                    Err(e) => vfs_error_to_errno(e),
                                 }
                             } else {
                                 EBADF
@@ -629,7 +665,7 @@ fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
                                         fd_entry.offset += n as u64;
                                         n as isize
                                     }
-                                    Err(_) => EBADF,
+                                    Err(e) => vfs_error_to_errno(e),
                                 }
                             } else {
                                 EBADF
@@ -657,17 +693,12 @@ fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
 
 /// `open(path_ptr, path_len, flags)` — Open a file from VFS and assign a task FD.
 fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> isize {
-    if path_ptr.is_null() || path_len == 0 || path_len > crate::vfs::MAX_PATH_LEN {
-        return EINVAL;
-    }
     let mut path_buf = [0u8; crate::vfs::MAX_PATH_LEN];
-    if let Err(e) = copy_from_user(&mut path_buf[..path_len], path_ptr, path_len) {
-        return e;
-    }
-    let path_str = match core::str::from_utf8(&path_buf[..path_len]) {
-        Ok(s) => s.trim_end_matches('\0'),
-        Err(_) => return EINVAL,
+    let path_str = match get_user_path(path_ptr, path_len, &mut path_buf) {
+        Ok(s) => s,
+        Err(e) => return e,
     };
+    let stored_len = path_str.len();
 
     let vfs_handle = match crate::vfs::open(path_str, flags) {
         Ok(h) => h,
@@ -688,7 +719,7 @@ fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> isize {
                 task.fds[fd] = Some(scheduler::TaskDescriptor::File(scheduler::TaskFileDescriptor {
                     vfs_handle,
                     path: path_buf,
-                    path_len,
+                    path_len: stored_len,
                     offset: 0,
                     flags,
                 }));
@@ -783,21 +814,14 @@ fn map_vfs_stat_to_filestat(stat: &crate::vfs::Stat) -> FileStat {
 
 /// `stat(path_ptr, path_len, stat_ptr)` — Consulta metadados de arquivo ou diretório pelo caminho.
 fn sys_stat(path_ptr: *const u8, path_len: usize, stat_ptr: *mut FileStat) -> isize {
-    if path_ptr.is_null() || stat_ptr.is_null() || path_len == 0 || path_len > crate::vfs::MAX_PATH_LEN {
+    if stat_ptr.is_null() {
         return EINVAL;
     }
     let mut path_buf = [0u8; crate::vfs::MAX_PATH_LEN];
-    if let Err(e) = copy_from_user(&mut path_buf[..path_len], path_ptr, path_len) {
-        return e;
-    }
-    let raw_str = match core::str::from_utf8(&path_buf[..path_len]) {
+    let path_str = match get_user_path(path_ptr, path_len, &mut path_buf) {
         Ok(s) => s,
-        Err(_) => return EINVAL,
+        Err(e) => return e,
     };
-    let path_str = raw_str.trim_end_matches('\0');
-    if path_str.is_empty() || !path_str.starts_with('/') {
-        return ENOENT;
-    }
 
     match crate::vfs::stat(path_str) {
         Ok(vfs_stat) => {
@@ -810,13 +834,7 @@ fn sys_stat(path_ptr: *const u8, path_len: usize, stat_ptr: *mut FileStat) -> is
             }
             0
         }
-        Err(e) => match e {
-            crate::vfs::VfsError::NotFound => ENOENT,
-            crate::vfs::VfsError::PermissionDenied => EPERM,
-            crate::vfs::VfsError::InvalidPath => EINVAL,
-            crate::vfs::VfsError::NotADirectory => ENOENT,
-            _ => ENOENT,
-        },
+        Err(e) => vfs_error_to_errno(e),
     }
 }
 
@@ -3104,16 +3122,10 @@ fn sys_volume_count() -> isize {
 
 /// `sys_unlink` — Remove um arquivo ou link do VFS (Syscall 50).
 fn sys_unlink(path_ptr: *const u8, path_len: usize) -> isize {
-    if path_ptr.is_null() || path_len == 0 || path_len > 128 {
-        return EINVAL;
-    }
-    let mut path_buf = [0u8; 128];
-    if let Err(e) = copy_from_user(&mut path_buf[..path_len], path_ptr, path_len) {
-        return e;
-    }
-    let path = match core::str::from_utf8(&path_buf[..path_len]) {
-        Ok(s) => s.trim_end_matches('\0'),
-        Err(_) => return EINVAL,
+    let mut path_buf = [0u8; crate::vfs::MAX_PATH_LEN];
+    let path = match get_user_path(path_ptr, path_len, &mut path_buf) {
+        Ok(s) => s,
+        Err(e) => return e,
     };
     if path == "/" || path == "/disk" || path == "/ext2" || path == "/dev" {
         return EPERM;
@@ -3126,16 +3138,10 @@ fn sys_unlink(path_ptr: *const u8, path_len: usize) -> isize {
 
 /// `sys_mkdir` — Cria um novo diretório no VFS (Syscall 51 e alias POSIX 83).
 fn sys_mkdir(path_ptr: *const u8, path_len: usize) -> isize {
-    if path_ptr.is_null() || path_len == 0 || path_len > crate::vfs::MAX_PATH_LEN {
-        return EINVAL;
-    }
     let mut path_buf = [0u8; crate::vfs::MAX_PATH_LEN];
-    if let Err(e) = copy_from_user(&mut path_buf[..path_len], path_ptr, path_len) {
-        return e;
-    }
-    let path = match core::str::from_utf8(&path_buf[..path_len]) {
-        Ok(s) => s.trim_end_matches('\0'),
-        Err(_) => return EINVAL,
+    let path = match get_user_path(path_ptr, path_len, &mut path_buf) {
+        Ok(s) => s,
+        Err(e) => return e,
     };
     match crate::vfs::mkdir(path) {
         Ok(()) => 0,

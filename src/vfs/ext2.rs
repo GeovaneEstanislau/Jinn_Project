@@ -276,7 +276,10 @@ impl Ext2Fs {
             }
 
             let inodes_in_this_group = self.inodes_per_group.min(self.inodes_count.saturating_sub(group * self.inodes_per_group));
-            for i in 0..inodes_in_this_group as usize {
+            // No Grupo 0, Inodes 1..10 são estritamente reservados pelo padrão Ext2
+            // (1: bad blocks, 2: root, 3: ACL idx, 4: ACL data, 5: bootloader, 6: undel dir, 7..10: res)
+            let start_i = if group == 0 { 10 } else { 0 };
+            for i in start_i..inodes_in_this_group as usize {
                 let byte_idx = i / 8;
                 let bit_idx = i % 8;
                 if (bitmap_buf[byte_idx] & (1 << bit_idx)) == 0 {
@@ -350,6 +353,21 @@ impl Ext2Fs {
 
             let blocks_in_group = self.blocks_per_group.min(self.blocks_count.saturating_sub(group * self.blocks_per_group));
             for i in 0..blocks_in_group as usize {
+                let block_num = self.first_data_block + group * self.blocks_per_group + (i as u32);
+                if block_num >= self.blocks_count {
+                    return Err(VfsError::NoSpace);
+                }
+
+                // Protege blocos de metadados no Grupo 0 contra sobrescrita acidental
+                // (Blocos de boot, superblock, descritores, bitmaps e tabela de inodes)
+                if group == 0 {
+                    let itable_blocks = ((self.inodes_per_group as usize * self.inode_size as usize) + self.block_size - 1) / self.block_size;
+                    let first_safe_data_block = 5 + itable_blocks as u32;
+                    if block_num < first_safe_data_block {
+                        continue;
+                    }
+                }
+
                 let byte_idx = i / 8;
                 let bit_idx = i % 8;
                 if (bitmap_buf[byte_idx] & (1 << bit_idx)) == 0 {
