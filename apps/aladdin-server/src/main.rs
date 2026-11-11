@@ -19,8 +19,8 @@ use aladdin::contracts::input::ClientWindowEvent;
 use aladdin::desktop::session::AladdinSession;
 
 // ── Allocator de Heap em Espaço de Usuário (.bss) ─────────────────────────────
-// 12 MiB de memória em .bss (0 bytes no arquivo ELF do disco).
-const HEAP_SIZE: usize = 12 * 1024 * 1024;
+// 7 MiB de memória em .bss (0 bytes no arquivo ELF do disco).
+const HEAP_SIZE: usize = 7 * 1024 * 1024;
 static mut HEAP_MEMORY: [u8; HEAP_SIZE] = [0u8; HEAP_SIZE];
 
 struct SimpleHeapAllocator {
@@ -146,6 +146,7 @@ pub struct UserFramebuffer {
     pub width: usize,
     pub height: usize,
     pub pitch: usize,
+    pub sub_buf: alloc::vec::Vec<u32>,
 }
 
 impl FramebufferDevice for UserFramebuffer {
@@ -165,17 +166,22 @@ impl FramebufferDevice for UserFramebuffer {
             height: rh as u32,
         };
 
-        let mut sub_buf = alloc::vec::Vec::new();
-        if sub_buf.try_reserve_exact(rw * rh).is_ok() {
-            sub_buf.resize(rw * rh, 0u32);
-            for row in 0..rh {
-                let src_idx = (rect.y + row) * self.width + rect.x;
-                let dst_idx = row * rw;
-                sub_buf[dst_idx..dst_idx + rw].copy_from_slice(&buffer[src_idx..src_idx + rw]);
+        let req_len = rw * rh;
+        if self.sub_buf.len() < req_len {
+            if self.sub_buf.try_reserve(req_len - self.sub_buf.len()).is_ok() {
+                self.sub_buf.resize(req_len, 0u32);
+            } else {
+                return;
             }
-            unsafe {
-                sys_present(&present_rect, sub_buf.as_ptr(), sub_buf.len() * 4);
-            }
+        }
+
+        for row in 0..rh {
+            let src_idx = (rect.y + row) * self.width + rect.x;
+            let dst_idx = row * rw;
+            self.sub_buf[dst_idx..dst_idx + rw].copy_from_slice(&buffer[src_idx..src_idx + rw]);
+        }
+        unsafe {
+            sys_present(&present_rect, self.sub_buf.as_ptr(), req_len * 4);
         }
     }
 
@@ -447,6 +453,7 @@ pub extern "C" fn _start() -> ! {
         width: fb_info.width as usize,
         height: fb_info.height as usize,
         pitch: fb_info.pitch as usize,
+        sub_buf: alloc::vec::Vec::new(),
     };
     let user_sys = UserSystem { start_tick: 100 };
     let user_vfs = UserVfs;

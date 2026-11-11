@@ -9,6 +9,11 @@ description = "Minimalist and preemptive x86_64 microkernel in Rust"
 name = "jinn"
 path = "src/main.rs"
 test = false
+required-features = ["kernel_bin"]
+
+[features]
+default = ["kernel_bin"]
+kernel_bin = []
 
 [dependencies]
 aladdin = { path = "../Aladdin", default-features = false }

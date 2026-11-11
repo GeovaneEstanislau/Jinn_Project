@@ -196,7 +196,7 @@ pub extern "C" fn _start() -> ! {
     w.write_memory_size(memory::total_bytes() as u64);
     w.write_line("");
 
-    w.write_string("[+] Kernel Heap (16 MiB)...");
+    w.write_string("[+] Kernel Heap (4 MiB inicial / 128 MiB dinamico)...");
     memory::heap::init();
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
@@ -568,7 +568,8 @@ pub extern "C" fn _start() -> ! {
     w.write_decimal(mod_count);
     w.write_line("");
 
-    if mod_count > 0 {
+    let prof = profile::get_system_profile();
+    if prof.is_headless() && mod_count > 0 {
         if let Some(elf_data) = limine::get_module(0) {
             w.write_string("    ELF modulo[0]: ");
             w.write_decimal(elf_data.len());
@@ -605,6 +606,10 @@ pub extern "C" fn _start() -> ! {
                 w.write_line(" (Tarefa Periodica)");
             }
         }
+    } else if !prof.is_headless() {
+        w.set_color(Color::LightCyan, Color::Black);
+        w.write_line("    Modo Desktop Aladdin: Inicializacao automatica do compositor Ring 3.");
+        w.set_color(Color::LightGray, Color::Black);
     } else {
         w.write_line("    (Nenhum modulo ELF carregado pelo bootloader)");
     }

@@ -266,6 +266,7 @@ impl MockWindowBroker {
 
 // ── Testes Unitários e de Estresse ────────────────────────────────────────────
 
+#[test]
 fn test_abi_constants_and_layout() {
     print!("Teste 1: Verificação da ABI, constantes e alinhamento #[repr(C)]... ");
     assert_eq!(core::mem::size_of::<ClientWindowEvent>(), 32);
@@ -298,6 +299,7 @@ fn test_abi_constants_and_layout() {
     println!("PASSOU!");
 }
 
+#[test]
 fn test_pointer_bounds_and_canonical_safety() {
     print!("Teste 2: Validação de ponteiros canônicos e limites de memória de usuário... ");
     let check_buf = |ptr: *const u8, len: usize| -> Result<(), isize> {
@@ -329,6 +331,7 @@ fn test_pointer_bounds_and_canonical_safety() {
     println!("PASSOU!");
 }
 
+#[test]
 fn test_window_creation_validation_and_quotas() {
     print!("Teste 3: Criação de janelas, validação de dimensões e cotas por processo... ");
     let mut broker = MockWindowBroker::new(4); // max 4 janelas por tarefa
@@ -375,6 +378,7 @@ fn test_window_creation_validation_and_quotas() {
     println!("PASSOU!");
 }
 
+#[test]
 fn test_window_isolation_and_permissions() {
     print!("Teste 4: Isolamento rigoroso entre processos (Anti-Interference e EPERM)... ");
     let mut broker = MockWindowBroker::new(4);
@@ -410,6 +414,7 @@ fn test_window_isolation_and_permissions() {
     println!("PASSOU!");
 }
 
+#[test]
 fn test_event_queue_isolation_and_fifo() {
     print!("Teste 5: Fila de eventos, isolamento entre janelas e semântica FIFO... ");
     let mut broker = MockWindowBroker::new(4);
@@ -481,6 +486,7 @@ fn test_event_queue_isolation_and_fifo() {
     println!("PASSOU!");
 }
 
+#[test]
 fn test_abnormal_termination_zero_leak_cleanup() {
     print!("Teste 6: Encerramento anormal (crash/segfault) e liberação total de recursos... ");
     let mut broker = MockWindowBroker::new(10);
@@ -518,6 +524,7 @@ fn test_abnormal_termination_zero_leak_cleanup() {
     println!("PASSOU!");
 }
 
+#[test]
 fn test_elf64_wx_security_policy() {
     print!("Teste 7: Parser ELF64 e imposição da política de segurança W^X... ");
     // Simula validação estrita W^X

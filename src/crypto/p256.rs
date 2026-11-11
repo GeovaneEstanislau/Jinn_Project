@@ -373,3 +373,4 @@ pub fn parse_der_ecdsa_signature(der: &[u8]) -> Result<(Vec<u8>, Vec<u8>), &'sta
 
     Ok((r_bytes.to_vec(), s_bytes.to_vec()))
 }
+

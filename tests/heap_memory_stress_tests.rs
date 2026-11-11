@@ -242,6 +242,7 @@ impl MockUserTask {
     }
 }
 
+#[test]
 fn test_buddy_allocator_coalescence_and_zero_leak() {
     print!("Teste 1: Buddy Allocator — ordens, blocos alinhados e coalescência sem vazamentos... ");
     let mut buddy = MockBuddyAllocator::new(256);
@@ -264,6 +265,7 @@ fn test_buddy_allocator_coalescence_and_zero_leak() {
     println!("PASSOU!");
 }
 
+#[test]
 fn test_dynamic_heap_lifecycle_and_quota_enforcement() {
     print!("Teste 2: Ciclo de vida de heap dinâmico (sys_alloc_page/free_page) e cota EDQUOT... ");
     let mut buddy = MockBuddyAllocator::new(128);
@@ -308,6 +310,7 @@ fn test_dynamic_heap_lifecycle_and_quota_enforcement() {
     println!("PASSOU!");
 }
 
+#[test]
 fn test_rapid_tab_lifecycle_100_cycles_leak_check() {
     print!("Teste 3: Estresse de 100 ciclos de abertura e fechamento de abas sem vazamento... ");
     let mut buddy = MockBuddyAllocator::new(512);
@@ -332,6 +335,7 @@ fn test_rapid_tab_lifecycle_100_cycles_leak_check() {
     println!("PASSOU!");
 }
 
+#[test]
 fn test_bidirectional_free_list_coalescence() {
     print!("Teste 4: Coalescência bidirecional do Kernel Heap (ordem direta e inversa)... ");
     let mut heap = MockKernelHeap::new(1024 * 1024);
@@ -361,6 +365,7 @@ fn test_bidirectional_free_list_coalescence() {
     println!("PASSOU!");
 }
 
+#[test]
 fn test_window_surface_quotas_and_zero_leak() {
     print!("Teste 5: Criação, destruição e cota EDQUOT de janelas do compositor... ");
     const MAX_WINDOWS_PER_PROCESS: usize = 4;
@@ -400,6 +405,7 @@ fn test_window_surface_quotas_and_zero_leak() {
     println!("PASSOU!");
 }
 
+#[test]
 fn test_system_monitor_telemetry_invariants() {
     print!("Teste 6: Invariantes do Monitor de Sistema (memória, frames, VFS e limites)... ");
     let total_ram_mb = 1024usize; // Perfil Standard 1 GB RAM

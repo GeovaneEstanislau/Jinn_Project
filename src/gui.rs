@@ -87,10 +87,12 @@ static LAST_MOUSE_STATE: SpinLock<(usize, usize, u8)> = SpinLock::new((512, 384,
 pub fn register_graphics_server(pid: usize, _flags: u32) -> Result<(), isize> {
     let current = GRAPHICS_SERVER_PID.load(Ordering::SeqCst);
     if current != 0 && current != pid {
+        crate::serial_write(b"[GUI] Falha ao registrar Servidor Grafico: EBUSY (ja ocupado por outro PID)\n");
         return Err(crate::syscall::EBUSY);
     }
     GRAPHICS_SERVER_PID.store(pid, Ordering::SeqCst);
     crate::interrupts::ps2_mouse::init();
+    crate::serial_write(b"[GUI] Servidor Grafico Ring 3 registrado com sucesso! GRAPHICS_SERVER_PID ativo.\n");
     Ok(())
 }
 
@@ -100,6 +102,7 @@ pub fn unregister_graphics_server(pid: usize) -> Result<(), isize> {
         return Err(crate::syscall::EPERM);
     }
     GRAPHICS_SERVER_PID.store(0, Ordering::SeqCst);
+    crate::serial_write(b"[GUI] Servidor Grafico Ring 3 desregistrado. Restaurando console de texto.\n");
     restore_text_console();
     Ok(())
 }
@@ -854,26 +857,13 @@ static mut BACKBUFFER: *mut u32 = core::ptr::null_mut();
 static mut SESSION: Option<AladdinSession> = None;
 
 pub fn init() {
-    unsafe {
-        if let Some(fb) = limine::framebuffer() {
-            let total_bytes = (fb.width * fb.height * 4) as usize;
-            let layout = core::alloc::Layout::from_size_align(total_bytes, 16)
-                .expect("Falha no layout do backbuffer");
-            let buf_ptr = alloc::alloc::alloc_zeroed(layout) as *mut u32;
-            if !buf_ptr.is_null() {
-                *core::ptr::addr_of_mut!(BACKBUFFER) = buf_ptr;
-            }
-            *core::ptr::addr_of_mut!(SESSION) = Some(AladdinSession::new());
-        }
-    }
+    // Inicialização leve do subsistema gráfico: valida presença do framebuffer Limine
+    // e inicializa subsistemas de entrada. Não aloca redundantemente o backbuffer de 3 MiB
+    // no heap do kernel, preservando memória RAM para o compositor independente Ring 3.
 }
 
 pub fn is_available() -> bool {
-    unsafe {
-        let bb_ptr = *core::ptr::addr_of!(BACKBUFFER);
-        let fb = limine::framebuffer();
-        fb.is_some() && !bb_ptr.is_null()
-    }
+    limine::framebuffer().is_some()
 }
 
 /// Cria uma nova janela de cliente para o processo `owner_pid`.
@@ -950,28 +940,43 @@ pub fn open_window(win_id: usize) {
 
 /// Inicia o serviço gráfico do Aladdin Desktop em Ring 3 como processo de usuário independente.
 pub fn launch_ring3_desktop() {
+    crate::serial_write(b"[GUI] launch_ring3_desktop() chamado\n");
     let path = "/disk/aladdin.elf";
     let argv = [path, "server"];
     
     // 1. Tenta carregar do disco FAT32
+    crate::serial_write(b"[GUI] Tentando spawn_user_task_from_vfs(/disk/aladdin.elf)...\n");
     let spawn_res = crate::scheduler::get().spawn_user_task_from_vfs(path, &argv, &[]);
     let pid = match spawn_res {
-        Ok(p) => p,
-        Err(_) => {
+        Ok(p) => {
+            crate::serial_write(b"[GUI] /disk/aladdin.elf carregado com sucesso!\n");
+            p
+        },
+        Err(_e) => {
+            crate::serial_write(b"[GUI] Falha ao carregar /disk/aladdin.elf, tentando /disk/ALADDIN.ELF...\n");
             // Tenta variante de caixa /disk/ALADDIN.ELF
             match crate::scheduler::get().spawn_user_task_from_vfs("/disk/ALADDIN.ELF", &argv, &[]) {
-                Ok(p) => p,
+                Ok(p) => {
+                    crate::serial_write(b"[GUI] /disk/ALADDIN.ELF carregado com sucesso!\n");
+                    p
+                },
                 Err(_) => {
+                    crate::serial_write(b"[GUI] Falha no disco, tentando modulo Limine 'aladdin'...\n");
                     // Fallback para módulos Limine em memória
                     if let Some(elf_bytes) = limine::get_module_by_name("aladdin").or_else(|| limine::get_module_by_name("aladdin-server")) {
                         match crate::scheduler::get().spawn_user_task_from_memory("aladdin[U3]", elf_bytes, &argv, &[]) {
-                            Ok(p) => p,
+                            Ok(p) => {
+                                crate::serial_write(b"[GUI] Modulo Limine aladdin carregado com sucesso!\n");
+                                p
+                            },
                             Err(_) => {
+                                crate::serial_write(b"[GUI] Falha ao spawnar modulo Limine, fallback Ring 0\n");
                                 run_desktop();
                                 return;
                             }
                         }
                     } else {
+                        crate::serial_write(b"[GUI] Modulo Limine nao encontrado, fallback Ring 0\n");
                         run_desktop();
                         return;
                     }
@@ -981,24 +986,42 @@ pub fn launch_ring3_desktop() {
     };
 
     crate::ipc::register(pid);
+    crate::serial_write(b"[GUI] Aguardando execucao do compositor Ring 3...\n");
     loop {
         if crate::scheduler::get().collect_zombie(pid).is_some() {
+            crate::serial_write(b"[GUI] Compositor Ring 3 terminou (zombie coletado)\n");
             break;
         }
         if pid >= crate::scheduler::MAX_TASKS || crate::scheduler::get().tasks[pid].is_none() {
+            crate::serial_write(b"[GUI] Compositor Ring 3 saiu do slot de tarefas\n");
             break;
         }
         crate::scheduler::yield_now();
     }
+    crate::serial_write(b"[GUI] launch_ring3_desktop finalizado, restaurando console de texto\n");
     restore_text_console();
 }
 
 pub fn run_desktop() {
     unsafe {
-        let bb_ptr = *core::ptr::addr_of!(BACKBUFFER);
         let fb_opt = limine::framebuffer();
-        if bb_ptr.is_null() || fb_opt.is_none() { return; }
+        if fb_opt.is_none() { return; }
         let fb = fb_opt.unwrap();
+
+        // Aloca backbuffer de fallback no heap do kernel sob demanda apenas se necessário
+        let mut bb_ptr = *core::ptr::addr_of!(BACKBUFFER);
+        if bb_ptr.is_null() {
+            let total_bytes = (fb.width * fb.height * 4) as usize;
+            if let Ok(layout) = core::alloc::Layout::from_size_align(total_bytes, 16) {
+                bb_ptr = alloc::alloc::alloc_zeroed(layout) as *mut u32;
+                *core::ptr::addr_of_mut!(BACKBUFFER) = bb_ptr;
+            }
+        }
+        if bb_ptr.is_null() { return; }
+
+        if (*core::ptr::addr_of!(SESSION)).is_none() {
+            *core::ptr::addr_of_mut!(SESSION) = Some(AladdinSession::new());
+        }
 
         let mut jinn_fb = JinnFramebuffer {
             address: fb.address,

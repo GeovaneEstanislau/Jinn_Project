@@ -20,7 +20,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 pub const HEAP_START: usize = 0xFFFF_C000_0000_0000;
-pub const HEAP_SIZE:  usize = 16 * 1024 * 1024; // 16 MiB mapeados inicialmente no boot
+pub const HEAP_SIZE:  usize = 4 * 1024 * 1024; // 4 MiB mapeados inicialmente no boot (expansível até 128 MiB)
 pub const MAX_HEAP_SIZE: usize = 128 * 1024 * 1024; // Teto dinâmico de até 128 MiB para buffers gráficos e abas
 const HEAP_END:       usize = HEAP_START + MAX_HEAP_SIZE;
 const MIN_ALIGN:      usize = 16;

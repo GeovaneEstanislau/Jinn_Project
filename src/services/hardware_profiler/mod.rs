@@ -65,7 +65,7 @@ impl HardwareProfile {
     /// Orçamento padrão de frames físicos (4 KiB) por processo de usuário Ring 3
     pub const fn max_user_frames(&self) -> usize {
         match self {
-            Self::Legacy => 1024,      // 4 MiB
+            Self::Legacy => 2048,      // 8 MiB (aloca backbuffer de 3 MiB + pools dinâmicos do compositor sob teto de 64M)
             Self::Compact => 2048,     // 8 MiB
             Self::Standard => 4096,    // 16 MiB
             Self::Performance => 16384,// 64 MiB

@@ -148,6 +148,7 @@ pub fn copy_to_user_mock(
     Ok(())
 }
 
+#[test]
 fn test_user_space_boundary_validation() {
     print!("Teste 1: Validação de limites do espaço de usuário (USER_SPACE_MIN/MAX)... ");
     let mut pt = MockPageTable::new();
@@ -171,6 +172,7 @@ fn test_user_space_boundary_validation() {
     println!("PASSOU!");
 }
 
+#[test]
 fn test_page_table_permissions_user_vs_supervisor() {
     print!("Teste 2: Permissões de tabela de páginas (USER vs SUPERVISOR, RO vs RW)... ");
     let mut pt = MockPageTable::new();
@@ -200,6 +202,7 @@ fn test_page_table_permissions_user_vs_supervisor() {
     println!("PASSOU!");
 }
 
+#[test]
 fn test_copy_from_and_to_user_primitives() {
     print!("Teste 3: Primitivas seguras copy_from_user e copy_to_user... ");
     let mut pt = MockPageTable::new();
@@ -232,6 +235,7 @@ fn test_copy_from_and_to_user_primitives() {
     println!("PASSOU!");
 }
 
+#[test]
 fn test_sys_free_page_ownership_and_bounds() {
     print!("Teste 4: sys_free_page alinhamento, faixa de heap e propriedade... ");
     // Simula a lógica de sys_free_page
@@ -264,6 +268,7 @@ fn test_sys_free_page_ownership_and_bounds() {
     println!("PASSOU!");
 }
 
+#[test]
 fn test_sys_task_set_state_hierarchy_and_security() {
     print!("Teste 5: sys_task_set_state hierarquia, proteção PID 0 e anti-deadlock... ");
     // Simula a lógica de sys_task_set_state
@@ -312,6 +317,7 @@ fn test_sys_task_set_state_hierarchy_and_security() {
     println!("PASSOU!");
 }
 
+#[test]
 fn test_smp_scheduler_concurrency_and_ticks() {
     print!("Teste 6: Escalonador SMP, trava SCHED_LOCK e isolamento PML4... ");
     use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};

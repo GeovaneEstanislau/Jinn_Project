@@ -2031,15 +2031,19 @@ fn cmd_reboot(w: &mut Writer) -> ! {
 
 /// Ponto de entrada do shell como uma task (Ring 0).
 pub fn task_entry() {
+    crate::serial_write(b"[SHELL] task_entry() iniciado\n");
     let mut w = Writer::new();
     w.set_position(21, 0);
     let prof = crate::profile::get_system_profile();
     if !prof.is_headless() && crate::gui::is_available() {
+        crate::serial_write(b"[SHELL] Perfil Desktop e GUI disponivel -> Invocando launch_ring3_desktop()\n");
         crate::gui::launch_ring3_desktop();
     } else {
+        crate::serial_write(b"[SHELL] Modo headless ou sem GUI -> Servicos Simbad\n");
         // Inicializacao dos servicos de infraestrutura do Simbad Server
         crate::supervisor::get_supervisor().start_all_target_server();
     }
+    crate::serial_write(b"[SHELL] launch_ring3_desktop retornou! Executando console VGA (run)...\n");
     run(&mut w);
 }
 

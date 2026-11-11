@@ -342,9 +342,7 @@ impl Writer {
     }
 
     pub fn write_byte(&mut self, byte: u8) {
-        unsafe {
-            core::arch::asm!("out dx, al", in("dx") 0x3f8u16, in("al") byte, options(nomem, nostack, preserves_flags));
-        }
+        crate::serial_write(&[byte]);
         match byte {
             b'\n' => self.new_line(),
             byte => {
