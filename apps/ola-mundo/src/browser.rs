@@ -2625,26 +2625,79 @@ pub fn is_web_domain(s: &[u8]) -> bool {
     false
 }
 
-/// Verifica se o payload contém o terminador de chunked transfer ("0\r\n\r\n" ou "\r\n0\r\n\r\n")
-pub fn has_chunked_terminator(body: &[u8]) -> bool {
-    if body.len() < 5 { return false; }
-    if body.starts_with(b"0\r\n\r\n") || body.ends_with(b"0\r\n\r\n") {
-        return true;
-    }
-    if body.ends_with(b"\r\n0\r\n\r\n") {
-        return true;
-    }
-    for w in body.windows(7) {
-        if w == b"\r\n0\r\n\r\n" {
-            return true;
+/// Verifica de forma determinística e compatível com RFC 7230 / RFC 9112 se o fluxo chunked
+/// foi totalmente recebido, analisando a cadeia de chunks a partir do byte 0 sem falsos positivos.
+pub fn is_chunked_complete(mut raw: &[u8]) -> bool {
+    // Se o slice contiver cabeçalhos HTTP, avança até o início efetivo do corpo chunked
+    if raw.starts_with(b"HTTP/1.") {
+        if let Some(pos) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+            raw = &raw[pos + 4..];
+        } else if let Some(pos) = raw.windows(2).position(|w| w == b"\n\n") {
+            raw = &raw[pos + 2..];
+        } else {
+            return false;
         }
     }
-    for w in body.windows(5) {
-        if w == b"0\r\n\r\n" {
+
+    let mut src_idx = 0usize;
+    while src_idx < raw.len() {
+        let line_end = match raw[src_idx..].iter().position(|&b| b == b'\n') {
+            Some(p) => src_idx + p,
+            None => return false,
+        };
+        let mut hex_slice = &raw[src_idx..line_end];
+        if !hex_slice.is_empty() && hex_slice[hex_slice.len() - 1] == b'\r' {
+            hex_slice = &hex_slice[..hex_slice.len() - 1];
+        }
+        if let Some(semi) = hex_slice.iter().position(|&b| b == b';') {
+            hex_slice = &hex_slice[..semi];
+        }
+        let hex_slice = hex_slice.trim_ascii();
+        if hex_slice.is_empty() {
+            src_idx = line_end + 1;
+            continue;
+        }
+
+        let mut chunk_size: usize = 0;
+        for &b in hex_slice {
+            let val = match b {
+                b'0'..=b'9' => (b - b'0') as usize,
+                b'a'..=b'f' => (b - b'a' + 10) as usize,
+                b'A'..=b'F' => (b - b'A' + 10) as usize,
+                _ => return false,
+            };
+            chunk_size = match chunk_size.checked_mul(16).and_then(|c| c.checked_add(val)) {
+                Some(c) => c,
+                None => return false,
+            };
+        }
+
+        src_idx = line_end + 1;
+        if chunk_size == 0 {
+            // Último chunk encontrado (tamanho 0). O payload está completo.
             return true;
+        }
+
+        // Se o chunk atual ainda não foi inteiramente recebido, o fluxo ainda não está completo
+        if src_idx + chunk_size > raw.len() {
+            return false;
+        }
+        src_idx += chunk_size;
+
+        // Pula o delimitador CRLF após o corpo do chunk
+        if src_idx < raw.len() && raw[src_idx] == b'\r' {
+            src_idx += 1;
+        }
+        if src_idx < raw.len() && raw[src_idx] == b'\n' {
+            src_idx += 1;
         }
     }
     false
+}
+
+/// Verifica se o payload contém o terminador de chunked transfer (RFC 7230)
+pub fn has_chunked_terminator(body: &[u8]) -> bool {
+    is_chunked_complete(body)
 }
 
 /// Resolve URL relativa ou absoluta contra uma URL base existente

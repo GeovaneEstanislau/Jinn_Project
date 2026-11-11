@@ -10,7 +10,7 @@ pub const MAX_SOCKETS: usize = 32;
 pub const MAX_BACKLOG: usize = 8;
 pub const MAX_SYN_BACKLOG: usize = 8;
 pub const SOCK_RX_BUF_SIZE: usize = 1536;
-pub const SOCK_RX_STREAM_SIZE: usize = 32768; // 32 KiB por socket para fluxo continuo HTTP/TCP
+pub const SOCK_RX_STREAM_SIZE: usize = 65536; // 64 KiB por socket para fluxo continuo HTTP/TCP
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -784,11 +784,16 @@ pub fn recv_socket(pid: usize, sockfd: usize, dest: &mut [u8]) -> Result<usize, 
         if sock.owner_pid != pid {
             return Err(EPERM);
         }
+        let prev_win = sock.tcb.local_win;
         match sock.pop_rx(dest) {
             Some(len) => {
                 // Notificação de abertura de janela (Window Update ACK) quando há espaço recuperado
                 if sock.sock_type == SOCK_STREAM && sock.tcb.state == crate::net::tcp::TcpState::Established {
-                    if sock.tcb.local_win >= 2048 {
+                    let win_opened = sock.tcb.local_win.saturating_sub(prev_win);
+                    let should_update = (prev_win < 2048 && sock.tcb.local_win >= 2048)
+                        || (prev_win == 0 && sock.tcb.local_win > 0)
+                        || win_opened >= 4096;
+                    if should_update {
                         crate::net::tcp::send_tcp_packet(
                             sock.local_port,
                             sock.remote_ip,

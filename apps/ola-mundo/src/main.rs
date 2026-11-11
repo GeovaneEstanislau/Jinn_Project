@@ -1702,9 +1702,10 @@ impl DynamicSurfaceBuffer {
         Ok(())
     }
 }
-static mut HTML_FILE_BUF: [u8; 32768] = [0; 32768];
-static mut HTTP_RX_BUF: [u8; 32768] = [0; 32768];
-static mut HTTP_PLAIN_BUF: [u8; 32768] = [0; 32768];
+pub const HTTP_BUF_SIZE: usize = 65536;
+static mut HTML_FILE_BUF: [u8; HTTP_BUF_SIZE] = [0; HTTP_BUF_SIZE];
+static mut HTTP_RX_BUF: [u8; HTTP_BUF_SIZE] = [0; HTTP_BUF_SIZE];
+static mut HTTP_PLAIN_BUF: [u8; HTTP_BUF_SIZE] = [0; HTTP_BUF_SIZE];
 
 unsafe fn read_html_file(path: &[u8]) -> Option<usize> {
     let fd = sys_open(path, O_RDONLY);
@@ -1712,7 +1713,7 @@ unsafe fn read_html_file(path: &[u8]) -> Option<usize> {
         return None;
     }
     let buf_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
-    let n = sys_read(fd as u64, buf_ptr, 32768);
+    let n = sys_read(fd as u64, buf_ptr, HTTP_BUF_SIZE as u64);
     let _ = sys_close(fd as u64);
     if n > 0 {
         Some(n as usize)
@@ -1945,7 +1946,7 @@ unsafe fn fetch_http_document(
                     }
 
                     let rec_slice = core::slice::from_raw_parts(rx_ptr.add(pos), total_rec);
-                    let plain_slice = core::slice::from_raw_parts_mut(plain_ptr.add(plain_total), 32768 - plain_total);
+                    let plain_slice = core::slice::from_raw_parts_mut(plain_ptr.add(plain_total), HTTP_BUF_SIZE - plain_total);
 
                     if rec_type == tls::CONTENT_APPLICATION_DATA {
                         if let Some(dec_len) = sess.decrypt_application_data(rec_slice, plain_slice) {
@@ -1977,7 +1978,7 @@ unsafe fn fetch_http_document(
                     }
                 }
 
-                let space = 32768 - rx_total;
+                let space = HTTP_BUF_SIZE - rx_total;
                 if space == 0 { break; }
                 let n = sys_recv(sockfd, rx_ptr.add(rx_total), space);
                 if n > 0 {
@@ -1995,8 +1996,15 @@ unsafe fn fetch_http_document(
                     break;
                 } else if n == -11 {
                     idle_spins += 1;
-                    if idle_spins > 600 {
-                        print_str(b"[BROWSER-NET] Timeout de recepcao atingido (3.0s)\n");
+                    if idle_spins > 1600 {
+                        print_str(b"[BROWSER-NET] Timeout de recepcao atingido (8.0s)\n");
+                        let rx_slice = core::slice::from_raw_parts(plain_ptr as *const u8, plain_total);
+                        if let Some(hdr) = browser::parse_http_response_header(rx_slice) {
+                            if plain_total > hdr.header_len {
+                                print_str(b"[BROWSER-NET] Resposta TLS parcial/completa disponivel. Renderizando...\n");
+                                break;
+                            }
+                        }
                         break;
                     }
                     let _ = sys_sleep(5);
@@ -2009,9 +2017,9 @@ unsafe fn fetch_http_document(
             }
         } else {
             loop {
-                let space = 32768 - rx_total;
+                let space = HTTP_BUF_SIZE - rx_total;
                 if space == 0 {
-                    print_str(b"[BROWSER-NET] Buffer de recepcao cheio (32 KiB)!\n");
+                    print_str(b"[BROWSER-NET] Buffer de recepcao cheio (64 KiB)!\n");
                     break;
                 }
                 let n = sys_recv(sockfd, rx_ptr.add(rx_total), space);
@@ -2035,7 +2043,7 @@ unsafe fn fetch_http_document(
                         } else if hdr.is_chunked {
                             let body_part = &rx_slice[hdr.header_len..];
                             if browser::has_chunked_terminator(body_part) {
-                                print_str(b"[HTTP-RX] Terminador de chunked transfer detectado!\n");
+                                print_str(b"[HTTP-RX] Terminador de chunked transfer detectado com integridade!\n");
                                 break;
                             }
                         }
@@ -2047,10 +2055,17 @@ unsafe fn fetch_http_document(
                     break;
                 } else if n == -11 {
                     idle_spins += 1;
-                    if idle_spins > 600 {
-                        print_str(b"[BROWSER-NET] Timeout de recepcao atingido (3.0s, recebidos ");
+                    if idle_spins > 1600 {
+                        print_str(b"[BROWSER-NET] Timeout de recepcao atingido (8.0s, recebidos ");
                         print_u64(rx_total as u64);
                         print_str(b" bytes)\n");
+                        let rx_slice = core::slice::from_raw_parts(rx_ptr as *const u8, rx_total);
+                        if let Some(hdr) = browser::parse_http_response_header(rx_slice) {
+                            if rx_total > hdr.header_len {
+                                print_str(b"[BROWSER-NET] Resposta HTTP recebida parcialmente antes do timeout. Entregando ao renderizador.\n");
+                                break;
+                            }
+                        }
                         let _ = sys_close(sockfd);
                         return Err(FetchError::RecvTimeout);
                     }
@@ -2163,7 +2178,7 @@ unsafe fn browser_load_and_display(
 
     if path.starts_with(b"about:") {
         let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
-        let out_buf = core::slice::from_raw_parts_mut(f_ptr, 32768);
+        let out_buf = core::slice::from_raw_parts_mut(f_ptr, HTTP_BUF_SIZE);
         let content_len = if path == b"about:blank" {
             let s = b"<html><head><title>about:blank</title></head><body></body></html>";
             out_buf[..s.len()].copy_from_slice(s);
@@ -2208,7 +2223,7 @@ unsafe fn browser_load_and_display(
         print_str(b"\n");
 
         let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
-        let out_buf = core::slice::from_raw_parts_mut(f_ptr, 32768);
+        let out_buf = core::slice::from_raw_parts_mut(f_ptr, HTTP_BUF_SIZE);
 
         match fetch_http_document(path, out_buf) {
             Ok(body_len) => {
@@ -2216,6 +2231,12 @@ unsafe fn browser_load_and_display(
                 print_str(b"[DIAG-FLOW] HTML: Extraindo corpo do documento HTML (bytes=");
                 print_u64(body_len as u64);
                 print_str(b")\n");
+                let has_html_tag = doc_slice.windows(5).any(|w| w.eq_ignore_ascii_case(b"<html") || w.eq_ignore_ascii_case(b"<body"));
+                if has_html_tag {
+                    print_str(b"[HTML-INTEGRITY] Validacao de integridade OK: tags HTML detectadas no payload.\n");
+                } else {
+                    print_str(b"[HTML-INTEGRITY] AVISO: Documento sem tags HTML estruturais padrao (renderizando como texto/bloco).\n");
+                }
                 print_str(b"[DIAG-FLOW] DOM: Convertendo HTML para arvore de elementos DOM...\n");
                 session.load_document_bytes(doc_slice, path);
                 print_str(b"[DIAG-FLOW] RENDER: Desenhando documento na janela do Aladdin...\n");

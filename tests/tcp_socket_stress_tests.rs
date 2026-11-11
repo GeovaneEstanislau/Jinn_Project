@@ -9,7 +9,7 @@
 //! 6. Enquadramento e decodificação HTTP/1.1 (Content-Length e Chunked Transfer)
 //! 7. Simulação de barramento loopback com handshake de 3 vias e transferência de 16 KiB
 
-const SOCK_RX_STREAM_SIZE: usize = 32768;
+const SOCK_RX_STREAM_SIZE: usize = 65536;
 
 struct TestSocketStream {
     buf: [u8; SOCK_RX_STREAM_SIZE],
@@ -18,7 +18,7 @@ struct TestSocketStream {
     len: usize,
     remote_seq: u32,
     local_win: u16,
-    ooo_buf: [u8; 1536],
+    ooo_buf: [u8; 4096],
     ooo_seq: u32,
     ooo_len: usize,
 }
@@ -31,8 +31,8 @@ impl TestSocketStream {
             tail: 0,
             len: 0,
             remote_seq: initial_seq,
-            local_win: SOCK_RX_STREAM_SIZE as u16,
-            ooo_buf: [0u8; 1536],
+            local_win: SOCK_RX_STREAM_SIZE.min(65535) as u16,
+            ooo_buf: [0u8; 4096],
             ooo_seq: 0,
             ooo_len: 0,
         }
@@ -84,6 +84,47 @@ impl TestSocketStream {
         Some(to_read)
     }
 
+    fn drain_and_realign_ooo(&mut self) {
+        if self.ooo_len == 0 {
+            return;
+        }
+
+        // Caso 1: OOO totalmente eclipsado
+        if (self.remote_seq.wrapping_sub(self.ooo_seq) as i32) >= (self.ooo_len as i32) {
+            self.ooo_len = 0;
+            return;
+        }
+
+        // Caso 2: OOO parcialmente eclipsado
+        if (self.remote_seq.wrapping_sub(self.ooo_seq) as i32) > 0 {
+            let overlap = self.remote_seq.wrapping_sub(self.ooo_seq) as usize;
+            if overlap < self.ooo_len {
+                self.ooo_buf.copy_within(overlap..self.ooo_len, 0);
+                self.ooo_len -= overlap;
+                self.ooo_seq = self.remote_seq;
+            } else {
+                self.ooo_len = 0;
+                return;
+            }
+        }
+
+        // Caso 3: Início do OOO conecta contiguamente com remote_seq
+        if self.ooo_seq == self.remote_seq && self.ooo_len > 0 {
+            let mut temp = [0u8; 4096];
+            let o_len = self.ooo_len.min(4096);
+            temp[..o_len].copy_from_slice(&self.ooo_buf[..o_len]);
+            let o_stored = self.push_rx(&temp[..o_len]);
+            self.remote_seq = self.remote_seq.wrapping_add(o_stored as u32);
+            if o_stored == o_len {
+                self.ooo_len = 0;
+            } else {
+                self.ooo_buf.copy_within(o_stored..o_len, 0);
+                self.ooo_len -= o_stored;
+                self.ooo_seq = self.ooo_seq.wrapping_add(o_stored as u32);
+            }
+        }
+    }
+
     fn process_incoming_tcp_payload(&mut self, seq_num: u32, payload: &[u8]) -> (u32, u16) {
         if payload.is_empty() {
             return (self.remote_seq, self.local_win);
@@ -94,22 +135,7 @@ impl TestSocketStream {
         if diff == 0 {
             let stored = self.push_rx(payload);
             self.remote_seq = self.remote_seq.wrapping_add(stored as u32);
-
-            // Reassenta segmento OOO pendente se agora for contíguo
-            if self.ooo_len > 0 && self.ooo_seq == self.remote_seq {
-                let mut temp = [0u8; 1536];
-                let o_len = self.ooo_len;
-                temp[..o_len].copy_from_slice(&self.ooo_buf[..o_len]);
-                let o_stored = self.push_rx(&temp[..o_len]);
-                self.remote_seq = self.remote_seq.wrapping_add(o_stored as u32);
-                if o_stored == o_len {
-                    self.ooo_len = 0;
-                } else {
-                    self.ooo_buf.copy_within(o_stored..o_len, 0);
-                    self.ooo_len -= o_stored;
-                    self.ooo_seq = self.ooo_seq.wrapping_add(o_stored as u32);
-                }
-            }
+            self.drain_and_realign_ooo();
         } else if diff < 0 {
             let seg_end_diff = seq_num.wrapping_add(payload.len() as u32).wrapping_sub(self.remote_seq) as i32;
             if seg_end_diff > 0 {
@@ -118,15 +144,25 @@ impl TestSocketStream {
                     let new_data = &payload[skip..];
                     let stored = self.push_rx(new_data);
                     self.remote_seq = self.remote_seq.wrapping_add(stored as u32);
+                    self.drain_and_realign_ooo();
                 }
             }
         } else {
             // Out-of-order
-            if (diff as usize) <= (self.local_win as usize) && self.ooo_len == 0 {
-                let len = payload.len().min(1536);
-                self.ooo_buf[..len].copy_from_slice(&payload[..len]);
-                self.ooo_seq = seq_num;
-                self.ooo_len = len;
+            if (diff as usize) <= (self.local_win as usize) {
+                if self.ooo_len == 0 {
+                    let len = payload.len().min(4096);
+                    self.ooo_buf[..len].copy_from_slice(&payload[..len]);
+                    self.ooo_seq = seq_num;
+                    self.ooo_len = len;
+                } else if seq_num == self.ooo_seq.wrapping_add(self.ooo_len as u32) {
+                    let append_len = payload.len().min(4096 - self.ooo_len);
+                    if append_len > 0 {
+                        self.ooo_buf[self.ooo_len..self.ooo_len + append_len]
+                            .copy_from_slice(&payload[..append_len]);
+                        self.ooo_len += append_len;
+                    }
+                }
             }
         }
 
@@ -521,23 +557,167 @@ fn trim_ascii_test(mut slice: &[u8]) -> &[u8] {
     slice
 }
 
-fn has_chunked_terminator_test(body: &[u8]) -> bool {
-    if body.len() < 5 { return false; }
-    if body.starts_with(b"0\r\n\r\n") || body.ends_with(b"0\r\n\r\n") {
-        return true;
-    }
-    if body.ends_with(b"\r\n0\r\n\r\n") {
-        return true;
-    }
-    for w in body.windows(7) {
-        if w == b"\r\n0\r\n\r\n" {
-            return true;
+fn is_chunked_complete_test(mut raw: &[u8]) -> bool {
+    if raw.starts_with(b"HTTP/1.") {
+        if let Some(pos) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+            raw = &raw[pos + 4..];
+        } else if let Some(pos) = raw.windows(2).position(|w| w == b"\n\n") {
+            raw = &raw[pos + 2..];
+        } else {
+            return false;
         }
     }
-    for w in body.windows(5) {
-        if w == b"0\r\n\r\n" {
+
+    let mut src_idx = 0usize;
+    while src_idx < raw.len() {
+        let line_end = match raw[src_idx..].iter().position(|&b| b == b'\n') {
+            Some(p) => src_idx + p,
+            None => return false,
+        };
+        let mut hex_slice = &raw[src_idx..line_end];
+        if !hex_slice.is_empty() && hex_slice[hex_slice.len() - 1] == b'\r' {
+            hex_slice = &hex_slice[..hex_slice.len() - 1];
+        }
+        if let Some(semi) = hex_slice.iter().position(|&b| b == b';') {
+            hex_slice = &hex_slice[..semi];
+        }
+        let hex_slice = trim_ascii_test(hex_slice);
+        if hex_slice.is_empty() {
+            src_idx = line_end + 1;
+            continue;
+        }
+
+        let mut chunk_size: usize = 0;
+        for &b in hex_slice {
+            let val = match b {
+                b'0'..=b'9' => (b - b'0') as usize,
+                b'a'..=b'f' => (b - b'a' + 10) as usize,
+                b'A'..=b'F' => (b - b'A' + 10) as usize,
+                _ => return false,
+            };
+            chunk_size = match chunk_size.checked_mul(16).and_then(|c| c.checked_add(val)) {
+                Some(c) => c,
+                None => return false,
+            };
+        }
+
+        src_idx = line_end + 1;
+        if chunk_size == 0 {
             return true;
+        }
+
+        if src_idx + chunk_size > raw.len() {
+            return false;
+        }
+        src_idx += chunk_size;
+
+        if src_idx < raw.len() && raw[src_idx] == b'\r' {
+            src_idx += 1;
+        }
+        if src_idx < raw.len() && raw[src_idx] == b'\n' {
+            src_idx += 1;
         }
     }
     false
+}
+
+fn has_chunked_terminator_test(body: &[u8]) -> bool {
+    is_chunked_complete_test(body)
+}
+
+#[test]
+fn test_http_chunked_with_embedded_zero_substring_no_false_termination() {
+    // Cenário crítico: o corpo do chunk contém a sequência exata "0\r\n\r\n".
+    // A implementação ingênua anterior disparava término prematuro.
+    let chunk1 = b"5\r\n0\r\n\r\n\r\n";
+    let chunk2 = b"5\r\nhello\r\n";
+    let chunk_term = b"0\r\n\r\n";
+
+    let mut stream = Vec::new();
+    stream.extend_from_slice(chunk1);
+    assert!(!has_chunked_terminator_test(&stream), "Chunk 1 com '0\\r\\n\\r\\n' interno não deve terminar o fluxo!");
+
+    stream.extend_from_slice(chunk2);
+    assert!(!has_chunked_terminator_test(&stream), "Ainda não terminou (faltando o chunk 0)");
+
+    stream.extend_from_slice(chunk_term);
+    assert!(has_chunked_terminator_test(&stream), "Agora o terminador real foi detectado!");
+
+    let mut decoded = [0u8; 64];
+    let n = decode_chunked_test(&stream, &mut decoded).expect("Decodificacao chunked perfeita");
+    assert_eq!(n, 10);
+    assert_eq!(&decoded[..n], b"0\r\n\r\nhello");
+}
+
+#[test]
+fn test_tcp_ooo_realign_on_overlapping_retransmit() {
+    let mut sock = TestSocketStream::new(1000);
+
+    // 1. Recebe segmento fora de ordem: seq 2000..2500 (gap de 1000..2000)
+    let ooo_payload = [0xBB; 500];
+    let (ack, _) = sock.process_incoming_tcp_payload(2000, &ooo_payload);
+    assert_eq!(ack, 1000, "ACK deve permanecer 1000 pois há lacuna");
+    assert_eq!(sock.ooo_len, 500);
+    assert_eq!(sock.ooo_seq, 2000);
+
+    // 2. Recebe segmento contíguo que avança e cobre parcialmente o OOO: seq 1000..2200
+    let overlap_payload = [0xAA; 1200];
+    let (ack, _) = sock.process_incoming_tcp_payload(1000, &overlap_payload);
+    // Deve consumir 1000..2200 contíguo + drenar os 300 restantes do OOO (2200..2500)!
+    assert_eq!(ack, 2500, "ACK deve avançar até 2500 após realignment do OOO");
+    assert_eq!(sock.ooo_len, 0, "Buffer OOO deve estar limpo e desbloqueado");
+
+    // 3. Testa que um novo segmento OOO pode ser enfileirado sem bloqueio
+    let (ack2, _) = sock.process_incoming_tcp_payload(3000, &[0xCC; 200]);
+    assert_eq!(ack2, 2500);
+    assert_eq!(sock.ooo_len, 200);
+    assert_eq!(sock.ooo_seq, 3000);
+}
+
+#[test]
+fn test_tcp_large_32k_and_64k_stream_flow_control() {
+    let mut sock = TestSocketStream::new(0);
+
+    let mut send_payload = vec![0u8; 65536];
+    for (i, b) in send_payload.iter_mut().enumerate() {
+        *b = (i % 251) as u8;
+    }
+
+    let mut sent = 0;
+    let mut rec = Vec::new();
+    let mut read_buf = [0u8; 4096];
+
+    while sent < send_payload.len() {
+        let chunk_size = 4096.min(send_payload.len() - sent);
+        let (ack, _win) = sock.process_incoming_tcp_payload(sent as u32, &send_payload[sent..sent + chunk_size]);
+        sent += chunk_size;
+        assert_eq!(ack, sent as u32);
+
+        // Drena do stream para simular leitura pelo usuário
+        if let Some(n) = sock.pop_rx(&mut read_buf) {
+            rec.extend_from_slice(&read_buf[..n]);
+        }
+    }
+
+    // Drena o restante
+    while let Some(n) = sock.pop_rx(&mut read_buf) {
+        if n == 0 { break; }
+        rec.extend_from_slice(&read_buf[..n]);
+    }
+
+    assert_eq!(rec.len(), 65536);
+    assert_eq!(rec, send_payload, "64 KiB de stream transmitidos e reconstituídos com integridade 100%");
+}
+
+#[test]
+fn test_http_resilient_body_delivery_on_slow_server() {
+    let http_response = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<!DOCTYPE html><html><body><h1>Servidor Lento</h1></body></html>";
+
+    let mut sock = TestSocketStream::new(0);
+    sock.process_incoming_tcp_payload(0, http_response);
+
+    let mut user_buf = [0u8; 1024];
+    let n = sock.pop_rx(&mut user_buf).expect("Leitura da resposta");
+    assert_eq!(n, http_response.len());
+    assert_eq!(&user_buf[..n], http_response);
 }

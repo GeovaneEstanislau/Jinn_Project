@@ -10,7 +10,7 @@ pub const TCP_FLAG_PSH: u8 = 0x08;
 pub const TCP_FLAG_ACK: u8 = 0x10;
 pub const TCP_FLAG_URG: u8 = 0x20;
 
-pub const TCP_DEFAULT_WINDOW: u16 = 32768;
+pub const TCP_DEFAULT_WINDOW: u16 = 65535;
 pub const TCP_DEFAULT_RTO_TICKS: u64 = 100; // 1 segundo (100 Hz timer)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,7 +112,7 @@ pub struct TcpControlBlock {
     pub dup_ack_count: u8,
     pub unacked_len: usize,
     pub unacked_buf: [u8; 4096],
-    pub ooo_buf: [u8; 1536],
+    pub ooo_buf: [u8; 4096],
     pub ooo_seq: u32,
     pub ooo_len: usize,
     pub last_persist_tick: u64,
@@ -134,7 +134,7 @@ impl TcpControlBlock {
             dup_ack_count: 0,
             unacked_len: 0,
             unacked_buf: [0; 4096],
-            ooo_buf: [0; 1536],
+            ooo_buf: [0; 4096],
             ooo_seq: 0,
             ooo_len: 0,
             last_persist_tick: 0,
@@ -269,7 +269,8 @@ pub struct LoopbackFrame {
     pub data: [u8; 1536],
 }
 
-pub static mut LOOPBACK_QUEUE: [Option<LoopbackFrame>; 16] = [None; 16];
+pub const LOOPBACK_QUEUE_SIZE: usize = 64;
+pub static mut LOOPBACK_QUEUE: [Option<LoopbackFrame>; LOOPBACK_QUEUE_SIZE] = [None; LOOPBACK_QUEUE_SIZE];
 pub static mut LOOPBACK_HEAD: usize = 0;
 pub static mut LOOPBACK_TAIL: usize = 0;
 pub static mut LOOPBACK_COUNT: usize = 0;
@@ -277,7 +278,7 @@ static LOOPBACK_DRAINING: core::sync::atomic::AtomicBool = core::sync::atomic::A
 
 pub fn enqueue_loopback(sender_ip: [u8; 4], dst_ip: [u8; 4], data: &[u8]) -> bool {
     unsafe {
-        if LOOPBACK_COUNT >= 16 {
+        if LOOPBACK_COUNT >= LOOPBACK_QUEUE_SIZE {
             return false;
         }
         let mut frame = LoopbackFrame {
@@ -288,7 +289,7 @@ pub fn enqueue_loopback(sender_ip: [u8; 4], dst_ip: [u8; 4], data: &[u8]) -> boo
         };
         frame.data[..frame.len].copy_from_slice(&data[..frame.len]);
         LOOPBACK_QUEUE[LOOPBACK_HEAD] = Some(frame);
-        LOOPBACK_HEAD = (LOOPBACK_HEAD + 1) % 16;
+        LOOPBACK_HEAD = (LOOPBACK_HEAD + 1) % LOOPBACK_QUEUE_SIZE;
         LOOPBACK_COUNT += 1;
         true
     }
@@ -301,7 +302,7 @@ pub fn drain_loopback() {
     unsafe {
         while LOOPBACK_COUNT > 0 {
             if let Some(frame) = LOOPBACK_QUEUE[LOOPBACK_TAIL].take() {
-                LOOPBACK_TAIL = (LOOPBACK_TAIL + 1) % 16;
+                LOOPBACK_TAIL = (LOOPBACK_TAIL + 1) % LOOPBACK_QUEUE_SIZE;
                 LOOPBACK_COUNT -= 1;
                 if let Ok(pkt) = TcpPacket::parse(&frame.data[..frame.len]) {
                     handle_incoming_tcp_packet(frame.sender_ip, frame.dst_ip, &pkt);
@@ -573,6 +574,47 @@ fn process_listen_tcp_event(listening_idx: usize, src_ip: [u8; 4], tcp: &TcpPack
     }
 }
 
+fn drain_and_realign_ooo(sock: &mut crate::net::socket::Socket) {
+    if sock.tcb.ooo_len == 0 {
+        return;
+    }
+
+    // Caso 1: OOO totalmente eclipsado pelos dados contíguos já absorvidos
+    if (sock.tcb.remote_seq.wrapping_sub(sock.tcb.ooo_seq) as i32) >= (sock.tcb.ooo_len as i32) {
+        sock.tcb.ooo_len = 0;
+        return;
+    }
+
+    // Caso 2: OOO parcialmente eclipsado (dados novos sobrepõem o início do OOO)
+    if (sock.tcb.remote_seq.wrapping_sub(sock.tcb.ooo_seq) as i32) > 0 {
+        let overlap = sock.tcb.remote_seq.wrapping_sub(sock.tcb.ooo_seq) as usize;
+        if overlap < sock.tcb.ooo_len {
+            sock.tcb.ooo_buf.copy_within(overlap..sock.tcb.ooo_len, 0);
+            sock.tcb.ooo_len -= overlap;
+            sock.tcb.ooo_seq = sock.tcb.remote_seq;
+        } else {
+            sock.tcb.ooo_len = 0;
+            return;
+        }
+    }
+
+    // Caso 3: Início do OOO conecta contiguamente com remote_seq
+    if sock.tcb.ooo_seq == sock.tcb.remote_seq && sock.tcb.ooo_len > 0 {
+        let mut temp_ooo = [0u8; 4096];
+        let ooo_len = sock.tcb.ooo_len.min(4096);
+        temp_ooo[..ooo_len].copy_from_slice(&sock.tcb.ooo_buf[..ooo_len]);
+        let ooo_stored = sock.push_rx(&temp_ooo[..ooo_len]);
+        sock.tcb.remote_seq = sock.tcb.remote_seq.wrapping_add(ooo_stored as u32);
+        if ooo_stored == ooo_len {
+            sock.tcb.ooo_len = 0;
+        } else {
+            sock.tcb.ooo_buf.copy_within(ooo_stored..ooo_len, 0);
+            sock.tcb.ooo_len -= ooo_stored;
+            sock.tcb.ooo_seq = sock.tcb.ooo_seq.wrapping_add(ooo_stored as u32);
+        }
+    }
+}
+
 fn process_connected_tcp_event(sock_idx: usize, src_ip: [u8; 4], tcp: &TcpPacket) {
     let sock = match unsafe { crate::net::socket::SOCKET_TABLE[sock_idx].as_mut() } {
         Some(s) => s,
@@ -720,21 +762,8 @@ fn process_connected_tcp_event(sock_idx: usize, src_ip: [u8; 4], tcp: &TcpPacket
                     let stored = sock.push_rx(tcp.payload);
                     sock.tcb.remote_seq = sock.tcb.remote_seq.wrapping_add(stored as u32);
 
-                    // Verifica se o buffer de fora-de-ordem conecta contiguamente agora
-                    if sock.tcb.ooo_len > 0 && sock.tcb.ooo_seq == sock.tcb.remote_seq {
-                        let mut temp_ooo = [0u8; 1536];
-                        let ooo_len = sock.tcb.ooo_len.min(1536);
-                        temp_ooo[..ooo_len].copy_from_slice(&sock.tcb.ooo_buf[..ooo_len]);
-                        let ooo_stored = sock.push_rx(&temp_ooo[..ooo_len]);
-                        sock.tcb.remote_seq = sock.tcb.remote_seq.wrapping_add(ooo_stored as u32);
-                        if ooo_stored == ooo_len {
-                            sock.tcb.ooo_len = 0;
-                        } else {
-                            sock.tcb.ooo_buf.copy_within(ooo_stored..ooo_len, 0);
-                            sock.tcb.ooo_len -= ooo_stored;
-                            sock.tcb.ooo_seq = sock.tcb.ooo_seq.wrapping_add(ooo_stored as u32);
-                        }
-                    }
+                    // Reassenta dados pendentes no buffer fora-de-ordem caso conectem contiguamente
+                    drain_and_realign_ooo(sock);
 
                     // Responde com ACK imediato com a sequência atualizada e janela anunciada dinâmica
                     send_tcp_packet(
@@ -756,6 +785,8 @@ fn process_connected_tcp_event(sock_idx: usize, src_ip: [u8; 4], tcp: &TcpPacket
                             let new_data = &tcp.payload[skip..];
                             let stored = sock.push_rx(new_data);
                             sock.tcb.remote_seq = sock.tcb.remote_seq.wrapping_add(stored as u32);
+                            // Reassenta OOO caso o novo segmento tenha preenchido a lacuna
+                            drain_and_realign_ooo(sock);
                         }
                     }
                     // Emite ACK repetido confirmando o ponto de sequência esperado
@@ -771,11 +802,20 @@ fn process_connected_tcp_event(sock_idx: usize, src_ip: [u8; 4], tcp: &TcpPacket
                     );
                 } else {
                     // Segmento fora de ordem (gap à frente do remote_seq)
-                    if (diff as usize) <= (sock.tcb.local_win as usize) && sock.tcb.ooo_len == 0 {
-                        let len = tcp.payload.len().min(1536);
-                        sock.tcb.ooo_buf[..len].copy_from_slice(&tcp.payload[..len]);
-                        sock.tcb.ooo_seq = tcp.seq_num;
-                        sock.tcb.ooo_len = len;
+                    if (diff as usize) <= (sock.tcb.local_win as usize) {
+                        if sock.tcb.ooo_len == 0 {
+                            let len = tcp.payload.len().min(4096);
+                            sock.tcb.ooo_buf[..len].copy_from_slice(&tcp.payload[..len]);
+                            sock.tcb.ooo_seq = tcp.seq_num;
+                            sock.tcb.ooo_len = len;
+                        } else if tcp.seq_num == sock.tcb.ooo_seq.wrapping_add(sock.tcb.ooo_len as u32) {
+                            let append_len = tcp.payload.len().min(4096 - sock.tcb.ooo_len);
+                            if append_len > 0 {
+                                sock.tcb.ooo_buf[sock.tcb.ooo_len..sock.tcb.ooo_len + append_len]
+                                    .copy_from_slice(&tcp.payload[..append_len]);
+                                sock.tcb.ooo_len += append_len;
+                            }
+                        }
                     }
 
                     // RFC 793 / RFC 5681: Emite ACK duplicado informando ao peer a lacuna de sequência

@@ -121,3 +121,4 @@ Com as modificações aplicadas, o subsistema de arquivos do Jinn OS atinge esta
 1. O Jinn Browser e quaisquer aplicações Ring 3 podem criar diretórios de dados locais (como `/disk/browser`, `/cache`) e gravar arquivos (`bookmarks.json`, `history.db`) de forma transacional e sem falhas de alocação de blocos.
 2. Não há risco de corrupção cruzada de superbloco ou tabelas de inodes no Ext2 devido à estrita validação de limites.
 3. As operações que ultrapassam a capacidade do disco reportam rigorosamente o erro POSIX `-ENOSPC` (-28), permitindo tratamento gracioso de falta de espaço sem panic de kernel.
+
