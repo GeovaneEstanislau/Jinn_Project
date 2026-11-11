@@ -4,6 +4,9 @@
 //! validando provas de assinatura RSA PKCS#1 v1.5, ECDSA NIST P-256, extensões de governança (CA, keyUsage, SAN)
 //! e rejeição mandatória de certificados forjados/autoassinados maliciosos.
 
+extern crate core;
+extern crate alloc;
+
 #[path = "../browser/crates/jbe-tls/src/bignum.rs"]
 pub mod bignum;
 

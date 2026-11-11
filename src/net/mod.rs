@@ -8,11 +8,15 @@ pub mod ethernet;
 pub mod icmp;
 pub mod ipv4;
 pub mod jinnwall;
+pub mod pki;
 pub mod socket;
 pub mod tcp;
 pub mod udp;
+pub mod x509;
 
 pub use diagnostics::NET_DIAGNOSTICS;
+pub use pki::{TrustStore, TrustAnchor, CertificateValidationError, validate_chain, validate_certificate, verify_hostname_match};
+pub use x509::{ParsedCertificate, PublicKey, SignatureAlgorithm, parse_der_certificate, x509_date_to_unix};
 
 use ethernet::{EthernetFrame, ETHERTYPE_ARP, ETHERTYPE_IPV4};
 use ipv4::{Ipv4Packet, PROTO_ICMP, PROTO_TCP, PROTO_UDP};
