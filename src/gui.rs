@@ -82,7 +82,7 @@ pub static CLIENT_WINDOWS: SpinLock<[Option<KernelClientWindow>; 32]> = SpinLock
     None, None, None, None, None, None, None, None,
 ]);
 
-static LAST_MOUSE_STATE: SpinLock<(usize, usize, u8)> = SpinLock::new((512, 384, 0));
+static LAST_MOUSE_STATE: SpinLock<(usize, usize, u8)> = SpinLock::new((usize::MAX, usize::MAX, 0xFF));
 
 pub fn register_graphics_server(pid: usize, _flags: u32) -> Result<(), isize> {
     let current = GRAPHICS_SERVER_PID.load(Ordering::SeqCst);
@@ -91,7 +91,11 @@ pub fn register_graphics_server(pid: usize, _flags: u32) -> Result<(), isize> {
         return Err(crate::syscall::EBUSY);
     }
     GRAPHICS_SERVER_PID.store(pid, Ordering::SeqCst);
-    crate::interrupts::ps2_mouse::init();
+    *LAST_MOUSE_STATE.lock() = (usize::MAX, usize::MAX, 0xFF);
+    crate::interrupts::ps2_mouse::reset_sync();
+    if let Some(fb) = crate::limine::framebuffer() {
+        crate::interrupts::ps2_mouse::set_bounds(fb.width as usize, fb.height as usize);
+    }
     crate::serial_write(b"[GUI] Servidor Grafico Ring 3 registrado com sucesso! GRAPHICS_SERVER_PID ativo.\n");
     Ok(())
 }
@@ -235,6 +239,8 @@ pub fn poll_hardware_input(caller_pid: usize) -> Result<Option<InputHardwareEven
         } else {
             3 // MouseMove
         };
+
+        crate::interrupts::ps2_mouse::MOUSE_EVENTS_DELIVERED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
         return Ok(Some(InputHardwareEvent {
             kind,

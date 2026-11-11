@@ -509,6 +509,9 @@ pub extern "C" fn _start() -> ! {
         win_id: 0, owner_pid: 0, width: 0, height: 0, is_open: 0, damaged: 0, title_len: 0, title: [0u8; 48],
     }; 16];
 
+    let fb_w = user_fb.width;
+    let fb_h = user_fb.height;
+
     let drain_hardware_events = || {
         let mut ev = InputHardwareEvent { kind: 0, code: 0, x: 0, y: 0, modifiers: 0 };
         for _ in 0..16 {
@@ -519,8 +522,8 @@ pub extern "C" fn _start() -> ! {
             if ev.kind == 1 {
                 enqueue_key(ev.code as u8);
             } else if ev.kind >= 3 {
-                let mx = (ev.x as usize).min(1023);
-                let my = (ev.y as usize).min(767);
+                let mx = (ev.x as usize).min(fb_w.saturating_sub(1));
+                let my = (ev.y as usize).min(fb_h.saturating_sub(1));
                 let btn = ev.code as u8;
                 unsafe {
                     CURRENT_MOUSE = (mx, my, btn);

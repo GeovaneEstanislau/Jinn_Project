@@ -15,6 +15,26 @@ use crate::net::x509::{ParsedCertificate, PublicKey, SignatureAlgorithm, parse_d
 pub const TLS13_VERSION: u16 = 0x0304;       // TLS 1.3
 pub const TLS12_LEGACY_VERSION: u16 = 0x0303;// TLS 1.2 legacy wire version
 
+/// SHA-256("HelloRetryRequest") - RFC 8446 Seção 4.1.3
+pub const HELLO_RETRY_REQUEST_RANDOM: [u8; 32] = [
+    0xCF, 0x21, 0xAD, 0x74, 0xE5, 0x9A, 0x61, 0x11,
+    0xBE, 0x1D, 0x8C, 0x02, 0x1E, 0x65, 0xB8, 0x91,
+    0xC2, 0xA2, 0x11, 0x16, 0x7A, 0xBB, 0x8C, 0x5E,
+    0x07, 0x9E, 0x09, 0xE2, 0xC8, 0x88, 0x3E, 0x9E,
+];
+
+pub fn is_hello_retry_request(msg: &[u8]) -> bool {
+    if msg.len() < 38 {
+        return false;
+    }
+    // msg[0] == HandshakeType::ServerHello (2)
+    if msg[0] != 2 {
+        return false;
+    }
+    // O campo random está nos offsets 6..38 (4 bytes cabeçalho handshake + 2 bytes legacy_version 0x0303)
+    &msg[6..38] == &HELLO_RETRY_REQUEST_RANDOM[..]
+}
+
 // Ciphersuites (RFC 8446 Seção B.4)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CipherSuite {
@@ -135,6 +155,7 @@ pub enum HandshakeType {
     CertificateVerify,
     Finished,
     KeyUpdate,
+    MessageHash,
     Unknown(u8),
 }
 
@@ -151,6 +172,7 @@ impl HandshakeType {
             Self::CertificateVerify => 15,
             Self::Finished => 20,
             Self::KeyUpdate => 24,
+            Self::MessageHash => 254,
             Self::Unknown(val) => *val,
         }
     }
@@ -167,6 +189,7 @@ impl HandshakeType {
             15 => Self::CertificateVerify,
             20 => Self::Finished,
             24 => Self::KeyUpdate,
+            254 => Self::MessageHash,
             other => Self::Unknown(other),
         }
     }
@@ -201,6 +224,7 @@ pub enum Tls13Alert {
 pub enum HandshakeState {
     Initial,
     ClientHelloSent,
+    HelloRetryRequestReceived,
     WaitServerHello,
     WaitEncryptedExtensions,
     WaitCertificate,
@@ -464,6 +488,13 @@ impl Tls13KeySchedule {
         Ok(())
     }
 
+    /// Deriva o Resumption Master Secret (RFC 8446 Seção 7.1)
+    /// resumption_master_secret = Derive-Secret(Master Secret, "res master", ClientHello..client Finished)
+    pub fn derive_resumption_master_secret(&self, transcript_hash_client_finished: &[u8; 32]) -> Result<[u8; 32], Tls13Alert> {
+        let m_secret = self.master_secret.ok_or(Tls13Alert::InternalError)?;
+        Ok(derive_secret(&m_secret, b"res master", transcript_hash_client_finished))
+    }
+
     /// Calcula o Nonce AEAD combinando o IV com o sequence number via operação XOR (RFC 8446 Seção 5.3)
     pub fn compute_nonce(iv: &[u8; 12], seq_num: u64) -> [u8; 12] {
         let mut nonce = *iv;
@@ -567,6 +598,7 @@ pub struct Tls13Client {
     pub transcript: TranscriptHash,
     pub trust_store: TrustStore,
     pub peer_certificate: Option<ParsedCertificate>,
+    pub client_hello1: Option<Vec<u8>>,
     pub client_seq: u64,
     pub server_seq: u64,
 }
@@ -581,6 +613,7 @@ impl Tls13Client {
             transcript: TranscriptHash::new(),
             trust_store,
             peer_certificate: None,
+            client_hello1: None,
             client_seq: 0,
             server_seq: 0,
         }
@@ -704,8 +737,112 @@ impl Tls13Client {
 
         // Atualiza o TranscriptHash com a mensagem completa do ClientHello
         self.transcript.update(&handshake_msg);
+        self.client_hello1 = Some(handshake_msg.clone());
         self.state = HandshakeState::ClientHelloSent;
 
+        handshake_msg
+    }
+
+    /// Processa mensagem HelloRetryRequest (RFC 8446 Seção 4.4.1)
+    /// Substitui ClientHello1 por synthetic message_hash no TranscriptHash
+    pub fn handle_hello_retry_request(&mut self, hrr_msg: &[u8]) -> Result<(), Tls13Alert> {
+        if !is_hello_retry_request(hrr_msg) {
+            return Err(Tls13Alert::IllegalParameter);
+        }
+        let ch1 = self.client_hello1.as_ref().ok_or(Tls13Alert::InternalError)?;
+
+        // RFC 8446 Seção 4.4.1:
+        // message_hash = Handshake {
+        //     msg_type: message_hash (254),
+        //     length: Hash.length (32),
+        //     body: SHA-256(ClientHello1)
+        // }
+        let ch1_hash = Sha256::digest(ch1);
+        let mut message_hash = Vec::with_capacity(4 + 32);
+        message_hash.push(HandshakeType::MessageHash.as_u8());
+        message_hash.push(0);
+        message_hash.push(0);
+        message_hash.push(32);
+        message_hash.extend_from_slice(&ch1_hash);
+
+        // Substitui ClientHello1 no transcript hash:
+        // Transcript-Hash = Hash(message_hash || HelloRetryRequest)
+        self.transcript.reset();
+        self.transcript.update(&message_hash);
+        self.transcript.update(hrr_msg);
+
+        self.state = HandshakeState::HelloRetryRequestReceived;
+        Ok(())
+    }
+
+    /// Constrói ClientHello2 após recebimento de HelloRetryRequest (RFC 8446)
+    pub fn build_client_hello2(
+        &mut self,
+        client_random: &[u8; 32],
+        client_public_key_bytes: &[u8],
+    ) -> Vec<u8> {
+        let mut ch_body = Vec::new();
+        ch_body.extend_from_slice(&TLS12_LEGACY_VERSION.to_be_bytes());
+        ch_body.extend_from_slice(client_random);
+        ch_body.push(32);
+        ch_body.extend_from_slice(client_random);
+
+        let suites: [u16; 3] = [
+            CipherSuite::TlsAes128GcmSha256.as_u16(),
+            CipherSuite::TlsChacha20Poly1305Sha256.as_u16(),
+            CipherSuite::TlsAes256GcmSha384.as_u16(),
+        ];
+        ch_body.extend_from_slice(&((suites.len() * 2) as u16).to_be_bytes());
+        for suite in &suites {
+            ch_body.extend_from_slice(&suite.to_be_bytes());
+        }
+        ch_body.push(1);
+        ch_body.push(0x00);
+
+        let mut extensions_data = Vec::new();
+        let host_bytes = self.hostname.as_bytes();
+        let sni_list_len = (host_bytes.len() + 3) as u16;
+        let mut sni_ext = Vec::new();
+        sni_ext.extend_from_slice(&sni_list_len.to_be_bytes());
+        sni_ext.push(0x00);
+        sni_ext.extend_from_slice(&(host_bytes.len() as u16).to_be_bytes());
+        sni_ext.extend_from_slice(host_bytes);
+
+        extensions_data.extend_from_slice(&0x0000u16.to_be_bytes());
+        extensions_data.extend_from_slice(&(sni_ext.len() as u16).to_be_bytes());
+        extensions_data.extend_from_slice(&sni_ext);
+
+        let mut ver_ext = Vec::new();
+        ver_ext.push(2);
+        ver_ext.extend_from_slice(&TLS13_VERSION.to_be_bytes());
+        extensions_data.extend_from_slice(&0x002Bu16.to_be_bytes());
+        extensions_data.extend_from_slice(&(ver_ext.len() as u16).to_be_bytes());
+        extensions_data.extend_from_slice(&ver_ext);
+
+        let mut ks_ext = Vec::new();
+        let client_shares_len = 2 + 2 + client_public_key_bytes.len();
+        ks_ext.extend_from_slice(&(client_shares_len as u16).to_be_bytes());
+        ks_ext.extend_from_slice(&(NamedGroup::Secp256r1.as_u16()).to_be_bytes());
+        ks_ext.extend_from_slice(&(client_public_key_bytes.len() as u16).to_be_bytes());
+        ks_ext.extend_from_slice(client_public_key_bytes);
+
+        extensions_data.extend_from_slice(&0x0033u16.to_be_bytes());
+        extensions_data.extend_from_slice(&(ks_ext.len() as u16).to_be_bytes());
+        extensions_data.extend_from_slice(&ks_ext);
+
+        ch_body.extend_from_slice(&(extensions_data.len() as u16).to_be_bytes());
+        ch_body.extend_from_slice(&extensions_data);
+
+        let mut handshake_msg = Vec::with_capacity(4 + ch_body.len());
+        handshake_msg.push(HandshakeType::ClientHello.as_u8());
+        let ch_len = ch_body.len();
+        handshake_msg.push(((ch_len >> 16) & 0xFF) as u8);
+        handshake_msg.push(((ch_len >> 8) & 0xFF) as u8);
+        handshake_msg.push((ch_len & 0xFF) as u8);
+        handshake_msg.extend_from_slice(&ch_body);
+
+        self.transcript.update(&handshake_msg);
+        self.state = HandshakeState::WaitServerHello;
         handshake_msg
     }
 

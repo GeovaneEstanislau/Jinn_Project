@@ -3,12 +3,56 @@
 /// Implementa a comunicação com o mouse PS/2 padrão conectado à segunda
 /// porta do controlador i8042. Suporta tanto recepção assíncrona via IRQ12
 /// quanto polling direto em laço de renderização, garantindo operação contínua
-/// mesmo quando o I/O APIC está ativado ou interrupções legadas do PIC estão mascaradas.
+/// com telemetria rigorosa, proteção contra desfasamento de pacotes e sincronização atômica.
 
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use crate::interrupts::pic;
 
 const PS2_DATA: u16 = 0x60;
 const PS2_CMD:  u16 = 0x64;
+
+// ── Telemetria do Subsistema PS/2 Mouse ────────────────────────────────────────
+
+pub static IRQ12_COUNT: AtomicU64 = AtomicU64::new(0);
+pub static MOUSE_BYTES_RECEIVED: AtomicU64 = AtomicU64::new(0);
+pub static MOUSE_PACKETS_COMPLETED: AtomicU64 = AtomicU64::new(0);
+pub static MOUSE_INVALID_PACKETS: AtomicU64 = AtomicU64::new(0);
+pub static DISCARDED_OVERFLOW: AtomicU64 = AtomicU64::new(0);
+pub static MOUSE_EVENTS_DELIVERED: AtomicU64 = AtomicU64::new(0);
+
+// ── Estado Atômico e Lock-Free do Mouse ───────────────────────────────────────
+
+pub static MOUSE_X: AtomicUsize = AtomicUsize::new(512);
+pub static MOUSE_Y: AtomicUsize = AtomicUsize::new(384);
+pub static MOUSE_BUTTONS: AtomicU8 = AtomicU8::new(0); // bit 0=Left, bit 1=Right, bit 2=Middle
+pub static MOUSE_MAX_X: AtomicUsize = AtomicUsize::new(1024);
+pub static MOUSE_MAX_Y: AtomicUsize = AtomicUsize::new(768);
+pub static MOUSE_CYCLE: AtomicU8 = AtomicU8::new(0);
+pub static MOUSE_PACKET: [AtomicU8; 3] = [AtomicU8::new(0), AtomicU8::new(0), AtomicU8::new(0)];
+pub static LAST_BYTE_TICK: AtomicU64 = AtomicU64::new(0);
+pub static HARDWARE_INITIALIZED: AtomicBool = AtomicBool::new(false);
+static PORT60_LOCK: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MouseTelemetry {
+    pub irq12_count: u64,
+    pub bytes_received: u64,
+    pub packets_completed: u64,
+    pub invalid_packets: u64,
+    pub discarded_overflow: u64,
+    pub events_delivered: u64,
+}
+
+pub fn get_telemetry() -> MouseTelemetry {
+    MouseTelemetry {
+        irq12_count: IRQ12_COUNT.load(Ordering::Relaxed),
+        bytes_received: MOUSE_BYTES_RECEIVED.load(Ordering::Relaxed),
+        packets_completed: MOUSE_PACKETS_COMPLETED.load(Ordering::Relaxed),
+        invalid_packets: MOUSE_INVALID_PACKETS.load(Ordering::Relaxed),
+        discarded_overflow: DISCARDED_OVERFLOW.load(Ordering::Relaxed),
+        events_delivered: MOUSE_EVENTS_DELIVERED.load(Ordering::Relaxed),
+    }
+}
 
 #[inline]
 unsafe fn inb(port: u16) -> u8 {
@@ -64,140 +108,154 @@ unsafe fn mouse_read() -> u8 {
     }
 }
 
-/// Estado do mouse mantido pelo driver
-pub struct MouseState {
-    pub x: usize,
-    pub y: usize,
-    pub buttons: u8, // bit 0 = Left, bit 1 = Right, bit 2 = Middle
-    pub max_x: usize,
-    pub max_y: usize,
-    pub cycle: u8,
-    pub packet: [u8; 3],
+/// Define os limites da tela (resolução do framebuffer)
+pub fn set_bounds(max_x: usize, max_y: usize) {
+    if max_x == 0 || max_y == 0 {
+        return;
+    }
+    MOUSE_MAX_X.store(max_x, Ordering::Relaxed);
+    MOUSE_MAX_Y.store(max_y, Ordering::Relaxed);
+
+    let cur_x = MOUSE_X.load(Ordering::Relaxed);
+    let cur_y = MOUSE_Y.load(Ordering::Relaxed);
+    if cur_x >= max_x {
+        MOUSE_X.store(max_x.saturating_sub(1), Ordering::Release);
+    }
+    if cur_y >= max_y {
+        MOUSE_Y.store(max_y.saturating_sub(1), Ordering::Release);
+    }
 }
 
-static mut MOUSE: MouseState = MouseState {
-    x: 1024 / 2,
-    y: 768 / 2,
-    buttons: 0,
-    max_x: 1024,
-    max_y: 768,
-    cycle: 0,
-    packet: [0; 3],
-};
-
-/// Processa um byte individual de dados do mouse na máquina de estados de 3 bytes.
+/// Processa um byte individual de dados do mouse na máquina de estados de 3 bytes (RFC / PS2 Spec).
 pub fn process_byte(b: u8) {
-    unsafe {
-        let mouse = &mut *core::ptr::addr_of_mut!(MOUSE);
-        match mouse.cycle {
-            0 => {
-                // Byte 0: Flags. Bit 3 deve ser sempre 1 para um pacote válido.
-                if (b & 0x08) != 0 {
-                    mouse.packet[0] = b;
-                    mouse.cycle = 1;
-                }
+    MOUSE_BYTES_RECEIVED.fetch_add(1, Ordering::Relaxed);
+
+    // Timeout de sincronização de pacote: se transcorreram > 5 ticks (50ms) entre bytes,
+    // o pacote foi interrompido/perdido no canal serial. Reseta o ciclo para evitar desfasamento.
+    let now = crate::timer::ticks();
+    let last = LAST_BYTE_TICK.swap(now, Ordering::Relaxed);
+    if now.saturating_sub(last) > 5 && MOUSE_CYCLE.load(Ordering::Relaxed) != 0 {
+        MOUSE_CYCLE.store(0, Ordering::Relaxed);
+        MOUSE_INVALID_PACKETS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    let cycle = MOUSE_CYCLE.load(Ordering::Relaxed);
+    match cycle {
+        0 => {
+            // Byte 0: Flags. Bit 3 deve ser obrigatoriamente 1 em qualquer pacote PS/2 padrão.
+            if (b & 0x08) != 0 {
+                MOUSE_PACKET[0].store(b, Ordering::Relaxed);
+                MOUSE_CYCLE.store(1, Ordering::Relaxed);
+            } else {
+                // Descarta byte órfão que não possui o bit de sincronismo
+                MOUSE_INVALID_PACKETS.fetch_add(1, Ordering::Relaxed);
             }
-            1 => {
-                // Byte 1: Delta X
-                mouse.packet[1] = b;
-                mouse.cycle = 2;
+        }
+        1 => {
+            // Byte 1: Delta X
+            MOUSE_PACKET[1].store(b, Ordering::Relaxed);
+            MOUSE_CYCLE.store(2, Ordering::Relaxed);
+        }
+        2 => {
+            // Byte 2: Delta Y
+            MOUSE_PACKET[2].store(b, Ordering::Relaxed);
+            MOUSE_CYCLE.store(0, Ordering::Relaxed);
+
+            let flags = MOUSE_PACKET[0].load(Ordering::Relaxed);
+            let raw_x = MOUSE_PACKET[1].load(Ordering::Relaxed);
+            let raw_y = b;
+
+            // 1. Descarta pacotes com overflow (bits 6 e 7)
+            if (flags & 0xC0) != 0 {
+                DISCARDED_OVERFLOW.fetch_add(1, Ordering::Relaxed);
+                return;
             }
-            2 => {
-                // Byte 2: Delta Y
-                mouse.packet[2] = b;
-                mouse.cycle = 0;
 
-                let flags = mouse.packet[0];
-                let raw_x = mouse.packet[1];
-                let raw_y = mouse.packet[2];
+            // 2. Decodificação de deltas com sinal 9-bit conforme especificação PS/2
+            // Bit 4 = sinal de X, Bit 5 = sinal de Y
+            let delta_x: i32 = if (flags & 0x10) != 0 {
+                (raw_x as i32) - 256
+            } else {
+                raw_x as i32
+            };
 
-                // Descarta pacotes com overflow
-                if (flags & 0xC0) != 0 {
-                    return;
-                }
+            let delta_y: i32 = if (flags & 0x20) != 0 {
+                (raw_y as i32) - 256
+            } else {
+                raw_y as i32
+            };
 
-                // Decodifica deltas com seus bits de sinal (bit 4 = sinal X, bit 5 = sinal Y)
-                let delta_x = if (flags & 0x10) != 0 {
-                    (raw_x as i16) - 256
-                } else {
-                    raw_x as i16
-                };
+            let max_x = MOUSE_MAX_X.load(Ordering::Relaxed);
+            let max_y = MOUSE_MAX_Y.load(Ordering::Relaxed);
 
-                let delta_y = if (flags & 0x20) != 0 {
-                    (raw_y as i16) - 256
-                } else {
-                    raw_y as i16
-                };
+            let cur_x = MOUSE_X.load(Ordering::Relaxed) as i32;
+            let cur_y = MOUSE_Y.load(Ordering::Relaxed) as i32;
 
-                // Atualiza posição X
-                let new_x = (mouse.x as i32) + (delta_x as i32);
-                mouse.x = if new_x < 0 {
-                    0
-                } else if (new_x as usize) >= mouse.max_x {
-                    mouse.max_x.saturating_sub(1)
-                } else {
-                    new_x as usize
-                };
+            // Atualiza posição X (limitada a [0, max_x - 1])
+            let new_x = (cur_x + delta_x).clamp(0, max_x.saturating_sub(1) as i32);
+            MOUSE_X.store(new_x as usize, Ordering::Release);
 
-                // Atualiza posição Y (No protocolo PS/2, delta_y positivo é para cima)
-                let new_y = (mouse.y as i32) - (delta_y as i32);
-                mouse.y = if new_y < 0 {
-                    0
-                } else if (new_y as usize) >= mouse.max_y {
-                    mouse.max_y.saturating_sub(1)
-                } else {
-                    new_y as usize
-                };
+            // Atualiza posição Y (No protocolo PS/2, delta_y positivo é para cima; na tela Y=0 é o topo)
+            let new_y = (cur_y - delta_y).clamp(0, max_y.saturating_sub(1) as i32);
+            MOUSE_Y.store(new_y as usize, Ordering::Release);
 
-                // Botões: bit 0 = Left, bit 1 = Right, bit 2 = Middle
-                mouse.buttons = flags & 0x07;
-            }
-            _ => {
-                mouse.cycle = 0;
-            }
+            // Botões: bit 0 = Left, bit 1 = Right, bit 2 = Middle
+            let buttons = flags & 0x07;
+            MOUSE_BUTTONS.store(buttons, Ordering::Release);
+
+            MOUSE_PACKETS_COMPLETED.fetch_add(1, Ordering::Relaxed);
+        }
+        _ => {
+            MOUSE_CYCLE.store(0, Ordering::Relaxed);
         }
     }
 }
 
 /// Reseta a máquina de estados de sincronização de pacotes do mouse (3 bytes) e libera botões presos
 pub fn reset_sync() {
-    unsafe {
-        let mouse = &mut *core::ptr::addr_of_mut!(MOUSE);
-        mouse.cycle = 0;
-        mouse.packet = [0; 3];
-        mouse.buttons = 0;
-    }
+    MOUSE_CYCLE.store(0, Ordering::Relaxed);
+    MOUSE_PACKET[0].store(0, Ordering::Relaxed);
+    MOUSE_PACKET[1].store(0, Ordering::Relaxed);
+    MOUSE_PACKET[2].store(0, Ordering::Relaxed);
+    MOUSE_BUTTONS.store(0, Ordering::Relaxed);
 }
 
 pub fn get_cycle() -> u8 {
-    unsafe { MOUSE.cycle }
+    MOUSE_CYCLE.load(Ordering::Relaxed)
 }
 
 pub fn set_cycle(cycle: u8) {
-    unsafe { MOUSE.cycle = cycle; }
+    MOUSE_CYCLE.store(cycle, Ordering::Relaxed);
 }
 
 /// Atualiza o estado do cursor e botões a partir de comandos normalizados do driver em Ring 3
 pub fn update_from_driver(kind: u16, code: u16, x: usize, y: usize) {
-    unsafe {
-        let mouse = &mut *core::ptr::addr_of_mut!(MOUSE);
-        mouse.x = x.min(mouse.max_x.saturating_sub(1));
-        mouse.y = y.min(mouse.max_y.saturating_sub(1));
-        match kind {
-            crate::drivers::device_manager::INPUT_KIND_MOUSE_BUTTON_DOWN => {
-                mouse.buttons |= code as u8;
-            }
-            crate::drivers::device_manager::INPUT_KIND_MOUSE_BUTTON_UP => {
-                mouse.buttons &= !(code as u8);
-            }
-            _ => {}
+    let max_x = MOUSE_MAX_X.load(Ordering::Relaxed);
+    let max_y = MOUSE_MAX_Y.load(Ordering::Relaxed);
+
+    MOUSE_X.store(x.min(max_x.saturating_sub(1)), Ordering::Release);
+    MOUSE_Y.store(y.min(max_y.saturating_sub(1)), Ordering::Release);
+
+    match kind {
+        crate::drivers::device_manager::INPUT_KIND_MOUSE_BUTTON_DOWN => {
+            let cur = MOUSE_BUTTONS.load(Ordering::Relaxed);
+            MOUSE_BUTTONS.store(cur | (code as u8), Ordering::Release);
         }
+        crate::drivers::device_manager::INPUT_KIND_MOUSE_BUTTON_UP => {
+            let cur = MOUSE_BUTTONS.load(Ordering::Relaxed);
+            MOUSE_BUTTONS.store(cur & !(code as u8), Ordering::Release);
+        }
+        _ => {}
     }
 }
 
 /// Faz polling direto no controlador i8042 processando bytes da porta auxiliar (mouse).
-/// Garante funcionamento perfeito mesmo quando o I/O APIC está ativo ou IRQ12 não é entregue.
+/// Garante funcionamento contínuo e sincronizado através de lock atômico contra concorrência com o ISR.
 pub fn poll() {
+    if PORT60_LOCK.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+        return;
+    }
+
     unsafe {
         for _ in 0..16 {
             let status = inb(PS2_CMD);
@@ -216,33 +274,43 @@ pub fn poll() {
             }
         }
     }
+
+    PORT60_LOCK.store(false, Ordering::Release);
 }
 
-/// Inicializa a segunda porta do controlador PS/2 e configura o mouse.
+/// Inicializa a segunda porta do controlador PS/2 e configura o streaming do mouse.
+/// É idempotente e temporariamente mascara IRQ12 durante comandos para prevenir que ACKs
+/// desfasem a máquina de estados de 3 bytes.
 pub fn init() {
     unsafe {
-        // 1. Define resolução máxima a partir do framebuffer do Limine, se disponível
+        // 1. Define resolução máxima a partir do framebuffer se disponível
         if let Some(fb) = crate::limine::framebuffer() {
-            MOUSE.max_x = fb.width as usize;
-            MOUSE.max_y = fb.height as usize;
-            MOUSE.x = MOUSE.max_x / 2;
-            MOUSE.y = MOUSE.max_y / 2;
+            set_bounds(fb.width as usize, fb.height as usize);
+            MOUSE_X.store((fb.width as usize) / 2, Ordering::Release);
+            MOUSE_Y.store((fb.height as usize) / 2, Ordering::Release);
         }
 
-        MOUSE.cycle = 0;
+        // Se o hardware já foi inicializado anteriormente pelo kernel boot, apenas reseta sincronização
+        if HARDWARE_INITIALIZED.load(Ordering::Acquire) {
+            reset_sync();
+            return;
+        }
 
-        // 2. Drena quaisquer dados residuais no buffer de saída do controlador
+        // 2. Mascara temporariamente IRQ12 no PIC para evitar que ACKs de comandos vazem para o IRQ handler
+        crate::interrupts::pic::mask_irq(12);
+
+        // 3. Drena quaisquer dados residuais no buffer de saída do controlador
         let mut drain = 1000;
         while (inb(PS2_CMD) & 1) != 0 && drain > 0 {
             let _ = inb(PS2_DATA);
             drain -= 1;
         }
 
-        // 3. Habilita a segunda porta PS/2 (porta auxiliar)
+        // 4. Habilita a segunda porta PS/2 (porta auxiliar)
         wait_write();
         outb(PS2_CMD, 0xA8);
 
-        // 4. Lê o byte de configuração atual do controlador
+        // 5. Lê e configura o byte de comando (CCB) do controlador
         wait_write();
         outb(PS2_CMD, 0x20);
         wait_read();
@@ -252,52 +320,62 @@ pub fn init() {
         status |= 1 << 1;
         status &= !(1 << 5);
 
-        // 5. Grava de volta o byte de configuração
         wait_write();
         outb(PS2_CMD, 0x60);
         wait_write();
         outb(PS2_DATA, status);
 
-        // 6. Envia comando para carregar parâmetros padrão do mouse (0xF6)
+        // 6. Envia comando para carregar parâmetros padrão do mouse (0xF6) e descarta ACK de hardware
         mouse_write(0xF6);
-        let _ = mouse_read(); // Descarta ACK (0xFA)
+        let _ = mouse_read();
 
-        // 7. Habilita streaming de pacotes de dados (0xF4)
+        // 7. Habilita streaming de pacotes de dados (0xF4) e descarta ACK de hardware
         mouse_write(0xF4);
-        let _ = mouse_read(); // Descarta ACK (0xFA)
-        // 8. Desmascara IRQ12 no PIC para recepcao assincrona dual (interrupcao + polling)
+        let _ = mouse_read();
+
+        // 8. Drena quaisquer bytes espúrios residuais antes de abrir a máquina de estados
+        let mut drain2 = 100;
+        while (inb(PS2_CMD) & 1) != 0 && drain2 > 0 {
+            let _ = inb(PS2_DATA);
+            drain2 -= 1;
+        }
+
+        reset_sync();
+        HARDWARE_INITIALIZED.store(true, Ordering::Release);
+
+        // 9. Desmascara IRQ12 no PIC para recepção assíncrona (e cascata IRQ2)
         crate::interrupts::pic::unmask_irq(12);
     }
 }
 
 /// Retorna a posição atual do mouse e o estado dos botões `(x, y, buttons)`.
 pub fn get_state() -> (usize, usize, u8) {
-    unsafe {
-        let mouse = &*core::ptr::addr_of!(MOUSE);
-        (mouse.x, mouse.y, mouse.buttons)
-    }
+    (
+        MOUSE_X.load(Ordering::Acquire),
+        MOUSE_Y.load(Ordering::Acquire),
+        MOUSE_BUTTONS.load(Ordering::Acquire),
+    )
 }
 
 /// Handler de interrupção IRQ12 (Vetor 44 da IDT).
 #[no_mangle]
 pub extern "C" fn mouse_irq_handler() {
-    unsafe {
-        let status = inb(PS2_CMD);
-        if (status & 1) == 0 {
-            pic::send_eoi(12);
-            return;
-        }
+    IRQ12_COUNT.fetch_add(1, Ordering::Relaxed);
 
-        // Processa apenas se o dado veio da porta auxiliar (mouse)
-        if (status & 0x20) != 0 {
-            let b = inb(PS2_DATA);
-            if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_MOUSE0, 12, b) {
-                process_byte(b);
+    if PORT60_LOCK.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+        unsafe {
+            let status = inb(PS2_CMD);
+            if (status & 1) != 0 && (status & 0x20) != 0 {
+                let b = inb(PS2_DATA);
+                if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_MOUSE0, 12, b) {
+                    process_byte(b);
+                }
             }
         }
-
-        pic::send_eoi(12);
+        PORT60_LOCK.store(false, Ordering::Release);
     }
+
+    pic::send_eoi(12);
 }
 
 #[cfg(test)]
@@ -306,25 +384,23 @@ mod tests {
 
     #[test]
     fn test_ps2_mouse_packet_decoding() {
-        unsafe {
-            MOUSE.x = 500;
-            MOUSE.y = 400;
-            MOUSE.max_x = 1024;
-            MOUSE.max_y = 768;
-            MOUSE.cycle = 0;
-            MOUSE.buttons = 0;
+        MOUSE_X.store(500, Ordering::Relaxed);
+        MOUSE_Y.store(400, Ordering::Relaxed);
+        MOUSE_MAX_X.store(1024, Ordering::Relaxed);
+        MOUSE_MAX_Y.store(768, Ordering::Relaxed);
+        MOUSE_CYCLE.store(0, Ordering::Relaxed);
+        MOUSE_BUTTONS.store(0, Ordering::Relaxed);
 
-            // Envia pacote válido: Flags (0x09: bit 3 + bit 0 left button), DeltaX = 10, DeltaY = 5
-            process_byte(0x09);
-            assert_eq!(MOUSE.cycle, 1);
-            process_byte(10);
-            assert_eq!(MOUSE.cycle, 2);
-            process_byte(5);
-            assert_eq!(MOUSE.cycle, 0);
+        // Envia pacote válido: Flags (0x09: bit 3 + bit 0 left button), DeltaX = 10, DeltaY = 5
+        process_byte(0x09);
+        assert_eq!(MOUSE_CYCLE.load(Ordering::Relaxed), 1);
+        process_byte(10);
+        assert_eq!(MOUSE_CYCLE.load(Ordering::Relaxed), 2);
+        process_byte(5);
+        assert_eq!(MOUSE_CYCLE.load(Ordering::Relaxed), 0);
 
-            assert_eq!(MOUSE.x, 510);
-            assert_eq!(MOUSE.y, 395); // Delta Y positivo move para cima no PS/2
-            assert_eq!(MOUSE.buttons, 1); // Left click ativo
-        }
+        assert_eq!(MOUSE_X.load(Ordering::Relaxed), 510);
+        assert_eq!(MOUSE_Y.load(Ordering::Relaxed), 395); // Delta Y positivo move para cima no PS/2
+        assert_eq!(MOUSE_BUTTONS.load(Ordering::Relaxed), 1); // Left click ativo
     }
 }

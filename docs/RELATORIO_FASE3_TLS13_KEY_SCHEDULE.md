@@ -125,3 +125,4 @@ Com a conclusão desta fase:
 1. O subsistema de entrada PS/2 e a fila de eventos do compositor Aladdin Desktop estão imunes a perdas de pacotes e bloqueios de foco.
 2. O microkernel Jinn OS dispõe agora de uma pilha TLS 1.3 nativa, robusta e matematicamente alinhada com as RFCs 8446 e 5869.
 3. A imagem ISO (`jinn.iso`) e o disco virtual (`disk.img`) foram atualizados e verificados em execução com 64 MB de RAM no QEMU.
+

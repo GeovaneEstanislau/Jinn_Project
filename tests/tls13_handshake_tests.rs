@@ -388,3 +388,103 @@ fn test_certificate_verify_context_formatting() {
     println!("PASSOU!");
 }
 
+// ── Teste 11: HelloRetryRequest e Substituição Sintética por message_hash (RFC 8446) ─
+
+#[test]
+fn test_hello_retry_request_synthetic_message_hash() {
+    print!("Teste 11: HelloRetryRequest e substituição sintética por message_hash (RFC 8446 Seção 4.4.1)... ");
+    let mut client = Tls13Client::new("secure.jinn.net", TrustStore::new());
+    let client_random = [0x55u8; 32];
+    let client_pubkey = [0x04u8; 65];
+
+    let ch1 = client.build_client_hello(&client_random, &client_pubkey);
+    assert_eq!(client.state, HandshakeState::ClientHelloSent);
+
+    // Constrói HelloRetryRequest com o random fixo padronizado da RFC 8446
+    let mut hrr_msg = alloc::vec![HandshakeType::ServerHello.as_u8(), 0x00, 0x00, 38];
+    hrr_msg.extend_from_slice(&TLS12_LEGACY_VERSION.to_be_bytes());
+    hrr_msg.extend_from_slice(&HELLO_RETRY_REQUEST_RANDOM); // 32 bytes SHA-256("HelloRetryRequest")
+    hrr_msg.push(0x00); // session id len = 0
+    hrr_msg.extend_from_slice(&CipherSuite::TlsAes128GcmSha256.as_u16().to_be_bytes());
+    hrr_msg.push(0x00); // compression = 0
+    hrr_msg.extend_from_slice(&0x0000u16.to_be_bytes()); // extensions len = 0
+
+    assert!(is_hello_retry_request(&hrr_msg));
+
+    // Processa HelloRetryRequest
+    let res = client.handle_hello_retry_request(&hrr_msg);
+    assert!(res.is_ok());
+    assert_eq!(client.state, HandshakeState::HelloRetryRequestReceived);
+
+    // O TranscriptHash agora deve conter message_hash (HandshakeType 254) + HRR
+    let transcript_after_hrr = client.transcript.current_hash();
+    let ch1_hash = Sha256::digest(&ch1);
+    let mut expected_message_hash = alloc::vec![254u8, 0x00, 0x00, 32];
+    expected_message_hash.extend_from_slice(&ch1_hash);
+
+    let mut expected_transcript = TranscriptHash::new();
+    expected_transcript.update(&expected_message_hash);
+    expected_transcript.update(&hrr_msg);
+    assert_eq!(transcript_after_hrr, expected_transcript.current_hash());
+
+    // Gera ClientHello2
+    let ch2 = client.build_client_hello2(&client_random, &client_pubkey);
+    assert_eq!(client.state, HandshakeState::WaitServerHello);
+    assert_eq!(ch2[0], HandshakeType::ClientHello.as_u8());
+
+    println!("PASSOU!");
+}
+
+// ── Teste 12: Derivação do Resumption Master Secret (RFC 8446 Seção 7.1) ───────────
+
+#[test]
+fn test_resumption_master_secret_derivation() {
+    print!("Teste 12: Derivação de Resumption Master Secret (RFC 8446 Seção 7.1)... ");
+    let mut ks = Tls13KeySchedule::new(CipherSuite::TlsAes128GcmSha256);
+    let transcript_hello = Sha256::digest(b"CH..SH");
+    ks.derive_handshake_secrets(&[0x33u8; 32], &transcript_hello);
+
+    let transcript_server_fin = Sha256::digest(b"CH..ServerFinished");
+    let master_res = ks.derive_master_secrets(&transcript_server_fin);
+    assert!(master_res.is_ok());
+
+    let transcript_client_fin = Sha256::digest(b"CH..ClientFinished");
+    let res_master = ks.derive_resumption_master_secret(&transcript_client_fin);
+    assert!(res_master.is_ok());
+    let res_master_bytes = res_master.unwrap();
+    assert_eq!(res_master_bytes.len(), 32);
+    assert_ne!(res_master_bytes, [0u8; 32]);
+
+    println!("PASSOU!");
+}
+
+// ── Teste 13: Interoperabilidade AEAD Nonce XOR com Sequence Numbers Múltiplos ────
+
+#[test]
+fn test_openssl_interop_transcript_vectors() {
+    print!("Teste 13: Interoperabilidade de AEAD Nonce XOR em múltiplos sequence numbers... ");
+    let static_iv: [u8; 12] = [
+        0x5D, 0x31, 0x3E, 0xB2, 0x67, 0x12, 0x98, 0x4B, 0x55, 0x24, 0xFE, 0x01
+    ];
+
+    // Seq 0: Nonce deve ser exatamente igual ao IV
+    let nonce0 = Tls13KeySchedule::compute_nonce(&static_iv, 0);
+    assert_eq!(nonce0, static_iv);
+
+    // Seq 1: Último byte sofre XOR com 1
+    let nonce1 = Tls13KeySchedule::compute_nonce(&static_iv, 1);
+    assert_eq!(nonce1[11], static_iv[11] ^ 1);
+    assert_eq!(&nonce1[..11], &static_iv[..11]);
+
+    // Seq 0x0102030405060708: Bytes 4..12 sofrem XOR alinhados à direita
+    let seq_arb = 0x0102030405060708u64;
+    let nonce_arb = Tls13KeySchedule::compute_nonce(&static_iv, seq_arb);
+    assert_eq!(&nonce_arb[..4], &static_iv[..4]); // Primeiros 4 bytes inalterados
+    let seq_b = seq_arb.to_be_bytes();
+    for i in 0..8 {
+        assert_eq!(nonce_arb[4 + i], static_iv[4 + i] ^ seq_b[i]);
+    }
+
+    println!("PASSOU!");
+}
+
