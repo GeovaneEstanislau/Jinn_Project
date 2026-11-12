@@ -1448,10 +1448,10 @@ impl Scheduler {
         let start_tsc = read_tsc();
 
         // Escalonamento por prioridade (Round-Robin dentro de cada nível, SMP-aware)
-        let core_idle_id = if cpu_id < crate::gdt::MAX_CPUS && self.core_idle[cpu_id] != 0 {
+        let core_idle_id = if cpu_id < crate::gdt::MAX_CPUS && self.tasks.get(self.core_idle[cpu_id]).and_then(|t| t.as_ref()).is_some() {
             self.core_idle[cpu_id]
         } else {
-            self.core_idle.iter().copied().find(|&id| id != 0 && self.tasks.get(id).and_then(|t| t.as_ref()).is_some()).unwrap_or(1)
+            0
         };
 
         for priority in [TaskPriority::RealTime, TaskPriority::Normal, TaskPriority::Idle] {
@@ -1538,8 +1538,7 @@ impl Scheduler {
 
         // Se o fallback do núcleo falhou, procura por qualquer Idle task disponível
         for &cand_id in self.core_idle.iter() {
-            if cand_id != 0 {
-                if let Some(idle) = &mut self.tasks[cand_id] {
+            if let Some(idle) = &mut self.tasks[cand_id] {
                     idle.state = TaskState::Running;
                     idle.running_on_cpu = Some(cpu_id);
                     self.core_current[cpu_id] = Some(cand_id);
@@ -1554,7 +1553,6 @@ impl Scheduler {
                     }
                     return idle.saved_rsp;
                 }
-            }
         }
 
         curr_frame_ptr

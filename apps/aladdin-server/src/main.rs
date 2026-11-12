@@ -521,12 +521,28 @@ pub extern "C" fn _start() -> ! {
             }
             if ev.kind == 1 {
                 enqueue_key(ev.code as u8);
+                aladdin_sdk::console::print("[ALADDIN-INPUT] KeyDown code=");
+                aladdin_sdk::console::print_num(ev.code as u64);
+                aladdin_sdk::console::println("");
             } else if ev.kind >= 3 {
                 let mx = (ev.x as usize).min(fb_w.saturating_sub(1));
                 let my = (ev.y as usize).min(fb_h.saturating_sub(1));
                 let btn = ev.code as u8;
                 unsafe {
                     CURRENT_MOUSE = (mx, my, btn);
+                }
+                if ev.kind == 4 || ev.kind == 5 {
+                    aladdin_sdk::console::print("[ALADDIN-INPUT] MouseBtn kind=");
+                    aladdin_sdk::console::print_num(ev.kind as u64);
+                    aladdin_sdk::console::print(" btn=");
+                    aladdin_sdk::console::print_num(btn as u64);
+                    aladdin_sdk::console::println("");
+                } else if ev.kind == 3 {
+                    aladdin_sdk::console::print("[ALADDIN-INPUT] MouseMove x=");
+                    aladdin_sdk::console::print_num(mx as u64);
+                    aladdin_sdk::console::print(" y=");
+                    aladdin_sdk::console::print_num(my as u64);
+                    aladdin_sdk::console::println("");
                 }
             }
         }
@@ -599,7 +615,14 @@ pub extern "C" fn _start() -> ! {
 }
 
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    aladdin_sdk::console::print("[ALADDIN PANIC] ");
+    if let Some(loc) = info.location() {
+        aladdin_sdk::console::print(loc.file());
+        aladdin_sdk::console::print(":");
+        aladdin_sdk::console::print_num(loc.line() as u64);
+    }
+    aladdin_sdk::console::println("");
     unsafe {
         sys_unregister_graphics();
         aladdin_sdk::syscall::syscall1(aladdin_sdk::syscall::SYS_EXIT, 1);

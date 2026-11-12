@@ -213,19 +213,27 @@ pub fn set_shift_down(val: bool) {
     unsafe { SHIFT_DOWN = val; }
 }
 
-/// IRQ1 handler (vetor 33) — usado se IRQ1 for habilitado no PIC.
+/// IRQ1 handler (vetor 33) — tratamento assíncrono de teclado PS/2.
 #[no_mangle]
 pub extern "C" fn kbd_irq_handler() {
     unsafe {
-        let status = inb(KBD_CMD);
-        if (status & 1) != 0 {
-            let sc = inb(KBD_DATA);
-            pic::send_eoi(1);
-            if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_KBD0, 1, sc) {
-                process_scancode(sc);
+        for _ in 0..16 {
+            let status = inb(KBD_CMD);
+            if (status & 1) == 0 {
+                break;
             }
-        } else {
-            pic::send_eoi(1);
+            let b = inb(KBD_DATA);
+            // Verifica o bit AUX (bit 5): se 0, pertence ao teclado; se 1, pertence ao mouse.
+            if (status & 0x20) == 0 {
+                if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_KBD0, 1, b) {
+                    process_scancode(b);
+                }
+            } else {
+                if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_MOUSE0, 12, b) {
+                    crate::interrupts::ps2_mouse::process_byte(b);
+                }
+            }
         }
+        pic::send_eoi(1);
     }
 }

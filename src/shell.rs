@@ -2069,25 +2069,31 @@ pub fn run(w: &mut Writer) -> ! {
             continue;
         }
 
-        // Fallback de polling: lê porta 0x64 diretamente (Ring 0 pode)
+        // Fallback de polling seguro: somente se interrupções estiverem desabilitadas (IF=0)
+        let rflags: u64;
         unsafe {
-            let status: u8;
-            core::arch::asm!(
-                "in al, dx",
-                out("al") status,
-                in("dx") 0x64u16,
-                options(nomem, nostack)
-            );
-            if (status & 1) != 0 && (status & 0x20) == 0 {
-                let sc: u8;
+            core::arch::asm!("pushfq", "pop {}", out(reg) rflags, options(nomem));
+        }
+        if (rflags & 0x200) == 0 {
+            unsafe {
+                let status: u8;
                 core::arch::asm!(
                     "in al, dx",
-                    out("al") sc,
-                    in("dx") 0x60u16,
+                    out("al") status,
+                    in("dx") 0x64u16,
                     options(nomem, nostack)
                 );
-                crate::interrupts::ps2_keyboard::process_scancode(sc);
-                continue;
+                if (status & 1) != 0 && (status & 0x20) == 0 {
+                    let sc: u8;
+                    core::arch::asm!(
+                        "in al, dx",
+                        out("al") sc,
+                        in("dx") 0x60u16,
+                        options(nomem, nostack)
+                    );
+                    crate::interrupts::ps2_keyboard::process_scancode(sc);
+                    continue;
+                }
             }
         }
 

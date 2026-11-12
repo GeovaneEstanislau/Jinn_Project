@@ -142,8 +142,6 @@ pub extern "C" fn _start() -> ! {
     interrupts::pic::remap();
     crate::timer::init();
     interrupts::pic::unmask_irq(0);    // IRQ0 = Timer (preempcao futura)
-    // IRQ1 (teclado) NAO habilitado: o shell usa polling direto em 0x60/0x64
-    // Isso evita conflito entre o IRQ handler e o loop de polling do shell.
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
@@ -154,8 +152,9 @@ pub extern "C" fn _start() -> ! {
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);
 
-    w.write_string("[+] PS/2 Keyboard...");
+    w.write_string("[+] PS/2 Keyboard (IRQ 1)...");
     interrupts::ps2_keyboard::init_and_flush();
+    interrupts::pic::unmask_irq(1);    // IRQ1 = Teclado PS/2 (bufferizado de forma segura via ISR)
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);

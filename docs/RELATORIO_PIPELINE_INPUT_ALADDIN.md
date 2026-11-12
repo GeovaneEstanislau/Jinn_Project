@@ -99,3 +99,4 @@ Quando o mouse se move sem alteração no estado de botões e sem janelas em ani
 4. `fb.swap_rect(&damage, backbuffer)`: Invoca a `Syscall 74: sys_present` transferindo apenas os pixels alterados para o framebuffer linear em memória de vídeo.
 
 **Desempenho Medido:** O caminho rápido consome menos de **4,2 microssegundos** por evento de movimento em resolução 1024x768x32bpp, permitindo rastreamento fluido a 60 FPS com menos de 0,5% de uso de CPU sob o teto de 64 MB de RAM.
+

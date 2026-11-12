@@ -66,3 +66,4 @@ Ambos os dispositivos compartilham os mesmos registradores de I/O na arquitetura
 | Resiliência a perda de pacotes | Timeout temporal >50ms e bit 3 mandatory | **CONFORME** |
 | Thread-Safety / SMP Safety | Registradores atômicos com Acquire-Release | **CONFORME** |
 | Telemetria de diagnóstico | Contadores atômicos em todos os estágios | **CONFORME** |
+

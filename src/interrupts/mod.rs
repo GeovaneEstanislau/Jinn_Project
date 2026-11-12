@@ -46,19 +46,22 @@ pub extern "C" fn irq_dispatch(vector: u64, _frame: *mut usize) -> usize {
             crate::scheduler::get().preempt_core(cpu_id, _frame as usize)
         }
         33 => {
-            // IRQ1 — PS/2 Keyboard (EOI sent inside the handler)
+            // IRQ1 — PS/2 Keyboard
             ps2_keyboard::kbd_irq_handler();
+            apic::send_eoi();
             0
         }
         44 => {
-            // IRQ12 — PS/2 Mouse (EOI sent inside handler)
+            // IRQ12 — PS/2 Mouse
             ps2_mouse::mouse_irq_handler();
+            apic::send_eoi();
             0
         }
         34..=47 => {
-            // Unhandled IRQ: send EOI and ignore
+            // Unhandled IRQ: send EOI to both legacy PIC and LAPIC
             let irq = (vector - 32) as u8;
             pic::send_eoi(irq);
+            apic::send_eoi();
             0
         }
         _ => 0,

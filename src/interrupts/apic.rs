@@ -8,8 +8,11 @@ const APIC_GLOBAL_ENABLE: u64 = 1 << 11;
 // APIC Registers (Offsets from APIC Base)
 #[allow(dead_code)]
 const APIC_ID: u32 = 0x020;
+const APIC_TPR: u32 = 0x080;
 const APIC_EOI: u32 = 0x0B0;
 const APIC_SPURIOUS: u32 = 0x0F0;
+const APIC_LVT_LINT0: u32 = 0x350;
+const APIC_LVT_LINT1: u32 = 0x360;
 const APIC_TIMER: u32 = 0x320;
 const APIC_TIMER_INIT_CNT: u32 = 0x380;
 #[allow(dead_code)]
@@ -54,6 +57,15 @@ pub fn init() {
         // Get physical address and convert to virtual address via HHDM
         let phys_base = apic_base & APIC_BASE_MASK;
         APIC_BASE_VADDR = phys_base + hhdm_offset();
+
+        // Aceita todas as prioridades de interrupção (TPR = 0)
+        write_apic(APIC_TPR, 0);
+
+        // Configura LVT LINT0 como ExtINT (0x700), sem máscara, para entregar interrupções do PIC 8259A ao BSP
+        write_apic(APIC_LVT_LINT0, 0x0000_0700);
+
+        // Configura LVT LINT1 como NMI (0x400)
+        write_apic(APIC_LVT_LINT1, 0x0000_0400);
 
         // Enable APIC by setting bit 8 in the Spurious Interrupt Vector Register.
         // We map the spurious interrupt to vector 255.

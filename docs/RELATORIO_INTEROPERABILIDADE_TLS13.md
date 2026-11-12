@@ -59,3 +59,4 @@ Para certificar que o cliente Jinn não aceita sessões comprometidas por ataque
 ## 5. Conclusão
 
 A pilha de handshake TLS 1.3 do microkernel Jinn OS apresenta conformidade completa com os padrões de rede de servidores OpenSSL modernos, fornecendo uma base criptográfica sólida e de alto desempenho para a navegação segura no Jinn Browser.
+

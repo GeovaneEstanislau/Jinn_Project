@@ -191,29 +191,7 @@ pub fn poll_hardware_input(caller_pid: usize) -> Result<Option<InputHardwareEven
         return Err(crate::syscall::EPERM);
     }
 
-    // 1. Prioriza eventos de teclado
-    let status: u8;
-    unsafe {
-        core::arch::asm!("in al, dx", out("al") status, in("dx") 0x64u16, options(nomem, nostack));
-    }
-    if (status & 1) != 0 && (status & 0x20) == 0 {
-        let sc: u8;
-        unsafe {
-            core::arch::asm!("in al, dx", out("al") sc, in("dx") 0x60u16, options(nomem, nostack));
-        }
-        if sc == 0x01 { // ESC
-            return Ok(Some(InputHardwareEvent {
-                kind: 1, // KeyDown
-                code: 0x1B,
-                x: 0,
-                y: 0,
-                modifiers: 0,
-            }));
-        }
-        if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_KBD0, 1, sc) {
-            crate::interrupts::ps2_keyboard::process_scancode(sc);
-        }
-    }
+    // 1. Processa eventos de teclado a partir da fila segura em memória alimentada pelo ISR (IRQ1)
     if let Some(ch) = crate::keyboard_buffer::pop() {
         return Ok(Some(InputHardwareEvent {
             kind: 1, // KeyDown
@@ -224,7 +202,7 @@ pub fn poll_hardware_input(caller_pid: usize) -> Result<Option<InputHardwareEven
         }));
     }
 
-    // 2. Eventos de mouse
+    // 2. Processa eventos de mouse a partir dos atômicos atualizados pelo ISR (IRQ12)
     crate::interrupts::ps2_mouse::poll();
     let (cur_x, cur_y, cur_btn) = crate::interrupts::ps2_mouse::get_state();
     let mut last = LAST_MOUSE_STATE.lock();
@@ -1045,18 +1023,6 @@ pub fn run_desktop() {
         crate::interrupts::ps2_mouse::init();
 
         let mut poll_keyboard = || -> Option<u8> {
-            let status: u8;
-            core::arch::asm!("in al, dx", out("al") status, in("dx") 0x64u16, options(nomem, nostack));
-            if (status & 1) != 0 && (status & 0x20) == 0 {
-                let sc: u8;
-                core::arch::asm!("in al, dx", out("al") sc, in("dx") 0x60u16, options(nomem, nostack));
-                if sc == 0x01 { // Scancode ESC
-                    return Some(0x1B);
-                }
-                if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_KBD0, 1, sc) {
-                    crate::interrupts::ps2_keyboard::process_scancode(sc);
-                }
-            }
             crate::keyboard_buffer::pop()
         };
 

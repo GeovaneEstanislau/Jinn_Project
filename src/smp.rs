@@ -187,12 +187,15 @@ pub unsafe extern "C" fn ap_entry(info: *const LimineSmpInfo) -> ! {
 
 /// Inicializa o subsistema SMP, registra o BSP e acorda todos os APs detectados.
 pub fn init() -> usize {
-    // 1. Inicializa tabela de mapeamento
+    // 1. Inicializa o Local APIC no BSP (CPU 0)
+    crate::interrupts::apic::init();
+
+    // 2. Inicializa tabela de mapeamento
     for slot in LAPIC_TO_CPUID.iter() {
         slot.store(-1, Ordering::Relaxed);
     }
 
-    // 2. Registra o Bootstrap Processor (BSP = CPU 0)
+    // 3. Registra o Bootstrap Processor (BSP = CPU 0)
     let bsp_lapic = apic::lapic_id();
     if (bsp_lapic as usize) < 256 {
         LAPIC_TO_CPUID[bsp_lapic as usize].store(0, Ordering::SeqCst);

@@ -107,3 +107,4 @@ O subsistema inclui o rastreador atômico `IRQ12_COUNT: AtomicU64`, que é incre
 - Taxa de disparos por segundo em repouso vs movimento (típico: 40–100 IRQs/s em movimento ativo).
 - Proporção entre interrupções atendidas pela ISR e eventos consumidos via polling do servidor gráfico.
 - Ausência total de interrupções perdidas (*lost interrupts*) ou vetores fantasmas (*spurious IRQs*).
+

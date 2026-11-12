@@ -131,3 +131,4 @@ O fluxo de transição de segredos foi auditado em todos os nós da árvore crip
 ## 3. Conclusão da Auditoria
 
 O subsistema TLS 1.3 do microkernel Jinn OS cumpre com integridade e rigor todas as cláusulas normativas das RFCs 8446 e 5869 auditadas. Não foram identificadas vulnerabilidades de oráculo de padding, correspondência cega de strings ou vazamentos de canal lateral de temporização.
+

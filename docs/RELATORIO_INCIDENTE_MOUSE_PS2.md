@@ -115,3 +115,4 @@ Implementaram-se contadores atômicos exportados via `get_telemetry()`:
 ## 5. Conclusão
 
 O incidente crítico do mouse PS/2 foi definitivamente solucionado. O pipeline de entrada entre o controlador i8042, as interrupções PIC IRQ 12, as syscalls de hardware e o compositor Ring 3 opera agora de forma estável, atômica e resiliente a falhas temporais, mantendo o sistema em conformidade com o teto de 64 MB de memória RAM.
+

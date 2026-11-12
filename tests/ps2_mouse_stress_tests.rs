@@ -40,6 +40,10 @@ mod interrupts {
 
         pub fn send_eoi(_irq: u8) {}
     }
+
+    pub mod ps2_keyboard {
+        pub fn process_scancode(_sc: u8) {}
+    }
 }
 
 mod limine {
@@ -54,6 +58,7 @@ mod limine {
 
 mod drivers {
     pub mod device_manager {
+        pub const DEV_KBD0: u32 = 0x1001;
         pub const DEV_MOUSE0: u32 = 0x1002;
         pub const INPUT_KIND_MOUSE_BUTTON_DOWN: u16 = 4;
         pub const INPUT_KIND_MOUSE_BUTTON_UP: u16 = 5;
@@ -226,13 +231,10 @@ fn test_mouse_stale_packet_timeout_resync() {
     ps2_mouse::process_byte(0x08);
     assert_eq!(ps2_mouse::get_cycle(), 1);
 
-    // Simula passagem de tempo no timer do sistema (> 5 ticks ~ 50ms)
-    timer::tick();
-    timer::tick();
-    timer::tick();
-    timer::tick();
-    timer::tick();
-    timer::tick();
+    // Simula passagem de tempo no timer do sistema (> 30 ticks ~ 300ms)
+    for _ in 0..35 {
+        timer::tick();
+    }
 
     // Chegada do próximo byte: deve detectar timeout, resetar cycle para 0 e processar
     // Como 0x08 tem bit 3 = 1, ele é aceito como novo Byte 0!

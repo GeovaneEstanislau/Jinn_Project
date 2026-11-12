@@ -31,7 +31,6 @@ pub static MOUSE_CYCLE: AtomicU8 = AtomicU8::new(0);
 pub static MOUSE_PACKET: [AtomicU8; 3] = [AtomicU8::new(0), AtomicU8::new(0), AtomicU8::new(0)];
 pub static LAST_BYTE_TICK: AtomicU64 = AtomicU64::new(0);
 pub static HARDWARE_INITIALIZED: AtomicBool = AtomicBool::new(false);
-static PORT60_LOCK: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MouseTelemetry {
@@ -130,11 +129,11 @@ pub fn set_bounds(max_x: usize, max_y: usize) {
 pub fn process_byte(b: u8) {
     MOUSE_BYTES_RECEIVED.fetch_add(1, Ordering::Relaxed);
 
-    // Timeout de sincronização de pacote: se transcorreram > 5 ticks (50ms) entre bytes,
+    // Timeout de sincronização de pacote: se transcorreram > 30 ticks (300ms) entre bytes,
     // o pacote foi interrompido/perdido no canal serial. Reseta o ciclo para evitar desfasamento.
     let now = crate::timer::ticks();
     let last = LAST_BYTE_TICK.swap(now, Ordering::Relaxed);
-    if now.saturating_sub(last) > 5 && MOUSE_CYCLE.load(Ordering::Relaxed) != 0 {
+    if now.saturating_sub(last) > 30 && MOUSE_CYCLE.load(Ordering::Relaxed) != 0 {
         MOUSE_CYCLE.store(0, Ordering::Relaxed);
         MOUSE_INVALID_PACKETS.fetch_add(1, Ordering::Relaxed);
     }
@@ -249,33 +248,14 @@ pub fn update_from_driver(kind: u16, code: u16, x: usize, y: usize) {
     }
 }
 
-/// Faz polling direto no controlador i8042 processando bytes da porta auxiliar (mouse).
-/// Garante funcionamento contínuo e sincronizado através de lock atômico contra concorrência com o ISR.
+/// Verifica estado temporal do mouse e recupera máquina de estados se estagnada.
+/// A ingestão da porta 0x60 é tratada de forma estrita e sem contenção pelo ISR (IRQ12).
 pub fn poll() {
-    if PORT60_LOCK.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-        return;
+    let now = crate::timer::ticks();
+    let last = LAST_BYTE_TICK.load(Ordering::Relaxed);
+    if now.saturating_sub(last) > 30 && MOUSE_CYCLE.load(Ordering::Relaxed) != 0 {
+        reset_sync();
     }
-
-    unsafe {
-        for _ in 0..16 {
-            let status = inb(PS2_CMD);
-            // Buffer de saída vazio
-            if (status & 1) == 0 {
-                break;
-            }
-            // Se o bit 5 for 0, o byte pertence ao teclado! Não consome para não roubar tecla.
-            if (status & 0x20) == 0 {
-                break;
-            }
-            // Bit 5 = 1: O byte pertence ao mouse
-            let b = inb(PS2_DATA);
-            if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_MOUSE0, 12, b) {
-                process_byte(b);
-            }
-        }
-    }
-
-    PORT60_LOCK.store(false, Ordering::Release);
 }
 
 /// Inicializa a segunda porta do controlador PS/2 e configura o streaming do mouse.
@@ -327,11 +307,17 @@ pub fn init() {
 
         // 6. Envia comando para carregar parâmetros padrão do mouse (0xF6) e descarta ACK de hardware
         mouse_write(0xF6);
-        let _ = mouse_read();
+        let ack1 = mouse_read();
+        crate::serial_write(b"[PS2-MOUSE] Init ACK 0xF6: ");
+        crate::serial_write_byte(if ack1 == 0xFA { b'Y' } else { b'N' });
+        crate::serial_write(b"\n");
 
         // 7. Habilita streaming de pacotes de dados (0xF4) e descarta ACK de hardware
         mouse_write(0xF4);
-        let _ = mouse_read();
+        let ack2 = mouse_read();
+        crate::serial_write(b"[PS2-MOUSE] Init ACK 0xF4: ");
+        crate::serial_write_byte(if ack2 == 0xFA { b'Y' } else { b'N' });
+        crate::serial_write(b"\n");
 
         // 8. Drena quaisquer bytes espúrios residuais antes de abrir a máquina de estados
         let mut drain2 = 100;
@@ -362,20 +348,26 @@ pub fn get_state() -> (usize, usize, u8) {
 pub extern "C" fn mouse_irq_handler() {
     IRQ12_COUNT.fetch_add(1, Ordering::Relaxed);
 
-    if PORT60_LOCK.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
-        unsafe {
+    unsafe {
+        for _ in 0..16 {
             let status = inb(PS2_CMD);
-            if (status & 1) != 0 && (status & 0x20) != 0 {
-                let b = inb(PS2_DATA);
+            if (status & 1) == 0 {
+                break;
+            }
+            let b = inb(PS2_DATA);
+            // Verifica o bit AUX (bit 5): se 1, pertence ao mouse; se 0, pertence ao teclado.
+            if (status & 0x20) != 0 {
                 if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_MOUSE0, 12, b) {
                     process_byte(b);
                 }
+            } else {
+                if !crate::drivers::device_manager::post_raw_hardware_byte(crate::drivers::device_manager::DEV_KBD0, 1, b) {
+                    crate::interrupts::ps2_keyboard::process_scancode(b);
+                }
             }
         }
-        PORT60_LOCK.store(false, Ordering::Release);
+        pic::send_eoi(12);
     }
-
-    pic::send_eoi(12);
 }
 
 #[cfg(test)]

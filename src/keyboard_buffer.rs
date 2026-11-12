@@ -10,7 +10,7 @@
 ///   - We never hold the lock across an `sti` boundary
 ///   - The shell holds the lock only briefly to pop one byte
 
-use crate::memory::SpinLock;
+use crate::memory::IrqSafeSpinLock;
 
 const BUF_SIZE: usize = 256;
 
@@ -55,7 +55,7 @@ impl RingBuffer {
     }
 }
 
-static KEYBOARD_BUFFER: SpinLock<RingBuffer> = SpinLock::new(RingBuffer::new());
+static KEYBOARD_BUFFER: IrqSafeSpinLock<RingBuffer> = IrqSafeSpinLock::new(RingBuffer::new());
 
 /// Push a byte into the buffer (called from IRQ context).
 pub fn push(byte: u8) {
