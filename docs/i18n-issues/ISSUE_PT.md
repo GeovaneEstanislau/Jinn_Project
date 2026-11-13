@@ -27,3 +27,4 @@ Queremos mobilizar a comunidade de desenvolvedores do Brasil, Portugal, Angola, 
 - Contributor License Agreement: [`CLA.md`](https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/CLA.md)
 
 Muito obrigado por fazer parte da construção de um sistema operacional moderno, soberano e aberto em Rust!
+

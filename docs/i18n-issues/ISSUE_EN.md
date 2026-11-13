@@ -27,3 +27,4 @@ We want to ensure that our English documentation is clear, idiomatic, technicall
 - Contributor License Agreement: [`CLA.md`](https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/CLA.md)
 
 Thank you for helping build a modern, transparent, and sovereign computing foundation in Rust!
+

@@ -27,3 +27,4 @@ Queremos invitar a la gran comunidad hispanohablante de desarrolladores de softw
 - Acuerdo de Licencia de Colaborador: [`CLA.md`](https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/CLA.md)
 
 ¡Muchas gracias por ayudarnos a construir una base de cómputo soberana, segura y transparente en Rust!
+

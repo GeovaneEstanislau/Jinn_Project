@@ -27,3 +27,4 @@ Szeretnénk megszólítani és bevonni a magyar rendszermérnököket, alacsony 
 - Közreműködői licencmegállapodás: [`CLA.md`](https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/CLA.md)
 
 Köszönjük a segítségét egy biztonságos, szuverén és modern számítástechnikai alap kiépítésében Rust nyelven!
+

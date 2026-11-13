@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Cria ou gera links para as Issues de internacionalização e chamamento de contribuidores no GitHub.
 
@@ -89,15 +89,17 @@ foreach ($file in $issueFiles) {
         } | ConvertTo-Json -Depth 5
 
         try {
-            $resp = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/issues" -Method Post -Headers $headers -Body ([System.Text.Encoding]::UTF8.GetBytes($payload)) -ContentType "application/json; charset=utf-8"
-            Write-Host " [CRIADA: #$($resp.number)]" -ForegroundColor Green
+            $utf8Bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+            $resp = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/issues" -Method Post -Headers $headers -Body $utf8Bytes -ContentType "application/json; charset=utf-8"
+            $issueNum = $resp.number
+            Write-Host " [CRIADA: #$issueNum]" -ForegroundColor Green
             $results += [PSCustomObject]@{
                 Title = $title
-                Status = "Criada (#$($resp.number))"
+                Status = "Criada (#$issueNum)"
                 Url = $resp.html_url
             }
         } catch {
-            Write-Host " [ERRO: $_]" -ForegroundColor Red
+            Write-Host " [ERRO: $($_.Exception.Message)]" -ForegroundColor Red
             $results += [PSCustomObject]@{
                 Title = $title
                 Status = "Erro na API"

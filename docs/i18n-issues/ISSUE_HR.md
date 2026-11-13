@@ -27,3 +27,4 @@ Objavili smo službenu verziju središnje tehničke dokumentacije na hrvatskom j
 - Ugovor o licenci suradnika: [`CLA.md`](https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/CLA.md)
 
 Hvala vam na podršci u izgradnji suverenog, transparentnog i sigurnog računalnog temelja u Rustu!
+

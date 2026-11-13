@@ -27,3 +27,4 @@
 - Лицензионное соглашение (CLA): [`CLA.md`](https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/CLA.md)
 
 Спасибо за поддержку суверенной, надежной и открытой вычислительной среды на Rust!
+

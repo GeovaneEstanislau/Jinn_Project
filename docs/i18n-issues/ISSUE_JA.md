@@ -27,3 +27,4 @@ Jinn OS の中心的な技術ドキュメントの日本語版を公開いたし
 - コントリビューター同意書: [`CLA.md`](https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/CLA.md)
 
 Rust による主権的で透明性の高い次世代コンピューティング基盤の構築に、ぜひご協力ください！
+

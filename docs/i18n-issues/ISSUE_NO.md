@@ -27,3 +27,4 @@ Vi ønsker å invitere utviklere, systemprogrammerere, Rustaceans og teknologien
 - Bidragsyteravtale: [`CLA.md`](https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/CLA.md)
 
 Hjertelig takk for at du hjelper oss med å bygge et suverent, transparent og sikkert softwarefundament i Rust!
+

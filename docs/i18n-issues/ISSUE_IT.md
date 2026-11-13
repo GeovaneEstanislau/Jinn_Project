@@ -27,3 +27,4 @@ Desideriamo coinvolgere la comunità italiana di sviluppatori software, esperti 
 - Accordo di licenza per i contributori: [`CLA.md`](https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/CLA.md)
 
 Grazie per il supporto nella costruzione di una base di calcolo sovrana, sicura e moderna in Rust!
+

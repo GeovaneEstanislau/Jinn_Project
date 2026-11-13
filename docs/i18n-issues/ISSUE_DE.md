@@ -27,3 +27,4 @@ Wir laden Entwickler, Low-Level-Programmierer, Rustaceans und Forscher aus dem g
 - Mitwirkendenvereinbarung: [`CLA.md`](https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/CLA.md)
 
 Vielen Dank für Ihre Unterstützung beim Aufbau eines transparenten, souveränen und sicheren Softwarefundaments in Rust!
+
