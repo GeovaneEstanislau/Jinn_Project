@@ -171,3 +171,4 @@ Pojedinosti o pravnim uvjetima potražite u datoteci [`LICENSE`](LICENSE). Dopri
 ## Kontakt i Sudjelovanje
 
 Jinn OS s veseljem poziva hrvatsku i međunarodnu zajednicu Rust inženjera, programera sustava niske razine i entuzijasta operacijskih sustava na suradnju. Bilo da se radi o optimizaciji kernela, razvoju drivera, sigurnosnim revizijama ili dokumentaciji, vaša je pomoć iznimno vrijedna! Pogledajte [CONTRIBUTING.md](CONTRIBUTING.md) kako biste saznali kako poslati zakrpe i Pull Requestove.
+

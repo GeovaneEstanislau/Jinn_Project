@@ -171,3 +171,4 @@ Per tutti i dettagli legali, consultare il file [`LICENSE`](LICENSE). Per contri
 ## Contatti e Contributi
 
 Il progetto accoglie con entusiasmo il contributo della comunità italiana e internazionale di sviluppatori Rust, esperti di programmazione low-level e appassionati di sistemi operativi. Dai miglioramenti del kernel ai driver di periferica, fino agli audit di sicurezza e alla documentazione, ogni supporto è prezioso! Consultate [CONTRIBUTING.md](CONTRIBUTING.md) per scoprire come inviare patch e pull request.
+

@@ -171,3 +171,4 @@ A jogi feltételek részleteiért tekintse meg a [`LICENSE`](LICENSE) fájlt. A 
 ## Kapcsolat és Közreműködés
 
 A Jinn OS örömmel fogadja a magyar és nemzetközi Rust programozók, alacsony szintű rendszermérnökök és fejlesztők közreműködését! Legyen szó a kernel optimalizálásáról, illesztőprogramok készítéséről, biztonsági vizsgálatokról vagy dokumentációról, minden támogatást szívesen veszünk. A javítások és Pull Requestek beküldéséhez olvassa el a [CONTRIBUTING.md](CONTRIBUTING.md) útmutatót.
+

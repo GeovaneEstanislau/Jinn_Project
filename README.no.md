@@ -171,3 +171,4 @@ For fullstendige juridiske vilkår, se [`LICENSE`](LICENSE). Kildekodebidrag for
 ## Kontakt og Bidrag
 
 Jinn OS ønsker utviklere fra det nordiske og globale Rust-miljøet hjertelig velkommen til å delta! Enten det gjelder kjerneoptimalisering, utvikling av maskinvaredrivere, sikkerhetsrevisjon eller dokumentasjon, er ethvert bidrag av stor betydning. Se [CONTRIBUTING.md](CONTRIBUTING.md) for instruksjoner om innsending av oppdateringer og pull requests.
+
