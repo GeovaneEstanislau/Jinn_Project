@@ -45,51 +45,7 @@ python -m http.server 8080
 
 ---
 
-## 🗄️ Configuração do Banco de Dados no Supabase
 
-1. Acesse o painel do seu projeto no [Supabase](https://supabase.com).
-2. Vá em **SQL Editor** no menu lateral esquerdo.
-3. Copie e cole todo o conteúdo do arquivo `supabase-schema.sql` e clique em **Run**.
-4. Vá em **Project Settings** -> **API** e obtenha a **Project URL** e a **anon public key**.
-5. No arquivo `index.html` (ou via variável de ambiente), configure:
-   ```javascript
-   window.ENV_SUPABASE_URL = 'https://SUA_URL_DO_SUPABASE.supabase.co';
-   window.ENV_SUPABASE_ANON_KEY = 'SUA_CHAVE_ANONIMA_PUBLICA';
-   ```
-
----
-
-## 📈 Configuração do Google Ads
-
-No cabeçalho de `index.html`, substitua `AW-XXXXXXXXX` pelo seu ID de tag global do Google Ads:
-
-```html
-<script async src="https://www.googletagmanager.com/gtag/js?id=AW-SEU_ID_AQUI"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-  gtag('config', 'AW-SEU_ID_AQUI');
-</script>
-```
-
-As conversões já estão mapeadas e são acionadas automaticamente nas seguintes ações:
-- **Download da ISO:** `trackConversion('download_iso')`
-- **Envio de Mensagem de Contato:** `trackConversion('contact_submit')`
-
----
-
-## 🌐 Publicação no GitHub Pages (`jinn-os.dev.br`)
-
-1. O arquivo `CNAME` já está configurado com `jinn-os.dev.br`.
-2. No seu provedor de domínio (Registro.br ou Cloudflare), configure os seguintes registros DNS:
-   - **Registro CNAME:**
-     - Nome: `www` ou `@` (se suportado CNAME flattening)
-     - Destino: `GeovaneEstanislau.github.io.`
-   - **Registros A (GitHub Pages Apex):**
-     - `185.199.108.153`
-     - `185.199.109.153`
-     - `185.199.110.153`
      - `185.199.111.153`
 3. No repositório GitHub, vá em **Settings** -> **Pages** -> selecione o branch para publicação e confirme o domínio customizado.
 
