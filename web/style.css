@@ -39,7 +39,7 @@ body, html {
   position: relative;
   width: 100vw;
   height: 100vh;
-  background-image: radial-gradient(rgba(11, 15, 25, 0.3) 0%, rgba(11, 15, 25, 0.75) 100%), url('assets/wallpaper-eagle.jpg');
+  background-image: radial-gradient(rgba(11, 15, 25, 0.3) 0%, rgba(11, 15, 25, 0.75) 100%), url('assets/wallpaper.jpg');
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
