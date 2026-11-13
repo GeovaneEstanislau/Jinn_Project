@@ -7,6 +7,7 @@
 /// Mount table: up to MAX_MOUNTS filesystems can be mounted at once.
 /// Path resolution is prefix-based: the longest matching mount point wins.
 
+pub mod cache;
 pub mod ext2;
 pub mod fat32;
 pub mod ramfs;
@@ -22,27 +23,38 @@ pub const BLOCK_SIZE:    usize = 512;
 // ── VFS Error Type ────────────────────────────────────────────────────────────
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VfsError {
-    NotFound,
-    PermissionDenied,
-    NotADirectory,
-    IsADirectory,
-    AlreadyExists,
-    InvalidPath,
-    NoSpace,
-    NotSupported,
-    IoError,
-    Busy,
+    NotFound,           // -ENOENT (-2)
+    PermissionDenied,   // -EACCES (-13)
+    NotPermitted,       // -EPERM (-1)
+    NotADirectory,      // -ENOTDIR (-20)
+    IsADirectory,       // -EISDIR (-21)
+    AlreadyExists,      // -EEXIST (-17)
+    InvalidPath,        // -EINVAL (-22)
+    NoSpace,            // -ENOSPC (-28)
+    ReadOnlyFilesystem, // -EROFS (-30)
+    TooManyOpenFiles,   // -EMFILE (-24)
+    FileTooLarge,       // -EFBIG (-27)
+    BadDescriptor,      // -EBADF (-9)
+    NotSupported,       // -ENOSYS (-38)
+    IoError,            // -EIO (-5)
+    Busy,               // -EBUSY (-16)
 }
 
 pub type VfsResult<T> = Result<T, VfsError>;
 
-// ── Open Flags ────────────────────────────────────────────────────────────────
-pub const O_RDONLY: u32 = 0x0;
-pub const O_WRONLY: u32 = 0x1;
-pub const O_RDWR:   u32 = 0x2;
-pub const O_CREAT:  u32 = 0x40;
-pub const O_TRUNC:  u32 = 0x200;
-pub const O_APPEND: u32 = 0x400;
+// ── Open Flags (Conforme Padrão POSIX.1-2008 / Linux ABI) ─────────────────────
+pub const O_RDONLY:    u32 = 0x0000;
+pub const O_WRONLY:    u32 = 0x0001;
+pub const O_RDWR:      u32 = 0x0002;
+pub const O_ACCMODE:   u32 = 0x0003;
+pub const O_CREAT:     u32 = 0x0040;
+pub const O_EXCL:      u32 = 0x0080;
+pub const O_NOCTTY:    u32 = 0x0100;
+pub const O_TRUNC:     u32 = 0x0200;
+pub const O_APPEND:    u32 = 0x0400;
+pub const O_NONBLOCK:  u32 = 0x0800;
+pub const O_DIRECTORY: u32 = 0x10000;
+pub const O_CLOEXEC:   u32 = 0x80000;
 
 // ── Node Types ────────────────────────────────────────────────────────────────
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,11 +111,27 @@ impl FsCapabilities {
 }
 
 // ── VFS Node Metadata ─────────────────────────────────────────────────────────
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stat {
     pub node_type: NodeType,
     pub size:      u64,
     pub inode:     u64,
+    pub mode:      u32, // Modo POSIX (ex: 0o100644, 0o040755)
+    pub uid:       u32, // User ID proprietário
+    pub gid:       u32, // Group ID proprietário
+}
+
+impl Stat {
+    pub const fn new(node_type: NodeType, size: u64, inode: u64, mode: u32, uid: u32, gid: u32) -> Self {
+        Self {
+            node_type,
+            size,
+            inode,
+            mode,
+            uid,
+            gid,
+        }
+    }
 }
 
 /// Métricas de capacidade e utilização do sistema de arquivos (statvfs)
@@ -313,6 +341,8 @@ pub fn sync_all() -> VfsResult<()> {
             let _ = entry.fs.sync();
         }
     }
+    // Sincroniza o cache de blocos LRU dedicado do VFS
+    let _ = crate::vfs::cache::flush_all();
     // Também sincroniza a cache de blocos física subjacente
     let _ = crate::drivers::block::flush_primary_cache();
     Ok(())
@@ -324,6 +354,60 @@ pub fn stat(path: &str) -> VfsResult<Stat> {
     fs.lookup(rel)
 }
 
+/// Valida os modos de acesso e permissões POSIX para um nó do VFS
+pub fn check_permission(
+    stat: &Stat,
+    flags: u32,
+    caller_uid: u32,
+    caller_gid: u32,
+    is_fs_readonly: bool,
+) -> VfsResult<()> {
+    let access_mode = flags & O_ACCMODE;
+    let is_write_intent = access_mode == O_WRONLY || access_mode == O_RDWR || (flags & (O_CREAT | O_TRUNC | O_APPEND)) != 0;
+
+    // 1. Rejeita escrita direta em diretórios (EISDIR)
+    if stat.node_type == NodeType::Directory && (access_mode == O_WRONLY || access_mode == O_RDWR || (flags & O_TRUNC) != 0) {
+        return Err(VfsError::IsADirectory);
+    }
+
+    // 2. Se O_DIRECTORY foi requisitado e o nó não for diretório: ENOTDIR
+    if (flags & O_DIRECTORY) != 0 && stat.node_type != NodeType::Directory {
+        return Err(VfsError::NotADirectory);
+    }
+
+    // 3. Se houver tentativa de escrita e o sistema de arquivos for somente leitura: EROFS
+    if is_write_intent && is_fs_readonly {
+        return Err(VfsError::ReadOnlyFilesystem);
+    }
+
+    // 4. Superusuário (root, UID 0): bypass de checagens normais de DAC
+    if caller_uid == 0 {
+        return Ok(());
+    }
+
+    // 5. Verificação de permissões do proprietário, grupo e outros
+    let req_read = access_mode == O_RDONLY || access_mode == O_RDWR;
+    let req_write = is_write_intent;
+
+    let (r_perm, w_perm) = if caller_uid == stat.uid {
+        ((stat.mode & 0o400) != 0, (stat.mode & 0o200) != 0)
+    } else if caller_gid == stat.gid {
+        ((stat.mode & 0o040) != 0, (stat.mode & 0o020) != 0)
+    } else {
+        ((stat.mode & 0o004) != 0, (stat.mode & 0o002) != 0)
+    };
+
+    if req_read && !r_perm {
+        return Err(VfsError::PermissionDenied); // -EACCES
+    }
+
+    if req_write && !w_perm {
+        return Err(VfsError::PermissionDenied); // -EACCES
+    }
+
+    Ok(())
+}
+
 pub fn open(path: &str, flags: u32) -> VfsResult<u64> {
     let (handle, pfx) = {
         let table = MOUNTS.lock();
@@ -332,7 +416,7 @@ pub fn open(path: &str, flags: u32) -> VfsResult<u64> {
         // Proteção de Integridade: se o FS for Read-Only, rejeita qualquer flag de escrita precocemente
         let is_write_intent = (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
         if is_write_intent && fs.capabilities().read_only {
-            return Err(VfsError::PermissionDenied);
+            return Err(VfsError::ReadOnlyFilesystem);
         }
 
         let h = fs.open(rel, flags)?;
@@ -495,6 +579,14 @@ pub fn rename(old_path: &str, new_path: &str) -> VfsResult<()> {
         return Err(VfsError::NotSupported);
     }
 
+    // Se o destino já existir, remove para permitir substituição atômica POSIX
+    if let Ok(dst_st) = stat(new_path) {
+        if dst_st.node_type == NodeType::Directory {
+            return Err(VfsError::IsADirectory);
+        }
+        let _ = remove(new_path);
+    }
+
     // 2. Cria o novo arquivo e copia o conteúdo em blocos seguros
     create(new_path)?;
     let mut chunk = [0u8; 512];
@@ -544,6 +636,15 @@ pub fn mkdir(path: &str) -> VfsResult<()> {
     fs.mkdir(rel)
 }
 
+/// Garante a criação da infraestrutura de diretórios dedicada do Jinn Browser (/disk/browser/)
+pub fn ensure_browser_directories() {
+    let _ = mkdir("/disk/browser");
+    let _ = mkdir("/disk/browser/cache");
+    let _ = mkdir("/disk/browser/cookies");
+    let _ = mkdir("/disk/browser/history");
+    let _ = mkdir("/disk/browser/bookmark");
+}
+
 /// Copia um arquivo no VFS com integridade garantida bloco a bloco.
 pub fn copy(src_path: &str, dst_path: &str) -> VfsResult<usize> {
     let s = stat(src_path)?;
@@ -591,4 +692,93 @@ pub fn copy(src_path: &str, dst_path: &str) -> VfsResult<usize> {
     let _ = close(src_path, in_h);
     let _ = close(dst_path, out_h);
     Ok(total_copied)
+}
+
+/// Suíte de testes unitários in-kernel para validação de permissões POSIX DAC e flags de acesso
+pub fn run_posix_permission_selftests() -> (usize, usize) {
+    let mut passed = 0;
+    let mut total = 0;
+
+    // Teste 1: Bypass total de superusuário (UID 0) em arquivo somente-leitura (0o100444)
+    total += 1;
+    let st_ro = Stat::new(NodeType::File, 1024, 1, 0o100444, 1000, 1000);
+    if check_permission(&st_ro, O_WRONLY, 0, 0, false).is_ok()
+        && check_permission(&st_ro, O_RDWR, 0, 0, false).is_ok() {
+        passed += 1;
+    }
+
+    // Teste 2: Proprietário com permissão rw-r--r-- (0o100644)
+    total += 1;
+    let st_rw = Stat::new(NodeType::File, 512, 2, 0o100644, 1000, 1000);
+    if check_permission(&st_rw, O_RDWR, 1000, 1000, false).is_ok()
+        && check_permission(&st_rw, O_WRONLY, 1000, 1000, false).is_ok()
+        && check_permission(&st_rw, O_RDONLY, 1000, 1000, false).is_ok() {
+        passed += 1;
+    }
+
+    // Teste 3: Outros (other) tentando escrever em 0o100644 -> EACCES
+    total += 1;
+    if check_permission(&st_rw, O_WRONLY, 1001, 1001, false) == Err(VfsError::PermissionDenied)
+        && check_permission(&st_rw, O_RDWR, 1001, 1001, false) == Err(VfsError::PermissionDenied) {
+        passed += 1;
+    }
+
+    // Teste 4: Membro do grupo em arquivo com permissão rwxr-x--- (0o100750)
+    total += 1;
+    let st_grp = Stat::new(NodeType::File, 256, 3, 0o100750, 1000, 2000);
+    if check_permission(&st_grp, O_RDONLY, 9999, 2000, false).is_ok()
+        && check_permission(&st_grp, O_WRONLY, 9999, 2000, false) == Err(VfsError::PermissionDenied) {
+        passed += 1;
+    }
+
+    // Teste 5: Rejeição de escrita em nó de diretório (EISDIR)
+    total += 1;
+    let st_dir = Stat::new(NodeType::Directory, 4096, 4, 0o040755, 1000, 1000);
+    if check_permission(&st_dir, O_WRONLY, 1000, 1000, false) == Err(VfsError::IsADirectory)
+        && check_permission(&st_dir, O_RDWR, 1000, 1000, false) == Err(VfsError::IsADirectory)
+        && check_permission(&st_dir, O_TRUNC | O_RDONLY, 1000, 1000, false) == Err(VfsError::IsADirectory) {
+        passed += 1;
+    }
+
+    // Teste 6: Flag O_DIRECTORY em arquivo regular (ENOTDIR)
+    total += 1;
+    if check_permission(&st_rw, O_RDONLY | O_DIRECTORY, 1000, 1000, false) == Err(VfsError::NotADirectory) {
+        passed += 1;
+    }
+
+    // Teste 7: Tentativa de escrita em sistema de arquivos somente-leitura (EROFS)
+    total += 1;
+    if check_permission(&st_rw, O_WRONLY, 1000, 1000, true) == Err(VfsError::ReadOnlyFilesystem)
+        && check_permission(&st_rw, O_RDONLY, 1000, 1000, true).is_ok() {
+        passed += 1;
+    }
+
+    // Teste 8: O_APPEND tratado compulsoriamente como intenção de escrita
+    total += 1;
+    let st_no_write = Stat::new(NodeType::File, 128, 5, 0o100444, 1000, 1000);
+    if check_permission(&st_no_write, O_RDONLY | O_APPEND, 1000, 1000, false) == Err(VfsError::PermissionDenied)
+        && check_permission(&st_no_write, O_RDONLY | O_APPEND, 1000, 1000, true) == Err(VfsError::ReadOnlyFilesystem) {
+        passed += 1;
+    }
+
+    // Teste 9: Mapeamento de códigos de erro normativos POSIX
+    total += 1;
+    if crate::syscall::EACCES == -13
+        && crate::syscall::EROFS == -30
+        && crate::syscall::EISDIR == -21
+        && crate::syscall::ENOTDIR == -20
+        && crate::syscall::EEXIST == -17
+        && crate::syscall::EMFILE == -24
+        && crate::syscall::EBADF == -9 {
+        passed += 1;
+    }
+
+    // Teste 10: Integridade e paridade dos campos da estrutura Stat
+    total += 1;
+    let st_test = Stat::new(NodeType::File, 4096, 42, 0o100644, 1000, 1000);
+    if st_test.size == 4096 && st_test.inode == 42 && st_test.mode == 0o100644 && st_test.uid == 1000 && st_test.gid == 1000 {
+        passed += 1;
+    }
+
+    (passed, total)
 }

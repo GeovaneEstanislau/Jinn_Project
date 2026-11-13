@@ -1680,6 +1680,46 @@ fn cmd_selftest(w: &mut Writer) {
         w.write_line(")");
     }
     w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string(" [*] Testes de Cache de Blocos e Buffers VFS (BlockCache LRU)...\n");
+    let (vfs_p, vfs_t) = crate::vfs::cache::run_vfs_cache_selftests();
+    w.write_string("     Resultado VFS BlockCache: ");
+    if vfs_p == vfs_t {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string("APROVADO (");
+        w.write_decimal(vfs_p);
+        w.write_string("/");
+        w.write_decimal(vfs_t);
+        w.write_line(")");
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string("FALHA (");
+        w.write_decimal(vfs_p);
+        w.write_string("/");
+        w.write_decimal(vfs_t);
+        w.write_line(")");
+    }
+    w.set_color(Color::LightGray, Color::Black);
+
+    w.write_string(" [*] Testes de Permissões POSIX DAC & Flags de Acesso (VFS & Syscalls)...\n");
+    let (posix_p, posix_t) = crate::vfs::run_posix_permission_selftests();
+    w.write_string("     Resultado Permissões POSIX: ");
+    if posix_p == posix_t {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string("APROVADO (");
+        w.write_decimal(posix_p);
+        w.write_string("/");
+        w.write_decimal(posix_t);
+        w.write_line(")");
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string("FALHA (");
+        w.write_decimal(posix_p);
+        w.write_string("/");
+        w.write_decimal(posix_t);
+        w.write_line(")");
+    }
+    w.set_color(Color::LightGray, Color::Black);
 }
 
 fn cmd_jinnctl(w: &mut Writer, args: &str) {
@@ -2581,6 +2621,21 @@ fn cmd_storage(w: &mut Writer, args: &str) {
     w.write_decimal(c_misses as usize);
     w.write_string(" | Dirty: ");
     w.write_decimal(c_dirty);
+    w.write_line(" setores");
+
+    let vfs_stats = crate::vfs::cache::cache_stats();
+    w.write_string("  VFS BlockCache LRU   : ");
+    w.write_decimal(vfs_stats.total_slots);
+    w.write_string(" slots (");
+    w.write_decimal(vfs_stats.total_slots * 512 / 1024);
+    w.write_string(" KiB) | Hits: ");
+    w.write_decimal(vfs_stats.hits as usize);
+    w.write_string(" | Misses: ");
+    w.write_decimal(vfs_stats.misses as usize);
+    w.write_string(" (Hit Ratio: ");
+    w.write_decimal(vfs_stats.hit_ratio_percent() as usize);
+    w.write_string("%) | Dirty: ");
+    w.write_decimal(vfs_stats.dirty_blocks);
     w.write_line(" setores");
 
     // Varredura de Partições MBR e GPT

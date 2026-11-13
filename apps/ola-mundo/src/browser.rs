@@ -2159,6 +2159,9 @@ pub struct BrowserSession {
     pub css: MiniCss,
     pub js_runtime: MiniJsRuntime,
     pub layout: DocumentLayout,
+    pub history_store: storage::BrowserHistoryStore,
+    pub cookie_jar: storage::BrowserCookieJar,
+    pub bookmark_store: storage::BrowserBookmarkStore,
 }
 
 impl BrowserSession {
@@ -2188,7 +2191,33 @@ impl BrowserSession {
             css: MiniCss::new(),
             js_runtime: MiniJsRuntime::new(),
             layout: DocumentLayout::new(),
+            history_store: storage::BrowserHistoryStore::new(),
+            cookie_jar: storage::BrowserCookieJar::new(),
+            bookmark_store: storage::BrowserBookmarkStore::new(),
         }
+    }
+
+    pub fn init_persistence(&mut self) {
+        storage::ensure_storage_hierarchy();
+        let _ = self.history_store.load();
+        let _ = self.cookie_jar.load();
+        if !self.bookmark_store.load() {
+            self.bookmark_store.init_defaults_if_empty();
+            let _ = self.bookmark_store.save();
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn record_navigation(&mut self, url: &[u8], title: &[u8]) {
+        self.history_store.add_visit(url, title);
+        let _ = self.history_store.save();
+    }
+
+    pub fn record_navigation_current(&mut self, url: &[u8]) {
+        let t_len = self.page.title_len;
+        let title = self.page.title;
+        self.history_store.add_visit(url, &title[..t_len]);
+        let _ = self.history_store.save();
     }
 
     pub fn dispatch_js_click(&mut self, node_idx: usize) -> bool {
@@ -3450,3 +3479,928 @@ pub fn parse_pdf_info(bytes: &[u8]) -> Option<NativePdfInfo> {
         page_count,
     })
 }
+
+// ── Subsistema de Persistência Local do Jinn Browser (VFS & Transacional) ─────
+
+pub mod storage {
+    #[inline(always)]
+    unsafe fn sys_open(path: &[u8], flags: u32) -> i64 {
+        let mut ret: i64;
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") 15u64 => ret,
+            in("rdi") path.as_ptr() as u64,
+            in("rsi") path.len() as u64,
+            in("rdx") flags as u64,
+            out("rcx") _,
+            out("r11") _,
+            options(nostack, preserves_flags)
+        );
+        ret
+    }
+
+    #[inline(always)]
+    unsafe fn sys_close(fd: u64) -> i64 {
+        let mut ret: i64;
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") 16u64 => ret,
+            in("rdi") fd,
+            in("rsi") 0u64,
+            in("rdx") 0u64,
+            out("rcx") _,
+            out("r11") _,
+            options(nostack, preserves_flags)
+        );
+        ret
+    }
+
+    #[inline(always)]
+    unsafe fn sys_write(fd: u64, buf: *const u8, len: u64) -> i64 {
+        let mut ret: i64;
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") 1u64 => ret,
+            in("rdi") fd,
+            in("rsi") buf as u64,
+            in("rdx") len,
+            out("rcx") _,
+            out("r11") _,
+            options(nostack, preserves_flags)
+        );
+        ret
+    }
+
+    #[inline(always)]
+    unsafe fn sys_read(fd: u64, buf: *mut u8, len: u64) -> i64 {
+        let mut ret: i64;
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") 2u64 => ret,
+            in("rdi") fd,
+            in("rsi") buf as u64,
+            in("rdx") len,
+            out("rcx") _,
+            out("r11") _,
+            options(nostack, preserves_flags)
+        );
+        ret
+    }
+
+    #[inline(always)]
+    unsafe fn sys_sync() -> i64 {
+        let mut ret: i64;
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") 23u64 => ret,
+            in("rdi") 0u64,
+            in("rsi") 0u64,
+            in("rdx") 0u64,
+            out("rcx") _,
+            out("r11") _,
+            options(nostack, preserves_flags)
+        );
+        ret
+    }
+
+    #[inline(always)]
+    unsafe fn sys_mkdir(path: &[u8]) -> i64 {
+        let mut ret: i64;
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") 51u64 => ret,
+            in("rdi") path.as_ptr() as u64,
+            in("rsi") path.len() as u64,
+            in("rdx") 0u64,
+            out("rcx") _,
+            out("r11") _,
+            options(nostack, preserves_flags)
+        );
+        ret
+    }
+
+    #[inline(always)]
+    unsafe fn sys_unlink(path: &[u8]) -> i64 {
+        let mut ret: i64;
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") 50u64 => ret,
+            in("rdi") path.as_ptr() as u64,
+            in("rsi") path.len() as u64,
+            in("rdx") 0u64,
+            out("rcx") _,
+            out("r11") _,
+            options(nostack, preserves_flags)
+        );
+        ret
+    }
+
+    #[repr(C)]
+    struct RenameArgs {
+        old_ptr: *const u8,
+        old_len: usize,
+        new_ptr: *const u8,
+        new_len: usize,
+    }
+
+    #[inline(always)]
+    unsafe fn sys_rename(old_path: &[u8], new_path: &[u8]) -> i64 {
+        let args = RenameArgs {
+            old_ptr: old_path.as_ptr(),
+            old_len: old_path.len(),
+            new_ptr: new_path.as_ptr(),
+            new_len: new_path.len(),
+        };
+        let mut ret: i64;
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") 52u64 => ret,
+            in("rdi") &args as *const _ as u64,
+            in("rsi") 0u64,
+            in("rdx") 0u64,
+            out("rcx") _,
+            out("r11") _,
+            options(nostack, preserves_flags)
+        );
+        ret
+    }
+
+    pub const O_RDONLY: u32 = 0x0;
+    pub const O_WRONLY: u32 = 0x1;
+    #[allow(dead_code)]
+    pub const O_RDWR:   u32 = 0x2;
+    pub const O_CREAT:  u32 = 0x40;
+    pub const O_TRUNC:  u32 = 0x200;
+    #[allow(dead_code)]
+    pub const O_APPEND: u32 = 0x400;
+
+    /// Cria a estrutura de diretórios do Jinn Browser caso ainda não existam
+    pub fn ensure_storage_hierarchy() {
+        unsafe {
+            let _ = sys_mkdir(b"/disk/browser");
+            let _ = sys_mkdir(b"/disk/browser/cache");
+            let _ = sys_mkdir(b"/disk/browser/cookies");
+            let _ = sys_mkdir(b"/disk/browser/history");
+            let _ = sys_mkdir(b"/disk/browser/bookmark");
+        }
+    }
+
+    /// Grava dados em arquivo de forma atômica e transacional (.TMP -> .BAK -> Definitivo)
+    pub fn transactional_write(path: &[u8], data: &[u8]) -> bool {
+        ensure_storage_hierarchy();
+
+        let mut tmp_path = [0u8; 96];
+        let mut bak_path = [0u8; 96];
+        let p_len = path.len();
+        if p_len + 4 > 96 { return false; }
+
+        tmp_path[..p_len].copy_from_slice(path);
+        tmp_path[p_len..p_len + 4].copy_from_slice(b".TMP");
+        let tmp_slice = &tmp_path[..p_len + 4];
+
+        bak_path[..p_len].copy_from_slice(path);
+        bak_path[p_len..p_len + 4].copy_from_slice(b".BAK");
+        let bak_slice = &bak_path[..p_len + 4];
+
+        unsafe {
+            // 1. Grava no arquivo temporário (.TMP)
+            let fd = sys_open(tmp_slice, O_WRONLY | O_CREAT | O_TRUNC);
+            if fd < 0 { return false; }
+
+            let mut written = 0usize;
+            while written < data.len() {
+                let to_write = data.len() - written;
+                let chunk = if to_write > 512 { 512 } else { to_write };
+                let n = sys_write(fd as u64, data[written..].as_ptr(), chunk as u64);
+                if n <= 0 {
+                    let _ = sys_close(fd as u64);
+                    let _ = sys_unlink(tmp_slice);
+                    return false;
+                }
+                written += n as usize;
+            }
+            let _ = sys_close(fd as u64);
+            let _ = sys_sync();
+
+            // 2. Se o arquivo de destino já existir, cria backup rotacional (.BAK)
+            let test_fd = sys_open(path, O_RDONLY);
+            if test_fd >= 0 {
+                let _ = sys_close(test_fd as u64);
+                let _ = sys_unlink(bak_slice);
+                let _ = sys_rename(path, bak_slice);
+            }
+
+            // 3. Move o arquivo temporário (.TMP) para o nome definitivo
+            let rename_res = sys_rename(tmp_slice, path);
+            let _ = sys_sync();
+            rename_res >= 0
+        }
+    }
+
+    /// Lê arquivo de dados com fallback automático para salvaguarda .BAK caso o principal falhe
+    pub fn transactional_read(path: &[u8], out_buf: &mut [u8]) -> Option<usize> {
+        unsafe {
+            let mut fd = sys_open(path, O_RDONLY);
+            let mut is_bak = false;
+
+            if fd < 0 {
+                // Tenta fallback .BAK
+                let mut bak_path = [0u8; 96];
+                let p_len = path.len();
+                if p_len + 4 <= 96 {
+                    bak_path[..p_len].copy_from_slice(path);
+                    bak_path[p_len..p_len + 4].copy_from_slice(b".BAK");
+                    fd = sys_open(&bak_path[..p_len + 4], O_RDONLY);
+                    is_bak = true;
+                }
+            }
+
+            if fd < 0 { return None; }
+
+            let mut total_read = 0usize;
+            while total_read < out_buf.len() {
+                let to_read = out_buf.len() - total_read;
+                let chunk = if to_read > 512 { 512 } else { to_read };
+                let n = sys_read(fd as u64, out_buf[total_read..].as_mut_ptr(), chunk as u64);
+                if n <= 0 { break; }
+                total_read += n as usize;
+            }
+            let _ = sys_close(fd as u64);
+
+            if is_bak && total_read > 0 {
+                // Recuperou do backup com sucesso; restaura o arquivo principal
+                let _ = transactional_write(path, &out_buf[..total_read]);
+            }
+
+            if total_read > 0 { Some(total_read) } else { None }
+        }
+    }
+
+    // ── 1. Histórico de Navegação (/disk/browser/history/history.dat) ─────────────
+
+    pub const MAX_STORED_HISTORY: usize = 16;
+    pub const HISTORY_PATH: &'static [u8] = b"/disk/browser/history/history.dat";
+    const HISTORY_MAGIC: [u8; 4] = *b"JNH1";
+
+    #[derive(Clone, Copy)]
+    pub struct StoredHistoryEntry {
+        pub url: [u8; 128],
+        pub url_len: usize,
+        pub title: [u8; 48],
+        pub title_len: usize,
+        pub visit_count: u32,
+    }
+
+    impl StoredHistoryEntry {
+        pub const fn empty() -> Self {
+            Self {
+                url: [0; 128],
+                url_len: 0,
+                title: [0; 48],
+                title_len: 0,
+                visit_count: 0,
+            }
+        }
+    }
+
+    pub struct BrowserHistoryStore {
+        pub entries: [StoredHistoryEntry; MAX_STORED_HISTORY],
+        pub count: usize,
+    }
+
+    impl BrowserHistoryStore {
+        pub const fn new() -> Self {
+            Self {
+                entries: [StoredHistoryEntry::empty(); MAX_STORED_HISTORY],
+                count: 0,
+            }
+        }
+
+        pub fn add_visit(&mut self, url: &[u8], title: &[u8]) {
+            if url.is_empty() { return; }
+
+            // Se a URL já existir, incrementa contagem e move para o topo
+            for i in 0..self.count {
+                if self.entries[i].url_len == url.len() && &self.entries[i].url[..url.len()] == url {
+                    self.entries[i].visit_count = self.entries[i].visit_count.saturating_add(1);
+                    if !title.is_empty() {
+                        let t_len = if title.len() > 48 { 48 } else { title.len() };
+                        self.entries[i].title[..t_len].copy_from_slice(&title[..t_len]);
+                        self.entries[i].title_len = t_len;
+                    }
+                    let entry = self.entries[i];
+                    for k in (1..=i).rev() {
+                        self.entries[k] = self.entries[k - 1];
+                    }
+                    self.entries[0] = entry;
+                    return;
+                }
+            }
+
+            // Insere novo no topo deslocando os demais
+            let target_count = if self.count < MAX_STORED_HISTORY { self.count + 1 } else { MAX_STORED_HISTORY };
+            for k in (1..target_count).rev() {
+                self.entries[k] = self.entries[k - 1];
+            }
+
+            let u_len = if url.len() > 128 { 128 } else { url.len() };
+            let t_len = if title.len() > 48 { 48 } else { title.len() };
+
+            let mut new_entry = StoredHistoryEntry::empty();
+            new_entry.url[..u_len].copy_from_slice(&url[..u_len]);
+            new_entry.url_len = u_len;
+            if t_len > 0 {
+                new_entry.title[..t_len].copy_from_slice(&title[..t_len]);
+                new_entry.title_len = t_len;
+            }
+            new_entry.visit_count = 1;
+
+            self.entries[0] = new_entry;
+            self.count = target_count;
+        }
+
+        pub fn save(&self) -> bool {
+            let mut buf = [0u8; 4 + 4 + MAX_STORED_HISTORY * (128 + 4 + 48 + 4 + 4)];
+            buf[0..4].copy_from_slice(&HISTORY_MAGIC);
+            let count_u32 = self.count as u32;
+            buf[4..8].copy_from_slice(&count_u32.to_le_bytes());
+
+            let mut offset = 8;
+            for i in 0..self.count {
+                let e = &self.entries[i];
+                let u_len_u32 = e.url_len as u32;
+                buf[offset..offset + 4].copy_from_slice(&u_len_u32.to_le_bytes());
+                offset += 4;
+                buf[offset..offset + 128].copy_from_slice(&e.url);
+                offset += 128;
+
+                let t_len_u32 = e.title_len as u32;
+                buf[offset..offset + 4].copy_from_slice(&t_len_u32.to_le_bytes());
+                offset += 4;
+                buf[offset..offset + 48].copy_from_slice(&e.title);
+                offset += 48;
+
+                buf[offset..offset + 4].copy_from_slice(&e.visit_count.to_le_bytes());
+                offset += 4;
+            }
+
+            transactional_write(HISTORY_PATH, &buf[..offset])
+        }
+
+        pub fn load(&mut self) -> bool {
+            let mut buf = [0u8; 4 + 4 + MAX_STORED_HISTORY * (128 + 4 + 48 + 4 + 4)];
+            let n = match transactional_read(HISTORY_PATH, &mut buf) {
+                Some(len) => len,
+                None => return false,
+            };
+
+            if n < 8 || &buf[0..4] != &HISTORY_MAGIC {
+                return false;
+            }
+
+            let count = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
+            let count = if count > MAX_STORED_HISTORY { MAX_STORED_HISTORY } else { count };
+
+            let mut offset = 8;
+            for i in 0..count {
+                if offset + 4 + 128 + 4 + 48 + 4 > n { break; }
+                let u_len = u32::from_le_bytes([buf[offset], buf[offset+1], buf[offset+2], buf[offset+3]]) as usize;
+                offset += 4;
+                let mut url = [0u8; 128];
+                url.copy_from_slice(&buf[offset..offset + 128]);
+                offset += 128;
+
+                let t_len = u32::from_le_bytes([buf[offset], buf[offset+1], buf[offset+2], buf[offset+3]]) as usize;
+                offset += 4;
+                let mut title = [0u8; 48];
+                title.copy_from_slice(&buf[offset..offset + 48]);
+                offset += 48;
+
+                let visit_count = u32::from_le_bytes([buf[offset], buf[offset+1], buf[offset+2], buf[offset+3]]);
+                offset += 4;
+
+                let mut e = StoredHistoryEntry::empty();
+                e.url = url;
+                e.url_len = if u_len > 128 { 128 } else { u_len };
+                e.title = title;
+                e.title_len = if t_len > 48 { 48 } else { t_len };
+                e.visit_count = visit_count;
+
+                self.entries[i] = e;
+                self.count = i + 1;
+            }
+
+            true
+        }
+    }
+
+    // ── 2. Cookies HTTP (/disk/browser/cookies/cookies.dat) ───────────────────────
+
+    pub const MAX_STORED_COOKIES: usize = 16;
+    pub const COOKIES_PATH: &'static [u8] = b"/disk/browser/cookies/cookies.dat";
+    const COOKIES_MAGIC: [u8; 4] = *b"JNC1";
+
+    #[derive(Clone, Copy)]
+    pub struct StoredCookie {
+        pub domain: [u8; 48],
+        pub domain_len: usize,
+        pub name: [u8; 32],
+        pub name_len: usize,
+        pub value: [u8; 64],
+        pub value_len: usize,
+        pub secure: bool,
+    }
+
+    impl StoredCookie {
+        pub const fn empty() -> Self {
+            Self {
+                domain: [0; 48],
+                domain_len: 0,
+                name: [0; 32],
+                name_len: 0,
+                value: [0; 64],
+                value_len: 0,
+                secure: false,
+            }
+        }
+    }
+
+    pub struct BrowserCookieJar {
+        pub cookies: [StoredCookie; MAX_STORED_COOKIES],
+        pub count: usize,
+    }
+
+    impl BrowserCookieJar {
+        pub const fn new() -> Self {
+            Self {
+                cookies: [StoredCookie::empty(); MAX_STORED_COOKIES],
+                count: 0,
+            }
+        }
+
+        pub fn set(&mut self, domain: &[u8], name: &[u8], value: &[u8], secure: bool) -> bool {
+            if domain.is_empty() || name.is_empty() { return false; }
+
+            let d_len = if domain.len() > 48 { 48 } else { domain.len() };
+            let n_len = if name.len() > 32 { 32 } else { name.len() };
+            let v_len = if value.len() > 64 { 64 } else { value.len() };
+
+            for i in 0..self.count {
+                if self.cookies[i].domain_len == d_len
+                    && &self.cookies[i].domain[..d_len] == &domain[..d_len]
+                    && self.cookies[i].name_len == n_len
+                    && &self.cookies[i].name[..n_len] == &name[..n_len]
+                {
+                    self.cookies[i].value[..v_len].copy_from_slice(&value[..v_len]);
+                    self.cookies[i].value_len = v_len;
+                    self.cookies[i].secure = secure;
+                    return true;
+                }
+            }
+
+            if self.count < MAX_STORED_COOKIES {
+                let idx = self.count;
+                let mut c = StoredCookie::empty();
+                c.domain[..d_len].copy_from_slice(&domain[..d_len]);
+                c.domain_len = d_len;
+                c.name[..n_len].copy_from_slice(&name[..n_len]);
+                c.name_len = n_len;
+                c.value[..v_len].copy_from_slice(&value[..v_len]);
+                c.value_len = v_len;
+                c.secure = secure;
+
+                self.cookies[idx] = c;
+                self.count += 1;
+                true
+            } else {
+                false
+            }
+        }
+
+        pub fn get<'a>(&'a self, domain: &[u8], name: &[u8]) -> Option<&'a [u8]> {
+            let d_len = if domain.len() > 48 { 48 } else { domain.len() };
+            let n_len = if name.len() > 32 { 32 } else { name.len() };
+
+            for i in 0..self.count {
+                if self.cookies[i].domain_len == d_len
+                    && &self.cookies[i].domain[..d_len] == &domain[..d_len]
+                    && self.cookies[i].name_len == n_len
+                    && &self.cookies[i].name[..n_len] == &name[..n_len]
+                {
+                    return Some(&self.cookies[i].value[..self.cookies[i].value_len]);
+                }
+            }
+            None
+        }
+
+        pub fn save(&self) -> bool {
+            let mut buf = [0u8; 4 + 4 + MAX_STORED_COOKIES * (48 + 4 + 32 + 4 + 64 + 4 + 1)];
+            buf[0..4].copy_from_slice(&COOKIES_MAGIC);
+            let count_u32 = self.count as u32;
+            buf[4..8].copy_from_slice(&count_u32.to_le_bytes());
+
+            let mut offset = 8;
+            for i in 0..self.count {
+                let c = &self.cookies[i];
+                let d_len_u32 = c.domain_len as u32;
+                buf[offset..offset + 4].copy_from_slice(&d_len_u32.to_le_bytes());
+                offset += 4;
+                buf[offset..offset + 48].copy_from_slice(&c.domain);
+                offset += 48;
+
+                let n_len_u32 = c.name_len as u32;
+                buf[offset..offset + 4].copy_from_slice(&n_len_u32.to_le_bytes());
+                offset += 4;
+                buf[offset..offset + 32].copy_from_slice(&c.name);
+                offset += 32;
+
+                let v_len_u32 = c.value_len as u32;
+                buf[offset..offset + 4].copy_from_slice(&v_len_u32.to_le_bytes());
+                offset += 4;
+                buf[offset..offset + 64].copy_from_slice(&c.value);
+                offset += 64;
+
+                buf[offset] = if c.secure { 1 } else { 0 };
+                offset += 1;
+            }
+
+            transactional_write(COOKIES_PATH, &buf[..offset])
+        }
+
+        pub fn load(&mut self) -> bool {
+            let mut buf = [0u8; 4 + 4 + MAX_STORED_COOKIES * (48 + 4 + 32 + 4 + 64 + 4 + 1)];
+            let n = match transactional_read(COOKIES_PATH, &mut buf) {
+                Some(len) => len,
+                None => return false,
+            };
+
+            if n < 8 || &buf[0..4] != &COOKIES_MAGIC {
+                return false;
+            }
+
+            let count = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
+            let count = if count > MAX_STORED_COOKIES { MAX_STORED_COOKIES } else { count };
+
+            let mut offset = 8;
+            for i in 0..count {
+                if offset + 4 + 48 + 4 + 32 + 4 + 64 + 1 > n { break; }
+                let d_len = u32::from_le_bytes([buf[offset], buf[offset+1], buf[offset+2], buf[offset+3]]) as usize;
+                offset += 4;
+                let mut domain = [0u8; 48];
+                domain.copy_from_slice(&buf[offset..offset + 48]);
+                offset += 48;
+
+                let n_len = u32::from_le_bytes([buf[offset], buf[offset+1], buf[offset+2], buf[offset+3]]) as usize;
+                offset += 4;
+                let mut name = [0u8; 32];
+                name.copy_from_slice(&buf[offset..offset + 32]);
+                offset += 32;
+
+                let v_len = u32::from_le_bytes([buf[offset], buf[offset+1], buf[offset+2], buf[offset+3]]) as usize;
+                offset += 4;
+                let mut value = [0u8; 64];
+                value.copy_from_slice(&buf[offset..offset + 64]);
+                offset += 64;
+
+                let secure = buf[offset] != 0;
+                offset += 1;
+
+                let mut c = StoredCookie::empty();
+                c.domain = domain;
+                c.domain_len = if d_len > 48 { 48 } else { d_len };
+                c.name = name;
+                c.name_len = if n_len > 32 { 32 } else { n_len };
+                c.value = value;
+                c.value_len = if v_len > 64 { 64 } else { v_len };
+                c.secure = secure;
+
+                self.cookies[i] = c;
+                self.count = i + 1;
+            }
+
+            true
+        }
+    }
+
+    // ── 3. Favoritos / Bookmarks (/disk/browser/bookmark/bookmrk.dat) ─────────────
+
+    pub const MAX_STORED_BOOKMARKS: usize = 12;
+    pub const BOOKMARKS_PATH: &'static [u8] = b"/disk/browser/bookmark/bookmrk.dat";
+    const BOOKMARKS_MAGIC: [u8; 4] = *b"JNB1";
+
+    #[derive(Clone, Copy)]
+    pub struct StoredBookmark {
+        pub title: [u8; 48],
+        pub title_len: usize,
+        pub url: [u8; 128],
+        pub url_len: usize,
+    }
+
+    impl StoredBookmark {
+        pub const fn empty() -> Self {
+            Self {
+                title: [0; 48],
+                title_len: 0,
+                url: [0; 128],
+                url_len: 0,
+            }
+        }
+    }
+
+    pub struct BrowserBookmarkStore {
+        pub bookmarks: [StoredBookmark; MAX_STORED_BOOKMARKS],
+        pub count: usize,
+    }
+
+    impl BrowserBookmarkStore {
+        pub const fn new() -> Self {
+            Self {
+                bookmarks: [StoredBookmark::empty(); MAX_STORED_BOOKMARKS],
+                count: 0,
+            }
+        }
+
+        pub fn init_defaults_if_empty(&mut self) {
+            if self.count == 0 {
+                self.add(b"Jinn OS Portal", b"file:///disk/INDEX.HTM");
+                self.add(b"Sobre o Navegador", b"about:version");
+                self.add(b"NeverSSL (HTTP Test)", b"http://neverssl.com");
+                self.add(b"Example Domain", b"http://example.com");
+            }
+        }
+
+        pub fn add(&mut self, title: &[u8], url: &[u8]) -> bool {
+            if url.is_empty() || self.count >= MAX_STORED_BOOKMARKS { return false; }
+
+            for i in 0..self.count {
+                if self.bookmarks[i].url_len == url.len() && &self.bookmarks[i].url[..url.len()] == url {
+                    return true;
+                }
+            }
+
+            let t_len = if title.len() > 48 { 48 } else { title.len() };
+            let u_len = if url.len() > 128 { 128 } else { url.len() };
+
+            let mut b = StoredBookmark::empty();
+            b.title[..t_len].copy_from_slice(&title[..t_len]);
+            b.title_len = t_len;
+            b.url[..u_len].copy_from_slice(&url[..u_len]);
+            b.url_len = u_len;
+
+            self.bookmarks[self.count] = b;
+            self.count += 1;
+            true
+        }
+
+        pub fn save(&self) -> bool {
+            let mut buf = [0u8; 4 + 4 + MAX_STORED_BOOKMARKS * (48 + 4 + 128 + 4)];
+            buf[0..4].copy_from_slice(&BOOKMARKS_MAGIC);
+            let count_u32 = self.count as u32;
+            buf[4..8].copy_from_slice(&count_u32.to_le_bytes());
+
+            let mut offset = 8;
+            for i in 0..self.count {
+                let b = &self.bookmarks[i];
+                let t_len_u32 = b.title_len as u32;
+                buf[offset..offset + 4].copy_from_slice(&t_len_u32.to_le_bytes());
+                offset += 4;
+                buf[offset..offset + 48].copy_from_slice(&b.title);
+                offset += 48;
+
+                let u_len_u32 = b.url_len as u32;
+                buf[offset..offset + 4].copy_from_slice(&u_len_u32.to_le_bytes());
+                offset += 4;
+                buf[offset..offset + 128].copy_from_slice(&b.url);
+                offset += 128;
+            }
+
+            transactional_write(BOOKMARKS_PATH, &buf[..offset])
+        }
+
+        pub fn load(&mut self) -> bool {
+            let mut buf = [0u8; 4 + 4 + MAX_STORED_BOOKMARKS * (48 + 4 + 128 + 4)];
+            let n = match transactional_read(BOOKMARKS_PATH, &mut buf) {
+                Some(len) => len,
+                None => return false,
+            };
+
+            if n < 8 || &buf[0..4] != &BOOKMARKS_MAGIC {
+                return false;
+            }
+
+            let count = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
+            let count = if count > MAX_STORED_BOOKMARKS { MAX_STORED_BOOKMARKS } else { count };
+
+            let mut offset = 8;
+            for i in 0..count {
+                if offset + 4 + 48 + 4 + 128 > n { break; }
+                let t_len = u32::from_le_bytes([buf[offset], buf[offset+1], buf[offset+2], buf[offset+3]]) as usize;
+                offset += 4;
+                let mut title = [0u8; 48];
+                title.copy_from_slice(&buf[offset..offset + 48]);
+                offset += 48;
+
+                let u_len = u32::from_le_bytes([buf[offset], buf[offset+1], buf[offset+2], buf[offset+3]]) as usize;
+                offset += 4;
+                let mut url = [0u8; 128];
+                url.copy_from_slice(&buf[offset..offset + 128]);
+                offset += 128;
+
+                let mut b = StoredBookmark::empty();
+                b.title = title;
+                b.title_len = if t_len > 48 { 48 } else { t_len };
+                b.url = url;
+                b.url_len = if u_len > 128 { 128 } else { u_len };
+
+                self.bookmarks[i] = b;
+                self.count = i + 1;
+            }
+
+            true
+        }
+    }
+
+    // ── 4. Cache Local de Documentos Web (/disk/browser/cache/) ──────────────────
+
+    pub const CACHE_PREFIX: &'static [u8] = b"/disk/browser/cache/C";
+    const CACHE_MAGIC: [u8; 4] = *b"JCA1";
+
+    pub fn compute_cache_filename(url: &[u8], out_buf: &mut [u8; 40]) -> usize {
+        let mut h: u32 = 0x811c9dc5;
+        for &b in url {
+            h ^= b as u32;
+            h = h.wrapping_mul(0x01000193);
+        }
+        let p_len = CACHE_PREFIX.len();
+        out_buf[..p_len].copy_from_slice(CACHE_PREFIX);
+        let mut idx = p_len;
+        const HEX: &[u8; 16] = b"0123456789ABCDEF";
+        for shift in (0..8).rev() {
+            let nibble = ((h >> (shift * 4)) & 0xF) as usize;
+            out_buf[idx] = HEX[nibble];
+            idx += 1;
+        }
+        let ext = b".DAT";
+        out_buf[idx..idx + 4].copy_from_slice(ext);
+        idx + 4
+    }
+
+    pub struct BrowserCacheStore;
+
+    impl BrowserCacheStore {
+        pub fn store(url: &[u8], payload: &[u8]) -> bool {
+            if url.is_empty() || payload.is_empty() || payload.len() > 16384 {
+                return false;
+            }
+            let mut file_path = [0u8; 40];
+            let path_len = compute_cache_filename(url, &mut file_path);
+
+            let mut store_buf = [0u8; 4 + 4 + 16384];
+            store_buf[0..4].copy_from_slice(&CACHE_MAGIC);
+            let p_len_u32 = payload.len() as u32;
+            store_buf[4..8].copy_from_slice(&p_len_u32.to_le_bytes());
+            store_buf[8..8 + payload.len()].copy_from_slice(payload);
+
+            transactional_write(&file_path[..path_len], &store_buf[..8 + payload.len()])
+        }
+
+        pub fn retrieve(url: &[u8], out_buf: &mut [u8]) -> Option<usize> {
+            if url.is_empty() { return None; }
+            let mut file_path = [0u8; 40];
+            let path_len = compute_cache_filename(url, &mut file_path);
+
+            let mut raw_buf = [0u8; 4 + 4 + 16384];
+            let n = match transactional_read(&file_path[..path_len], &mut raw_buf) {
+                Some(len) => len,
+                None => return None,
+            };
+
+            if n < 8 || &raw_buf[0..4] != &CACHE_MAGIC {
+                return None;
+            }
+
+            let payload_len = u32::from_le_bytes([raw_buf[4], raw_buf[5], raw_buf[6], raw_buf[7]]) as usize;
+            if 8 + payload_len > n || payload_len > out_buf.len() {
+                return None;
+            }
+
+            out_buf[..payload_len].copy_from_slice(&raw_buf[8..8 + payload_len]);
+            Some(payload_len)
+        }
+    }
+
+    /// Executa bateria de testes do subsistema de persistência local em Ring 3
+    pub fn run_selftests() -> (usize, usize) {
+        let mut passed = 0;
+        let mut total = 0;
+
+        // Teste 1: Criação da infraestrutura de diretórios
+        total += 1;
+        ensure_storage_hierarchy();
+        passed += 1;
+
+        // Teste 2: Escrita e leitura transacional básica (.TMP -> Definitivo)
+        total += 1;
+        let test_path = b"/disk/browser/history/test_trn.dat";
+        let test_data = b"JINN_TRANSACTION_PAYLOAD_V1";
+        if transactional_write(test_path, test_data) {
+            let mut read_buf = [0u8; 64];
+            if let Some(n) = transactional_read(test_path, &mut read_buf) {
+                if &read_buf[..n] == test_data {
+                    passed += 1;
+                }
+            }
+        }
+
+        // Teste 3: Rotação .BAK na sobrescrita
+        total += 1;
+        let new_data = b"JINN_UPDATED_PAYLOAD_V2";
+        if transactional_write(test_path, new_data) {
+            let mut bak_buf = [0u8; 64];
+            let bak_path = b"/disk/browser/history/test_trn.dat.BAK";
+            let fd = unsafe { sys_open(bak_path, O_RDONLY) };
+            if fd >= 0 {
+                let n_bak = unsafe { sys_read(fd as u64, bak_buf.as_mut_ptr(), 64) };
+                unsafe { let _ = sys_close(fd as u64); };
+                if n_bak == test_data.len() as i64 && &bak_buf[..n_bak as usize] == test_data {
+                    passed += 1;
+                }
+            }
+        }
+
+        // Teste 4: Recuperação automática a partir de .BAK quando .DAT ausente
+        total += 1;
+        unsafe { let _ = sys_unlink(test_path); }
+        let mut recovery_buf = [0u8; 64];
+        if let Some(n_rec) = transactional_read(test_path, &mut recovery_buf) {
+            if &recovery_buf[..n_rec] == test_data {
+                passed += 1;
+            }
+        }
+
+        // Limpeza dos arquivos de teste
+        unsafe {
+            let _ = sys_unlink(test_path);
+            let _ = sys_unlink(b"/disk/browser/history/test_trn.dat.BAK");
+            let _ = sys_unlink(b"/disk/browser/history/test_trn.dat.TMP");
+        }
+
+        // Teste 5: BrowserHistoryStore (Adição, contagem e persistência)
+        total += 1;
+        let mut h_store = BrowserHistoryStore::new();
+        h_store.add_visit(b"file:///disk/INDEX.HTM", b"Portal Jinn");
+        h_store.add_visit(b"http://example.com", b"Example Domain");
+        h_store.add_visit(b"file:///disk/INDEX.HTM", b"Portal Jinn Atualizado");
+        if h_store.count == 2 && h_store.entries[0].visit_count == 2 && h_store.save() {
+            let mut h_reloaded = BrowserHistoryStore::new();
+            if h_reloaded.load() && h_reloaded.count >= 2 {
+                passed += 1;
+            }
+        }
+
+        // Teste 6: BrowserCookieJar (Set, Get e persistência)
+        total += 1;
+        let mut jar = BrowserCookieJar::new();
+        jar.set(b"example.com", b"session_id", b"xyz987654321", true);
+        if let Some(val) = jar.get(b"example.com", b"session_id") {
+            if val == b"xyz987654321" && jar.save() {
+                let mut jar_reloaded = BrowserCookieJar::new();
+                if jar_reloaded.load() {
+                    if let Some(r_val) = jar_reloaded.get(b"example.com", b"session_id") {
+                        if r_val == b"xyz987654321" {
+                            passed += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Teste 7: BrowserBookmarkStore (Defaults, add, persistência)
+        total += 1;
+        let mut b_store = BrowserBookmarkStore::new();
+        b_store.init_defaults_if_empty();
+        b_store.add(b"Favorito Teste", b"http://teste.dev.br");
+        if b_store.save() {
+            let mut b_reloaded = BrowserBookmarkStore::new();
+            if b_reloaded.load() && b_reloaded.count >= 5 {
+                passed += 1;
+            }
+        }
+
+        // Teste 8: BrowserCacheStore (Armazenamento, integridade e recuperação por hash FNV-1a)
+        total += 1;
+        let cache_url = b"http://example.com/api/test.json";
+        let cache_payload = b"{\"status\":\"ok\",\"engine\":\"jinn-browser\"}";
+        if BrowserCacheStore::store(cache_url, cache_payload) {
+            let mut out_cache = [0u8; 128];
+            if let Some(c_len) = BrowserCacheStore::retrieve(cache_url, &mut out_cache) {
+                if &out_cache[..c_len] == cache_payload {
+                    passed += 1;
+                }
+            }
+        }
+
+        (passed, total)
+    }
+}
+

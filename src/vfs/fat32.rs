@@ -87,7 +87,7 @@ impl Fat32Fs {
         if self.partition_sectors > 0 && (lba as u64) >= (self.partition_lba as u64 + self.partition_sectors) {
             return Err("Acesso de leitura fora dos limites da particao FAT32");
         }
-        crate::drivers::block::cached_read_sector(lba as u64, buf)
+        crate::vfs::cache::read_block(self.drive, lba as u64, buf)
     }
 
     #[inline]
@@ -95,7 +95,7 @@ impl Fat32Fs {
         if self.partition_sectors > 0 && (lba as u64) >= (self.partition_lba as u64 + self.partition_sectors) {
             return Err("Acesso de escrita fora dos limites da particao FAT32 (Bloqueado)");
         }
-        crate::drivers::block::cached_write_sector(lba as u64, buf)
+        crate::vfs::cache::write_block(self.drive, lba as u64, buf)
     }
 
     /// Inicializa e monta o filesystem lendo o BPB (Boot Sector) da partição.
@@ -740,6 +740,7 @@ impl FileSystem for Fat32Fs {
     }
 
     fn sync(&self) -> VfsResult<()> {
+        let _ = crate::vfs::cache::flush_device(self.drive);
         crate::drivers::block::flush_primary_cache().map_err(|_| VfsError::IoError)?;
         Ok(())
     }
@@ -754,6 +755,7 @@ impl FileSystem for Fat32Fs {
                 }
             }
             self.sync()?;
+            crate::vfs::cache::invalidate_device(self.drive);
             (*fs_ptr).is_mounted = false;
         }
         Ok(())
@@ -770,10 +772,18 @@ impl FileSystem for Fat32Fs {
         } else {
             ((entry.dir_sector_lba as u64) << 16) | (entry.dir_entry_offset as u64 | 0x8000_0000)
         };
+        let mode = if entry.is_dir {
+            0o040755
+        } else {
+            0o100644
+        };
         Ok(Stat {
             node_type: if entry.is_dir { NodeType::Directory } else { NodeType::File },
             size: entry.size as u64,
             inode,
+            mode,
+            uid: 0,
+            gid: 0,
         })
     }
 

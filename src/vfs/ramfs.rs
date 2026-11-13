@@ -179,10 +179,18 @@ impl FileSystem for RamFs {
         let name = path.trim_start_matches('/');
         let idx  = inner.find_entry(name).ok_or(VfsError::NotFound)?;
         let inode = &inner.inodes[idx];
+        let mode = match inode.node_type {
+            NodeType::Directory => 0o040755,
+            NodeType::File => 0o100644,
+            _ => 0o020666,
+        };
         Ok(Stat {
             node_type: inode.node_type,
             size:      inode.size as u64,
             inode:     idx as u64,
+            mode,
+            uid:       0,
+            gid:       0,
         })
     }
 

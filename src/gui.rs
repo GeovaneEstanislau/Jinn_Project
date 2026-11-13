@@ -95,6 +95,9 @@ pub fn register_graphics_server(pid: usize, _flags: u32) -> Result<(), isize> {
     crate::interrupts::ps2_mouse::reset_sync();
     if let Some(fb) = crate::limine::framebuffer() {
         crate::interrupts::ps2_mouse::set_bounds(fb.width as usize, fb.height as usize);
+        crate::interrupts::ps2_mouse::MOUSE_X.store((fb.width as usize) / 2, Ordering::Release);
+        crate::interrupts::ps2_mouse::MOUSE_Y.store((fb.height as usize) / 2, Ordering::Release);
+        crate::interrupts::ps2_mouse::MOUSE_BUTTONS.store(0, Ordering::Release);
     }
     crate::serial_write(b"[GUI] Servidor Grafico Ring 3 registrado com sucesso! GRAPHICS_SERVER_PID ativo.\n");
     Ok(())
@@ -744,6 +747,26 @@ impl VfsHost for JinnVfs {
     }
 }
 
+fn write_i64(mut n: i64) {
+    if n == 0 {
+        crate::serial_write(b"0");
+        return;
+    }
+    if n < 0 {
+        crate::serial_write(b"-");
+        n = -n;
+    }
+    let mut buf = [0u8; 20];
+    let mut i = 0;
+    while n > 0 {
+        buf[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        i += 1;
+    }
+    buf[..i].reverse();
+    crate::serial_write(&buf[..i]);
+}
+
 pub struct JinnProcess;
 
 impl ProcessHost for JinnProcess {
@@ -763,9 +786,16 @@ impl ProcessHost for JinnProcess {
         let argv: [&str; 2] = [path, if is_browser { "browser" } else { "" }];
         let argv_slice: &[&str] = if is_browser { &argv[..2] } else { &argv[..1] };
 
+        crate::serial_write(b"[SPAWN_APP] Solicitado spawn_app para: ");
+        crate::serial_write(path.as_bytes());
+        crate::serial_write(b"\n");
+
         // 1. Tenta carregar do VFS (disco FAT32)
         match crate::scheduler::get().spawn_user_task_from_vfs(path, argv_slice, &[]) {
             Ok(pid) => {
+                crate::serial_write(b"[SPAWN_APP] VFS spawn com sucesso! PID=");
+                write_i64(pid as i64);
+                crate::serial_write(b"\n");
                 crate::ipc::register(pid);
                 if is_browser {
                     crate::gui::register_browser_pid(pid);
@@ -773,6 +803,9 @@ impl ProcessHost for JinnProcess {
                 return Ok(pid);
             }
             Err(errno) => {
+                crate::serial_write(b"[SPAWN_APP] spawn_user_task_from_vfs falhou com errno: ");
+                write_i64(errno as i64);
+                crate::serial_write(b"\n");
                 // Se a falha foi de formato/integridade interna do binário (ENOEXEC = -8, E2BIG = -7),
                 // não podemos mascarar a corrupção do arquivo.
                 // Mas se for arquivo não encontrado (-ENOENT = -2) ou erro de VFS/mídia não montada (-EIO = -5),
@@ -797,6 +830,9 @@ impl ProcessHost for JinnProcess {
             let alt_slice = if is_browser { &alt_argv[..2] } else { &alt_argv[..1] };
             match crate::scheduler::get().spawn_user_task_from_vfs(alt_path, alt_slice, &[]) {
                 Ok(pid) => {
+                    crate::serial_write(b"[SPAWN_APP] alt_path VFS spawn com sucesso! PID=");
+                    write_i64(pid as i64);
+                    crate::serial_write(b"\n");
                     crate::ipc::register(pid);
                     if is_browser {
                         crate::gui::register_browser_pid(pid);
@@ -804,6 +840,9 @@ impl ProcessHost for JinnProcess {
                     return Ok(pid);
                 }
                 Err(errno) => {
+                    crate::serial_write(b"[SPAWN_APP] alt_path falhou com errno: ");
+                    write_i64(errno as i64);
+                    crate::serial_write(b"\n");
                     if errno != -2 && errno != -5 {
                         return Err(());
                     }
@@ -815,24 +854,46 @@ impl ProcessHost for JinnProcess {
         // estiver ausente (-ENOENT), busca o executável estritamente correspondente nos módulos
         // Limine em memória (procura por nome/caminho 'browser', jamais carregando executáveis alheios).
         if is_browser {
+            crate::serial_write(b"[SPAWN_APP] Tentando fallback para modulo Limine browser...\n");
             let mod_opt = limine::get_module_by_name("browser").or_else(|| limine::get_module(1));
             if let Some(elf_bytes) = mod_opt {
-                // Valida estritamente a integridade do módulo ELF antes de tentar inicializar
-                if crate::elf::validate_elf(elf_bytes).is_ok() {
-                    if let Ok(pid) = crate::scheduler::get().spawn_user_task_from_memory(
-                        "browser[U3]",
-                        elf_bytes,
-                        &["/disk/browser.elf", "browser"],
-                        &[],
-                    ) {
-                        crate::ipc::register(pid);
-                        crate::gui::register_browser_pid(pid);
-                        return Ok(pid);
+                crate::serial_write(b"[SPAWN_APP] Modulo Limine obtido (bytes=");
+                write_i64(elf_bytes.len() as i64);
+                crate::serial_write(b"). Validando ELF...\n");
+                match crate::elf::validate_elf(elf_bytes) {
+                    Ok(_) => {
+                        crate::serial_write(b"[SPAWN_APP] validate_elf OK! Invocando spawn_user_task_from_memory...\n");
+                        match crate::scheduler::get().spawn_user_task_from_memory(
+                            "browser[U3]",
+                            elf_bytes,
+                            &["/disk/browser.elf", "browser"],
+                            &[],
+                        ) {
+                            Ok(pid) => {
+                                crate::serial_write(b"[SPAWN_APP] Sucesso Limine! PID=");
+                                write_i64(pid as i64);
+                                crate::serial_write(b"\n");
+                                crate::ipc::register(pid);
+                                crate::gui::register_browser_pid(pid);
+                                return Ok(pid);
+                            }
+                            Err(e) => {
+                                crate::serial_write(b"[SPAWN_APP] spawn_user_task_from_memory falhou com errno: ");
+                                write_i64(e as i64);
+                                crate::serial_write(b"\n");
+                            }
+                        }
+                    }
+                    Err(_e) => {
+                        crate::serial_write(b"[SPAWN_APP] validate_elf falhou no modulo Limine!\n");
                     }
                 }
+            } else {
+                crate::serial_write(b"[SPAWN_APP] Modulo Limine browser NAO foi encontrado!\n");
             }
         }
 
+        crate::serial_write(b"[SPAWN_APP] Retornando Err(())\n");
         Err(())
     }
 }
@@ -1021,6 +1082,10 @@ pub fn run_desktop() {
         let backbuffer_slice = core::slice::from_raw_parts_mut(bb_ptr, total_pixels);
 
         crate::interrupts::ps2_mouse::init();
+        crate::interrupts::ps2_mouse::MOUSE_X.store(jinn_fb.width / 2, Ordering::Release);
+        crate::interrupts::ps2_mouse::MOUSE_Y.store(jinn_fb.height / 2, Ordering::Release);
+        crate::interrupts::ps2_mouse::MOUSE_BUTTONS.store(0, Ordering::Release);
+        crate::interrupts::ps2_mouse::reset_sync();
 
         let mut poll_keyboard = || -> Option<u8> {
             crate::keyboard_buffer::pop()

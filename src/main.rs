@@ -276,6 +276,49 @@ pub extern "C" fn _start() -> ! {
     // Inicializa Gerenciador de Volumes (L1 Volume Manager)
     vfs::volume::init_volume_manager();
 
+    // Garante infraestrutura de armazenamento estruturado do Jinn Browser (/disk/browser/)
+    vfs::ensure_browser_directories();
+
+    // Executa bateria de selftests do VFS Block Cache
+    w.write_string("[+] VFS Block Cache LRU (32 KiB)...");
+    let (vfs_c_passed, vfs_c_total) = vfs::cache::run_vfs_cache_selftests();
+    if vfs_c_passed == vfs_c_total {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string(" OK (");
+        w.write_decimal(vfs_c_passed);
+        w.write_string("/");
+        w.write_decimal(vfs_c_total);
+        w.write_line(" aprovados)");
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string(" FALHA (");
+        w.write_decimal(vfs_c_passed);
+        w.write_string("/");
+        w.write_decimal(vfs_c_total);
+        w.write_line(" aprovados)");
+    }
+    w.set_color(Color::LightGray, Color::Black);
+
+    // Executa bateria de testes de validação de Permissões POSIX DAC e Flags de Acesso
+    w.write_string("[+] Permissões POSIX DAC & Flags VFS...");
+    let (posix_p, posix_t) = vfs::run_posix_permission_selftests();
+    if posix_p == posix_t {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string(" OK (");
+        w.write_decimal(posix_p);
+        w.write_string("/");
+        w.write_decimal(posix_t);
+        w.write_line(" aprovados)");
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string(" FALHA (");
+        w.write_decimal(posix_p);
+        w.write_string("/");
+        w.write_decimal(posix_t);
+        w.write_line(" aprovados)");
+    }
+    w.set_color(Color::LightGray, Color::Black);
+
     w.write_string("[+] IPC...");
     ipc::register(0);
     w.set_color(Color::LightGreen, Color::Black);

@@ -114,7 +114,7 @@ impl Ext2Fs {
         if self.partition_sectors > 0 && (lba as u64) >= (self.partition_lba as u64 + self.partition_sectors) {
             return Err("Acesso de leitura fora dos limites da particao Ext2 (Bloqueado)");
         }
-        crate::drivers::block::cached_read_sector(lba as u64, buf)
+        crate::vfs::cache::read_block(self.drive, lba as u64, buf)
     }
 
     /// Inicializa e valida o Superblock Ext2 na partição especificada
@@ -175,7 +175,7 @@ impl Ext2Fs {
         if self.partition_sectors > 0 && (lba as u64) >= (self.partition_lba as u64 + self.partition_sectors) {
             return Err("Acesso de escrita fora dos limites da particao Ext2 (Bloqueado)");
         }
-        crate::drivers::block::cached_write_sector(lba as u64, buf)
+        crate::vfs::cache::write_block(self.drive, lba as u64, buf)
     }
 
     /// Escreve um bloco de dados no sistema de arquivos Ext2
@@ -796,6 +796,9 @@ impl FileSystem for Ext2Fs {
             node_type,
             size: inode.size as u64,
             inode: ino as u64,
+            mode: inode.mode as u32,
+            uid: inode.uid as u32,
+            gid: inode.gid as u32,
         })
     }
 
@@ -1210,6 +1213,7 @@ impl FileSystem for Ext2Fs {
     }
 
     fn sync(&self) -> VfsResult<()> {
+        let _ = crate::vfs::cache::flush_device(self.drive);
         let _ = crate::drivers::block::flush_primary_cache();
         Ok(())
     }
@@ -1224,6 +1228,7 @@ impl FileSystem for Ext2Fs {
                 }
             }
             let _ = self.sync();
+            crate::vfs::cache::invalidate_device(self.drive);
             (*fs_ptr).is_mounted = false;
         }
         Ok(())

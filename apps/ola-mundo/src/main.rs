@@ -2218,12 +2218,26 @@ unsafe fn browser_load_and_display(
     }
 
     if path.starts_with(b"http://") || path.starts_with(b"https://") {
+        let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
+        let out_buf = core::slice::from_raw_parts_mut(f_ptr, HTTP_BUF_SIZE);
+
+        // Verifica cache local (/disk/browser/cache/) antes da requisição de rede
+        if let Some(cached_len) = browser::storage::BrowserCacheStore::retrieve(path, out_buf) {
+            print_str(b"[BROWSER-CACHE] Recurso obtido do cache local (/disk/browser/cache/)!\n");
+            let doc_slice = &out_buf[..cached_len];
+            session.load_document_bytes(doc_slice, path);
+            session.record_navigation_current(path);
+            session.render(buf_slice);
+            let _ = sys_window_update(win_id, buf_slice);
+            print_str(b"[BROWSER-INTERACTION] PAGE_LOADED (CACHE) target=");
+            print_str(path);
+            print_str(b"\n");
+            return true;
+        }
+
         print_str(b"[BROWSER] Requisitando recurso externo: ");
         print_str(path);
         print_str(b"\n");
-
-        let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
-        let out_buf = core::slice::from_raw_parts_mut(f_ptr, HTTP_BUF_SIZE);
 
         match fetch_http_document(path, out_buf) {
             Ok(body_len) => {
@@ -2239,6 +2253,10 @@ unsafe fn browser_load_and_display(
                 }
                 print_str(b"[DIAG-FLOW] DOM: Convertendo HTML para arvore de elementos DOM...\n");
                 session.load_document_bytes(doc_slice, path);
+                session.record_navigation_current(path);
+                // Armazena cópia transacional no cache local (/disk/browser/cache/)
+                browser::storage::BrowserCacheStore::store(path, doc_slice);
+
                 print_str(b"[DIAG-FLOW] RENDER: Desenhando documento na janela do Aladdin...\n");
                 session.render(buf_slice);
                 let _ = sys_window_update(win_id, buf_slice);
@@ -2357,6 +2375,7 @@ unsafe fn browser_load_and_display(
         if let Some(len) = read_html_file(path) {
             let doc_slice = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, len);
             session.load_document_bytes(doc_slice, path);
+            session.record_navigation_current(path);
             session.render(buf_slice);
             let _ = sys_window_update(win_id, buf_slice);
             print_str(b"[BROWSER-INTERACTION] PAGE_LOADED target=");
@@ -2739,6 +2758,10 @@ unsafe fn run_browser_interactive() -> ! {
     print_str(b"==================================================================\n");
 
     let mut session = browser::BrowserSession::new();
+    print_str(b"[BROWSER-STORAGE] Inicializando infraestrutura de persistencia local...\n");
+    session.init_persistence();
+    print_str(b"[BROWSER-STORAGE] Persistencia pronta em /disk/browser/ (cache, cookies, history, bookmark)!\n");
+
     let mut surface = DynamicSurfaceBuffer::new();
     unsafe { surface.init(); }
     print_str(b"[BROWSER] Buffer alocado com sucesso (216 KiB BSS Surface)...\n");
@@ -2764,6 +2787,7 @@ unsafe fn run_browser_interactive() -> ! {
 
     let raw_bytes = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, bytes_read);
     session.load_document_bytes(raw_bytes, b"file:///disk/INDEX.HTM");
+    session.record_navigation_current(b"file:///disk/INDEX.HTM");
 
     // 2. Cria janela nativa no Aladdin Desktop
     print_str(b"[BROWSER] Janela solicitada ao compositor (300x180)...\n");
@@ -2801,6 +2825,9 @@ unsafe fn run_browser_interactive() -> ! {
             match ev.event_type {
                 EVENT_WINDOW_CLOSE => {
                     print_str(b"[BROWSER-INTERACTION] CLOSE window received\n");
+                    let _ = session.history_store.save();
+                    let _ = session.cookie_jar.save();
+                    let _ = session.bookmark_store.save();
                     let _ = sys_window_close(win_id);
                     sys_exit(0);
                 }
@@ -3754,6 +3781,21 @@ unsafe fn test_adv_fat32_persistent_write_and_recovery() {
     print_str(b"  [PASS] test_adv_fat32_persistent_write_and_recovery: Auditoria e Integridade de Escrita FAT32 APROVADA!\n");
 }
 
+unsafe fn test_browser_storage_persistence() {
+    print_str(b"--- [Ring 3] Teste 18: Subsistema de Persistencia Local do Jinn Browser (/disk/browser/) ---\n");
+    let (p, t) = browser::storage::run_selftests();
+    print_str(b"  Resultado Persistencia do Browser: ");
+    print_u64(p as u64);
+    print_str(b"/");
+    print_u64(t as u64);
+    print_str(b" testes aprovados\n");
+    if p == t {
+        print_str(b"  [PASS] test_browser_storage_persistence: Infraestrutura VFS, Cookies, Historico e Transacional (.BAK) APROVADOS!\n");
+    } else {
+        print_str(b"  [FAIL] test_browser_storage_persistence: Falha em teste de persistencia!\n");
+    }
+}
+
 // ── Testes de Carregamento ELF, sys_spawn e sys_execve ────────────────────────
 
 unsafe fn streq(s: *const u8, expected: &[u8]) -> bool {
@@ -4082,6 +4124,8 @@ unsafe fn test_userspace_driver_subsystem() {
         } else {
             print_str(b"  [FAIL] 18.12: Falha no pipeline Ring 3 de mouse\n");
         }
+        // Restaura coordenadas e botoes do mouse no centro da tela apos teste
+        let _ = sys_driver_send_input(INPUT_KIND_MOUSE_BUTTON_UP, 1, 512, 384);
     } else {
         print_str(b"  [FAIL] 18.12: Falha ao registrar driver de mouse para teste 18.12, ret: ");
         print_i64(mouse_gen);
@@ -4326,6 +4370,7 @@ pub extern "C" fn _start() -> ! {
         test_observer_app();
         test_adv_vfs_stat_and_lseek();
         test_adv_fat32_persistent_write_and_recovery();
+        test_browser_storage_persistence();
         test_adv_elf_exec_and_spawn();
         test_sched_preemption_and_cpu_quota();
         test_userspace_driver_subsystem();

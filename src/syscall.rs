@@ -88,13 +88,19 @@ pub const EBADF:        isize = -9;   // Bad file descriptor
 pub const ECHILD:       isize = -10;  // No child processes
 pub const EAGAIN:       isize = -11;  // Resource temporarily unavailable / Would block
 pub const ENOMEM:       isize = -12;  // Out of memory
+pub const EACCES:       isize = -13;  // Permission denied
 pub const EFAULT:       isize = -14;  // Bad address
 pub const EBUSY:        isize = -16;  // Device or resource busy
+pub const EEXIST:       isize = -17;  // File exists
 pub const ENODEV:       isize = -19;  // No such device
+pub const ENOTDIR:      isize = -20;  // Not a directory
+pub const EISDIR:       isize = -21;  // Is a directory
 pub const EINVAL:       isize = -22;  // Invalid argument
 pub const EMFILE:       isize = -24;  // Too many open files
+pub const EFBIG:        isize = -27;  // File too large
 pub const ENOSPC:       isize = -28;  // No space left on device
 pub const ESPIPE:       isize = -29;  // Illegal seek
+pub const EROFS:        isize = -30;  // Read-only file system
 pub const EDEADLK:      isize = -35;  // Resource deadlock avoided
 pub const ENOSYS:       isize = -38;  // Function not implemented
 pub const EADDRINUSE:   isize = -98;  // Address already in use
@@ -549,6 +555,10 @@ pub extern "C" fn syscall_dispatch(
         79 => sys_graphics_list_client_windows(arg0 as *mut crate::gui::ClientWindowInfoUser, arg1),
         83 => sys_mkdir(arg0 as *const u8, arg1),
         85 => sys_creat(arg0 as *const u8, arg1, arg2 as u32),
+        102 => sys_getuid(),
+        104 => sys_getgid(),
+        107 => sys_geteuid(),
+        108 => sys_getegid(),
         _  => ENOSYS,
     }
 }
@@ -599,7 +609,17 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
                 if let Some(desc) = &mut task.fds[fd] {
                     match desc {
                         scheduler::TaskDescriptor::File(fd_entry) => {
+                            let accmode = fd_entry.flags & crate::vfs::O_ACCMODE;
+                            if accmode == crate::vfs::O_RDONLY {
+                                return EBADF;
+                            }
                             if let Ok(p_str) = core::str::from_utf8(&fd_entry.path[..fd_entry.path_len]) {
+                                // O_APPEND: reposiciona compulsoriamente no fim do arquivo antes de cada escrita
+                                if (fd_entry.flags & crate::vfs::O_APPEND) != 0 {
+                                    if let Ok(st) = crate::vfs::stat(p_str) {
+                                        fd_entry.offset = st.size;
+                                    }
+                                }
                                 let slice = unsafe { core::slice::from_raw_parts(buf, len) };
                                 match crate::vfs::write(p_str, fd_entry.vfs_handle, fd_entry.offset, slice) {
                                     Ok(n) => {
@@ -662,6 +682,10 @@ fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
                 if let Some(desc) = &mut task.fds[fd] {
                     match desc {
                         scheduler::TaskDescriptor::File(fd_entry) => {
+                            let accmode = fd_entry.flags & crate::vfs::O_ACCMODE;
+                            if accmode == crate::vfs::O_WRONLY {
+                                return EBADF;
+                            }
                             if let Ok(p_str) = core::str::from_utf8(&fd_entry.path[..fd_entry.path_len]) {
                                 let slice = unsafe { core::slice::from_raw_parts_mut(buf, len) };
                                 match crate::vfs::read(p_str, fd_entry.vfs_handle, fd_entry.offset, slice) {
@@ -704,9 +728,39 @@ fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> isize {
     };
     let stored_len = path_str.len();
 
+    let (caller_uid, caller_gid) = scheduler::current_uid_gid();
+
+    // Validação POSIX: se o nó existir, valida O_CREAT | O_EXCL e permissões DAC
+    match crate::vfs::stat(path_str) {
+        Ok(stat) => {
+            if (flags & (crate::vfs::O_CREAT | crate::vfs::O_EXCL)) == (crate::vfs::O_CREAT | crate::vfs::O_EXCL) {
+                return EEXIST;
+            }
+            if let Err(e) = crate::vfs::check_permission(&stat, flags, caller_uid, caller_gid, false) {
+                return vfs_error_to_errno(e);
+            }
+        }
+        Err(crate::vfs::VfsError::NotFound) => {
+            if (flags & crate::vfs::O_CREAT) == 0 {
+                return ENOENT;
+            }
+        }
+        Err(e) => return vfs_error_to_errno(e),
+    }
+
     let vfs_handle = match crate::vfs::open(path_str, flags) {
         Ok(h) => h,
         Err(e) => return vfs_error_to_errno(e),
+    };
+
+    let initial_offset = if (flags & crate::vfs::O_APPEND) != 0 {
+        if let Ok(st) = crate::vfs::stat(path_str) {
+            st.size
+        } else {
+            0
+        }
+    } else {
+        0
     };
 
     let pid = scheduler::current_pid();
@@ -724,7 +778,7 @@ fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> isize {
                     vfs_handle,
                     path: path_buf,
                     path_len: stored_len,
-                    offset: 0,
+                    offset: initial_offset,
                     flags,
                 }));
                 return fd as isize;
@@ -796,12 +850,23 @@ const _: () = {
 /// contados a partir da inicialização do microkernel. Não representam segundos de calendário Unix Epoch
 /// devido à ausência de driver de RTC na arquitetura atual.
 fn map_vfs_stat_to_filestat(stat: &crate::vfs::Stat) -> FileStat {
-    let (node_type, mode) = match stat.node_type {
-        crate::vfs::NodeType::File => (0u32, 0o100644u32),
-        crate::vfs::NodeType::Directory => (1u32, 0o040755u32),
-        crate::vfs::NodeType::CharDevice => (2u32, 0o020666u32),
-        crate::vfs::NodeType::BlockDevice => (3u32, 0o060660u32),
-        crate::vfs::NodeType::Symlink => (4u32, 0o120777u32),
+    let node_type = match stat.node_type {
+        crate::vfs::NodeType::File => 0u32,
+        crate::vfs::NodeType::Directory => 1u32,
+        crate::vfs::NodeType::CharDevice => 2u32,
+        crate::vfs::NodeType::BlockDevice => 3u32,
+        crate::vfs::NodeType::Symlink => 4u32,
+    };
+    let mode = if stat.mode != 0 {
+        stat.mode
+    } else {
+        match stat.node_type {
+            crate::vfs::NodeType::File => 0o100644u32,
+            crate::vfs::NodeType::Directory => 0o040755u32,
+            crate::vfs::NodeType::CharDevice => 0o020666u32,
+            crate::vfs::NodeType::BlockDevice => 0o060660u32,
+            crate::vfs::NodeType::Symlink => 0o120777u32,
+        }
     };
     FileStat {
         size: stat.size,
@@ -1003,6 +1068,26 @@ fn sys_yield() -> isize {
 /// `getpid()` — Return the PID of the calling task.
 fn sys_getpid() -> isize {
     scheduler::current_pid() as isize
+}
+
+/// `getuid()` — Return the real user ID of the calling process (Syscall 102).
+fn sys_getuid() -> isize {
+    scheduler::current_uid_gid().0 as isize
+}
+
+/// `getgid()` — Return the real group ID of the calling process (Syscall 104).
+fn sys_getgid() -> isize {
+    scheduler::current_uid_gid().1 as isize
+}
+
+/// `geteuid()` — Return the effective user ID of the calling process (Syscall 107).
+fn sys_geteuid() -> isize {
+    scheduler::current_uid_gid().0 as isize
+}
+
+/// `getegid()` — Return the effective group ID of the calling process (Syscall 108).
+fn sys_getegid() -> isize {
+    scheduler::current_uid_gid().1 as isize
 }
 
 /// `ipc_send(to_pid, tag, payload_ptr)` — Send an IPC message.
@@ -2734,6 +2819,24 @@ fn sys_spawn_process(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> isize
             pid as isize
         }
         Err(e) => {
+            crate::serial_write(b"[sys_spawn_process] spawn_user_task_from_vfs falhou com erro: ");
+            let mut buf = [0u8; 16];
+            let mut val = e.unsigned_abs() as u64;
+            let mut i = 0;
+            if val == 0 {
+                crate::serial_write(b"0");
+            } else {
+                if e < 0 { crate::serial_write(b"-"); }
+                while val > 0 {
+                    buf[i] = b'0' + (val % 10) as u8;
+                    val /= 10;
+                    i += 1;
+                }
+                buf[..i].reverse();
+                crate::serial_write(&buf[..i]);
+            }
+            crate::serial_write(b"\n");
+
             // 1. Tenta variantes de caixa se o arquivo primário não foi encontrado
             let alt_path = if path.contains("BROWSER") {
                 alloc::string::String::from("/disk/browser.elf")
@@ -2748,6 +2851,7 @@ fn sys_spawn_process(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> isize
             };
             if !alt_path.is_empty() && alt_path != path {
                 if let Ok(pid) = scheduler::get().spawn_user_task_from_vfs(&alt_path, &argv_slices, &envp_slices) {
+                    crate::serial_write(b"[sys_spawn_process] Sucesso com alt_path!\n");
                     ipc::register(pid);
                     if path.contains("browser") || path.contains("BROWSER") {
                         crate::gui::register_browser_pid(pid);
@@ -2773,24 +2877,38 @@ fn sys_spawn_process(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> isize
             };
 
             if let Some(m_name) = mod_name {
+                crate::serial_write(b"[sys_spawn_process] Tentando modulo Limine: ");
+                crate::serial_write(m_name.as_bytes());
+                crate::serial_write(b"\n");
                 let mod_opt = crate::limine::get_module_by_name(m_name)
                     .or_else(|| if m_name == "browser" { crate::limine::get_module(1) } else { None });
                 if let Some(elf_bytes) = mod_opt {
+                    crate::serial_write(b"[sys_spawn_process] Modulo Limine encontrado, validando...\n");
                     if crate::elf::validate_elf(elf_bytes).is_ok() {
                         let proc_name = if m_name == "browser" { "browser[U3]" } else { m_name };
-                        if let Ok(pid) = scheduler::get().spawn_user_task_from_memory(
+                        match scheduler::get().spawn_user_task_from_memory(
                             proc_name,
                             elf_bytes,
                             &argv_slices,
                             &envp_slices,
                         ) {
-                            ipc::register(pid);
-                            if path.contains("browser") || path.contains("BROWSER") {
-                                crate::gui::register_browser_pid(pid);
+                            Ok(pid) => {
+                                crate::serial_write(b"[sys_spawn_process] Sucesso ao spawnar modulo Limine! PID=\n");
+                                ipc::register(pid);
+                                if path.contains("browser") || path.contains("BROWSER") {
+                                    crate::gui::register_browser_pid(pid);
+                                }
+                                return pid as isize;
                             }
-                            return pid as isize;
+                            Err(_spawn_err) => {
+                                crate::serial_write(b"[sys_spawn_process] spawn_user_task_from_memory falhou com errno: \n");
+                            }
                         }
+                    } else {
+                        crate::serial_write(b"[sys_spawn_process] validate_elf falhou no modulo Limine!\n");
                     }
+                } else {
+                    crate::serial_write(b"[sys_spawn_process] Modulo Limine NAO encontrado!\n");
                 }
             }
 
@@ -2804,15 +2922,20 @@ fn sys_spawn_process(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> isize
 fn vfs_error_to_errno(err: crate::vfs::VfsError) -> isize {
     match err {
         crate::vfs::VfsError::NotFound => ENOENT,
-        crate::vfs::VfsError::PermissionDenied => EPERM,
-        crate::vfs::VfsError::NotADirectory => -20, // ENOTDIR
-        crate::vfs::VfsError::IsADirectory => -21,  // EISDIR
-        crate::vfs::VfsError::AlreadyExists => -17, // EEXIST
+        crate::vfs::VfsError::PermissionDenied => EACCES,
+        crate::vfs::VfsError::NotPermitted => EPERM,
+        crate::vfs::VfsError::NotADirectory => ENOTDIR,
+        crate::vfs::VfsError::IsADirectory => EISDIR,
+        crate::vfs::VfsError::AlreadyExists => EEXIST,
         crate::vfs::VfsError::InvalidPath => EINVAL,
-        crate::vfs::VfsError::NoSpace => -28,       // ENOSPC
+        crate::vfs::VfsError::NoSpace => ENOSPC,
+        crate::vfs::VfsError::ReadOnlyFilesystem => EROFS,
+        crate::vfs::VfsError::TooManyOpenFiles => EMFILE,
+        crate::vfs::VfsError::FileTooLarge => EFBIG,
+        crate::vfs::VfsError::BadDescriptor => EBADF,
         crate::vfs::VfsError::NotSupported => ENOSYS,
         crate::vfs::VfsError::IoError => EIO,
-        crate::vfs::VfsError::Busy => -16,          // EBUSY
+        crate::vfs::VfsError::Busy => EBUSY,
     }
 }
 

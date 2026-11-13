@@ -157,6 +157,22 @@ pub fn current_has_cap(cap: u32) -> bool {
     }
 }
 
+/// Retorna a tupla (UID, GID) POSIX da tarefa atualmente em execução.
+/// Tarefa 0 (kernel / sistema) retorna rigorosamente (0, 0) [root].
+pub fn current_uid_gid() -> (u32, u32) {
+    let pid = current_pid();
+    if pid == 0 {
+        return (0, 0);
+    }
+    let _guard = SCHED_LOCK.lock();
+    let sched = unsafe { &*core::ptr::addr_of!(SCHEDULER) };
+    if let Some(Some(ref task)) = sched.tasks.get(pid) {
+        (task.uid, task.gid)
+    } else {
+        (0, 0)
+    }
+}
+
 /// Concede uma capacidade de driver ao processo especificado por PID.
 pub fn grant_driver_cap(pid: usize, cap: u32) {
     if pid >= MAX_TASKS {
@@ -328,6 +344,10 @@ pub struct Task {
     pub generation: u64,
     /// Máscara de bits de capacidades concedidas a este processo (ex: DRIVER_CAP_DMA).
     pub driver_caps: u32,
+    /// UID (User ID) POSIX do processo.
+    pub uid: u32,
+    /// GID (Group ID) POSIX do processo.
+    pub gid: u32,
 }
 
 // ── Estrutura do escalonador ──────────────────────────────────────────────────
@@ -566,6 +586,8 @@ impl Scheduler {
                 parent_pid,
                 generation: gen,
                 driver_caps: 0,
+                uid: 1000,
+                gid: 1000,
             });
             let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
             self.next_id = (id + 1) % max_alloc;
@@ -692,6 +714,8 @@ impl Scheduler {
                 parent_pid,
                 generation: gen,
                 driver_caps: 0,
+                uid: 1000,
+                gid: 1000,
             });
             let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
             self.next_id = (id + 1) % max_alloc;
@@ -867,6 +891,8 @@ impl Scheduler {
             parent_pid,
             generation: gen,
             driver_caps: 0,
+            uid: 1000,
+            gid: 1000,
         });
         let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
         self.next_id = (id + 1) % max_alloc;
@@ -981,6 +1007,8 @@ impl Scheduler {
             parent_pid: None,
             generation: gen,
             driver_caps: 0,
+            uid: 0,
+            gid: 0,
         });
 
         if cpu_id < crate::gdt::MAX_CPUS {
@@ -1061,6 +1089,8 @@ impl Scheduler {
                 parent_pid,
                 generation: gen,
                 driver_caps: 0,
+                uid: 0,
+                gid: 0,
             });
             let max_alloc = MAX_TASKS - crate::gdt::MAX_CPUS;
             self.next_id = (id + 1) % max_alloc;

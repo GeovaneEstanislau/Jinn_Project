@@ -15,6 +15,7 @@ pub const SYS_WINDOW_BLIT:       u64 = 21;
 pub const SYS_WINDOW_CLOSE:      u64 = 22;
 pub const SYS_WINDOW_POLL_EVENT: u64 = 24;
 pub const SYS_SPAWN_PROCESS:     u64 = 39;
+pub const SYS_CLOCK_GETTIME:      u64 = 70;
 
 pub const SYS_GRAPHICS_REGISTER:              u64 = 72;
 pub const SYS_GRAPHICS_GET_FB_INFO:          u64 = 73;

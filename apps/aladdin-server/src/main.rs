@@ -19,8 +19,8 @@ use aladdin::contracts::input::ClientWindowEvent;
 use aladdin::desktop::session::AladdinSession;
 
 // ── Allocator de Heap em Espaço de Usuário (.bss) ─────────────────────────────
-// 7 MiB de memória em .bss (0 bytes no arquivo ELF do disco).
-const HEAP_SIZE: usize = 7 * 1024 * 1024;
+// 16 MiB de memória em .bss (0 bytes no arquivo ELF do disco).
+const HEAP_SIZE: usize = 16 * 1024 * 1024;
 static mut HEAP_MEMORY: [u8; HEAP_SIZE] = [0u8; HEAP_SIZE];
 
 struct SimpleHeapAllocator {
@@ -198,21 +198,44 @@ impl FramebufferDevice for UserFramebuffer {
     }
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Timespec {
+    pub tv_sec: u64,
+    pub tv_nsec: u64,
+}
+
+#[inline(always)]
+unsafe fn sys_clock_gettime(clock_id: u32, out_ts: *mut Timespec) -> i64 {
+    aladdin_sdk::syscall::syscall2(70, clock_id as u64, out_ts as u64)
+}
+
 // ── Adaptador de Sistema em Ring 3 ───────────────────────────────────────────
 
 pub struct UserSystem {
-    pub start_tick: u64,
+    pub start_tick: core::sync::atomic::AtomicU64,
 }
 
 impl SystemHost for UserSystem {
     fn stats(&self) -> SystemStats {
+        let mut ts = Timespec::default();
+        let (uptime_secs, current_tick) = unsafe {
+            if sys_clock_gettime(1, &mut ts) == 0 {
+                let ticks = ts.tv_sec * 100 + ts.tv_nsec / 10_000_000;
+                (ts.tv_sec as usize, ticks)
+            } else {
+                let c = self.start_tick.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                ((c / 100) as usize, c)
+            }
+        };
+
         SystemStats {
-            uptime_secs: 10,
+            uptime_secs,
             task_count: 3,
             sched_ticks: 100,
             used_ram_mb: 19,
             total_ram_mb: 256,
-            current_tick: self.start_tick + 1,
+            current_tick,
             net_ip: [192, 168, 1, 100],
             net_adapter: "virtio-net",
             net_state_desc: "Connected (Ring 3)",
@@ -447,12 +470,22 @@ impl ProcessHost for UserProcess {
         ];
 
         unsafe {
+            aladdin_sdk::console::print("[aladdin-server] Invocando SYS_SPAWN_PROCESS para: ");
+            aladdin_sdk::console::println(target_path);
             let ret = aladdin_sdk::syscall::syscall3(
                 aladdin_sdk::syscall::SYS_SPAWN_PROCESS,
                 path_buf.as_ptr() as u64,
                 argv_ptrs.as_mut_ptr() as u64,
                 0, // envp
             );
+            aladdin_sdk::console::print("[aladdin-server] SYS_SPAWN_PROCESS retornou: ");
+            if ret < 0 {
+                aladdin_sdk::console::print("-");
+                aladdin_sdk::console::print_num((-ret) as u64);
+            } else {
+                aladdin_sdk::console::print_num(ret as u64);
+            }
+            aladdin_sdk::console::println("");
             if ret > 0 {
                 Ok(ret as usize)
             } else {
@@ -496,7 +529,7 @@ pub extern "C" fn _start() -> ! {
         pitch: fb_info.pitch as usize,
         sub_buf: alloc::vec::Vec::new(),
     };
-    let user_sys = UserSystem { start_tick: 100 };
+    let user_sys = UserSystem { start_tick: core::sync::atomic::AtomicU64::new(100) };
     let user_vfs = UserVfs;
     let mut user_proc = UserProcess;
 
@@ -563,8 +596,8 @@ pub extern "C" fn _start() -> ! {
             if ev.kind == 1 {
                 enqueue_key(ev.code as u8);
             } else if ev.kind >= 3 {
-                let mx = (ev.x as usize).min(fb_w.saturating_sub(1));
-                let my = (ev.y as usize).min(fb_h.saturating_sub(1));
+                let mx = (ev.x.max(0) as usize).min(fb_w.saturating_sub(1));
+                let my = (ev.y.max(0) as usize).min(fb_h.saturating_sub(1));
                 let btn = ev.code as u8;
                 unsafe {
                     CURRENT_MOUSE = (mx, my, btn);
