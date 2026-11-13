@@ -5,8 +5,8 @@
 
 // ── 1. Configuração do Supabase & Google Ads ─────────────────────────────────
 
-const SUPABASE_URL = window.ENV_SUPABASE_URL || 'https://xyzcompany.supabase.co';
-const SUPABASE_ANON_KEY = window.ENV_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy';
+const SUPABASE_URL = window.ENV_SUPABASE_URL || 'https://krtxsjnvyijfeycxdqjy.supabase.co';
+const SUPABASE_ANON_KEY = window.ENV_SUPABASE_ANON_KEY || 'sb_publishable_ZRzHmTfIBlkSU2oQS_kM6w_jZ95cZCG';
 
 let supabaseClient = null;
 try {
