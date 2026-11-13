@@ -94,3 +94,4 @@ Para viabilizar a coexistência pacífica:
 ## 4. Conclusão da Auditoria de Interrupções
 
 A harmonização dos controladores 8042, 8259A PIC e Local APIC foi comprovada matematicamente e em telemetria real. As interrupções operam sem perdas, bloqueios ou vazamentos de prioridade.
+

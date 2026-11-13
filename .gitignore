@@ -23,6 +23,12 @@
 .vscode/
 .idea/
 
+# Installed portable tools
+/tools/7z/
+/tools/git/
+/tools/qemu/
+/tools/xorriso/
+
 # Misc binaries
 *.bin
 *.exe

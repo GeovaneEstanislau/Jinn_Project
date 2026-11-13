@@ -389,15 +389,42 @@ impl VfsHost for UserVfs {
 pub struct UserProcess;
 
 impl ProcessHost for UserProcess {
-    fn execute_command(&mut self, _cmd: &str, output: &mut dyn FnMut(&str, u32)) {
-        output("Executando em Aladdin Ring 3 Display Server.", 0x0022_C55E);
+    fn execute_command(&mut self, cmd: &str, output: &mut dyn FnMut(&str, u32)) {
+        let trimmed = cmd.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        if trimmed.eq_ignore_ascii_case("browser")
+            || trimmed.eq_ignore_ascii_case("spawn browser")
+            || trimmed.eq_ignore_ascii_case("/disk/browser.elf")
+        {
+            output("Iniciando Jinn Browser Engine (Ring 3)...", 0x0093_C5FD);
+            match self.spawn_app("/disk/browser.elf") {
+                Ok(_pid) => output("Jinn Browser Ring 3 iniciado com sucesso!", 0x0010_B981),
+                Err(()) => output("Erro: falha ao carregar /disk/browser.elf", 0x00EF_4444),
+            }
+        } else if trimmed.starts_with("spawn ") {
+            let app = trimmed[6..].trim();
+            output("Executando spawn...", 0x0093_C5FD);
+            match self.spawn_app(app) {
+                Ok(_) => output("Processo iniciado com sucesso!", 0x0010_B981),
+                Err(()) => output("Erro ao iniciar processo.", 0x00EF_4444),
+            }
+        } else if trimmed.eq_ignore_ascii_case("help") {
+            output("Comandos: browser, spawn <path>, uptime, reboot, clear", 0x0093_C5FD);
+        } else if trimmed.eq_ignore_ascii_case("reboot") {
+            output("Reiniciando o sistema...", 0x00EF_4444);
+            unsafe { aladdin_sdk::syscall::syscall0(aladdin_sdk::syscall::SYS_REBOOT); }
+        } else {
+            output("Comando recebido pelo Aladdin Ring 3 Display Server.", 0x0022_C55E);
+        }
     }
 
     fn is_process_alive(&self, _pid: usize) -> bool { true }
 
     fn spawn_app(&mut self, path: &str) -> Result<usize, ()> {
         let is_browser = path.contains("browser") || path.contains("BROWSER");
-        let alt_path = if is_browser {
+        let target_path = if is_browser {
             "/disk/browser.elf"
         } else if path.contains("contador") {
             "/disk/contador.elf"
@@ -405,12 +432,26 @@ impl ProcessHost for UserProcess {
             "/disk/ola_graf.elf"
         };
 
+        let mut path_buf = [0u8; 128];
+        let bytes = target_path.as_bytes();
+        let len = bytes.len().min(127);
+        path_buf[..len].copy_from_slice(&bytes[..len]);
+        path_buf[len] = 0;
+
+        // Argumento 'browser' para que ola-mundo inicie no modo navegador gráfico
+        let arg_browser = b"browser\0";
+        let mut argv_ptrs: [*const u8; 3] = [
+            path_buf.as_ptr(),
+            if is_browser { arg_browser.as_ptr() } else { core::ptr::null() },
+            core::ptr::null(),
+        ];
+
         unsafe {
             let ret = aladdin_sdk::syscall::syscall3(
-                9, // sys_spawn
-                alt_path.as_ptr() as u64,
-                alt_path.len() as u64,
-                3, // Ring 3
+                aladdin_sdk::syscall::SYS_SPAWN_PROCESS,
+                path_buf.as_ptr() as u64,
+                argv_ptrs.as_mut_ptr() as u64,
+                0, // envp
             );
             if ret > 0 {
                 Ok(ret as usize)
@@ -521,28 +562,12 @@ pub extern "C" fn _start() -> ! {
             }
             if ev.kind == 1 {
                 enqueue_key(ev.code as u8);
-                aladdin_sdk::console::print("[ALADDIN-INPUT] KeyDown code=");
-                aladdin_sdk::console::print_num(ev.code as u64);
-                aladdin_sdk::console::println("");
             } else if ev.kind >= 3 {
                 let mx = (ev.x as usize).min(fb_w.saturating_sub(1));
                 let my = (ev.y as usize).min(fb_h.saturating_sub(1));
                 let btn = ev.code as u8;
                 unsafe {
                     CURRENT_MOUSE = (mx, my, btn);
-                }
-                if ev.kind == 4 || ev.kind == 5 {
-                    aladdin_sdk::console::print("[ALADDIN-INPUT] MouseBtn kind=");
-                    aladdin_sdk::console::print_num(ev.kind as u64);
-                    aladdin_sdk::console::print(" btn=");
-                    aladdin_sdk::console::print_num(btn as u64);
-                    aladdin_sdk::console::println("");
-                } else if ev.kind == 3 {
-                    aladdin_sdk::console::print("[ALADDIN-INPUT] MouseMove x=");
-                    aladdin_sdk::console::print_num(mx as u64);
-                    aladdin_sdk::console::print(" y=");
-                    aladdin_sdk::console::print_num(my as u64);
-                    aladdin_sdk::console::println("");
                 }
             }
         }

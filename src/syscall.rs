@@ -579,12 +579,16 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
     match fd {
         1 | 2 => {
             let slice = unsafe { core::slice::from_raw_parts(buf, len) };
-            let mut w = crate::vga::Writer::new();
-            if fd == 2 {
-                w.set_color(crate::vga::Color::LightRed, crate::vga::Color::Black);
-            }
-            for &byte in slice {
-                w.write_byte(byte);
+            crate::serial_write(slice);
+            // Se o servidor gráfico (Aladdin) estiver ativo, não sobrescreve o framebuffer com texto VGA
+            if crate::gui::GRAPHICS_SERVER_PID.load(core::sync::atomic::Ordering::Relaxed) == 0 {
+                let mut w = crate::vga::Writer::new();
+                if fd == 2 {
+                    w.set_color(crate::vga::Color::LightRed, crate::vga::Color::Black);
+                }
+                for &byte in slice {
+                    w.write_byte(byte);
+                }
             }
             len as isize
         }
@@ -1177,9 +1181,8 @@ fn sys_free_page(addr: u64) -> isize {
 /// para passar dados ELF do espaço de usuário (ex: via filesystem).
 fn sys_spawn(fn_ptr: usize, _name_ptr: *const u8, ring_flag: usize) -> isize {
     if ring_flag == 3 {
-        // Spawn de processo Ring 3 via syscall não é mais suportado diretamente.
-        // O processo precisa ser carregado via ELF (módulo Limine ou futuro filesystem).
-        return -1;
+        // Redirecionamento resiliente: chamadores que passam caminho para ELF em fn_ptr
+        return sys_spawn_process(fn_ptr, 0, 0);
     }
     let entry: fn() = unsafe { core::mem::transmute(fn_ptr) };
     let sched = scheduler::get();
@@ -2723,8 +2726,76 @@ fn sys_spawn_process(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> isize
     let envp_slices: alloc::vec::Vec<&str> = envp_strings.iter().map(|s| s.as_str()).collect();
 
     match scheduler::get().spawn_user_task_from_vfs(&path, &argv_slices, &envp_slices) {
-        Ok(pid) => pid as isize,
-        Err(e) => e,
+        Ok(pid) => {
+            ipc::register(pid);
+            if path.contains("browser") || path.contains("BROWSER") {
+                crate::gui::register_browser_pid(pid);
+            }
+            pid as isize
+        }
+        Err(e) => {
+            // 1. Tenta variantes de caixa se o arquivo primário não foi encontrado
+            let alt_path = if path.contains("BROWSER") {
+                alloc::string::String::from("/disk/browser.elf")
+            } else if path.contains("browser") {
+                alloc::string::String::from("/disk/BROWSER.ELF")
+            } else if path.contains("OLA") {
+                alloc::string::String::from("/disk/ola.elf")
+            } else if path.contains("ola") {
+                alloc::string::String::from("/disk/OLA.ELF")
+            } else {
+                alloc::string::String::new()
+            };
+            if !alt_path.is_empty() && alt_path != path {
+                if let Ok(pid) = scheduler::get().spawn_user_task_from_vfs(&alt_path, &argv_slices, &envp_slices) {
+                    ipc::register(pid);
+                    if path.contains("browser") || path.contains("BROWSER") {
+                        crate::gui::register_browser_pid(pid);
+                    }
+                    return pid as isize;
+                }
+            }
+
+            // 2. Fallback resiliente: se o disco não estiver montado ou o arquivo estiver ausente,
+            // carrega o binário correspondente a partir dos módulos Limine em memória (garante execução por ISO)
+            let mod_name = if path.contains("browser") || path.contains("BROWSER") {
+                Some("browser")
+            } else if path.contains("aladdin") || path.contains("ALADDIN") {
+                Some("aladdin")
+            } else if path.contains("ola-mundo") || path.contains("ola") {
+                Some("ola-mundo")
+            } else if path.contains("contador") {
+                Some("contador")
+            } else if path.contains("ola-grafico") || path.contains("graf") {
+                Some("ola-grafico")
+            } else {
+                None
+            };
+
+            if let Some(m_name) = mod_name {
+                let mod_opt = crate::limine::get_module_by_name(m_name)
+                    .or_else(|| if m_name == "browser" { crate::limine::get_module(1) } else { None });
+                if let Some(elf_bytes) = mod_opt {
+                    if crate::elf::validate_elf(elf_bytes).is_ok() {
+                        let proc_name = if m_name == "browser" { "browser[U3]" } else { m_name };
+                        if let Ok(pid) = scheduler::get().spawn_user_task_from_memory(
+                            proc_name,
+                            elf_bytes,
+                            &argv_slices,
+                            &envp_slices,
+                        ) {
+                            ipc::register(pid);
+                            if path.contains("browser") || path.contains("BROWSER") {
+                                crate::gui::register_browser_pid(pid);
+                            }
+                            return pid as isize;
+                        }
+                    }
+                }
+            }
+
+            e
+        }
     }
 }
 

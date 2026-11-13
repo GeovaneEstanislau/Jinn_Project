@@ -12,8 +12,8 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     }
 }
 
-# Build release ELF for the official bare-metal target using the locally installed rust-src.
-& cargo build --release --target x86_64-unknown-none '-Zbuild-std=core,alloc'
+# Build release ELF for the official bare-metal target
+& cargo build --release --target x86_64-unknown-none
 if ($LASTEXITCODE -ne 0) {
     throw "Kernel build failed with exit code $LASTEXITCODE. Existing artifacts were not updated."
 }
@@ -33,17 +33,25 @@ $isoBootDir = Join-Path -Path (Get-Location) "iso_root\boot"
 New-Item -ItemType Directory -Force -Path $isoBootDir | Out-Null
 Copy-Item -Path $elfPath -Destination (Join-Path $isoBootDir "kernel.elf") -Force
 
+# --- Build User Apps with Ring 3 canonical addressing (>= 0x10000) ---
+$origRustflags = $env:RUSTFLAGS
+$env:RUSTFLAGS = "-C link-arg=-no-pie -C link-arg=-Ttext=0x400000"
+
 # --- Build ola-mundo ---
 Write-Host "Building ola-mundo app..."
 Push-Location "apps\ola-mundo"
-& cargo +nightly build --release -Zjson-target-spec -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem
+& cargo build --release --target x86_64-unknown-none
 if ($LASTEXITCODE -ne 0) {
     Pop-Location
+    $env:RUSTFLAGS = $origRustflags
     throw "App ola-mundo build failed."
 }
 Pop-Location
 
-$appElfPath = "apps\ola-mundo\target\x86_64-jinn-user\release\ola-mundo"
+$appElfPath = "apps\ola-mundo\target\x86_64-unknown-none\release\ola-mundo"
+if (-not (Test-Path $appElfPath)) {
+    $appElfPath = "apps\ola-mundo\target\x86_64-jinn-user\release\ola-mundo"
+}
 if (-not (Test-Path $appElfPath)) {
     throw "App ELF not found: $appElfPath"
 }
@@ -56,14 +64,17 @@ Copy-Item -Path $appElfPath -Destination (Join-Path $isoAppsDir "browser.elf") -
 # --- Build ola-grafico ---
 Write-Host "Building ola-grafico app..."
 Push-Location "apps\ola-grafico"
-& cargo +nightly build --release -Zjson-target-spec -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem
+& cargo build --release --target x86_64-unknown-none
 if ($LASTEXITCODE -ne 0) {
     Pop-Location
     throw "App ola-grafico build failed."
 }
 Pop-Location
 
-$grafElfPath = "apps\ola-grafico\target\x86_64-jinn-user\release\ola-grafico"
+$grafElfPath = "apps\ola-grafico\target\x86_64-unknown-none\release\ola-grafico"
+if (-not (Test-Path $grafElfPath)) {
+    $grafElfPath = "apps\ola-grafico\target\x86_64-jinn-user\release\ola-grafico"
+}
 if (-not (Test-Path $grafElfPath)) {
     throw "App ola-grafico ELF not found: $grafElfPath"
 }
@@ -72,14 +83,17 @@ Copy-Item -Path $grafElfPath -Destination (Join-Path $isoAppsDir "ola-grafico.el
 # --- Build contador ---
 Write-Host "Building contador app..."
 Push-Location "apps\contador"
-& cargo +nightly build --release -Zjson-target-spec -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem
+& cargo build --release --target x86_64-unknown-none
 if ($LASTEXITCODE -ne 0) {
     Pop-Location
     throw "App contador build failed."
 }
 Pop-Location
 
-$contElfPath = "apps\contador\target\x86_64-jinn-user\release\contador"
+$contElfPath = "apps\contador\target\x86_64-unknown-none\release\contador"
+if (-not (Test-Path $contElfPath)) {
+    $contElfPath = "apps\contador\target\x86_64-jinn-user\release\contador"
+}
 if (-not (Test-Path $contElfPath)) {
     throw "App contador ELF not found: $contElfPath"
 }
@@ -88,19 +102,23 @@ Copy-Item -Path $contElfPath -Destination (Join-Path $isoAppsDir "contador.elf")
 # --- Build aladdin-server (Ring 3 Graphics Display Server) ---
 Write-Host "Building aladdin-server (Ring 3 Graphics Service)..."
 Push-Location "apps\aladdin-server"
-& cargo +nightly build --release -Zjson-target-spec '-Zbuild-std=core,alloc' -Zbuild-std-features=compiler-builtins-mem
+& cargo build --release --target x86_64-unknown-none
 if ($LASTEXITCODE -ne 0) {
     Pop-Location
     throw "Aladdin Server build failed."
 }
 Pop-Location
 
-$serverElfPath = "apps\aladdin-server\target\x86_64-jinn-user\release\aladdin-server"
+$serverElfPath = "apps\aladdin-server\target\x86_64-unknown-none\release\aladdin-server"
+if (-not (Test-Path $serverElfPath)) {
+    $serverElfPath = "apps\aladdin-server\target\x86_64-jinn-user\release\aladdin-server"
+}
 if (-not (Test-Path $serverElfPath)) {
     throw "Aladdin Server ELF not found: $serverElfPath"
 }
 Copy-Item -Path $serverElfPath -Destination (Join-Path $isoAppsDir "aladdin-server.elf") -Force
 Copy-Item -Path $serverElfPath -Destination (Join-Path $isoAppsDir "aladdin.elf") -Force
+$env:RUSTFLAGS = $origRustflags
 
 # --- Gera imagem de disco virtual FAT32 com MBR ---
 $makeDiskScript = Join-Path -Path (Get-Location) "scripts\make_disk.ps1"

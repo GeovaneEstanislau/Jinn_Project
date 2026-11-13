@@ -110,3 +110,4 @@ A remoção de `PORT60_LOCK` e a adoção do pipeline lock-free foram submetidas
 ## 5. Conclusão da Auditoria
 
 A remoção de `PORT60_LOCK` eliminou a causa primária do congelamento de entrada no microkernel Jinn. O subsistema opera com isolamento garantido entre contextos de interrupção e espaço de usuário.
+

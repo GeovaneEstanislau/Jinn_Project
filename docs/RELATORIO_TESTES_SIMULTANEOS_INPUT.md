@@ -103,3 +103,4 @@ Para assegurar que o cursor do mouse de fato se movimentou na tela e não foi si
 ## 5. Conclusão dos Testes
 
 O funcionamento simultâneo, independente e sustentado do teclado e mouse PS/2 foi rigorosamente comprovado em todos os quatro cenários, homologando o subsistema de entrada do microkernel Jinn OS.
+

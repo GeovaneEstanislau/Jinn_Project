@@ -120,3 +120,4 @@ Para erradicar definitivamente essas vulnerabilidades, o subsistema de entrada f
 
 O incidente crítico P0 foi integralmente diagnosticado e solucionado. O microkernel Jinn OS agora possui um subsistema de entrada PS/2 reentrante, livre de deadlocks, compatível com SMP e UP sob o teto estrito de 64 MB de memória RAM.
 A integridade arquitetural do microkernel foi preservada, mantendo o módulo TLS 1.3 inalterado e os contratos de Ring 3 plenamente funcionais.
+

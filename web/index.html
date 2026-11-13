@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jinn OS — Microkernel x86_64 Minimalista e Preemptivo em Rust</title>
+  <meta name="description"
+    content="Portal oficial do Jinn OS: um sistema operacional microkernel escrito em Rust moderno (no_std, x86_64) com Ring 3 isolado, compositor gráfico Aladdin e segurança em profundidade.">
+  <meta name="keywords"
+    content="Jinn OS, Microkernel, Rust, no_std, x86_64, Aladdin Desktop, Geovane da Conceicao Estanislau, Sistema Operacional">
+  <meta name="author" content="Geovane da Conceição Estanislau">
+
+  <!-- Open Graph / Meta Compartilhamento -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://jinn-os.dev.br/">
+  <meta property="og:title" content="Jinn OS — Microkernel x86_64 em Rust">
+  <meta property="og:description"
+    content="Computação de fundação soberana: microkernel em Rust bare-metal com arquitetura sem concessões a legados de 40 anos.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/wallpaper-eagle.jpg">
+
+  <!-- Global site tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=AW-XXXXXXXXX"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-XXXXXXXXX');
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- Supabase JS Client v2 -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <!-- Estilos Personalizados do Desktop e Cairo-Dock -->
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+  <!-- Superfície Principal do Desktop -->
+  <div class="desktop-surface" id="desktop">
+
+    <!-- 1. Painel Superior (Top Panel) -->
+    <header class="top-panel">
+      <div class="flex items-center gap-3">
+        <button id="top-menu-btn"
+          class="flex items-center gap-2 hover:text-cyan-400 transition-colors py-1 px-2 rounded hover:bg-white/10">
+          <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span class="font-bold tracking-wide">Jinn OS</span>
+          <span
+            class="text-xs text-cyan-300 font-mono bg-cyan-950/80 px-1.5 py-0.5 rounded border border-cyan-500/30">v0.0.3-alpha</span>
+        </button>
+        <div class="hidden md:flex items-center gap-2 text-xs text-slate-400">
+          <span class="text-slate-600">|</span>
+          <span>x86_64 Bare-Metal</span>
+          <span class="text-slate-600">|</span>
+          <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer"
+            class="hover:text-cyan-300 transition-colors flex items-center gap-1">
+            <i data-lucide="github" class="w-3.5 h-3.5"></i>
+            <span>GitHub</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- Telemetria do Painel Superior -->
+      <div class="flex items-center gap-4 text-xs">
+        <div
+          class="hidden sm:flex items-center gap-2 text-slate-300 font-mono bg-slate-900/60 px-2 py-0.5 rounded border border-white/5">
+          <span class="text-emerald-400">CPU: <span id="hud-cpu">4%</span></span>
+          <span class="text-slate-600">|</span>
+          <span class="text-cyan-400">RAM: <span id="hud-ram">44.3 MB / 256 MB</span></span>
+          <span class="text-slate-600">|</span>
+          <span class="text-amber-400">4 Cores SMP</span>
+        </div>
+        <div class="flex items-center gap-2 text-slate-200">
+          <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400" title="JinnWall SPI Ativo"></i>
+          <i data-lucide="wifi" class="w-3.5 h-3.5 text-cyan-400" title="VirtIO-Net Conectado"></i>
+          <span id="panel-clock" class="font-mono text-slate-300">15:43 23/03/2026</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- 2. Conky HUD Lateral (Telemetria do Microkernel) -->
+    <aside class="conky-hud hidden lg:block">
+      <div class="text-emerald-400 font-bold mb-1 border-b border-emerald-500/30 pb-1 flex justify-between">
+        <span>--- JINN MICROKERNEL ---</span>
+        <span class="text-xs text-slate-400">JAHA 1.2</span>
+      </div>
+      <div>Arquitetura : <span class="text-white">x86_64 no_std</span></div>
+      <div>Bootloader : <span class="text-white">Limine Protocol v2</span></div>
+      <div>Preempcao : <span class="text-white">PIT 100 Hz (10ms)</span></div>
+      <div>Ticks APIC : <span class="text-white" id="hud-ticks">1,877,379</span></div>
+      <div>SMP Cores : <span class="text-white">4 Online (LAPIC 0..3)</span></div>
+      <div>Mem Usavel : <span class="text-white">44.4 MB / 256 MB</span></div>
+      <div>Paginacao : <span class="text-white">4-Level PML4 Estrito</span></div>
+      <div>VFS Storage : <span class="text-white">FAT32 (/disk) + Ext2</span></div>
+      <div>Segurança : <span class="text-emerald-400">Ring 0 / Ring 3 W^X</span></div>
+      <div class="mt-2 text-xs text-slate-400 border-t border-slate-700/50 pt-1">
+        Dominio : <span class="text-cyan-300">jinn-os.dev.br</span>
+      </div>
+    </aside>
+
+    <!-- 3. Atalhos na Área de Trabalho (Desktop Icons) -->
+    <main class="desktop-shortcuts">
+      <div class="desktop-icon-item" data-open-window="win-history">
+        <div class="desktop-icon-box bg-gradient-to-br from-indigo-500 to-purple-600">
+          <i data-lucide="book-open" class="w-6 h-6 text-white"></i>
+        </div>
+        <span class="desktop-icon-label">História do Jinn</span>
+      </div>
+
+      <div class="desktop-icon-item" data-open-window="win-creator">
+        <div class="desktop-icon-box bg-gradient-to-br from-cyan-500 to-blue-600">
+          <i data-lucide="user-check" class="w-6 h-6 text-white"></i>
+        </div>
+        <span class="desktop-icon-label">O Criador</span>
+      </div>
+
+      <div class="desktop-icon-item" data-open-window="win-terminal">
+        <div class="desktop-icon-box bg-gradient-to-br from-slate-700 to-slate-900 border border-emerald-500/30">
+          <i data-lucide="terminal" class="w-6 h-6 text-emerald-400"></i>
+        </div>
+        <span class="desktop-icon-label">Terminal Shell</span>
+      </div>
+
+      <div class="desktop-icon-item" data-open-window="win-vfs">
+        <div class="desktop-icon-box bg-gradient-to-br from-amber-500 to-orange-600">
+          <i data-lucide="folder-git-2" class="w-6 h-6 text-white"></i>
+        </div>
+        <span class="desktop-icon-label">Código (VFS)</span>
+      </div>
+
+      <div class="desktop-icon-item" data-open-window="win-browser">
+        <div class="desktop-icon-box bg-gradient-to-br from-teal-500 to-emerald-600">
+          <i data-lucide="globe" class="w-6 h-6 text-white"></i>
+        </div>
+        <span class="desktop-icon-label">Jinn Browser</span>
+      </div>
+
+      <div class="desktop-icon-item" data-open-window="win-download">
+        <div class="desktop-icon-box bg-gradient-to-br from-rose-500 to-red-600">
+          <i data-lucide="download" class="w-6 h-6 text-white"></i>
+        </div>
+        <span class="desktop-icon-label">Baixar ISO</span>
+      </div>
+    </main>
+
+    <!-- 4. Menu Iniciar Whisker Menu (Estilo XFCE / Print Águia) -->
+    <nav class="whisker-menu hidden" id="whisker-menu" aria-label="Menu Iniciar">
+      <div class="whisker-search">
+        <input type="text" id="whisker-search-input" placeholder="Pesquisar módulos, fontes ou comandos do Jinn OS..."
+          autocomplete="off">
+      </div>
+      <div class="whisker-body">
+        <!-- Coluna de Categorias -->
+        <div class="whisker-categories">
+          <div class="whisker-category-item active" data-cat="all">
+            <i data-lucide="layout-grid" class="w-4 h-4"></i>
+            <span>Todos os Módulos</span>
+          </div>
+          <div class="whisker-category-item" data-cat="kernel">
+            <i data-lucide="cpu" class="w-4 h-4"></i>
+            <span>Microkernel (Ring 0)</span>
+          </div>
+          <div class="whisker-category-item" data-cat="apps">
+            <i data-lucide="app-window" class="w-4 h-4"></i>
+            <span>Ambiente Ring 3</span>
+          </div>
+          <div class="whisker-category-item" data-cat="docs">
+            <i data-lucide="file-text" class="w-4 h-4"></i>
+            <span>Documentação</span>
+          </div>
+          <div class="whisker-category-item" data-cat="institutional">
+            <i data-lucide="info" class="w-4 h-4"></i>
+            <span>Institucional</span>
+          </div>
+        </div>
+
+        <!-- Coluna de Itens (Links para o Repositório e Modais) -->
+        <div class="whisker-items" id="whisker-items-container">
+          <!-- Kernel Files -->
+          <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/src/main.rs" target="_blank"
+            rel="noopener noreferrer" class="whisker-item-card" data-cat="kernel">
+            <div class="flex items-center gap-3">
+              <span class="p-2 rounded bg-cyan-950 text-cyan-400 border border-cyan-500/20"><i data-lucide="file-code"
+                  class="w-4 h-4"></i></span>
+              <div>
+                <div class="text-sm font-medium text-white">src/main.rs</div>
+                <div class="text-xs text-slate-400">Ponto de Entrada (_start) e Handover Limine</div>
+              </div>
+            </div>
+            <i data-lucide="external-link" class="w-3.5 h-3.5 text-slate-500"></i>
+          </a>
+
+          <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/src/syscall.rs" target="_blank"
+            rel="noopener noreferrer" class="whisker-item-card" data-cat="kernel">
+            <div class="flex items-center gap-3">
+              <span class="p-2 rounded bg-cyan-950 text-cyan-400 border border-cyan-500/20"><i data-lucide="shield"
+                  class="w-4 h-4"></i></span>
+              <div>
+                <div class="text-sm font-medium text-white">src/syscall.rs</div>
+                <div class="text-xs text-slate-400">Interface Canônica de Syscalls (0..85)</div>
+              </div>
+            </div>
+            <i data-lucide="external-link" class="w-3.5 h-3.5 text-slate-500"></i>
+          </a>
+
+          <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/src/scheduler.rs" target="_blank"
+            rel="noopener noreferrer" class="whisker-item-card" data-cat="kernel">
+            <div class="flex items-center gap-3">
+              <span class="p-2 rounded bg-cyan-950 text-cyan-400 border border-cyan-500/20"><i data-lucide="clock"
+                  class="w-4 h-4"></i></span>
+              <div>
+                <div class="text-sm font-medium text-white">src/scheduler.rs</div>
+                <div class="text-xs text-slate-400">Escalonador Preemptivo Round-Robin APIC</div>
+              </div>
+            </div>
+            <i data-lucide="external-link" class="w-3.5 h-3.5 text-slate-500"></i>
+          </a>
+
+          <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/src/dma/manager.rs" target="_blank"
+            rel="noopener noreferrer" class="whisker-item-card" data-cat="kernel">
+            <div class="flex items-center gap-3">
+              <span class="p-2 rounded bg-cyan-950 text-cyan-400 border border-cyan-500/20"><i data-lucide="zap"
+                  class="w-4 h-4"></i></span>
+              <div>
+                <div class="text-sm font-medium text-white">src/dma/manager.rs</div>
+                <div class="text-xs text-slate-400">Kernel DMA Manager (KDM) Zero-Copy</div>
+              </div>
+            </div>
+            <i data-lucide="external-link" class="w-3.5 h-3.5 text-slate-500"></i>
+          </a>
+
+          <!-- Apps -->
+          <div class="whisker-item-card" data-cat="apps" data-open-window="win-terminal">
+            <div class="flex items-center gap-3">
+              <span class="p-2 rounded bg-emerald-950 text-emerald-400 border border-emerald-500/20"><i
+                  data-lucide="terminal" class="w-4 h-4"></i></span>
+              <div>
+                <div class="text-sm font-medium text-white">Emulador de Terminal (Aladdin Shell)</div>
+                <div class="text-xs text-slate-400">Prompt Interativo com comandos nativos</div>
+              </div>
+            </div>
+            <span class="text-xs text-emerald-400 font-mono">Abrir</span>
+          </div>
+
+          <div class="whisker-item-card" data-cat="apps" data-open-window="win-browser">
+            <div class="flex items-center gap-3">
+              <span class="p-2 rounded bg-emerald-950 text-emerald-400 border border-emerald-500/20"><i
+                  data-lucide="globe" class="w-4 h-4"></i></span>
+              <div>
+                <div class="text-sm font-medium text-white">Jinn Browser Engine (JBE)</div>
+                <div class="text-xs text-slate-400">Navegador nativo sem GPU e sem dependências</div>
+              </div>
+            </div>
+            <span class="text-xs text-emerald-400 font-mono">Abrir</span>
+          </div>
+
+          <a href="https://github.com/GeovaneEstanislau/Jinn_Project/tree/main/apps/aladdin-server" target="_blank"
+            rel="noopener noreferrer" class="whisker-item-card" data-cat="apps">
+            <div class="flex items-center gap-3">
+              <span class="p-2 rounded bg-emerald-950 text-emerald-400 border border-emerald-500/20"><i
+                  data-lucide="monitor" class="w-4 h-4"></i></span>
+              <div>
+                <div class="text-sm font-medium text-white">apps/aladdin-server</div>
+                <div class="text-xs text-slate-400">Servidor Gráfico e Compositor de Janelas Ring 3</div>
+              </div>
+            </div>
+            <i data-lucide="external-link" class="w-3.5 h-3.5 text-slate-500"></i>
+          </a>
+
+          <!-- Docs -->
+          <a href="https://github.com/GeovaneEstanislau/Jinn_Project/tree/main/docs" target="_blank"
+            rel="noopener noreferrer" class="whisker-item-card" data-cat="docs">
+            <div class="flex items-center gap-3">
+              <span class="p-2 rounded bg-amber-950 text-amber-400 border border-amber-500/20"><i data-lucide="book"
+                  class="w-4 h-4"></i></span>
+              <div>
+                <div class="text-sm font-medium text-white">docs/ (Especificações & Auditorias)</div>
+                <div class="text-xs text-slate-400">Relatórios de estabilização e benchmarks</div>
+              </div>
+            </div>
+            <i data-lucide="external-link" class="w-3.5 h-3.5 text-slate-500"></i>
+          </a>
+
+          <!-- Institucional -->
+          <div class="whisker-item-card" data-cat="institutional" data-open-window="win-history">
+            <div class="flex items-center gap-3">
+              <span class="p-2 rounded bg-purple-950 text-purple-400 border border-purple-500/20"><i
+                  data-lucide="scroll" class="w-4 h-4"></i></span>
+              <div>
+                <div class="text-sm font-medium text-white">A História do Jinn OS</div>
+                <div class="text-xs text-slate-400">Filosofia, origens e ruptura com limitações</div>
+              </div>
+            </div>
+            <span class="text-xs text-purple-400 font-mono">Ler</span>
+          </div>
+
+          <div class="whisker-item-card" data-cat="institutional" data-open-window="win-creator">
+            <div class="flex items-center gap-3">
+              <span class="p-2 rounded bg-purple-950 text-purple-400 border border-purple-500/20"><i data-lucide="user"
+                  class="w-4 h-4"></i></span>
+              <div>
+                <div class="text-sm font-medium text-white">O Criador (Geovane Estanislau)</div>
+                <div class="text-xs text-slate-400">Biografia, LinkedIn e Currículo Lattes</div>
+              </div>
+            </div>
+            <span class="text-xs text-purple-400 font-mono">Ver</span>
+          </div>
+
+          <div class="whisker-item-card" data-cat="institutional" data-open-window="win-contact">
+            <div class="flex items-center gap-3">
+              <span class="p-2 rounded bg-purple-950 text-purple-400 border border-purple-500/20"><i data-lucide="mail"
+                  class="w-4 h-4"></i></span>
+              <div>
+                <div class="text-sm font-medium text-white">Contato & Mensagens (Supabase)</div>
+                <div class="text-xs text-slate-400">Envio seguro sem exposição de e-mail</div>
+              </div>
+            </div>
+            <span class="text-xs text-purple-400 font-mono">Contato</span>
+          </div>
+        </div>
+      </div>
+    </nav>
+
+    <!-- 5. Dock Flutuante Inferior (Cairo-Dock com Reflexos) -->
+    <footer class="cairo-dock-container" id="dock" aria-label="Barra de Aplicativos">
+      <!-- Botão Alien Head (Menu Iniciar) -->
+      <div class="dock-item" id="alien-menu-btn" title="Menu Iniciar Jinn OS">
+        <div class="dock-tooltip">Menu Iniciar</div>
+        <div class="dock-icon bg-gradient-to-tr from-emerald-600 to-green-400 border border-emerald-300/40">
+          <!-- Ícone estilizado de Cabeça de Alienígena como no print -->
+          <svg class="w-7 h-7 text-white fill-current" viewBox="0 0 24 24">
+            <path
+              d="M12 2C6.48 2 2 6.48 2 12c0 3.84 2.16 7.18 5.34 8.86.35.18.78.1.99-.21.21-.31.13-.73-.18-.94C5.45 18.23 3.6 15.34 3.6 12c0-4.63 3.77-8.4 8.4-8.4s8.4 3.77 8.4 8.4c0 3.34-1.85 6.23-4.55 7.71-.31.21-.39.63-.18.94.21.31.64.39.99.21C19.84 19.18 22 15.84 22 12c0-5.52-4.48-10-10-10zm-3 8.5c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zm6 0c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5z" />
+          </svg>
+        </div>
+        <div class="dock-reflection bg-emerald-500"></div>
+      </div>
+
+      <!-- Ícone História -->
+      <div class="dock-item" data-open-window="win-history" data-target="win-history">
+        <div class="dock-tooltip">A História do Jinn</div>
+        <div class="dock-icon bg-gradient-to-tr from-indigo-600 to-purple-500">
+          <i data-lucide="book-open" class="w-6 h-6 text-white"></i>
+        </div>
+        <div class="dock-reflection bg-indigo-500"></div>
+      </div>
+
+      <!-- Ícone Criador -->
+      <div class="dock-item" data-open-window="win-creator" data-target="win-creator">
+        <div class="dock-tooltip">Geovane da C. Estanislau</div>
+        <div class="dock-icon bg-gradient-to-tr from-blue-600 to-cyan-400">
+          <i data-lucide="user" class="w-6 h-6 text-white"></i>
+        </div>
+        <div class="dock-reflection bg-blue-500"></div>
+      </div>
+
+      <!-- Ícone Terminal -->
+      <div class="dock-item" data-open-window="win-terminal" data-target="win-terminal">
+        <div class="dock-tooltip">Terminal Shell (Ring 3)</div>
+        <div class="dock-icon bg-slate-900 border border-emerald-500/40">
+          <i data-lucide="terminal" class="w-6 h-6 text-emerald-400"></i>
+        </div>
+        <div class="dock-reflection bg-slate-800"></div>
+      </div>
+
+      <!-- Ícone Arquivos (VFS) -->
+      <div class="dock-item" data-open-window="win-vfs" data-target="win-vfs">
+        <div class="dock-tooltip">Arquivos VFS (FAT32/Ext2)</div>
+        <div class="dock-icon bg-gradient-to-tr from-amber-600 to-yellow-500">
+          <i data-lucide="folder" class="w-6 h-6 text-white"></i>
+        </div>
+        <div class="dock-reflection bg-amber-500"></div>
+      </div>
+
+      <!-- Ícone Jinn Browser -->
+      <div class="dock-item" data-open-window="win-browser" data-target="win-browser">
+        <div class="dock-tooltip">Jinn Browser Engine</div>
+        <div class="dock-icon bg-gradient-to-tr from-teal-600 to-emerald-400">
+          <i data-lucide="globe" class="w-6 h-6 text-white"></i>
+        </div>
+        <div class="dock-reflection bg-teal-500"></div>
+      </div>
+
+      <!-- Ícone Monitor de Recursos -->
+      <div class="dock-item" data-open-window="win-monitor" data-target="win-monitor">
+        <div class="dock-tooltip">Monitor de Recursos (JAHA)</div>
+        <div class="dock-icon bg-gradient-to-tr from-cyan-600 to-sky-400">
+          <i data-lucide="activity" class="w-6 h-6 text-white"></i>
+        </div>
+        <div class="dock-reflection bg-cyan-500"></div>
+      </div>
+
+      <!-- Ícone Contato via Supabase -->
+      <div class="dock-item" data-open-window="win-contact" data-target="win-contact">
+        <div class="dock-tooltip">Enviar Mensagem (Supabase)</div>
+        <div class="dock-icon bg-gradient-to-tr from-violet-600 to-fuchsia-500">
+          <i data-lucide="message-square" class="w-6 h-6 text-white"></i>
+        </div>
+        <div class="dock-reflection bg-violet-500"></div>
+      </div>
+
+      <!-- Ícone Baixar ISO -->
+      <div class="dock-item" data-open-window="win-download" data-target="win-download">
+        <div class="dock-tooltip">Baixar ISO Oficial</div>
+        <div class="dock-icon bg-gradient-to-tr from-rose-600 to-red-500">
+          <i data-lucide="download" class="w-6 h-6 text-white"></i>
+        </div>
+        <div class="dock-reflection bg-rose-500"></div>
+      </div>
+
+      <!-- Ícone GitHub -->
+      <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer"
+        class="dock-item" title="Repositório Oficial no GitHub">
+        <div class="dock-tooltip">GitHub Repository</div>
+        <div class="dock-icon bg-slate-800 border border-white/20">
+          <i data-lucide="github" class="w-6 h-6 text-white"></i>
+        </div>
+        <div class="dock-reflection bg-slate-700"></div>
+      </a>
+    </footer>
+
+    <!-- =========================================================================
+         6. Janelas Modais Flutuantes do Sistema Operacional (Window Manager)
+         ========================================================================= -->
+
+    <!-- Janela 1: A História do Jinn OS -->
+    <div class="os-window hidden" id="win-history" style="top: 70px; left: 60px; width: 720px; height: 540px;">
+      <div class="os-window-header">
+        <div class="os-window-title">
+          <i data-lucide="book-open" class="w-4 h-4 text-indigo-400"></i>
+          <span>Jinn OS — Diário de um Sistema Operacional & Filosofia de Projeto</span>
+        </div>
+        <div class="os-window-controls">
+          <div class="win-btn min" title="Minimizar"></div>
+          <div class="win-btn max" title="Maximizar"></div>
+          <div class="win-btn close" title="Fechar"></div>
+        </div>
+      </div>
+      <div class="os-window-content space-y-5 text-slate-200">
+        <div class="bg-indigo-950/40 p-4 rounded-xl border border-indigo-500/20">
+          <h2 class="text-xl font-bold text-indigo-300 mb-1">A Primeira Tese: Por que continuamos construindo o futuro
+            com as ferramentas do passado?</h2>
+          <p class="text-xs text-indigo-400 font-mono">Volume I — A Origem | Capítulo 1 — Antes de existir o primeiro
+            código</p>
+        </div>
+
+        <blockquote class="border-l-4 border-cyan-400 pl-4 py-1 italic text-cyan-200 bg-cyan-950/20 rounded-r">
+          "A liberdade não significa deixar de ter limitações. Significa não aceitar que as limitações existentes sejam
+          necessariamente as únicas possibilidades."
+        </blockquote>
+
+        <p class="leading-relaxed text-sm">
+          A história do <strong>Jinn OS</strong> não começou com a primeira linha de código ou com a primeira compilação
+          do microkernel x86_64 em Rust. Começou com uma inquietude que acompanhou o pesquisador e desenvolvedor
+          <strong>Geovane da Conceição Estanislau</strong> por muitos anos, através de experiências acadêmicas,
+          profissionais e de vida.
+        </p>
+
+        <h3 class="text-md font-semibold text-white flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+          Os Três Desafios que Moldaram a Arquitetura
+        </h3>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div class="bg-slate-900/60 p-3 rounded-lg border border-white/5">
+            <h4 class="font-bold text-cyan-300 text-xs mb-1">1. A Experiência Humana</h4>
+            <p class="text-xs text-slate-400 leading-normal">
+              Sistemas convencionais exigem que o usuário aprenda uma sobrecarga excessiva de procedimentos legados. A
+              tecnologia deve reduzir barreiras, não impor novos rituais.
+            </p>
+          </div>
+          <div class="bg-slate-900/60 p-3 rounded-lg border border-white/5">
+            <h4 class="font-bold text-emerald-300 text-xs mb-1">2. A Herança Tecnológica</h4>
+            <p class="text-xs text-slate-400 leading-normal">
+              Barramentos e modelos de 40 anos atrás condicionam o que conseguimos projetar hoje. O Jinn foi desenhado
+              em <code>no_std</code> puro, livre de bibliotecas legadas inchadas.
+            </p>
+          </div>
+          <div class="bg-slate-900/60 p-3 rounded-lg border border-white/5">
+            <h4 class="font-bold text-purple-300 text-xs mb-1">3. A Soberania do Saber</h4>
+            <p class="text-xs text-slate-400 leading-normal">
+              A computação precisa ser compreensível, verificável e transparente. O microkernel Ring 0 isola o núcleo de
+              erros em drivers ou aplicações de usuários.
+            </p>
+          </div>
+        </div>
+
+        <h3 class="text-md font-semibold text-white flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          Marcos de Conquista no Alpha 0.0.3
+        </h3>
+        <ul class="space-y-1.5 text-xs text-slate-300 list-disc list-inside">
+          <li><strong>Isolamento Ring 3 Estrito:</strong> Driver Manager e Servidor Gráfico Aladdin rodam como processos
+            independentes protegidos por hardware (PML4).</li>
+          <li><strong>Compositor Gráfico sem FPU:</strong> Renderização 2D inteira acelerada por software, operando sem
+            co-processador matemático no caminho crítico.</li>
+          <li><strong>Orçamento Ultrabaixo de Memória:</strong> Sistema completo ativo consumindo menos de 45 MB de RAM.
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Janela 2: O Criador (Geovane da Conceição Estanislau) -->
+    <div class="os-window hidden" id="win-creator" style="top: 80px; left: 140px; width: 680px; height: 520px;">
+      <div class="os-window-header">
+        <div class="os-window-title">
+          <i data-lucide="user-check" class="w-4 h-4 text-blue-400"></i>
+          <span>Perfil do Criador — Geovane da Conceição Estanislau</span>
+        </div>
+        <div class="os-window-controls">
+          <div class="win-btn min"></div>
+          <div class="win-btn max"></div>
+          <div class="win-btn close"></div>
+        </div>
+      </div>
+      <div class="os-window-content space-y-6 text-slate-200">
+        <!-- Card de Apresentação -->
+        <div
+          class="flex flex-col sm:flex-row items-center gap-5 p-4 rounded-xl bg-gradient-to-r from-blue-950/60 to-slate-900 border border-blue-500/20">
+          <div
+            class="w-24 h-24 rounded-full bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-3xl font-black text-white shadow-xl shadow-cyan-950/50 shrink-0 border-2 border-white/20">
+            GE
+          </div>
+          <div>
+            <h2 class="text-xl font-bold text-white">Geovane da Conceição Estanislau</h2>
+            <p class="text-xs text-cyan-300 font-medium">Educador, Pesquisador em Computação e Desenvolvedor de Sistemas
+              de Baixo Nível</p>
+            <p class="text-xs text-slate-400 mt-2 leading-relaxed">
+              Arquiteto e criador do <strong>Jinn Microkernel</strong> e do ecossistema de computação
+              <strong>Aladdin</strong>. Dedicado à investigação de sistemas operacionais de alta previsibilidade,
+              isolamento de memória e soberania de infraestrutura computacional.
+            </p>
+          </div>
+        </div>
+
+        <!-- Links Oficiais em Destaque Obrigatório -->
+        <div class="space-y-3">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Canais Oficiais e Perfis Acadêmicos</h3>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <a href="https://www.linkedin.com/in/geovane-da-concei%C3%A7%C3%A3o-estanislau-96b49b343/" target="_blank"
+              rel="noopener noreferrer"
+              class="flex items-center justify-between p-3.5 rounded-lg bg-blue-900/30 hover:bg-blue-900/50 border border-blue-500/30 text-white transition-all group shadow-lg">
+              <div class="flex items-center gap-3">
+                <i data-lucide="linkedin" class="w-5 h-5 text-blue-400 group-hover:scale-110 transition-transform"></i>
+                <div>
+                  <div class="font-bold text-sm">Perfil no LinkedIn</div>
+                  <div class="text-xs text-slate-400">Trajetória profissional & conexões</div>
+                </div>
+              </div>
+              <i data-lucide="external-link" class="w-4 h-4 text-slate-400 group-hover:text-cyan-300"></i>
+            </a>
+
+            <a href="https://lattes.cnpq.br/2987975206846575" target="_blank" rel="noopener noreferrer"
+              class="flex items-center justify-between p-3.5 rounded-lg bg-emerald-900/30 hover:bg-emerald-900/50 border border-emerald-500/30 text-white transition-all group shadow-lg">
+              <div class="flex items-center gap-3">
+                <i data-lucide="graduation-cap"
+                  class="w-5 h-5 text-emerald-400 group-hover:scale-110 transition-transform"></i>
+                <div>
+                  <div class="font-bold text-sm">Currículo Lattes</div>
+                  <div class="text-xs text-slate-400">CNPq — Produção Acadêmica & Pesquisa</div>
+                </div>
+              </div>
+              <i data-lucide="external-link" class="w-4 h-4 text-slate-400 group-hover:text-emerald-300"></i>
+            </a>
+          </div>
+        </div>
+
+        <!-- Visão Técnica -->
+        <div class="bg-slate-900/40 p-4 rounded-lg border border-white/5 space-y-2">
+          <h4 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Compromisso com o Código Aberto de
+            Fundação</h4>
+          <p class="text-xs text-slate-400 leading-relaxed">
+            "A construção de um sistema operacional moderno em Rust x86_64 não busca reinventar o mundo por vaidade, mas
+            demonstrar que a computação de base pode ser elegante, compreensível, sem monopólios e segura por desenho."
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Janela 3: Terminal Interativo (Aladdin Shell) -->
+    <div class="os-window hidden" id="win-terminal" style="top: 100px; left: 220px; width: 640px; height: 420px;">
+      <div class="os-window-header">
+        <div class="os-window-title">
+          <i data-lucide="terminal" class="w-4 h-4 text-emerald-400"></i>
+          <span>Terminal Interativo (Ring 3 Ready)</span>
+        </div>
+        <div class="os-window-controls">
+          <div class="win-btn min"></div>
+          <div class="win-btn max"></div>
+          <div class="win-btn close"></div>
+        </div>
+      </div>
+      <div class="os-window-content p-2" style="background:#050811;">
+        <div class="terminal-screen">
+          <div class="terminal-history" id="term-history">
+            ================================================================================
+            Jinn Microkernel Shell v0.0.3-userspace (Aladdin Display Environment)
+            ================================================================================
+            [+] GDT, TSS e IDT (48 vetores) ........... OK
+            [+] PIT Preemptive Timer (100 Hz) ........ OK
+            [+] Memoria Física Utilizável ............ 44.4 MB / 256 MB
+            [+] Drivers Ring 3 e VFS FAT32 ........... Montado em /disk
+            [+] Digite 'help' para listar os comandos disponiveis.
+          </div>
+          <div class="terminal-input-row">
+            <span class="terminal-prompt">jinn&gt;</span>
+            <input type="text" id="term-input" class="terminal-input" autofocus autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Janela 4: Explorador de Arquivos (VFS) -->
+    <div class="os-window hidden" id="win-vfs" style="top: 110px; left: 280px; width: 620px; height: 440px;">
+      <div class="os-window-header">
+        <div class="os-window-title">
+          <i data-lucide="folder" class="w-4 h-4 text-amber-400"></i>
+          <span>Explorador de Arquivos do VFS (FAT32 & Ext2)</span>
+        </div>
+        <div class="os-window-controls">
+          <div class="win-btn min"></div>
+          <div class="win-btn max"></div>
+          <div class="win-btn close"></div>
+        </div>
+      </div>
+      <div class="os-window-content space-y-4">
+        <div class="text-xs text-slate-400">
+          Navegue pelas fontes do sistema. Clique em qualquer arquivo para inspecioná-lo diretamente no GitHub:
+        </div>
+        <div class="space-y-2 text-xs font-mono">
+          <div class="text-cyan-400 font-bold">/disk (Partição Primária FAT32 - LBA 2048)</div>
+          <div class="pl-4 space-y-1.5 border-l border-cyan-500/20 text-slate-300">
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/apps/aladdin-server/src/main.rs"
+              target="_blank" rel="noopener noreferrer" class="hover:text-cyan-300 flex items-center gap-2 py-0.5">
+              <i data-lucide="file-code" class="w-3.5 h-3.5 text-emerald-400"></i>
+              <span>aladdin.elf (Servidor Gráfico Ring 3)</span>
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/apps/ola-mundo/src/browser.rs"
+              target="_blank" rel="noopener noreferrer" class="hover:text-cyan-300 flex items-center gap-2 py-0.5">
+              <i data-lucide="file-code" class="w-3.5 h-3.5 text-emerald-400"></i>
+              <span>browser.elf (Jinn Browser Engine v0.5.0)</span>
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/src/vfs/fat32.rs" target="_blank"
+              rel="noopener noreferrer" class="hover:text-cyan-300 flex items-center gap-2 py-0.5">
+              <i data-lucide="file-code" class="w-3.5 h-3.5 text-blue-400"></i>
+              <span>fat32.rs (Driver de Cluster e MBR)</span>
+            </a>
+            <div class="text-slate-400 flex items-center gap-2 py-0.5">
+              <i data-lucide="file-text" class="w-3.5 h-3.5 text-slate-400"></i>
+              <span>README.TXT (Manifesto de Boas-Vindas)</span>
+            </div>
+            <div class="text-slate-400 flex items-center gap-2 py-0.5">
+              <i data-lucide="image" class="w-3.5 h-3.5 text-purple-400"></i>
+              <span>nebula.ppm (NASA Cosmic Carina - CC0)</span>
+            </div>
+          </div>
+
+          <div class="text-emerald-400 font-bold mt-4">/ext2 (Partição Secundária Ext2 - LBA 65536)</div>
+          <div class="pl-4 space-y-1.5 border-l border-emerald-500/20 text-slate-300">
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/src/vfs/ext2.rs" target="_blank"
+              rel="noopener noreferrer" class="hover:text-emerald-300 flex items-center gap-2 py-0.5">
+              <i data-lucide="file-code" class="w-3.5 h-3.5 text-emerald-400"></i>
+              <span>ext2.rs (Driver Read-Only Inode Engine)</span>
+            </a>
+            <div class="text-slate-400 flex items-center gap-2 py-0.5">
+              <i data-lucide="file-text" class="w-3.5 h-3.5 text-slate-400"></i>
+              <span>SERVER.TXT (Configurações de Auditoria)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Janela 5: Jinn Browser Engine (JBE) -->
+    <div class="os-window hidden" id="win-browser" style="top: 90px; left: 180px; width: 680px; height: 460px;">
+      <div class="os-window-header">
+        <div class="os-window-title">
+          <i data-lucide="globe" class="w-4 h-4 text-teal-400"></i>
+          <span>Jinn Browser Engine v0.5.0 (Ring 3 userspace)</span>
+        </div>
+        <div class="os-window-controls">
+          <div class="win-btn min"></div>
+          <div class="win-btn max"></div>
+          <div class="win-btn close"></div>
+        </div>
+      </div>
+      <div class="os-window-content p-0 flex flex-col bg-slate-950">
+        <!-- Barra de Navegação do Navegador -->
+        <div class="p-2 bg-slate-900 border-b border-white/10 flex items-center gap-2">
+          <div class="flex gap-1 text-slate-400">
+            <button class="p-1 hover:text-white rounded hover:bg-white/10"><i data-lucide="arrow-left"
+                class="w-3.5 h-3.5"></i></button>
+            <button class="p-1 hover:text-white rounded hover:bg-white/10"><i data-lucide="arrow-right"
+                class="w-3.5 h-3.5"></i></button>
+            <button class="p-1 hover:text-white rounded hover:bg-white/10"><i data-lucide="rotate-cw"
+                class="w-3.5 h-3.5"></i></button>
+          </div>
+          <div
+            class="flex-1 bg-slate-800 rounded px-3 py-1 text-xs font-mono text-cyan-300 border border-slate-700 flex items-center justify-between">
+            <span>https://jinn-os.dev.br/index.htm</span>
+            <span class="text-emerald-400 text-[10px] uppercase font-bold">TLS 1.3 RFC8446</span>
+          </div>
+        </div>
+        <!-- Conteúdo Renderizado -->
+        <div class="p-6 space-y-4 text-slate-200 overflow-y-auto">
+          <h1 class="text-2xl font-bold text-white">Bem-vindo ao Jinn Browser!</h1>
+          <p class="text-sm text-slate-300">
+            Este navegador opera com um motor nativo escrito em <strong>Rust <code>no_std</code></strong>, projetado
+            especificamente para o microkernel Jinn.
+          </p>
+          <div class="p-4 bg-slate-900/80 rounded-lg border border-teal-500/20 space-y-2">
+            <h3 class="font-bold text-teal-300 text-sm">Características do Motor JBE:</h3>
+            <ul class="text-xs text-slate-400 space-y-1 list-disc list-inside">
+              <li>Pilha de rede segura IPv4 / TCP / UDP / DNS nativa (sem bibliotecas externas)</li>
+              <li>Handshake criptográfico TLS 1.3 completo integrado com ChaCha20-Poly1305</li>
+              <li>Parser de HTML e motor de layout com renderização em ladrilhos (Tile-based)</li>
+              <li>Isolamento estrito de abas por processos em Ring 3</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Janela 6: Monitor de Recursos (JAHA) -->
+    <div class="os-window hidden" id="win-monitor" style="top: 120px; left: 160px; width: 600px; height: 420px;">
+      <div class="os-window-header">
+        <div class="os-window-title">
+          <i data-lucide="activity" class="w-4 h-4 text-cyan-400"></i>
+          <span>Monitor de Recursos do Sistema (JAHA 1.2 Telemetria)</span>
+        </div>
+        <div class="os-window-controls">
+          <div class="win-btn min"></div>
+          <div class="win-btn max"></div>
+          <div class="win-btn close"></div>
+        </div>
+      </div>
+      <div class="os-window-content space-y-5">
+        <div>
+          <div class="flex justify-between text-xs font-mono mb-1">
+            <span class="text-cyan-300">Memória Física (Buddy Allocator + PML4)</span>
+            <span class="text-slate-300">44.4 MB / 256.0 MB (17.3%)</span>
+          </div>
+          <div class="w-full bg-slate-800 h-3 rounded-full overflow-hidden border border-white/10">
+            <div class="bg-cyan-500 h-full w-[17.3%]"></div>
+          </div>
+        </div>
+
+        <div>
+          <div class="text-xs font-mono text-emerald-300 mb-2">Multiprocessamento Simétrico (SMP — 4 Núcleos APIC)</div>
+          <div class="grid grid-cols-2 gap-3 text-xs font-mono">
+            <div class="bg-slate-900 p-2.5 rounded border border-white/5">
+              <div class="flex justify-between text-slate-400"><span>Core 0 (BSP)</span><span
+                  class="text-emerald-400">4%</span></div>
+              <div class="w-full bg-slate-800 h-1.5 rounded mt-1.5">
+                <div class="bg-emerald-500 h-full w-[4%]"></div>
+              </div>
+            </div>
+            <div class="bg-slate-900 p-2.5 rounded border border-white/5">
+              <div class="flex justify-between text-slate-400"><span>Core 1 (AP)</span><span
+                  class="text-emerald-400">2%</span></div>
+              <div class="w-full bg-slate-800 h-1.5 rounded mt-1.5">
+                <div class="bg-emerald-500 h-full w-[2%]"></div>
+              </div>
+            </div>
+            <div class="bg-slate-900 p-2.5 rounded border border-white/5">
+              <div class="flex justify-between text-slate-400"><span>Core 2 (AP)</span><span
+                  class="text-emerald-400">3%</span></div>
+              <div class="w-full bg-slate-800 h-1.5 rounded mt-1.5">
+                <div class="bg-emerald-500 h-full w-[3%]"></div>
+              </div>
+            </div>
+            <div class="bg-slate-900 p-2.5 rounded border border-white/5">
+              <div class="flex justify-between text-slate-400"><span>Core 3 (AP)</span><span
+                  class="text-emerald-400">1%</span></div>
+              <div class="w-full bg-slate-800 h-1.5 rounded mt-1.5">
+                <div class="bg-emerald-500 h-full w-[1%]"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-slate-900/60 p-3 rounded-lg border border-white/5 font-mono text-xs space-y-1">
+          <div class="text-slate-400">Firewall JinnWall: <span class="text-emerald-400 font-bold">PublicSecure (SPI
+              Ativo)</span></div>
+          <div class="text-slate-400">Conntrack Flows : <span class="text-cyan-300">0 fluxos ativos</span></div>
+          <div class="text-slate-400">Invariante Memória: <span class="text-emerald-400">0 bytes discrepância (Audit
+              Passed)</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Janela 7: Contato & Mensagens via Supabase -->
+    <div class="os-window hidden" id="win-contact" style="top: 75px; left: 190px; width: 620px; height: 500px;">
+      <div class="os-window-header">
+        <div class="os-window-title">
+          <i data-lucide="mail" class="w-4 h-4 text-violet-400"></i>
+          <span>Enviar Mensagem Segura (Supabase Database)</span>
+        </div>
+        <div class="os-window-controls">
+          <div class="win-btn min"></div>
+          <div class="win-btn max"></div>
+          <div class="win-btn close"></div>
+        </div>
+      </div>
+      <div class="os-window-content space-y-4">
+        <div>
+          <h2 class="text-lg font-bold text-white">Canal de Comunicação Direto</h2>
+          <p class="text-xs text-slate-400 leading-relaxed">
+            As mensagens enviadas através deste formulário são gravadas diretamente no banco de dados seguro do
+            <strong>Supabase</strong>, protegidas por Row Level Security (RLS) sem expor e-mails pessoais a bots e
+            spammers.
+          </p>
+        </div>
+
+        <form id="contact-form" class="space-y-3.5 text-xs">
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">Seu Nome / Identificação *</label>
+            <input type="text" id="contact-name"
+              class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white outline-none focus:border-violet-500 transition-colors"
+              placeholder="Ex: Linus Torvalds ou Visitante Entusiasta" required>
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">E-mail ou Contato para Retorno (Opcional)</label>
+            <input type="text" id="contact-sender"
+              class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white outline-none focus:border-violet-500 transition-colors"
+              placeholder="Ex: contato@seudominio.com ou @linkedin">
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">Sua Mensagem ou Proposta de Colaboração *</label>
+            <textarea id="contact-content" rows="4"
+              class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white outline-none focus:border-violet-500 transition-colors resize-none"
+              placeholder="Escreva aqui suas impressões sobre o Jinn OS, dúvidas técnicas ou sugestões de projeto..."
+              required></textarea>
+          </div>
+
+          <button type="submit"
+            class="w-full py-2.5 px-4 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold tracking-wide transition-all shadow-lg shadow-violet-950/50 flex items-center justify-center gap-2">
+            <i data-lucide="send" class="w-4 h-4"></i>
+            <span>Enviar Mensagem Segura</span>
+          </button>
+        </form>
+
+        <div id="contact-status" class="text-xs text-center min-h-[20px]"></div>
+      </div>
+    </div>
+
+    <!-- Janela 8: Central de Download da ISO Oficial -->
+    <div class="os-window hidden" id="win-download" style="top: 85px; left: 170px; width: 640px; height: 480px;">
+      <div class="os-window-header">
+        <div class="os-window-title">
+          <i data-lucide="download" class="w-4 h-4 text-red-400"></i>
+          <span>Central de Download — Jinn OS ISO Oficial</span>
+        </div>
+        <div class="os-window-controls">
+          <div class="win-btn min"></div>
+          <div class="win-btn max"></div>
+          <div class="win-btn close"></div>
+        </div>
+      </div>
+      <div class="os-window-content space-y-5">
+        <div>
+          <h2 class="text-lg font-bold text-white">Imagem ISO Oficial do Jinn OS</h2>
+          <p class="text-xs text-slate-400 leading-relaxed">
+            Imagem híbrida CD-ROM bootável (MBR / Limine Protocol v2) pronta para execução no VirtualBox, QEMU ou
+            hardware real compatível com x86_64.
+          </p>
+        </div>
+
+        <div
+          class="p-4 bg-slate-900 rounded-xl border border-red-500/20 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div>
+            <div class="text-sm font-bold text-white">jinn.iso (Alpha 0.0.3-userspace)</div>
+            <div class="text-xs text-slate-400 mt-1">Tamanho: ~11.8 MB | Limine Hybrid MBR</div>
+            <div class="text-[11px] font-mono text-cyan-400 mt-1">SHA-256: 3a7f82b... (Integridade Verificada)</div>
+          </div>
+          <a href="https://github.com/GeovaneEstanislau/Jinn_Project/releases" target="_blank" rel="noopener noreferrer"
+            class="btn-download-iso px-5 py-2.5 bg-gradient-to-r from-red-600 to-rose-500 hover:from-red-500 hover:to-rose-400 text-white font-bold rounded-lg transition-all shadow-lg shadow-red-950/50 flex items-center gap-2 shrink-0">
+            <i data-lucide="download" class="w-4 h-4"></i>
+            <span>Baixar jinn.iso</span>
+          </a>
+        </div>
+
+        <div class="space-y-2 text-xs text-slate-300">
+          <h3 class="font-bold text-white">Como Executar no VirtualBox:</h3>
+          <ol class="list-decimal list-inside space-y-1 text-slate-400">
+            <li>Crie uma nova VM: Tipo <em>Other</em> / Versão <em>Other/Unknown (64-bit)</em>.</li>
+            <li>Memória RAM: 64 MB ou 256 MB.</li>
+            <li>Em <strong>Sistema</strong> &gt; <strong>Placa-Mãe</strong>, configure o <strong>Dispositivo
+                Apontador</strong> como <strong>Mouse PS/2</strong>.</li>
+            <li>Anexe a <code>jinn.iso</code> na unidade óptica e inicie a máquina.</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Script Principal da Aplicação -->
+  <script src="app.js"></script>
+</body>
+
+</html>

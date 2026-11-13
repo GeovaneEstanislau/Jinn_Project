@@ -7,11 +7,14 @@ pub const SYS_WRITE:             u64 = 1;
 pub const SYS_READ:              u64 = 2;
 pub const SYS_YIELD:             u64 = 3;
 pub const SYS_GETPID:            u64 = 4;
+pub const SYS_UPTIME:            u64 = 5;
+pub const SYS_REBOOT:            u64 = 7;
 pub const SYS_SLEEP:             u64 = 11;
 pub const SYS_WINDOW_CREATE:     u64 = 20;
 pub const SYS_WINDOW_BLIT:       u64 = 21;
 pub const SYS_WINDOW_CLOSE:      u64 = 22;
 pub const SYS_WINDOW_POLL_EVENT: u64 = 24;
+pub const SYS_SPAWN_PROCESS:     u64 = 39;
 
 pub const SYS_GRAPHICS_REGISTER:              u64 = 72;
 pub const SYS_GRAPHICS_GET_FB_INFO:          u64 = 73;

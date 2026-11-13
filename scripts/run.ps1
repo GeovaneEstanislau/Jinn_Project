@@ -139,8 +139,18 @@ $isoPath = if ([System.IO.Path]::IsPathRooted($IsoPath)) {
     Join-Path $projectRoot $IsoPath
 }
 
-# Remove ISO anterior
-if (Test-Path $isoPath) { Remove-Item $isoPath -Force }
+# Remove ISO anterior ou chaveia para jinn_new.iso se jinn.iso estiver travado pelo VirtualBox
+if (Test-Path $isoPath) {
+    try {
+        Remove-Item $isoPath -Force -ErrorAction Stop
+    } catch {
+        Write-Warning "Arquivo $isoPath está travado (ex: montado no VirtualBox). Gerando jinn_new.iso..."
+        $isoPath = Join-Path $projectRoot "jinn_new.iso"
+        if (Test-Path $isoPath) {
+            Remove-Item $isoPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
 
 # ------------------------------------------------------------------
 # 4) Localizar mkisofs / genisoimage / xorriso
@@ -155,6 +165,7 @@ if (Get-Command mkisofs -ErrorAction SilentlyContinue) {
 } else {
     # Procura em locais comuns de instalação
     $knownPaths = @(
+        (Join-Path $projectRoot "tools\xorriso\xorriso.exe"),
         "C:\Program Files\Git\usr\bin\mkisofs.exe",
         "C:\msys64\usr\bin\mkisofs.exe",
         "C:\msys64\mingw64\bin\mkisofs.exe",
@@ -249,8 +260,22 @@ $mkisoArgs = @(
 )
 
 if ((Split-Path $mkiso -Leaf) -eq "xorriso.exe" -or $mkiso -eq "xorriso") {
-    $isoPathUnix = (& "C:\msys64\usr\bin\cygpath.exe" -u $isoPath).Trim()
-    $bootStageUnix = (& "C:\msys64\usr\bin\cygpath.exe" -u $bootStage).Trim()
+    if (Get-Command cygpath -ErrorAction SilentlyContinue) {
+        $isoPathUnix = (& cygpath -u $isoPath).Trim()
+        $bootStageUnix = (& cygpath -u $bootStage).Trim()
+    } elseif (Test-Path "C:\msys64\usr\bin\cygpath.exe") {
+        $isoPathUnix = (& "C:\msys64\usr\bin\cygpath.exe" -u $isoPath).Trim()
+    } else {
+        $toCyg = {
+            param($p)
+            $full = [System.IO.Path]::GetFullPath($p)
+            $drive = (Split-Path $full -Qualifier).TrimEnd(':').ToLower()
+            $rest = (Split-Path $full -NoQualifier) -replace '\\', '/'
+            "/cygdrive/$drive$rest"
+        }
+        $isoPathUnix = & $toCyg $isoPath
+        $bootStageUnix = & $toCyg $bootStage
+    }
     $env:MSYS_NO_PATHCONV = "1"
     
     if ($limineUefiCd) {
@@ -302,6 +327,7 @@ if (-not $NoRun) {
     $qemu = (Get-Command qemu-system-x86_64 -ErrorAction SilentlyContinue).Source
     if (-not $qemu) {
         $qemuCandidates = @(
+            (Join-Path $projectRoot "tools\qemu\qemu-system-x86_64.exe"),
             "C:\Program Files\qemu\qemu-system-x86_64.exe",
             "C:\Program Files\QEMU\qemu-system-x86_64.exe"
         )

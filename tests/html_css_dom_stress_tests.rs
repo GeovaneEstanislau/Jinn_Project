@@ -122,6 +122,12 @@ pub struct DomNode {
     pub style_len: usize,
     pub href_attr: [u8; 64],
     pub href_len: usize,
+    pub src_attr: [u8; 64],
+    pub src_len: usize,
+    pub width_attr: u16,
+    pub height_attr: u16,
+    pub alt_attr: [u8; 32],
+    pub alt_len: usize,
     pub onclick_attr: [u8; 128],
     pub onclick_len: usize,
     pub text: [u8; 256],
@@ -147,6 +153,12 @@ impl DomNode {
             style_len: 0,
             href_attr: [0; 64],
             href_len: 0,
+            src_attr: [0; 64],
+            src_len: 0,
+            width_attr: 0,
+            height_attr: 0,
+            alt_attr: [0; 32],
+            alt_len: 0,
             onclick_attr: [0; 128],
             onclick_len: 0,
             text: [0; 256],
@@ -894,6 +906,58 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                     let cpy = a_val.len().min(63);
                     dom.nodes[node_id].href_attr[..cpy].copy_from_slice(&a_val[..cpy]);
                     dom.nodes[node_id].href_len = cpy;
+                } else if i + 4 < len && html[i..i + 4].eq_ignore_ascii_case(b"src=") {
+                    i += 4;
+                    let quote = if i < len && (html[i] == b'"' || html[i] == b'\'') { let q = html[i]; i += 1; Some(q) } else { None };
+                    let a_start = i;
+                    while i < len {
+                        let c = html[i];
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' || c == b'/' { break; }
+                        i += 1;
+                    }
+                    let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
+                    let cpy = a_val.len().min(63);
+                    dom.nodes[node_id].src_attr[..cpy].copy_from_slice(&a_val[..cpy]);
+                    dom.nodes[node_id].src_len = cpy;
+                } else if i + 4 < len && html[i..i + 4].eq_ignore_ascii_case(b"alt=") {
+                    i += 4;
+                    let quote = if i < len && (html[i] == b'"' || html[i] == b'\'') { let q = html[i]; i += 1; Some(q) } else { None };
+                    let a_start = i;
+                    while i < len {
+                        let c = html[i];
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' || c == b'/' { break; }
+                        i += 1;
+                    }
+                    let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
+                    let cpy = a_val.len().min(31);
+                    dom.nodes[node_id].alt_attr[..cpy].copy_from_slice(&a_val[..cpy]);
+                    dom.nodes[node_id].alt_len = cpy;
+                } else if i + 6 < len && html[i..i + 6].eq_ignore_ascii_case(b"width=") {
+                    i += 6;
+                    let quote = if i < len && (html[i] == b'"' || html[i] == b'\'') { let q = html[i]; i += 1; Some(q) } else { None };
+                    let a_start = i;
+                    while i < len {
+                        let c = html[i];
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' || c == b'/' { break; }
+                        i += 1;
+                    }
+                    let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
+                    if let Some(w_num) = parse_px(a_val) {
+                        dom.nodes[node_id].width_attr = w_num.min(u16::MAX as usize) as u16;
+                    }
+                } else if i + 7 < len && html[i..i + 7].eq_ignore_ascii_case(b"height=") {
+                    i += 7;
+                    let quote = if i < len && (html[i] == b'"' || html[i] == b'\'') { let q = html[i]; i += 1; Some(q) } else { None };
+                    let a_start = i;
+                    while i < len {
+                        let c = html[i];
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' || c == b'/' { break; }
+                        i += 1;
+                    }
+                    let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
+                    if let Some(h_num) = parse_px(a_val) {
+                        dom.nodes[node_id].height_attr = h_num.min(u16::MAX as usize) as u16;
+                    }
                 } else if i + 8 < len && html[i..i + 8].eq_ignore_ascii_case(b"onclick=") {
                     i += 8;
                     let quote = if i < len && (html[i] == b'"' || html[i] == b'\'') { let q = html[i]; i += 1; Some(q) } else { None };
@@ -1144,6 +1208,37 @@ pub struct ClickRegion {
     pub node_idx: usize,
 }
 
+impl ClickRegion {
+    pub const fn empty() -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+            target: [0; 128],
+            target_len: 0,
+            is_js: false,
+            node_idx: 0,
+        }
+    }
+}
+
+pub const MAX_RENDER_IMAGES: usize = 16;
+
+#[derive(Clone, Copy)]
+pub struct RenderImage {
+    pub x: usize,
+    pub y: usize,
+    pub w: usize,
+    pub h: usize,
+    pub src: [u8; 64],
+    pub src_len: usize,
+    pub alt: [u8; 32],
+    pub alt_len: usize,
+    #[allow(dead_code)]
+    pub node_idx: usize,
+}
+
 #[derive(Clone, Copy)]
 pub struct BoxRect {
     pub x: usize,
@@ -1170,6 +1265,8 @@ pub struct DocumentLayout {
     pub line_count: usize,
     pub boxes: [BoxRect; MAX_RENDER_BOXES],
     pub box_count: usize,
+    pub images: [RenderImage; MAX_RENDER_IMAGES],
+    pub image_count: usize,
     pub click_regions: [ClickRegion; MAX_CLICK_REGIONS],
     pub click_count: usize,
     pub total_height: usize,
@@ -1197,6 +1294,18 @@ impl DocumentLayout {
                 border_color: None,
             }; MAX_RENDER_BOXES],
             box_count: 0,
+            images: [RenderImage {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+                src: [0; 64],
+                src_len: 0,
+                alt: [0; 32],
+                alt_len: 0,
+                node_idx: 0,
+            }; MAX_RENDER_IMAGES],
+            image_count: 0,
             click_regions: [ClickRegion {
                 x: 0,
                 y: 0,
@@ -1216,6 +1325,7 @@ impl DocumentLayout {
         self.line_count = 0;
         self.click_count = 0;
         self.box_count = 0;
+        self.image_count = 0;
 
         let mut curr_y = 6usize;
         let mut laid_out = [false; MAX_DOM_NODES];
@@ -1265,6 +1375,77 @@ impl DocumentLayout {
                 self.line_count += 1;
             }
             *curr_y += 10;
+            return;
+        }
+
+        if tag == b"img" {
+            if node.computed_style.display_block {
+                *curr_y += node.computed_style.margin_top;
+            }
+            let mar_left = node.computed_style.margin_left;
+            let mar_right = node.computed_style.margin_right;
+            let pad_left = node.computed_style.padding_left;
+            let pad_top = node.computed_style.padding_top;
+            let pad_bottom = node.computed_style.padding_bottom;
+
+            let img_w = if node.width_attr > 0 {
+                (node.width_attr as usize).min(avail_width.saturating_sub(mar_left + mar_right))
+            } else {
+                48.min(avail_width.saturating_sub(mar_left + mar_right))
+            };
+            let img_h = if node.height_attr > 0 {
+                node.height_attr as usize
+            } else {
+                36
+            };
+
+            if self.image_count < MAX_RENDER_IMAGES {
+                let slot = self.image_count;
+                self.images[slot] = RenderImage {
+                    x: base_x + mar_left + pad_left,
+                    y: *curr_y + pad_top,
+                    w: img_w,
+                    h: img_h,
+                    src: node.src_attr,
+                    src_len: node.src_len,
+                    alt: node.alt_attr,
+                    alt_len: node.alt_len,
+                    node_idx,
+                };
+                self.image_count += 1;
+
+                let href_opt = if node.href_len > 0 {
+                    Some(&node.href_attr[..node.href_len])
+                } else if let Some(pid) = node.parent {
+                    if dom.nodes[pid].href_len > 0 {
+                        Some(&dom.nodes[pid].href_attr[..dom.nodes[pid].href_len])
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(href) = href_opt {
+                    if self.click_count < self.click_regions.len() {
+                        let mut reg = ClickRegion::empty();
+                        reg.x = base_x + mar_left + pad_left;
+                        reg.y = *curr_y + pad_top;
+                        reg.w = img_w;
+                        reg.h = img_h;
+                        let cpy_h = href.len().min(63);
+                        reg.target[..cpy_h].copy_from_slice(&href[..cpy_h]);
+                        reg.target_len = cpy_h;
+                        self.click_regions[self.click_count] = reg;
+                        self.click_count += 1;
+                    }
+                }
+            }
+
+            *curr_y += img_h + pad_top + pad_bottom;
+            if node.computed_style.display_block {
+                *curr_y += node.computed_style.margin_bottom;
+            }
             return;
         }
 
@@ -1911,6 +2092,66 @@ fn test_index_htm_exact_conformance() {
         dom.node_count, layout.line_count, layout.box_count, layout.click_count);
 }
 
+fn test_image_parsing_and_layout() {
+    print!("Teste 11: Suporte a imagens <img> (src, alt, width, height e links com imagem)... ");
+    let html = b"
+        <div>
+            <h1>Galeria</h1>
+            <img src=\"logo.bmp\" width=\"64\" height=\"48\" alt=\"Jinn Logo\" />
+            <a href=\"detalhes.htm\"><img src=\"banner.qoi\" width=\"120\" height=\"30\" alt=\"Banner Link\" /></a>
+        </div>
+    ";
+    let mut dom = DomArena::new();
+    let mut css = MiniCss::new();
+    let mut js = MiniJsRuntime::new();
+    let mut layout = DocumentLayout::new();
+
+    parse_html_into_dom(html, &mut dom, &mut css, &mut js);
+    layout.compute_from_dom(&dom, 280);
+
+    // 1. Verifica parsing das tags <img> no DOM
+    let mut img_count = 0;
+    for i in 0..dom.node_count {
+        if &dom.nodes[i].tag[..dom.nodes[i].tag_len] == b"img" {
+            img_count += 1;
+            if &dom.nodes[i].src_attr[..dom.nodes[i].src_len] == b"logo.bmp" {
+                assert_eq!(dom.nodes[i].width_attr, 64);
+                assert_eq!(dom.nodes[i].height_attr, 48);
+                assert_eq!(&dom.nodes[i].alt_attr[..dom.nodes[i].alt_len], b"Jinn Logo");
+            } else if &dom.nodes[i].src_attr[..dom.nodes[i].src_len] == b"banner.qoi" {
+                assert_eq!(dom.nodes[i].width_attr, 120);
+                assert_eq!(dom.nodes[i].height_attr, 30);
+                assert_eq!(&dom.nodes[i].alt_attr[..dom.nodes[i].alt_len], b"Banner Link");
+            }
+        }
+    }
+    assert_eq!(img_count, 2, "Devem existir 2 nós <img> no DOM");
+
+    // 2. Verifica cálculo de layout de imagens
+    assert_eq!(layout.image_count, 2, "Devem existir exatamente 2 imagens registradas no layout");
+    assert_eq!(layout.images[0].w, 64);
+    assert_eq!(layout.images[0].h, 48);
+    assert_eq!(&layout.images[0].src[..layout.images[0].src_len], b"logo.bmp");
+
+    assert_eq!(layout.images[1].w, 120);
+    assert_eq!(layout.images[1].h, 30);
+    assert_eq!(&layout.images[1].src[..layout.images[1].src_len], b"banner.qoi");
+
+    // 3. Verifica que a imagem dentro do <a> gerou uma região clicável com o destino correto
+    let mut found_img_link = false;
+    for c in 0..layout.click_count {
+        let reg = &layout.click_regions[c];
+        if &reg.target[..reg.target_len] == b"detalhes.htm" {
+            assert_eq!(reg.w, 120);
+            assert_eq!(reg.h, 30);
+            found_img_link = true;
+        }
+    }
+    assert!(found_img_link, "Imagem dentro de <a> deve ter registrado região clicável para 'detalhes.htm'");
+
+    println!("PASSOU! (2 imagens posicionadas e link com imagem validado)");
+}
+
 fn main() {
     println!("==================================================================");
     println!("  JINN OS — AUDITORIA E TESTES DE ESTRESSE: PARSER HTML E MINI-CSS");
@@ -1926,8 +2167,9 @@ fn main() {
     test_html_entities_and_whitespace_normalization();
     test_malformed_and_orphaned_tags_resilience();
     test_index_htm_exact_conformance();
+    test_image_parsing_and_layout();
 
     println!("==================================================================");
-    println!("  TODOS OS 10 TESTES DE HTML, MINI-CSS E DOM PASSARAM COM SUCESSO!");
+    println!("  TODOS OS 11 TESTES DE HTML, MINI-CSS E DOM PASSARAM COM SUCESSO!");
     println!("==================================================================");
 }

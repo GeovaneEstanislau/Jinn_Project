@@ -99,6 +99,12 @@ pub struct DomNode {
     pub style_len: usize,
     pub href_attr: [u8; 64],
     pub href_len: usize,
+    pub src_attr: [u8; 64],
+    pub src_len: usize,
+    pub width_attr: u16,
+    pub height_attr: u16,
+    pub alt_attr: [u8; 32],
+    pub alt_len: usize,
     pub onclick_attr: [u8; 128],
     pub onclick_len: usize,
     pub text: [u8; 256],
@@ -124,6 +130,12 @@ impl DomNode {
             style_len: 0,
             href_attr: [0; 64],
             href_len: 0,
+            src_attr: [0; 64],
+            src_len: 0,
+            width_attr: 0,
+            height_attr: 0,
+            alt_attr: [0; 32],
+            alt_len: 0,
             onclick_attr: [0; 128],
             onclick_len: 0,
             text: [0; 256],
@@ -1074,6 +1086,58 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                     let cpy = a_val.len().min(63);
                     dom.nodes[node_id].href_attr[..cpy].copy_from_slice(&a_val[..cpy]);
                     dom.nodes[node_id].href_len = cpy;
+                } else if i + 4 < len && html[i..i + 4].eq_ignore_ascii_case(b"src=") {
+                    i += 4;
+                    let quote = if i < len && (html[i] == b'"' || html[i] == b'\'') { let q = html[i]; i += 1; Some(q) } else { None };
+                    let a_start = i;
+                    while i < len {
+                        let c = html[i];
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' || c == b'/' { break; }
+                        i += 1;
+                    }
+                    let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
+                    let cpy = a_val.len().min(63);
+                    dom.nodes[node_id].src_attr[..cpy].copy_from_slice(&a_val[..cpy]);
+                    dom.nodes[node_id].src_len = cpy;
+                } else if i + 4 < len && html[i..i + 4].eq_ignore_ascii_case(b"alt=") {
+                    i += 4;
+                    let quote = if i < len && (html[i] == b'"' || html[i] == b'\'') { let q = html[i]; i += 1; Some(q) } else { None };
+                    let a_start = i;
+                    while i < len {
+                        let c = html[i];
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' || c == b'/' { break; }
+                        i += 1;
+                    }
+                    let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
+                    let cpy = a_val.len().min(31);
+                    dom.nodes[node_id].alt_attr[..cpy].copy_from_slice(&a_val[..cpy]);
+                    dom.nodes[node_id].alt_len = cpy;
+                } else if i + 6 < len && html[i..i + 6].eq_ignore_ascii_case(b"width=") {
+                    i += 6;
+                    let quote = if i < len && (html[i] == b'"' || html[i] == b'\'') { let q = html[i]; i += 1; Some(q) } else { None };
+                    let a_start = i;
+                    while i < len {
+                        let c = html[i];
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' || c == b'/' { break; }
+                        i += 1;
+                    }
+                    let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
+                    if let Some(w_num) = parse_px(a_val) {
+                        dom.nodes[node_id].width_attr = w_num.min(u16::MAX as usize) as u16;
+                    }
+                } else if i + 7 < len && html[i..i + 7].eq_ignore_ascii_case(b"height=") {
+                    i += 7;
+                    let quote = if i < len && (html[i] == b'"' || html[i] == b'\'') { let q = html[i]; i += 1; Some(q) } else { None };
+                    let a_start = i;
+                    while i < len {
+                        let c = html[i];
+                        if let Some(q) = quote { if c == q { i += 1; break; } } else if c == b' ' || c == b'>' || c == b'/' { break; }
+                        i += 1;
+                    }
+                    let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
+                    if let Some(h_num) = parse_px(a_val) {
+                        dom.nodes[node_id].height_attr = h_num.min(u16::MAX as usize) as u16;
+                    }
                 } else if i + 8 < len && html[i..i + 8].eq_ignore_ascii_case(b"onclick=") {
                     i += 8;
                     let quote = if i < len && (html[i] == b'"' || html[i] == b'\'') { let q = html[i]; i += 1; Some(q) } else { None };
@@ -1236,6 +1300,21 @@ pub struct ClickRegion {
     pub target_len: usize,
     pub is_js: bool,
     pub node_idx: usize,
+}
+
+impl ClickRegion {
+    pub const fn empty() -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+            target: [0; 128],
+            target_len: 0,
+            is_js: false,
+            node_idx: 0,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1447,13 +1526,30 @@ pub fn parse_html(html: &[u8], page: &mut ParsedPage) {
 
 pub const MAX_RENDER_LINES: usize = 128;
 pub const MAX_RENDER_BOXES: usize = 32;
+pub const MAX_RENDER_IMAGES: usize = 16;
 pub const MAX_CLICK_REGIONS: usize = 32;
+
+#[derive(Clone, Copy)]
+pub struct RenderImage {
+    pub x: usize,
+    pub y: usize,
+    pub w: usize,
+    pub h: usize,
+    pub src: [u8; 64],
+    pub src_len: usize,
+    pub alt: [u8; 32],
+    pub alt_len: usize,
+    #[allow(dead_code)]
+    pub node_idx: usize,
+}
 
 pub struct DocumentLayout {
     pub lines: [RenderLine; MAX_RENDER_LINES],
     pub line_count: usize,
     pub boxes: [BoxRect; MAX_RENDER_BOXES],
     pub box_count: usize,
+    pub images: [RenderImage; MAX_RENDER_IMAGES],
+    pub image_count: usize,
     pub click_regions: [ClickRegion; MAX_CLICK_REGIONS],
     pub click_count: usize,
     pub total_height: usize,
@@ -1481,6 +1577,18 @@ impl DocumentLayout {
                 border_color: None,
             }; MAX_RENDER_BOXES],
             box_count: 0,
+            images: [RenderImage {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+                src: [0; 64],
+                src_len: 0,
+                alt: [0; 32],
+                alt_len: 0,
+                node_idx: 0,
+            }; MAX_RENDER_IMAGES],
+            image_count: 0,
             click_regions: [ClickRegion {
                 x: 0,
                 y: 0,
@@ -1500,6 +1608,7 @@ impl DocumentLayout {
         self.line_count = 0;
         self.click_count = 0;
         self.box_count = 0;
+        self.image_count = 0;
 
         let mut curr_y = 6usize;
         let mut laid_out = [false; MAX_DOM_NODES];
@@ -1551,6 +1660,77 @@ impl DocumentLayout {
                 self.line_count += 1;
             }
             *curr_y += 10;
+            return;
+        }
+
+        if tag == b"img" {
+            if node.computed_style.display_block {
+                *curr_y += node.computed_style.margin_top;
+            }
+            let mar_left = node.computed_style.margin_left;
+            let mar_right = node.computed_style.margin_right;
+            let pad_left = node.computed_style.padding_left;
+            let pad_top = node.computed_style.padding_top;
+            let pad_bottom = node.computed_style.padding_bottom;
+
+            let img_w = if node.width_attr > 0 {
+                (node.width_attr as usize).min(avail_width.saturating_sub(mar_left + mar_right))
+            } else {
+                48.min(avail_width.saturating_sub(mar_left + mar_right))
+            };
+            let img_h = if node.height_attr > 0 {
+                node.height_attr as usize
+            } else {
+                36
+            };
+
+            if self.image_count < MAX_RENDER_IMAGES {
+                let slot = self.image_count;
+                self.images[slot] = RenderImage {
+                    x: base_x + mar_left + pad_left,
+                    y: *curr_y + pad_top,
+                    w: img_w,
+                    h: img_h,
+                    src: node.src_attr,
+                    src_len: node.src_len,
+                    alt: node.alt_attr,
+                    alt_len: node.alt_len,
+                    node_idx,
+                };
+                self.image_count += 1;
+
+                let href_opt = if node.href_len > 0 {
+                    Some(&node.href_attr[..node.href_len])
+                } else if let Some(pid) = node.parent {
+                    if dom.nodes[pid].href_len > 0 {
+                        Some(&dom.nodes[pid].href_attr[..dom.nodes[pid].href_len])
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(href) = href_opt {
+                    if self.click_count < self.click_regions.len() {
+                        let mut reg = ClickRegion::empty();
+                        reg.x = base_x + mar_left + pad_left;
+                        reg.y = *curr_y + pad_top;
+                        reg.w = img_w;
+                        reg.h = img_h;
+                        let cpy_h = href.len().min(63);
+                        reg.target[..cpy_h].copy_from_slice(&href[..cpy_h]);
+                        reg.target_len = cpy_h;
+                        self.click_regions[self.click_count] = reg;
+                        self.click_count += 1;
+                    }
+                }
+            }
+
+            *curr_y += img_h + pad_top + pad_bottom;
+            if node.computed_style.display_block {
+                *curr_y += node.computed_style.margin_bottom;
+            }
             return;
         }
 
@@ -2419,6 +2599,26 @@ impl BrowserSession {
             }
         }
 
+        // 2.7. Renderiza imagens (<img>) com clipping e scroll
+        for i in 0..self.layout.image_count {
+            let img = &self.layout.images[i];
+            if img.y + img.h > self.scroll_y {
+                let img_top = if img.y >= self.scroll_y {
+                    (img.y - self.scroll_y) + clip_top
+                } else {
+                    clip_top
+                };
+                let img_bottom = ((img.y + img.h).saturating_sub(self.scroll_y)) + clip_top;
+                if img_top < clip_bottom && img_bottom > clip_top {
+                    let draw_y = img_top.max(clip_top);
+                    let draw_h = img_bottom.min(clip_bottom).saturating_sub(draw_y);
+                    if draw_h > 0 {
+                        render_image_element(buf, w, h, img, draw_y, draw_h, clip_top, clip_bottom);
+                    }
+                }
+            }
+        }
+
         // 3. Documento no Viewport (com scroll_y aplicado e clipping)
         for i in 0..self.layout.line_count {
             let line = &self.layout.lines[i];
@@ -2513,6 +2713,44 @@ fn draw_rect_border(buf: &mut [u32], stride_w: usize, max_h: usize, rx: usize, r
     for y in ry..=y_end.min(max_h.saturating_sub(1)) {
         if rx < stride_w && y * stride_w + rx < buf.len() { buf[y * stride_w + rx] = color; }
         if x_end < stride_w && y * stride_w + x_end < buf.len() { buf[y * stride_w + x_end] = color; }
+    }
+}
+
+pub fn render_image_element(
+    buf: &mut [u32],
+    w: usize,
+    h: usize,
+    img: &RenderImage,
+    draw_y: usize,
+    draw_h: usize,
+    clip_top: usize,
+    clip_bottom: usize,
+) {
+    if img.w == 0 || draw_h == 0 { return; }
+
+    // Fundo da imagem (Catppuccin Surface)
+    fill_rect(buf, w, h, img.x, draw_y, img.w, draw_h, 0x0031_3244);
+    draw_rect_border(buf, w, h, img.x, draw_y, img.w, draw_h, 0x0045_475A);
+
+    // Renderiza selo e descrição se houver altura visível
+    if draw_h >= 14 && img.w >= 28 {
+        let text_y = draw_y + 2;
+        if text_y + font::FONT_HEIGHT <= clip_bottom {
+            let label = b"[IMG]";
+            font::draw_text_clipped(buf, w, h, img.x + 3, text_y, label, COLOR_H1, None, clip_top, clip_bottom);
+
+            let alt_x = img.x + 3 + label.len() * font::FONT_WIDTH + 4;
+            let max_text_w = (img.x + img.w).saturating_sub(alt_x + 2);
+            if max_text_w >= font::FONT_WIDTH {
+                if img.alt_len > 0 {
+                    let alt_slice = &img.alt[..img.alt_len];
+                    font::draw_text_clipped(buf, w, h, alt_x, text_y, alt_slice, COLOR_TEXT, None, clip_top, clip_bottom);
+                } else if img.src_len > 0 {
+                    let src_slice = &img.src[..img.src_len];
+                    font::draw_text_clipped(buf, w, h, alt_x, text_y, src_slice, 0x00A6_ADC8, None, clip_top, clip_bottom);
+                }
+            }
+        }
     }
 }
 
