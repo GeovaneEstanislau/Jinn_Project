@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Cria ou gera links para as Issues de internacionalização e chamamento de contribuidores no GitHub.
 
@@ -82,11 +82,12 @@ foreach ($file in $issueFiles) {
             "User-Agent" = "Jinn-Issue-Publisher"
         }
 
-        $payload = @{
+        $payloadObj = @{
             title = $title
             body = $body
             labels = $labels
-        } | ConvertTo-Json -Depth 5
+        }
+        $payload = $payloadObj | ConvertTo-Json -Depth 5
 
         try {
             $utf8Bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
