@@ -255,8 +255,34 @@ pub fn client_window_create(owner_pid: usize, title: &str, width: usize, height:
             title_buf[..t_len].copy_from_slice(&t_bytes[..t_len]);
 
             let total_pixels = width * height;
+            let total_bytes = total_pixels * 4;
             let mut buf = alloc::vec::Vec::new();
             if buf.try_reserve_exact(total_pixels).is_err() {
+                crate::serial_write(b"[gui] ENOMEM ao alocar buffer da janela cliente: ");
+                // Serializa tamanho em bytes para diagnóstico serial
+                let mut nbuf = [0u8; 12];
+                let mut n = total_bytes;
+                let mut idx = 11usize;
+                if n == 0 { nbuf[idx] = b'0'; } else {
+                    while n > 0 { nbuf[idx] = b'0' + (n % 10) as u8; n /= 10; if idx > 0 { idx -= 1; } else { break; } }
+                    idx += 1;
+                }
+                crate::serial_write(&nbuf[idx..]);
+                crate::serial_write(b" bytes (");
+                let mut n2 = width; let mut idx2 = 11usize; let mut nbuf2 = [0u8; 12];
+                if n2 == 0 { nbuf2[idx2] = b'0'; } else {
+                    while n2 > 0 { nbuf2[idx2] = b'0' + (n2 % 10) as u8; n2 /= 10; if idx2 > 0 { idx2 -= 1; } else { break; } }
+                    idx2 += 1;
+                }
+                crate::serial_write(&nbuf2[idx2..]);
+                crate::serial_write(b"x");
+                let mut n3 = height; let mut idx3 = 11usize; let mut nbuf3 = [0u8; 12];
+                if n3 == 0 { nbuf3[idx3] = b'0'; } else {
+                    while n3 > 0 { nbuf3[idx3] = b'0' + (n3 % 10) as u8; n3 /= 10; if idx3 > 0 { idx3 -= 1; } else { break; } }
+                    idx3 += 1;
+                }
+                crate::serial_write(&nbuf3[idx3..]);
+                crate::serial_write(b" px)\n");
                 if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(owner_pid) {
                     task.resources.close_window();
                 }

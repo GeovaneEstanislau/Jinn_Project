@@ -19,39 +19,86 @@ use aladdin::contracts::input::ClientWindowEvent;
 use aladdin::desktop::session::AladdinSession;
 
 // ── Allocator de Heap em Espaço de Usuário (.bss) ─────────────────────────────
-// 16 MiB de memória em .bss (0 bytes no arquivo ELF do disco).
-const HEAP_SIZE: usize = 16 * 1024 * 1024;
+// 14 MiB de memória em .bss (0 bytes no arquivo ELF do disco).
+// Dimensionado para rodar sob máquinas reais e VMs com 64 MB de RAM total:
+// Backbuffer 1024×768 (3 MiB) + sub_buf (3 MiB) + janelas clientes Ring 3 (3 MiB) + folgas (5 MiB).
+const HEAP_SIZE: usize = 14 * 1024 * 1024;
 static mut HEAP_MEMORY: [u8; HEAP_SIZE] = [0u8; HEAP_SIZE];
 
 struct SimpleHeapAllocator {
     offset: core::sync::atomic::AtomicUsize,
+    peak:   core::sync::atomic::AtomicUsize,
 }
 
 unsafe impl GlobalAlloc for SimpleHeapAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let align = layout.align();
         let size = layout.size();
-        let current = self.offset.load(Ordering::Relaxed);
-        let aligned = (current + align - 1) & !(align - 1);
-        let next = aligned + size;
+        loop {
+            let current = self.offset.load(Ordering::Relaxed);
+            let aligned = (current + align - 1) & !(align - 1);
+            let next = aligned + size;
 
-        if next > HEAP_SIZE {
-            return core::ptr::null_mut();
+            if next > HEAP_SIZE {
+                // OOM: imprime diagnóstico na porta serial via syscall write
+                aladdin_sdk::console::print("[aladdin-server] [OOM] Heap esgotado! offset=");
+                aladdin_sdk::console::print_num(current as u64);
+                aladdin_sdk::console::print(" size=");
+                aladdin_sdk::console::print_num(HEAP_SIZE as u64);
+                aladdin_sdk::console::print(" pedido=");
+                aladdin_sdk::console::print_num(size as u64);
+                aladdin_sdk::console::println("");
+                return core::ptr::null_mut();
+            }
+
+            // CAS atômico: garante corretude mesmo se IRQ preemptar entre load e store
+            if self.offset.compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+                // Atualiza pico histórico para diagnóstico
+                let mut pk = self.peak.load(Ordering::Relaxed);
+                while next > pk {
+                    match self.peak.compare_exchange_weak(pk, next, Ordering::Relaxed, Ordering::Relaxed) {
+                        Ok(_) => break,
+                        Err(p) => pk = p,
+                    }
+                }
+                let base = core::ptr::addr_of_mut!(HEAP_MEMORY) as *mut u8;
+                return base.add(aligned);
+            }
         }
-
-        self.offset.store(next, Ordering::Relaxed);
-        let base = core::ptr::addr_of_mut!(HEAP_MEMORY) as *mut u8;
-        base.add(aligned)
     }
 
     unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
-        // Bump allocator com reciclagem per-session
+        // Bump allocator: frees são ignorados (sem fragmentação, sem double-free).
+        // Objetos de longa duração (backbuffer, janelas) nunca são liberados em sessão normal.
+        // Para reciclagem explícita (ex.: fechar janela do browser), use reset_session().
+    }
+
+    /// Consulta uso atual do heap para telemetria.
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        let ptr = self.alloc(layout);
+        if !ptr.is_null() {
+            core::ptr::write_bytes(ptr, 0, layout.size());
+        }
+        ptr
+    }
+}
+
+impl SimpleHeapAllocator {
+    /// Retorna (bytes_usados, bytes_total, bytes_pico) para diagnóstico.
+    #[allow(dead_code)]
+    pub fn heap_stats(&self) -> (usize, usize, usize) {
+        (
+            self.offset.load(Ordering::Relaxed),
+            HEAP_SIZE,
+            self.peak.load(Ordering::Relaxed),
+        )
     }
 }
 
 #[global_allocator]
 static ALLOCATOR: SimpleHeapAllocator = SimpleHeapAllocator {
     offset: core::sync::atomic::AtomicUsize::new(0),
+    peak:   core::sync::atomic::AtomicUsize::new(0),
 };
 
 // ── ABI e Estruturas de Syscall (72..79) ──────────────────────────────────────
@@ -502,6 +549,9 @@ static mut GLOBAL_SESSION: *mut AladdinSession = core::ptr::null_mut();
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     aladdin_sdk::console::println("[aladdin-server] Inicializando servidor grafico Ring 3...");
+    aladdin_sdk::console::print("[aladdin-server] Heap disponivel: ");
+    aladdin_sdk::console::print_num((HEAP_SIZE / (1024 * 1024)) as u64);
+    aladdin_sdk::console::println(" MiB");
 
     // 1. Registra este processo como Servidor Gráfico exclusivo via Syscall 72
     let reg_res = unsafe { sys_register_graphics(0) };
@@ -545,6 +595,16 @@ pub extern "C" fn _start() -> ! {
     }
     backbuffer.resize(total_pixels, 0u32);
 
+    // Diagnóstico: heap usado após alocação do backbuffer
+    {
+        let heap_used = ALLOCATOR.offset.load(core::sync::atomic::Ordering::Relaxed);
+        aladdin_sdk::console::print("[aladdin-server] Heap usado apos backbuffer: ");
+        aladdin_sdk::console::print_num((heap_used / 1024) as u64);
+        aladdin_sdk::console::print(" KiB / ");
+        aladdin_sdk::console::print_num((HEAP_SIZE / 1024) as u64);
+        aladdin_sdk::console::println(" KiB total");
+    }
+
     let mut session = AladdinSession::new();
     unsafe {
         GLOBAL_SESSION = &mut session as *mut AladdinSession;
@@ -579,6 +639,23 @@ pub extern "C" fn _start() -> ! {
 
     static mut CURRENT_MOUSE: (usize, usize, u8) = (512usize, 384usize, 0u8);
     let mut client_cache_buf: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
+    // Pré-reserva buffer de transferência de cliente para evitar alocações dinâmicas repetidas no bump allocator
+    let _ = client_cache_buf.try_reserve_exact(1024 * 768);
+
+    #[derive(Clone, Copy)]
+    struct ClientWindowMapEntry {
+        kernel_win_id: u32,
+        wm_win_id: usize,
+        owner_pid: u32,
+        active: bool,
+    }
+    static mut CLIENT_MAP: [ClientWindowMapEntry; 16] = [ClientWindowMapEntry {
+        kernel_win_id: 0,
+        wm_win_id: 0,
+        owner_pid: 0,
+        active: false,
+    }; 16];
+
     let mut client_info_list = [ClientWindowInfoUser {
         win_id: 0, owner_pid: 0, width: 0, height: 0, is_open: 0, damaged: 0, title_len: 0, title: [0u8; 48],
     }; 16];
@@ -618,15 +695,71 @@ pub extern "C" fn _start() -> ! {
         unsafe {
             if let Some(sess) = GLOBAL_SESSION.as_mut() {
                 let count = sys_list_client_windows(client_info_list.as_mut_ptr(), 16);
+                let client_map = &mut *core::ptr::addr_of_mut!(CLIENT_MAP);
                 if count > 0 {
                     for i in 0..(count as usize).min(16) {
                         let win = &client_info_list[i];
-                        let win_exists = sess.wm.windows.iter().any(|w| w.as_ref().map_or(false, |w| w.id == win.win_id as usize));
-                        if !win_exists {
-                            let title_bytes = &win.title[..(win.title_len as usize).min(48)];
-                            let title_str = core::str::from_utf8(title_bytes).unwrap_or("App Ring 3");
-                            let _ = sess.create_client_window(win.owner_pid as usize, title_str, win.width as usize, win.height as usize);
+
+                        // 1. Trata fechamento de janela
+                        if win.is_open == 0 {
+                            for map in client_map.iter_mut() {
+                                if map.active && map.kernel_win_id == win.win_id {
+                                    let _ = sess.close_client_window(map.owner_pid as usize, map.wm_win_id);
+                                    map.active = false;
+                                }
+                            }
+                            continue;
                         }
+
+                        // 2. Localiza ou cria mapeamento kernel_win_id -> wm_win_id
+                        let mut target_wm_id = None;
+                        for map in client_map.iter() {
+                            if map.active && map.kernel_win_id == win.win_id && map.owner_pid == win.owner_pid {
+                                target_wm_id = Some(map.wm_win_id);
+                                break;
+                            }
+                        }
+
+                        let wm_id = match target_wm_id {
+                            Some(id) => id,
+                            None => {
+                                let title_bytes = &win.title[..(win.title_len as usize).min(48)];
+                                let title_str = core::str::from_utf8(title_bytes).unwrap_or("App Ring 3");
+                                match sess.create_client_window(win.owner_pid as usize, title_str, win.width as usize, win.height as usize) {
+                                    Ok(new_wm_id) => {
+                                        aladdin_sdk::console::print("[aladdin-server] Mapeada janela cliente: kernel_win_id=");
+                                        aladdin_sdk::console::print_num(win.win_id as u64);
+                                        aladdin_sdk::console::print(" -> wm_win_id=");
+                                        aladdin_sdk::console::print_num(new_wm_id as u64);
+                                        aladdin_sdk::console::println("");
+
+                                        let mut stored = false;
+                                        for map in client_map.iter_mut() {
+                                            if !map.active {
+                                                map.kernel_win_id = win.win_id;
+                                                map.wm_win_id = new_wm_id;
+                                                map.owner_pid = win.owner_pid;
+                                                map.active = true;
+                                                stored = true;
+                                                break;
+                                            }
+                                        }
+                                        if !stored {
+                                            client_map[0] = ClientWindowMapEntry {
+                                                kernel_win_id: win.win_id,
+                                                wm_win_id: new_wm_id,
+                                                owner_pid: win.owner_pid,
+                                                active: true,
+                                            };
+                                        }
+                                        new_wm_id
+                                    }
+                                    Err(()) => continue,
+                                }
+                            }
+                        };
+
+                        // 3. Atualiza superfície quando danificada
                         if win.damaged == 1 {
                             let total_px = (win.width as usize) * (win.height as usize);
                             if total_px > 0 && total_px <= 1024 * 768 {
@@ -635,12 +768,13 @@ pub extern "C" fn _start() -> ! {
                                 }
                                 let read_bytes = sys_read_client_surface(win.win_id as usize, client_cache_buf.as_mut_ptr(), total_px * 4);
                                 if read_bytes > 0 {
-                                    let _ = sess.update_client_buffer(win.owner_pid as usize, win.win_id as usize, &client_cache_buf[..total_px]);
+                                    let _ = sess.update_client_buffer(win.owner_pid as usize, wm_id, &client_cache_buf[..total_px]);
                                 }
                             }
                         }
-                        // Despacha eventos de entrada produzidos para a janela do cliente
-                        while let Ok(Some(cev)) = sess.poll_client_event(win.owner_pid as usize, win.win_id as usize) {
+
+                        // 4. Despacha eventos de entrada produzidos pelo WindowManager para a janela do cliente
+                        while let Ok(Some(cev)) = sess.poll_client_event(win.owner_pid as usize, wm_id) {
                             let _ = sys_dispatch_client_event(win.win_id as usize, &cev);
                         }
                     }

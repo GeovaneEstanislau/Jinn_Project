@@ -28,7 +28,7 @@ impl ResourceLimits {
     /// Limites conservadores e seguros para aplicações em Ring 3.
     pub const fn user_default() -> Self {
         Self {
-            max_frames: 2048,     // Permite stack, ELF/BSS e superfícies dinâmicas até 8 MiB
+            max_frames: 3584,     // Permite stack, ELF/BSS e superfícies dinâmicas até 14 MiB
             max_fds: 32,          // Até 32 descritores por processo (MAX_TASK_FDS)
             max_windows: 4,       // Até 4 janelas por processo (sistema suporta 8)
             max_jda_buffers: 4,   // Até 4 buffers JDA Zero-Copy

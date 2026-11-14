@@ -1562,7 +1562,7 @@ pub const BASE_WIN_W: usize = 300;
 pub const BASE_WIN_H: usize = 180;
 pub const BASE_WIN_PIXELS: usize = BASE_WIN_W * BASE_WIN_H; // 54.000 pixels = 216 KiB
 
-static mut BASE_WIN_BUF: [u32; BASE_WIN_PIXELS] = [0x0018_1825; BASE_WIN_PIXELS];
+static mut BASE_WIN_BUF: [u32; BASE_WIN_PIXELS] = [0u32; BASE_WIN_PIXELS];
 
 /// Gerenciador dinâmico de superfícies gráficas sob demanda para modo janela e tela cheia
 pub struct DynamicSurfaceBuffer {
@@ -1596,6 +1596,8 @@ impl DynamicSurfaceBuffer {
         self.is_heap_allocated = false;
         self.allocated_pages = 0;
         self.dynamic_base_vaddr = 0;
+        let slice = core::slice::from_raw_parts_mut(self.ptr, BASE_WIN_PIXELS);
+        slice.fill(0x0018_1825);
     }
 
     pub fn slice_mut(&mut self) -> &mut [u32] {
