@@ -64,8 +64,14 @@ node_modules/
 /contracts/typechain/
 /contracts/typechain-types/
 
-# Python Virtual Environments and Google Ads secrets
+# Python Virtual Environments and Google Ads automation
 venv/
-saved/code/venv/
+saved/
 google-ads.yaml
 *.log
+
+# Internal dev reports and issue templates
+docs/i18n-issues/
+scripts/create_i18n_issues.ps1
+docs/RELATORIO_*.md
+GOVERNANCE-IMPLEMENTATION-REPORT.md
