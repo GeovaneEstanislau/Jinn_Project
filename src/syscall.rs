@@ -2073,9 +2073,10 @@ fn sys_window_close(win_id: usize) -> isize {
 /// `sys_window_poll_event(win_id, event_ptr, flags)` — Coleta o próximo evento de entrada da janela.
 /// Retorna:
 ///   1 se um evento foi copiado para `event_ptr`
-///   0 se não há eventos pendentes (fila vazia)
+///   0 se não há eventos pendentes (fila vazia, chamada bloqueante ou padrão)
+///   -EAGAIN (-11) se não há eventos e foi solicitada operação não bloqueante (flags & 1 != 0) ou canal em inicialização
 ///   < 0 em caso de erro (-EINVAL, -EFAULT, -EBADF, -EPERM, -ENOSYS)
-fn sys_window_poll_event(win_id: usize, event_ptr: *mut crate::gui::ClientWindowEvent, _flags: usize) -> isize {
+fn sys_window_poll_event(win_id: usize, event_ptr: *mut crate::gui::ClientWindowEvent, flags: usize) -> isize {
     let pid = scheduler::current_pid();
     if is_current_task_user() {
         if let Err(e) = validate_user_buffer(event_ptr as *const u8, core::mem::size_of::<crate::gui::ClientWindowEvent>(), true) {
@@ -2086,6 +2087,11 @@ fn sys_window_poll_event(win_id: usize, event_ptr: *mut crate::gui::ClientWindow
         return EINVAL;
     }
 
+    // Se canal ainda não inicializado (win_id == 0) e solicitou non-blocking, retorna EAGAIN imediatamente
+    if win_id == 0 && (flags & 1) != 0 {
+        return EAGAIN;
+    }
+
     match crate::gui::window_poll_event(pid, win_id) {
         Ok(Some(ev)) => {
             unsafe {
@@ -2093,8 +2099,22 @@ fn sys_window_poll_event(win_id: usize, event_ptr: *mut crate::gui::ClientWindow
             }
             1
         }
-        Ok(None) => 0,
-        Err(err) => err,
+        Ok(None) => {
+            if (flags & 1) != 0 {
+                EAGAIN
+            } else {
+                // Preempção cooperativa: cede ciclos ao compositor / outras tarefas para evitar spinloop com 100% CPU
+                crate::scheduler::yield_now();
+                0
+            }
+        }
+        Err(err) => {
+            if (flags & 1) != 0 && err == EBADF {
+                EAGAIN
+            } else {
+                err
+            }
+        }
     }
 }
 

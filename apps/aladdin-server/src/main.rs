@@ -490,7 +490,14 @@ impl ProcessHost for UserProcess {
         }
     }
 
-    fn is_process_alive(&self, _pid: usize) -> bool { true }
+    fn is_process_alive(&self, pid: usize) -> bool {
+        if pid == 0 { return false; }
+        let mut stat = [0u8; 128];
+        let ret = unsafe {
+            aladdin_sdk::syscall::syscall3(25, pid as u64, stat.as_mut_ptr() as u64, stat.len() as u64)
+        };
+        ret == 0
+    }
 
     fn spawn_app(&mut self, path: &str) -> Result<usize, ()> {
         let is_browser = path.contains("browser") || path.contains("BROWSER");

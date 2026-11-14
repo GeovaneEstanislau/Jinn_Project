@@ -437,11 +437,13 @@ pub fn graphics_dispatch_client_event(caller_pid: usize, win_id: usize, event: &
     for slot in windows.iter_mut() {
         if let Some(w) = slot {
             if w.id == win_id {
-                let next_tail = w.ev_tail.wrapping_add(1);
-                if (next_tail - w.ev_head) <= 16 {
-                    w.events[w.ev_tail % 16] = *event;
-                    w.ev_tail = next_tail;
+                let count = w.ev_tail.wrapping_sub(w.ev_head);
+                if count >= 16 {
+                    // Descarta o evento mais antigo para evitar que a fila de 16 itens trave o compositor
+                    w.ev_head = w.ev_head.wrapping_add(1);
                 }
+                w.events[w.ev_tail % 16] = *event;
+                w.ev_tail = w.ev_tail.wrapping_add(1);
                 return Ok(());
             }
         }

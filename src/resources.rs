@@ -49,10 +49,10 @@ impl ResourceLimits {
                 HardwareProfile::HighEnd => 32,
             },
             max_windows: match profile {
-                HardwareProfile::Legacy => 2,
-                HardwareProfile::Compact => 4,
-                HardwareProfile::Standard => 6,
-                HardwareProfile::Performance => 8,
+                HardwareProfile::Legacy => 4,
+                HardwareProfile::Compact => 6,
+                HardwareProfile::Standard => 8,
+                HardwareProfile::Performance => 12,
                 HardwareProfile::HighEnd => 16,
             },
             max_jda_buffers: match profile {
