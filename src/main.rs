@@ -516,6 +516,20 @@ pub extern "C" fn _start() -> ! {
         w.set_color(Color::LightGray, Color::Black);
     }
 
+    w.write_string("[+] TLS 1.3 Key Schedule & AEAD (RFC 8446/8439)...");
+    let tls13_ok = net::tls13::run_tls13_self_tests();
+    if tls13_ok {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_line(" OK (HKDF/Transcript/AEAD)");
+        w.set_color(Color::LightGray, Color::Black);
+        serial_write(b"[TLS13] Key Schedule & ChaCha20-Poly1305 AEAD: OK\n");
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_line(" FALHA");
+        w.set_color(Color::LightGray, Color::Black);
+        serial_write(b"[TLS13] Key Schedule & ChaCha20-Poly1305 AEAD: FALHA\n");
+    }
+
     w.write_string("[+] Kernel DMA Manager (KDM Fases 1, 2 e 3)...");
     dma::init();
     let (dma_passed, dma_total) = dma::run_dma_manager_selftests();

@@ -488,3 +488,82 @@ fn test_openssl_interop_transcript_vectors() {
     println!("PASSOU!");
 }
 
+// ── Teste 14: Cifragem e Decifragem de Registros de Aplicação (TLSCiphertext) ─
+
+#[test]
+fn test_tls13_application_record_encryption_decryption() {
+    print!("Teste 14: Cifragem e Decifragem de Registros de Aplicação (TLSCiphertext RFC 8446)... ");
+    let mut client = Tls13Client::new("jinn.os", TrustStore::new());
+    
+    // Injeta chaves de aplicação simuladas (ChaCha20-Poly1305 32 bytes + IV 12 bytes)
+    let app_key = [0x44u8; 32];
+    let app_iv = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC];
+    
+    client.key_schedule.client_app_key = Some(app_key.to_vec());
+    client.key_schedule.client_app_iv = Some(app_iv);
+    client.key_schedule.server_app_key = Some(app_key.to_vec());
+    client.key_schedule.server_app_iv = Some(app_iv);
+
+    let http_request = b"GET /index.html HTTP/1.1\r\nHost: jinn.os\r\nUser-Agent: JinnBrowser/1.0\r\n\r\n";
+    
+    // 1. Encripta como cliente
+    let encrypted_record = client.encrypt_application_record(http_request).expect("Encriptação falhou");
+    
+    // Valida estrutura do frame TLSCiphertext
+    assert_eq!(encrypted_record[0], 0x17); // ContentType application_data
+    assert_eq!(encrypted_record[1], 0x03); // TLS 1.2 legacy version
+    assert_eq!(encrypted_record[2], 0x03);
+    assert_eq!(client.client_seq, 1); // Sequence number deve ter avançado para 1
+
+    // 2. Decripta simulando recepção pelo outro lado (com as mesmas chaves e server_seq sincronizado)
+    let decrypted = client.decrypt_application_record(&encrypted_record).expect("Decriptação falhou");
+    assert_eq!(&decrypted[..], &http_request[..]);
+    assert_eq!(client.server_seq, 1);
+
+    println!("PASSOU!");
+}
+
+// ── Teste 15: Rejeição Rigorosa de Registro com MAC Adulterado (BadRecordMac) ──
+
+#[test]
+fn test_tls13_application_record_tamper_rejection() {
+    print!("Teste 15: Rejeição de adulteração em TLSCiphertext com BadRecordMac... ");
+    let mut client = Tls13Client::new("jinn.os", TrustStore::new());
+    let app_key = [0x55u8; 32];
+    let app_iv = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C];
+    
+    client.key_schedule.client_app_key = Some(app_key.to_vec());
+    client.key_schedule.client_app_iv = Some(app_iv);
+    client.key_schedule.server_app_key = Some(app_key.to_vec());
+    client.key_schedule.server_app_iv = Some(app_iv);
+
+    let plaintext = b"Segredo ultraconfidencial do microkernel Jinn";
+    let mut encrypted = client.encrypt_application_record(plaintext).unwrap();
+
+    // Adultera 1 bit no ciphertext
+    encrypted[10] ^= 0x01;
+    let res = client.decrypt_application_record(&encrypted);
+    assert_eq!(res, Err(Tls13Alert::BadRecordMac));
+
+    // Restaura o ciphertext e adultera o último byte da tag Poly1305
+    encrypted[10] ^= 0x01;
+    let last = encrypted.len() - 1;
+    encrypted[last] ^= 0x80;
+    
+    // Reseta o sequence number do servidor para testar na mesma posição
+    client.server_seq = 0;
+    let res_tag = client.decrypt_application_record(&encrypted);
+    assert_eq!(res_tag, Err(Tls13Alert::BadRecordMac));
+
+    println!("PASSOU!");
+}
+
+// ── Teste 16: Bateria Integrada de Auto-Testes Unitários do TLS 1.3 ────────────
+
+#[test]
+fn test_tls13_builtin_self_tests() {
+    print!("Teste 16: Auto-testes embutidos run_tls13_self_tests()... ");
+    assert!(run_tls13_self_tests());
+    println!("PASSOU!");
+}
+

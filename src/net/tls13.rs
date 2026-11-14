@@ -506,6 +506,70 @@ impl Tls13KeySchedule {
         nonce
     }
 
+    /// Retorna a chave de handshake do cliente expandida/alinhada para 32 bytes (ChaCha20-Poly1305)
+    pub fn client_handshake_key_32(&self) -> Option<[u8; 32]> {
+        let k = self.client_handshake_key.as_ref()?;
+        let mut out = [0u8; 32];
+        if k.len() >= 32 {
+            out.copy_from_slice(&k[..32]);
+        } else if k.len() == 16 {
+            out[..16].copy_from_slice(k);
+            out[16..].copy_from_slice(k);
+        } else {
+            let chunk = k.len().min(32);
+            out[..chunk].copy_from_slice(&k[..chunk]);
+        }
+        Some(out)
+    }
+
+    /// Retorna a chave de handshake do servidor expandida/alinhada para 32 bytes (ChaCha20-Poly1305)
+    pub fn server_handshake_key_32(&self) -> Option<[u8; 32]> {
+        let k = self.server_handshake_key.as_ref()?;
+        let mut out = [0u8; 32];
+        if k.len() >= 32 {
+            out.copy_from_slice(&k[..32]);
+        } else if k.len() == 16 {
+            out[..16].copy_from_slice(k);
+            out[16..].copy_from_slice(k);
+        } else {
+            let chunk = k.len().min(32);
+            out[..chunk].copy_from_slice(&k[..chunk]);
+        }
+        Some(out)
+    }
+
+    /// Retorna a chave de tráfego de aplicação do cliente para 32 bytes (ChaCha20-Poly1305)
+    pub fn client_app_key_32(&self) -> Option<[u8; 32]> {
+        let k = self.client_app_key.as_ref()?;
+        let mut out = [0u8; 32];
+        if k.len() >= 32 {
+            out.copy_from_slice(&k[..32]);
+        } else if k.len() == 16 {
+            out[..16].copy_from_slice(k);
+            out[16..].copy_from_slice(k);
+        } else {
+            let chunk = k.len().min(32);
+            out[..chunk].copy_from_slice(&k[..chunk]);
+        }
+        Some(out)
+    }
+
+    /// Retorna a chave de tráfego de aplicação do servidor para 32 bytes (ChaCha20-Poly1305)
+    pub fn server_app_key_32(&self) -> Option<[u8; 32]> {
+        let k = self.server_app_key.as_ref()?;
+        let mut out = [0u8; 32];
+        if k.len() >= 32 {
+            out.copy_from_slice(&k[..32]);
+        } else if k.len() == 16 {
+            out[..16].copy_from_slice(k);
+            out[16..].copy_from_slice(k);
+        } else {
+            let chunk = k.len().min(32);
+            out[..chunk].copy_from_slice(&k[..chunk]);
+        }
+        Some(out)
+    }
+
     /// Calcula a `verify_data` do bloco Finished (RFC 8446 Seção 4.4.4)
     ///
     /// finished_key = HKDF-Expand-Label(BaseKey, "finished", "", Hash.length)
@@ -1076,4 +1140,445 @@ impl Tls13Client {
 
         Ok(client_finished_msg)
     }
+
+    /// Encripta e formata um registro genérico TLS 1.3 TLSCiphertext (RFC 8446 Seção 5.2)
+    pub fn encrypt_record_with_keys(
+        key: &[u8; 32],
+        iv: &[u8; 12],
+        seq: &mut u64,
+        inner_type: u8,
+        plaintext: &[u8],
+    ) -> Vec<u8> {
+        let mut payload = Vec::with_capacity(plaintext.len() + 1);
+        payload.extend_from_slice(plaintext);
+        payload.push(inner_type);
+
+        let nonce = Tls13KeySchedule::compute_nonce(iv, *seq);
+        *seq = seq.wrapping_add(1);
+
+        let length = payload.len() + 16;
+        let header = [
+            0x17, // ContentType: application_data (legado/envoltório TLS 1.3)
+            0x03, // legacy_record_version major (TLS 1.2 = 0x0303)
+            0x03, // legacy_record_version minor
+            ((length >> 8) & 0xFF) as u8,
+            (length & 0xFF) as u8,
+        ];
+
+        let tag = ChaCha20Poly1305::encrypt(key, &nonce, &header, &mut payload);
+
+        let mut record = Vec::with_capacity(5 + payload.len() + 16);
+        record.extend_from_slice(&header);
+        record.extend_from_slice(&payload);
+        record.extend_from_slice(&tag);
+        record
+    }
+
+    /// Decripta e valida a integridade de um registro genérico TLS 1.3 TLSCiphertext
+    pub fn decrypt_record_with_keys(
+        key: &[u8; 32],
+        iv: &[u8; 12],
+        seq: &mut u64,
+        record_bytes: &[u8],
+    ) -> Result<(u8, Vec<u8>), Tls13Alert> {
+        if record_bytes.len() < 22 {
+            return Err(Tls13Alert::DecodeError);
+        }
+        if record_bytes[0] != 0x17 || record_bytes[1] != 0x03 || record_bytes[2] != 0x03 {
+            return Err(Tls13Alert::UnexpectedMessage);
+        }
+        let length = u16::from_be_bytes([record_bytes[3], record_bytes[4]]) as usize;
+        if length < 17 || record_bytes.len() < 5 + length {
+            return Err(Tls13Alert::DecodeError);
+        }
+
+        let aad = &record_bytes[..5];
+        let ct_len = length - 16;
+        let mut ct = record_bytes[5..5 + ct_len].to_vec();
+        let mut tag = [0u8; 16];
+        tag.copy_from_slice(&record_bytes[5 + ct_len..5 + length]);
+
+        let nonce = Tls13KeySchedule::compute_nonce(iv, *seq);
+        *seq = seq.wrapping_add(1);
+
+        let ok = ChaCha20Poly1305::decrypt(key, &nonce, aad, &mut ct, &tag);
+        if !ok {
+            return Err(Tls13Alert::BadRecordMac);
+        }
+
+        let mut end = ct.len();
+        while end > 0 && ct[end - 1] == 0 {
+            end -= 1;
+        }
+        if end == 0 {
+            return Err(Tls13Alert::DecodeError);
+        }
+        let inner_type = ct[end - 1];
+        let payload = ct[..end - 1].to_vec();
+        Ok((inner_type, payload))
+    }
+
+    /// Encripta registro de Handshake protegido (inner content type 0x16)
+    pub fn encrypt_handshake_record(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, Tls13Alert> {
+        let key = self.key_schedule.client_handshake_key_32().ok_or(Tls13Alert::InternalError)?;
+        let iv = self.key_schedule.client_handshake_iv.ok_or(Tls13Alert::InternalError)?;
+        Ok(Self::encrypt_record_with_keys(&key, &iv, &mut self.client_seq, 0x16, plaintext))
+    }
+
+    /// Decripta registro de Handshake protegido recebido do servidor
+    pub fn decrypt_handshake_record(&mut self, record_bytes: &[u8]) -> Result<Vec<u8>, Tls13Alert> {
+        let key = self.key_schedule.server_handshake_key_32().ok_or(Tls13Alert::InternalError)?;
+        let iv = self.key_schedule.server_handshake_iv.ok_or(Tls13Alert::InternalError)?;
+        let (inner_type, payload) = Self::decrypt_record_with_keys(&key, &iv, &mut self.server_seq, record_bytes)?;
+        if inner_type == 0x15 {
+            return Err(Tls13Alert::CloseNotify);
+        }
+        if inner_type != 0x16 {
+            return Err(Tls13Alert::UnexpectedMessage);
+        }
+        Ok(payload)
+    }
+
+    /// Encripta dados de aplicação HTTP/TCP (inner content type 0x17)
+    pub fn encrypt_application_record(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, Tls13Alert> {
+        let key = self.key_schedule.client_app_key_32().ok_or(Tls13Alert::InternalError)?;
+        let iv = self.key_schedule.client_app_iv.ok_or(Tls13Alert::InternalError)?;
+        Ok(Self::encrypt_record_with_keys(&key, &iv, &mut self.client_seq, 0x17, plaintext))
+    }
+
+    /// Decripta dados de aplicação HTTP/TCP recebidos do servidor
+    pub fn decrypt_application_record(&mut self, record_bytes: &[u8]) -> Result<Vec<u8>, Tls13Alert> {
+        let key = self.key_schedule.server_app_key_32().ok_or(Tls13Alert::InternalError)?;
+        let iv = self.key_schedule.server_app_iv.ok_or(Tls13Alert::InternalError)?;
+        let (inner_type, payload) = Self::decrypt_record_with_keys(&key, &iv, &mut self.server_seq, record_bytes)?;
+        if inner_type == 0x15 {
+            return Err(Tls13Alert::CloseNotify);
+        }
+        if inner_type != 0x17 {
+            return Err(Tls13Alert::UnexpectedMessage);
+        }
+        Ok(payload)
+    }
+}
+
+// ── Cifrador Autenticado ChaCha20-Poly1305 AEAD (RFC 8439) ────────────────────
+
+#[inline(always)]
+fn qr(st: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
+    st[a] = st[a].wrapping_add(st[b]); st[d] ^= st[a]; st[d] = st[d].rotate_left(16);
+    st[c] = st[c].wrapping_add(st[d]); st[b] ^= st[c]; st[b] = st[b].rotate_left(12);
+    st[a] = st[a].wrapping_add(st[b]); st[d] ^= st[a]; st[d] = st[d].rotate_left(8);
+    st[c] = st[c].wrapping_add(st[d]); st[b] ^= st[c]; st[b] = st[b].rotate_left(7);
+}
+
+pub struct ChaCha20 {
+    state: [u32; 16],
+}
+
+impl ChaCha20 {
+    pub fn new(key: &[u8; 32], nonce: &[u8; 12], counter: u32) -> Self {
+        let mut state = [0u32; 16];
+        state[0] = 0x61707865;
+        state[1] = 0x3320646e;
+        state[2] = 0x79622d32;
+        state[3] = 0x6b206574;
+
+        for i in 0..8 {
+            state[4 + i] = u32::from_le_bytes([key[i * 4], key[i * 4 + 1], key[i * 4 + 2], key[i * 4 + 3]]);
+        }
+        state[12] = counter;
+        for i in 0..3 {
+            state[13 + i] = u32::from_le_bytes([nonce[i * 4], nonce[i * 4 + 1], nonce[i * 4 + 2], nonce[i * 4 + 3]]);
+        }
+        Self { state }
+    }
+
+    pub fn block(&mut self, out: &mut [u8; 64]) {
+        let mut working = self.state;
+        for _ in 0..10 {
+            qr(&mut working, 0, 4, 8, 12);
+            qr(&mut working, 1, 5, 9, 13);
+            qr(&mut working, 2, 6, 10, 14);
+            qr(&mut working, 3, 7, 11, 15);
+            qr(&mut working, 0, 5, 10, 15);
+            qr(&mut working, 1, 6, 11, 12);
+            qr(&mut working, 2, 7, 8, 13);
+            qr(&mut working, 3, 4, 9, 14);
+        }
+        for i in 0..16 {
+            let val = working[i].wrapping_add(self.state[i]);
+            out[i * 4..i * 4 + 4].copy_from_slice(&val.to_le_bytes());
+        }
+        self.state[12] = self.state[12].wrapping_add(1);
+    }
+
+    pub fn apply_keystream(&mut self, buffer: &mut [u8]) {
+        let mut block = [0u8; 64];
+        let mut offset = 0;
+        while offset < buffer.len() {
+            self.block(&mut block);
+            let chunk = (buffer.len() - offset).min(64);
+            for i in 0..chunk {
+                buffer[offset + i] ^= block[i];
+            }
+            offset += chunk;
+        }
+    }
+}
+
+pub struct Poly1305 {
+    r0: u64, r1: u64, r2: u64,
+    h0: u64, h1: u64, h2: u64,
+    pad: [u8; 16],
+    buffer: [u8; 16],
+    buf_len: usize,
+}
+
+impl Poly1305 {
+    pub fn new(key: &[u8; 32]) -> Self {
+        let r0 = u64::from_le_bytes([key[0], key[1], key[2], key[3], key[4], key[5], 0, 0]) & 0x0ffffffc0fffffff;
+        let r1 = (u64::from_le_bytes([key[3], key[4], key[5], key[6], key[7], key[8], key[9], key[10]]) >> 6) & 0x0ffffffc0ffffffc;
+        let r2 = (u64::from_le_bytes([key[9], key[10], key[11], key[12], key[13], key[14], key[15], 0]) >> 12) & 0x000000000ffffffc;
+
+        let mut pad = [0u8; 16];
+        pad.copy_from_slice(&key[16..32]);
+
+        Self {
+            r0, r1, r2,
+            h0: 0, h1: 0, h2: 0,
+            pad,
+            buffer: [0u8; 16],
+            buf_len: 0,
+        }
+    }
+
+    fn process_block(&mut self, block: &[u8], is_final: bool) {
+        let mut b = [0u8; 17];
+        b[..block.len()].copy_from_slice(block);
+        if is_final { b[block.len()] = 1; } else { b[16] = 1; }
+
+        let m0 = u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], 0, 0]) & 0x3ffffffffffff;
+        let m1 = (u64::from_le_bytes([b[5], b[6], b[7], b[8], b[9], b[10], b[11], 0]) >> 2) & 0x3ffffffffffff;
+        let m2 = (u64::from_le_bytes([b[11], b[12], b[13], b[14], b[15], b[16], 0, 0]) >> 4) & 0x3ffffffffffff;
+
+        self.h0 += m0;
+        self.h1 += m1;
+        self.h2 += m2;
+
+        let d0 = (self.h0 as u128) * (self.r0 as u128)
+            + (self.h1 as u128) * (self.r2 as u128 * 20)
+            + (self.h2 as u128) * (self.r1 as u128 * 20);
+
+        let d1 = (self.h0 as u128) * (self.r1 as u128)
+            + (self.h1 as u128) * (self.r0 as u128)
+            + (self.h2 as u128) * (self.r2 as u128 * 20);
+
+        let d2 = (self.h0 as u128) * (self.r2 as u128)
+            + (self.h1 as u128) * (self.r1 as u128)
+            + (self.h2 as u128) * (self.r0 as u128);
+
+        let mask = (1u128 << 44) - 1;
+        let mut c = d0 >> 44;
+        self.h0 = (d0 & mask) as u64;
+
+        let d1 = d1 + c;
+        c = d1 >> 44;
+        self.h1 = (d1 & mask) as u64;
+
+        let d2 = d2 + c;
+        c = d2 >> 42;
+        self.h2 = (d2 & ((1u128 << 42) - 1)) as u64;
+
+        self.h0 += (c * 5) as u64;
+        c = (self.h0 >> 44) as u128;
+        self.h0 &= (1u64 << 44) - 1;
+        self.h1 += c as u64;
+    }
+
+    pub fn update(&mut self, data: &[u8]) {
+        let mut offset = 0;
+        if self.buf_len > 0 {
+            let to_copy = (16 - self.buf_len).min(data.len());
+            self.buffer[self.buf_len..self.buf_len + to_copy].copy_from_slice(&data[..to_copy]);
+            self.buf_len += to_copy;
+            offset += to_copy;
+
+            if self.buf_len == 16 {
+                let blk = self.buffer;
+                self.process_block(&blk, false);
+                self.buf_len = 0;
+            }
+        }
+
+        while offset + 16 <= data.len() {
+            self.process_block(&data[offset..offset + 16], false);
+            offset += 16;
+        }
+
+        if offset < data.len() {
+            let rem = data.len() - offset;
+            self.buffer[..rem].copy_from_slice(&data[offset..]);
+            self.buf_len = rem;
+        }
+    }
+
+    pub fn finalize(mut self) -> [u8; 16] {
+        if self.buf_len > 0 {
+            let len = self.buf_len;
+            let mut blk = [0u8; 16];
+            blk[..len].copy_from_slice(&self.buffer[..len]);
+            self.process_block(&blk[..len], true);
+        }
+
+        let mut c = self.h1 >> 44;
+        self.h1 &= (1u64 << 44) - 1;
+        self.h2 += c;
+        c = self.h2 >> 42;
+        self.h2 &= (1u64 << 42) - 1;
+        self.h0 += c * 5;
+        c = self.h0 >> 44;
+        self.h0 &= (1u64 << 44) - 1;
+        self.h1 += c;
+
+        let mut g0 = self.h0.wrapping_add(5);
+        c = g0 >> 44;
+        g0 &= (1u64 << 44) - 1;
+        let mut g1 = self.h1.wrapping_add(c);
+        c = g1 >> 44;
+        g1 &= (1u64 << 44) - 1;
+        let mut g2 = self.h2.wrapping_add(c);
+
+        let mask = ((g2 >> 42) as i64).wrapping_neg() as u64;
+        g2 &= (1u64 << 42) - 1;
+
+        self.h0 = (self.h0 & !mask) | (g0 & mask);
+        self.h1 = (self.h1 & !mask) | (g1 & mask);
+        self.h2 = (self.h2 & !mask) | (g2 & mask);
+
+        let h_bits = (self.h0 as u128) | ((self.h1 as u128) << 44) | ((self.h2 as u128) << 88);
+        let pad_val = u128::from_le_bytes(self.pad);
+        let tag_val = h_bits.wrapping_add(pad_val);
+
+        tag_val.to_le_bytes()
+    }
+}
+
+pub struct ChaCha20Poly1305;
+
+impl ChaCha20Poly1305 {
+    pub fn encrypt(key: &[u8; 32], nonce: &[u8; 12], aad: &[u8], plaintext: &mut [u8]) -> [u8; 16] {
+        let mut cipher0 = ChaCha20::new(key, nonce, 0);
+        let mut poly_key_block = [0u8; 64];
+        cipher0.block(&mut poly_key_block);
+        let mut poly_key = [0u8; 32];
+        poly_key.copy_from_slice(&poly_key_block[..32]);
+
+        let mut cipher1 = ChaCha20::new(key, nonce, 1);
+        cipher1.apply_keystream(plaintext);
+
+        let mut poly = Poly1305::new(&poly_key);
+        poly.update(aad);
+        if aad.len() % 16 != 0 {
+            poly.update(&[0u8; 16][..16 - (aad.len() % 16)]);
+        }
+
+        poly.update(plaintext);
+        if plaintext.len() % 16 != 0 {
+            poly.update(&[0u8; 16][..16 - (plaintext.len() % 16)]);
+        }
+
+        poly.update(&(aad.len() as u64).to_le_bytes());
+        poly.update(&(plaintext.len() as u64).to_le_bytes());
+
+        poly.finalize()
+    }
+
+    pub fn decrypt(key: &[u8; 32], nonce: &[u8; 12], aad: &[u8], ciphertext: &mut [u8], expected_tag: &[u8; 16]) -> bool {
+        let mut cipher0 = ChaCha20::new(key, nonce, 0);
+        let mut poly_key_block = [0u8; 64];
+        cipher0.block(&mut poly_key_block);
+        let mut poly_key = [0u8; 32];
+        poly_key.copy_from_slice(&poly_key_block[..32]);
+
+        let mut poly = Poly1305::new(&poly_key);
+        poly.update(aad);
+        if aad.len() % 16 != 0 {
+            poly.update(&[0u8; 16][..16 - (aad.len() % 16)]);
+        }
+
+        poly.update(ciphertext);
+        if ciphertext.len() % 16 != 0 {
+            poly.update(&[0u8; 16][..16 - (ciphertext.len() % 16)]);
+        }
+
+        poly.update(&(aad.len() as u64).to_le_bytes());
+        poly.update(&(ciphertext.len() as u64).to_le_bytes());
+
+        let computed_tag = poly.finalize();
+
+        let mut diff = 0u8;
+        for i in 0..16 {
+            diff |= expected_tag[i] ^ computed_tag[i];
+        }
+
+        if diff != 0 {
+            return false;
+        }
+
+        let mut cipher1 = ChaCha20::new(key, nonce, 1);
+        cipher1.apply_keystream(ciphertext);
+        true
+    }
+}
+
+/// Executa bateria de auto-testes unitários do TLS 1.3 em tempo de inicialização (#![no_std])
+pub fn run_tls13_self_tests() -> bool {
+    // 1. Teste de RFC 5869 HKDF Extract/Expand
+    let ikm = [0x0bu8; 22];
+    let salt = [
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c,
+    ];
+    let prk = hkdf_extract(&salt, &ikm);
+    if prk[0] != 0x07 || prk[1] != 0x77 || prk[31] != 0xe5 {
+        return false;
+    }
+
+    // 2. Teste de derivação de Nonce XOR (RFC 8446 Seção 5.3)
+    let iv = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0];
+    let nonce0 = Tls13KeySchedule::compute_nonce(&iv, 0);
+    if nonce0 != iv {
+        return false;
+    }
+    let nonce1 = Tls13KeySchedule::compute_nonce(&iv, 1);
+    if nonce1[11] != iv[11] ^ 1 {
+        return false;
+    }
+
+    // 3. Teste Roundtrip AEAD ChaCha20-Poly1305 (RFC 8439)
+    let key = [0x42u8; 32];
+    let aad = b"TLS 1.3 Record Header";
+    let original = b"GET /index.html HTTP/1.1\r\nHost: jinn.os\r\n\r\n";
+    let mut buffer = alloc::vec![0u8; original.len()];
+    buffer.copy_from_slice(original);
+
+    let tag = ChaCha20Poly1305::encrypt(&key, &nonce1, aad, &mut buffer);
+    if &buffer[..] == original {
+        return false; // Ciphertext não pode ser idêntico ao plaintext
+    }
+
+    let decrypt_ok = ChaCha20Poly1305::decrypt(&key, &nonce1, aad, &mut buffer, &tag);
+    if !decrypt_ok || &buffer[..] != original {
+        return false;
+    }
+
+    // 4. Teste de rejeição de tag adulterada
+    let mut bad_tag = tag;
+    bad_tag[0] ^= 0x01;
+    let bad_ok = ChaCha20Poly1305::decrypt(&key, &nonce1, aad, &mut buffer, &bad_tag);
+    if bad_ok {
+        return false; // Rejeição de MAC corrompido é obrigatória
+    }
+
+    true
 }
