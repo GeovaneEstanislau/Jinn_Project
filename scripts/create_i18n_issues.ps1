@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Cria ou gera links para as Issues de internacionalização e chamamento de contribuidores no GitHub.
 

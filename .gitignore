@@ -63,3 +63,9 @@ node_modules/
 /contracts/coverage.json
 /contracts/typechain/
 /contracts/typechain-types/
+
+# Python Virtual Environments and Google Ads secrets
+venv/
+saved/code/venv/
+google-ads.yaml
+*.log
