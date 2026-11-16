@@ -1,29 +1,30 @@
-# 🗺️ Jinn OS — Roteiro de Evolução Computacional (Etapas B, C, D e E)
+# 🗺️ Jinn OS — Roteiro de Evolução Computacional & Arquitetura JHCS
 
 > **Documento Oficial de Engenharia — Etapa A (Consolidação Tecnológica)**  
 > **Data de Emissão:** 16 de Novembro de 2026 | **Branch:** `main` | **Commit Base:** `447780e`  
-> **Princípio Fundamental:** A FPU e a GPU são aceleradores computacionais secundários. O microkernel Jinn OS e o ambiente Aladdin Desktop **não dependem de GPU nem de aceleração externa para funcionar**; a renderização em software puro e o processamento numérico de base permanecem como pilhas canônicas, robustas e plenamente operacionais sob qualquer configuração de hardware.
+> **Princípio Oficial:** **Heterogeneous Computing by Design** — *Computação cooperativa, adaptativa e independente de hardware.*  
+> O microkernel Jinn OS e o ambiente Aladdin Desktop **não dependem de GPU nem de aceleração externa para funcionar**; a renderização em software puro e o processamento numérico de base permanecem como pilhas canônicas, robustas e plenamente operacionais sob qualquer configuração de hardware. Toda a distribuição cooperativa de tarefas é orquestrada pelo **Jinn Heterogeneous Compute Service (JHCS)** em **Ring 3**.
 
 ---
 
 ## 1. Visão Geral das Fases Evolutivas
 
-O plano de evolução computacional do Jinn OS está estruturado em quatro etapas sequenciais estritas, onde cada etapa possui pré-requisitos claros, critérios de aceitação e mecanismos de isolamento que impedem regressões no núcleo estável:
+O plano de evolução computacional do Jinn OS articula as fundações do microkernel (Etapas B a E) com o serviço desacoplado de espaço de usuário **JHCS** (especificado em [JINN_HETEROGENEOUS_COMPUTE_SERVICE.md](file:///d:/Projetos/Jinn/docs/JINN_HETEROGENEOUS_COMPUTE_SERVICE.md)):
 
 ```
 [Etapa A: Auditoria e Consolidação Tecnológica]  <-- [CONCLUÍDA]
        │
        ▼
-[Etapa B: FPU & Isolamento Numérico de Processos]
+[Etapa B: FPU & Isolamento Numérico de Processos]  --> Habilita Backend FPU do JHCS
        │
        ▼
-[Etapa C: GPU como Acelerador Gráfico Secundário]
+[Etapa C: GPU como Acelerador Gráfico Secundário]  --> Habilita Backend GPU / KDM do JHCS
        │
        ▼
-[Etapa D: Escalonador Adaptativo & Topologia SMP]
+[Etapa D: Escalonador Adaptativo & Topologia SMP]  --> Habilita Despacho Cooperativo do JHCS
        │
        ▼
-[Etapa E: Aquecimento Preditivo de Recursos sob 64 MB]
+[Etapa E: Aquecimento Preditivo de Recursos sob 64 MB] --> Habilita Pre-caching do Compute Broker
 ```
 
 ---
