@@ -216,31 +216,69 @@ function filterByCategory(category) {
   });
 }
 
-// ── 4. Terminal Interativo (Aladdin Shell Ring 3) ────────────────────────────
+// ── 4. Terminal Interativo (Aladdin Shell Ring 3 & GitHub Dispatcher) ───────
 
-const TERMINAL_HELP = `Comandos do Jinn Microkernel Shell (Ring 3):
-  help            - Exibe esta lista de comandos disponíveis
-  uname -a        - Detalhes da arquitetura do kernel e compilador
-  uptime          - Tempo de execução contínua e frequência APIC
-  ps              - Lista os processos ativos e níveis de privilégio (Ring 0 / Ring 3)
-  ls [/disk]      - Lista arquivos nas partições VFS (FAT32 / Ext2)
-  cat <arquivo>   - Lê o conteúdo de um arquivo do VFS (ex: cat /disk/README.TXT)
-  browser         - Inicializa o simulador do Jinn Browser Engine
-  history         - Abre o ensaio memorialístico e filosofia do Jinn
-  creator         - Detalhes e links do criador (Geovane da C. Estanislau)
-  contact         - Abre a janela de mensagens diretas via Supabase
-  clear           - Limpa a tela do terminal
-  reboot          - Reinicia a sessão simulada do sistema`;
+const TERMINAL_HELP = `JINN OS Shell v0.0.3 — Ajuda de Comandos:
+  gui      - Inicia o subsistema gráfico e abre a spec do Aladdin no GitHub.
+  aladdin  - Exibe informações e documentação do compositor Aladdin.
+  browser  - Direciona para o código fonte do Jinn Browser.
+  vfs      - Abre a especificação do sistema de arquivos (FAT32/Ext2).
+  pki      - Consulta os módulos de criptografia e X.509 PKI.
+  kernel   - Visita o repositório principal do microkernel Jinn.
+  clear    - Limpa a tela do terminal.`;
+
+const GITHUB_ROUTING_MAP = {
+  gui: {
+    url: 'https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/RELATORIO_IMPLEMENTACOES_JINN_OS.md',
+    desc: 'Compositor Aladdin Ring 3 & Especificações Gráficas'
+  },
+  aladdin: {
+    url: 'https://github.com/GeovaneEstanislau/Aladdin',
+    desc: 'Repositório Oficial do Aladdin Desktop / Server'
+  },
+  browser: {
+    url: 'https://github.com/GeovaneEstanislau/Jinn_Project/tree/main/apps/ola-mundo',
+    desc: 'Código Fonte do Jinn Browser Engine (Ring 3)'
+  },
+  vfs: {
+    url: 'https://github.com/GeovaneEstanislau/Jinn_Project/tree/main/src/vfs',
+    desc: 'Subsistema de Arquivos Virtual (FAT32/Ext2)'
+  },
+  files: {
+    url: 'https://github.com/GeovaneEstanislau/Jinn_Project/tree/main/src/vfs',
+    desc: 'Subsistema de Arquivos Virtual (FAT32/Ext2)'
+  },
+  pki: {
+    url: 'https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/src/net/x509.rs',
+    desc: 'Módulos de Criptografia, Certificados X.509 e PKI'
+  },
+  tls: {
+    url: 'https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/src/net/x509.rs',
+    desc: 'Módulos de Criptografia e TLS 1.3'
+  },
+  kernel: {
+    url: 'https://github.com/GeovaneEstanislau/Jinn_Project',
+    desc: 'Repositório Principal do Microkernel Jinn'
+  },
+  uname: {
+    url: 'https://github.com/GeovaneEstanislau/Jinn_Project',
+    desc: 'Repositório Principal do Microkernel Jinn'
+  }
+};
 
 function initTerminal() {
   const input = document.getElementById('term-input');
   const history = document.getElementById('term-history');
   if (!input || !history) return;
 
-  function appendOutput(text, color = '#38bdf8') {
+  function appendOutput(text, color = '#38bdf8', isHtml = false) {
     const p = document.createElement('div');
     p.style.color = color;
-    p.textContent = text;
+    if (isHtml) {
+      p.innerHTML = text;
+    } else {
+      p.textContent = text;
+    }
     history.appendChild(p);
     history.scrollTop = history.scrollHeight;
   }
@@ -262,14 +300,36 @@ function handleTerminalCommand(cmd, output, historyEl) {
   const command = parts[0].toLowerCase();
   const arg = parts[1] || '';
 
+  // 1. Comando Help (exclusivamente interno)
+  if (command === 'help') {
+    output(TERMINAL_HELP, '#93c5fd');
+    return;
+  }
+
+  // 2. Comando Clear (limpeza de buffer de tela)
+  if (command === 'clear') {
+    historyEl.innerHTML = '';
+    return;
+  }
+
+  // 3. Comandos com Redirecionamento Automático para o GitHub
+  if (GITHUB_ROUTING_MAP[command]) {
+    const route = GITHUB_ROUTING_MAP[command];
+    output(`[sys] Inicializando subsistema '${command}'...`, '#38bdf8');
+    output(`[sys] Localizado: ${route.desc}`, '#cbd5e1');
+    output(`[net] Conectando ao repositório GitHub...`, '#a855f7');
+    output(`[url] ${route.url}`, '#10b981');
+    output(`[sys] Redirecionando navegador em 750ms...`, '#38bdf8');
+    output(`<a href="${route.url}" target="_blank" style="color: #67e8f9; text-decoration: underline;">[Clique aqui caso o redirecionamento automático não inicie]</a>`, '#67e8f9', true);
+
+    setTimeout(() => {
+      window.location.href = route.url;
+    }, 750);
+    return;
+  }
+
+  // 4. Comandos auxiliares de simulação interna (Easter eggs / ferramentas locais)
   switch (command) {
-    case 'help':
-      output(TERMINAL_HELP, '#93c5fd');
-      break;
-    case 'uname':
-    case 'uname -a':
-      output('Jinn OS 0.0.3-alpha x86_64 SMP (4 Cores) no_std bare-metal Rust [Limine Boot v2]', '#a855f7');
-      break;
     case 'uptime':
       output('Up: 147s | 100 Hz APIC Timer | Preempcoes ativas: 14,700 ticks | Quantum: 10ms', '#38bdf8');
       break;
@@ -302,10 +362,6 @@ sem dependência de FPU e com controle estrito de memória.`, '#f8fafc');
         output(`cat: Arquivo '${arg}' lido via VFS. Dados brutos normalizados.`, '#f59e0b');
       }
       break;
-    case 'browser':
-      openWindow('win-browser');
-      output('Jinn Browser Engine (Ring 3) iniciado com sucesso!', '#10b981');
-      break;
     case 'history':
       openWindow('win-history');
       output('Janela do Ensaio Histórico e Filosófico aberta.', '#38bdf8');
@@ -318,9 +374,6 @@ sem dependência de FPU e com controle estrito de memória.`, '#f8fafc');
       openWindow('win-contact');
       output('Formulário de contato seguro via Supabase aberto.', '#38bdf8');
       break;
-    case 'clear':
-      historyEl.innerHTML = '';
-      break;
     case 'reboot':
       output('Reiniciando subsistemas do microkernel Jinn...', '#ef4444');
       setTimeout(() => {
@@ -329,7 +382,7 @@ sem dependência de FPU e com controle estrito de memória.`, '#f8fafc');
       }, 700);
       break;
     default:
-      output(`Comando '${cmd}' não reconhecido. Digite 'help' para ver os comandos.`, '#f87171');
+      output(`Comando '${cmd}' não reconhecido. Digite 'help' para ver os comandos disponíveis.`, '#f87171');
       break;
   }
 }
