@@ -302,6 +302,8 @@ pub struct Task {
     pub pml4_phys: u64,
     /// Código de saída (válido quando state == Zombie).
     pub exit_code: i32,
+    /// Estado arquitetural da FPU/SIMD salvo para esta tarefa (512 bytes alinhados a 16).
+    pub fpu_state: crate::fpu::FpuState,
 
     // ── Contabilização de CPU ─────────────────────────────────────────────
     /// Número de ticks de timer consumidos por esta tarefa.
@@ -572,6 +574,7 @@ impl Scheduler {
                 kstack_top,
                 pml4_phys,
                 exit_code: 0,
+                fpu_state: crate::fpu::FpuState::new_user_default(),
                 cpu_ticks: 0,
                 ctx_switches: 0,
                 irq_preemptions: 0,
@@ -700,6 +703,7 @@ impl Scheduler {
                 kstack_top,
                 pml4_phys,
                 exit_code: 0,
+                fpu_state: crate::fpu::FpuState::new_user_default(),
                 cpu_ticks: 0,
                 ctx_switches: 0,
                 irq_preemptions: 0,
@@ -808,6 +812,12 @@ impl Scheduler {
         task.resources.open_windows = 0;
         task.resources.open_jda_buffers = 0;
 
+        // Reinicializa o estado FPU para o novo executável e carrega registradores zerados
+        task.fpu_state = crate::fpu::FpuState::new_user_default();
+        unsafe {
+            crate::fpu::fxrstor64(&task.fpu_state);
+        }
+
         // Comuta CR3 para o novo espaço de usuário
         unsafe {
             paging::load_cr3(pml4_new);
@@ -877,6 +887,7 @@ impl Scheduler {
             kstack_top,
             pml4_phys,
             exit_code: 0,
+            fpu_state: crate::fpu::FpuState::new_user_default(),
             cpu_ticks: 0,
             ctx_switches: 0,
             irq_preemptions: 0,
@@ -993,6 +1004,7 @@ impl Scheduler {
             kstack_top,
             pml4_phys,
             exit_code: 0,
+            fpu_state: crate::fpu::FpuState::new_user_default(),
             cpu_ticks: 0,
             ctx_switches: 0,
             irq_preemptions: 0,
@@ -1075,6 +1087,7 @@ impl Scheduler {
                 kstack_top,
                 pml4_phys,
                 exit_code: 0,
+                fpu_state: crate::fpu::FpuState::new_user_default(),
                 cpu_ticks: 0,
                 ctx_switches: 0,
                 irq_preemptions: 0,
@@ -1152,6 +1165,8 @@ impl Scheduler {
             task.state        = TaskState::Zombie;
             task.exit_code    = code;
             task.running_on_cpu = None;
+            // Sanitiza estado FPU para evitar vazamento de memória residual pós-morte
+            task.fpu_state = crate::fpu::FpuState::new_user_default();
 
             // Fecha todos os descritores unificados (VFS ou Sockets)
             for fd_opt in task.fds.iter_mut() {
@@ -1296,6 +1311,9 @@ impl Scheduler {
         if let Some(Some(sender)) = self.tasks.get_mut(sender_pid) {
             sender.saved_rsp = sender_rsp;
             sender.state = TaskState::Blocked; // Bloqueado esperando reply
+            if sender.ring == Ring::User {
+                unsafe { crate::fpu::fxsave64(&mut sender.fpu_state); }
+            }
         } else {
             return None;
         }
@@ -1333,6 +1351,13 @@ impl Scheduler {
         let current_cr3 = paging::current_cr3();
         if current_cr3 != receiver_pml4 {
             unsafe { paging::load_cr3(receiver_pml4); }
+        }
+
+        // Se o receptor executa em Ring 3, restaura seu estado FPU
+        if receiver_ring == Ring::User {
+            if let Some(Some(receiver)) = self.tasks.get(receiver_pid) {
+                unsafe { crate::fpu::fxrstor64(&receiver.fpu_state); }
+            }
         }
 
         Some(receiver_rsp)
@@ -1442,8 +1467,15 @@ impl Scheduler {
             return curr_frame_ptr;
         }
 
-        // Salva RSP da tarefa atual e atualiza estatísticas de troca
+        // Salva RSP e estado FPU da tarefa atual e atualiza estatísticas de troca
         if let Some(cur) = cur_id_opt {
+            if let Some(task) = &mut self.tasks[cur] {
+                // Salva estado FPU se a tarefa de saída for Ring 3
+                if task.ring == Ring::User {
+                    unsafe { crate::fpu::fxsave64(&mut task.fpu_state); }
+                }
+            }
+
             if quota_violation {
                 if let Some(task) = &mut self.tasks[cur] {
                     task.saved_rsp = curr_frame_ptr;
@@ -1529,6 +1561,11 @@ impl Scheduler {
                         let current_cr3 = paging::current_cr3();
                         if current_cr3 != task.pml4_phys || task.ring == Ring::User {
                             unsafe { paging::load_cr3(task.pml4_phys); }
+                        }
+
+                        // 3. Se a tarefa for Ring 3, restaura seu estado FPU/SIMD isolado
+                        if task.ring == Ring::User {
+                            unsafe { crate::fpu::fxrstor64(&task.fpu_state); }
                         }
 
                         let elapsed_tsc = read_tsc().saturating_sub(start_tsc);

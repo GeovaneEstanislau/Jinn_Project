@@ -12,6 +12,7 @@ pub mod dma;
 pub mod drivers;
 pub mod elf;
 pub mod font;
+pub mod fpu;
 pub mod flusher;
 pub mod hardware_profiler;
 pub mod httpd;

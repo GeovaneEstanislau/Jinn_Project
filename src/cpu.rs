@@ -300,6 +300,7 @@ pub unsafe fn enable_sse() {
     let mut cr0 = read_cr0();
     cr0 &= !(1 << 2); // Limpa bit 2 (EM - Emulação de coprocessador)
     cr0 |= 1 << 1;    // Define bit 1 (MP - Monitor coprocessor)
+    cr0 |= 1 << 5;    // Define bit 5 (NE - Numeric Error, tratamento nativo via #MF vetor 16)
     core::arch::asm!("mov cr0, {}", in(reg) cr0, options(nomem, nostack, preserves_flags));
 
     let mut cr4 = read_cr4();
