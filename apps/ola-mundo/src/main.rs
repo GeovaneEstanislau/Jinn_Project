@@ -4297,22 +4297,8 @@ unsafe fn test_tls13_cryptography_and_syscalls() {
 // ── Entry Point ──────────────────────────────────────────────────────────────
 
 #[no_mangle]
-pub extern "C" fn _start() -> ! {
-    let argc: usize;
-    let argv: *const *const u8;
-    let _envp: *const *const u8;
-
+pub extern "C" fn _start(argc: usize, argv: *const *const u8, _envp: *const *const u8) -> ! {
     unsafe {
-        core::arch::asm!(
-            "mov {0}, rdi",
-            "mov {1}, rsi",
-            "mov {2}, rdx",
-            out(reg) argc,
-            out(reg) argv,
-            out(reg) _envp,
-            options(nomem, nostack)
-        );
-
         let mut is_explicit_main = false;
         if argc > 1 && !argv.is_null() {
             let arg1 = *argv.add(1);

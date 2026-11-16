@@ -727,8 +727,8 @@ pub extern "C" fn _start() -> ! {
                             }
                         }
 
-                        let wm_id = match target_wm_id {
-                            Some(id) => id,
+                        let (wm_id, is_new) = match target_wm_id {
+                            Some(id) => (id, false),
                             None => {
                                 let title_bytes = &win.title[..(win.title_len as usize).min(48)];
                                 let title_str = core::str::from_utf8(title_bytes).unwrap_or("App Ring 3");
@@ -759,15 +759,15 @@ pub extern "C" fn _start() -> ! {
                                                 active: true,
                                             };
                                         }
-                                        new_wm_id
+                                        (new_wm_id, true)
                                     }
                                     Err(()) => continue,
                                 }
                             }
                         };
 
-                        // 3. Atualiza superfície quando danificada
-                        if win.damaged == 1 {
+                        // 3. Atualiza superfície quando danificada ou recém-criada (IMP-02)
+                        if win.damaged == 1 || is_new {
                             let total_px = (win.width as usize) * (win.height as usize);
                             if total_px > 0 && total_px <= 1024 * 768 {
                                 if client_cache_buf.len() < total_px {
