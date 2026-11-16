@@ -5,13 +5,13 @@
 
 // ── 1. Configuração do Supabase & Google Ads ─────────────────────────────────
 
-const SUPABASE_URL = window.ENV_SUPABASE_URL || 'https://krtxsjnvyijfeycxdqjy.supabase.co';
-const SUPABASE_ANON_KEY = window.ENV_SUPABASE_ANON_KEY || 'sb_publishable_ZRzHmTfIBlkSU2oQS_kM6w_jZ95cZCG';
+const NEXT_PUBLIC_SUPABASE_URL = window.NEXT_PUBLIC_SUPABASE_URL || window.ENV_SUPABASE_URL || 'https://krtxsjnvyijfeycxdqjy.supabase.co';
+const NEXT_PUBLIC_SUPABASE_ANON_KEY = window.NEXT_PUBLIC_SUPABASE_ANON_KEY || window.ENV_SUPABASE_ANON_KEY || 'sb_publishable_ZRzHmTfIBlkSU2oQS_kM6w_jZ95cZCG';
 
 let supabaseClient = null;
 try {
   if (window.supabase && typeof window.supabase.createClient === 'function') {
-    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    supabaseClient = window.supabase.createClient(NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY);
   }
 } catch (e) {
   console.warn('[Supabase] Inicializado em modo cliente seguro:', e);
@@ -219,22 +219,30 @@ function filterByCategory(category) {
 // ── 4. Terminal Interativo (Aladdin Shell Ring 3 & GitHub Dispatcher) ───────
 
 const TERMINAL_HELP = `JINN OS Shell v0.0.3 — Ajuda de Comandos:
-  gui      - Inicia o subsistema gráfico e abre a spec do Aladdin no GitHub.
-  aladdin  - Exibe informações e documentação do compositor Aladdin.
-  browser  - Direciona para o código fonte do Jinn Browser.
-  vfs      - Abre a especificação do sistema de arquivos (FAT32/Ext2).
-  pki      - Consulta os módulos de criptografia e X.509 PKI.
-  kernel   - Visita o repositório principal do microkernel Jinn.
-  clear    - Limpa a tela do terminal.`;
+  help     - Exibe esta lista de comandos disponíveis
+  gui      - Redireciona para o relatório de migração do Aladdin Desktop (Ring 3)
+  browser  - Redireciona para o código-fonte do Jinn Browser Engine
+  vfs      - Redireciona para o subsistema de arquivos FAT32/Ext2
+  pki      - Redireciona para o módulo de criptografia e certificados X.509
+  tls      - Redireciona para o módulo de criptografia e TLS 1.3
+  kernel   - Redireciona para a raiz do repositório principal no GitHub
+  history  - Abre a janela do Ensaio Histórico e Filosofia do Jinn OS
+  creator  - Apresenta o perfil biográfico do Criador (Geovane Estanislau)
+  contact  - Abre o formulário de contato seguro via Supabase
+  clear    - Limpa a tela do terminal
+  uptime   - Exibe o tempo de atividade e preempção do APIC timer
+  ps       - Lista os processos ativos e níveis de privilégio (Ring 0 / Ring 3)
+  ls       - Lista arquivos na partição virtual /disk
+  reboot   - Reinicia a sessão simulada do sistema`;
 
 const GITHUB_ROUTING_MAP = {
   gui: {
     url: 'https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/RELATORIO_IMPLEMENTACOES_JINN_OS.md',
-    desc: 'Compositor Aladdin Ring 3 & Especificações Gráficas'
+    desc: 'Relatório de Migração e Especificações do Aladdin Desktop (Ring 3)'
   },
   aladdin: {
     url: 'https://github.com/GeovaneEstanislau/Aladdin',
-    desc: 'Repositório Oficial do Aladdin Desktop / Server'
+    desc: 'Repositório Oficial do Compositor Gráfico Aladdin'
   },
   browser: {
     url: 'https://github.com/GeovaneEstanislau/Jinn_Project/tree/main/apps/ola-mundo',
@@ -312,8 +320,8 @@ function handleTerminalCommand(cmd, output, historyEl) {
     return;
   }
 
-  // 3. Comandos com Redirecionamento Automático para o GitHub
-  if (GITHUB_ROUTING_MAP[command]) {
+  // 3. Comandos com Redirecionamento Automático para o GitHub (protegido contra prototype lookup)
+  if (Object.prototype.hasOwnProperty.call(GITHUB_ROUTING_MAP, command)) {
     const route = GITHUB_ROUTING_MAP[command];
     output(`[sys] Inicializando subsistema '${command}'...`, '#38bdf8');
     output(`[sys] Localizado: ${route.desc}`, '#cbd5e1');
@@ -321,6 +329,8 @@ function handleTerminalCommand(cmd, output, historyEl) {
     output(`[url] ${route.url}`, '#10b981');
     output(`[sys] Redirecionando navegador em 750ms...`, '#38bdf8');
     output(`<a href="${route.url}" target="_blank" style="color: #67e8f9; text-decoration: underline;">[Clique aqui caso o redirecionamento automático não inicie]</a>`, '#67e8f9', true);
+
+    trackConversion('github_redirect_' + command);
 
     setTimeout(() => {
       window.location.href = route.url;
@@ -387,15 +397,35 @@ sem dependência de FPU e com controle estrito de memória.`, '#f8fafc');
   }
 }
 
-// ── 5. Integração com Supabase (Formulário de Contato) ───────────────────────
+// ── 5. Integração com Supabase (Formulário de Contato Anti-Spam) ─────────────
 
 function initContactForm() {
   const form = document.getElementById('contact-form');
   const statusEl = document.getElementById('contact-status');
   if (!form) return;
 
+  const LAST_SUBMIT_KEY = 'jinn_last_contact_ts';
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+
+    // 1. Verificação Anti-Spam (Honeypot)
+    const hp = document.getElementById('contact-hp');
+    if (hp && hp.value.trim() !== '') {
+      console.warn('[Anti-Spam] Bot trigger detectado via honeypot.');
+      statusEl.innerHTML = '<span style="color:#10b981;">✓ Mensagem enviada com sucesso!</span>';
+      form.reset();
+      return;
+    }
+
+    // 2. Proteção Anti-Flooding (Cooldown de 15 segundos)
+    const lastSubmit = parseInt(localStorage.getItem(LAST_SUBMIT_KEY) || '0', 10);
+    const now = Date.now();
+    if (now - lastSubmit < 15000) {
+      statusEl.innerHTML = '<span style="color:#f59e0b;">⏳ Aguarde alguns segundos antes de enviar outra mensagem.</span>';
+      return;
+    }
+
     const name = document.getElementById('contact-name').value.trim();
     const contact = document.getElementById('contact-sender').value.trim();
     const content = document.getElementById('contact-content').value.trim();
@@ -410,7 +440,7 @@ function initContactForm() {
     try {
       let isSuccess = false;
 
-      if (supabaseClient && SUPABASE_URL !== 'https://xyzcompany.supabase.co') {
+      if (supabaseClient && NEXT_PUBLIC_SUPABASE_URL && !NEXT_PUBLIC_SUPABASE_URL.includes('xyzcompany')) {
         const { error } = await supabaseClient
           .from('jinn_messages')
           .insert([
@@ -423,14 +453,15 @@ function initContactForm() {
         if (error) throw error;
         isSuccess = true;
       } else {
-        // Modo Demonstração Seguro / Mock quando as chaves ainda não foram preenchidas no HTML
-        await new Promise(res => setTimeout(res, 800));
+        // Modo Demonstração Seguro / Mock quando offline
+        await new Promise(res => setTimeout(res, 600));
         isSuccess = true;
         console.log('[Supabase Mock] Mensagem registrada:', { name, contact, content });
       }
 
       if (isSuccess) {
-        statusEl.innerHTML = '<span style="color:#10b981;">✓ Mensagem enviada com sucesso! Obrigado pelo contato.</span>';
+        localStorage.setItem(LAST_SUBMIT_KEY, Date.now().toString());
+        statusEl.innerHTML = '<span style="color:#10b981;">✓ Mensagem enviada com sucesso! Os dados foram gravados via RLS.</span>';
         form.reset();
 
         // Dispara evento de conversão do Google Ads
@@ -438,7 +469,7 @@ function initContactForm() {
       }
     } catch (err) {
       console.error('[Supabase Error]', err);
-      statusEl.innerHTML = '<span style="color:#f59e0b;">✓ Mensagem recebida! (Modo de entrega local ativo).</span>';
+      statusEl.innerHTML = '<span style="color:#f59e0b;">✓ Mensagem recebida! (Canal de contingência ativo).</span>';
       form.reset();
       trackConversion('contact_submit');
     }

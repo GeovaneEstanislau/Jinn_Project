@@ -28,6 +28,12 @@
     gtag('config', 'AW-XXXXXXXXX');
   </script>
 
+  <!-- Supabase Public Configuration -->
+  <script>
+    window.NEXT_PUBLIC_SUPABASE_URL = "https://krtxsjnvyijfeycxdqjy.supabase.co";
+    window.NEXT_PUBLIC_SUPABASE_ANON_KEY = "sb_publishable_ZRzHmTfIBlkSU2oQS_kM6w_jZ95cZCG";
+  </script>
+
   <!-- Tailwind CSS & Lucide Icons -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
@@ -430,11 +436,11 @@
          ========================================================================= -->
 
     <!-- Janela 1: A História do Jinn OS -->
-    <div class="os-window hidden" id="win-history" style="top: 70px; left: 60px; width: 720px; height: 540px;">
+    <div class="os-window hidden" id="win-history" style="top: 70px; left: 60px; width: 740px; height: 560px;">
       <div class="os-window-header">
         <div class="os-window-title">
           <i data-lucide="book-open" class="w-4 h-4 text-indigo-400"></i>
-          <span>Jinn OS — Diário de um Sistema Operacional & Filosofia de Projeto</span>
+          <span>Jinn OS — História, Filosofia de Projeto & Arquitetura</span>
         </div>
         <div class="os-window-controls">
           <div class="win-btn min" title="Minimizar"></div>
@@ -444,10 +450,8 @@
       </div>
       <div class="os-window-content space-y-5 text-slate-200">
         <div class="bg-indigo-950/40 p-4 rounded-xl border border-indigo-500/20">
-          <h2 class="text-xl font-bold text-indigo-300 mb-1">A Primeira Tese: Por que continuamos construindo o futuro
-            com as ferramentas do passado?</h2>
-          <p class="text-xs text-indigo-400 font-mono">Volume I — A Origem | Capítulo 1 — Antes de existir o primeiro
-            código</p>
+          <h2 class="text-xl font-bold text-indigo-300 mb-1">A Filosofia do Jinn OS: Redefinindo os Fundamentos da Computação Soberana</h2>
+          <p class="text-xs text-indigo-400 font-mono">Volume I — Origens, Princípios Fundamentais e Arquitetura do Microkernel</p>
         </div>
 
         <blockquote class="border-l-4 border-cyan-400 pl-4 py-1 italic text-cyan-200 bg-cyan-950/20 rounded-r">
@@ -456,62 +460,74 @@
         </blockquote>
 
         <p class="leading-relaxed text-sm">
-          A história do <strong>Jinn OS</strong> não começou com a primeira linha de código ou com a primeira compilação
-          do microkernel x86_64 em Rust. Começou com uma inquietude que acompanhou o pesquisador e desenvolvedor
-          <strong>Geovane da Conceição Estanislau</strong> por muitos anos, através de experiências acadêmicas,
-          profissionais e de vida.
+          A história do <strong>Jinn OS</strong> não começou com uma simples linha de código, mas com a recusa em aceitar que a computação moderna continue refém de decisões tomadas há 40 ou 50 anos. Idealizado e implementado por <strong>Geovane da Conceição Estanislau</strong>, o Jinn nasceu da convicção de que sistemas operacionais de infraestrutura devem ser concebidos para alta previsibilidade, isolamento formal e soberania de código.
         </p>
 
         <h3 class="text-md font-semibold text-white flex items-center gap-2">
           <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
-          Os Três Desafios que Moldaram a Arquitetura
+          Pilares Arquiteturais da Filosofia de Projeto
         </h3>
 
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div class="bg-slate-900/60 p-3 rounded-lg border border-white/5">
-            <h4 class="font-bold text-cyan-300 text-xs mb-1">1. A Experiência Humana</h4>
-            <p class="text-xs text-slate-400 leading-normal">
-              Sistemas convencionais exigem que o usuário aprenda uma sobrecarga excessiva de procedimentos legados. A
-              tecnologia deve reduzir barreiras, não impor novos rituais.
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5 text-xs">
+          <div class="bg-slate-900/70 p-3.5 rounded-lg border border-cyan-500/20 space-y-1.5">
+            <h4 class="font-bold text-cyan-300 flex items-center gap-2">
+              <i data-lucide="shield-check" class="w-4 h-4 text-cyan-400"></i>
+              Rust Bare-Metal (#![no_std])
+            </h4>
+            <p class="text-slate-300 leading-relaxed">
+              O microkernel é compilado sem qualquer dependência da biblioteca padrão (<code>#![no_std]</code>), sem runtime pesado e sem libc. Cada byte em memória e cada ciclo de CPU são diretamente controlados com garantias estritas de segurança de memória em tempo de compilação.
             </p>
           </div>
-          <div class="bg-slate-900/60 p-3 rounded-lg border border-white/5">
-            <h4 class="font-bold text-emerald-300 text-xs mb-1">2. A Herança Tecnológica</h4>
-            <p class="text-xs text-slate-400 leading-normal">
-              Barramentos e modelos de 40 anos atrás condicionam o que conseguimos projetar hoje. O Jinn foi desenhado
-              em <code>no_std</code> puro, livre de bibliotecas legadas inchadas.
+
+          <div class="bg-slate-900/70 p-3.5 rounded-lg border border-emerald-500/20 space-y-1.5">
+            <h4 class="font-bold text-emerald-300 flex items-center gap-2">
+              <i data-lucide="cpu" class="w-4 h-4 text-emerald-400"></i>
+              Microkernel Preemptivo & Ring 3
+            </h4>
+            <p class="text-slate-300 leading-relaxed">
+              O núcleo opera estritamente em Ring 0 com escalonamento preemptivo por timer APIC/PIT (100 Hz / quantum 10ms). Drivers de dispositivos e o compositor gráfico Aladdin operam em Ring 3 sob proteção de hardware e paginação PML4 W^X. Falhas em drivers jamais derrubam o microkernel.
             </p>
           </div>
-          <div class="bg-slate-900/60 p-3 rounded-lg border border-white/5">
-            <h4 class="font-bold text-purple-300 text-xs mb-1">3. A Soberania do Saber</h4>
-            <p class="text-xs text-slate-400 leading-normal">
-              A computação precisa ser compreensível, verificável e transparente. O microkernel Ring 0 isola o núcleo de
-              erros em drivers ou aplicações de usuários.
+
+          <div class="bg-slate-900/70 p-3.5 rounded-lg border border-amber-500/20 space-y-1.5">
+            <h4 class="font-bold text-amber-300 flex items-center gap-2">
+              <i data-lucide="zap" class="w-4 h-4 text-amber-400"></i>
+              Bootloader Limine (Protocol v2)
+            </h4>
+            <p class="text-slate-300 leading-relaxed">
+              A inicialização utiliza o protocolo Limine v2, eliminando armadilhas de carregamento legadas em MBR/BIOS e UEFI. O bootloader entrega o mapa de memória física, o framebuffer gráfico linear e os módulos ELF ao microkernel em estado determinístico.
+            </p>
+          </div>
+
+          <div class="bg-slate-900/70 p-3.5 rounded-lg border border-purple-500/20 space-y-1.5">
+            <h4 class="font-bold text-purple-300 flex items-center gap-2">
+              <i data-lucide="gauge" class="w-4 h-4 text-purple-400"></i>
+              Eficiência e Teto Estrito de RAM
+            </h4>
+            <p class="text-slate-300 leading-relaxed">
+              Projetado sob um teto severo de 64 MB de memória física (~19 MB de uso real estável com desktop Aladdin, VFS e navegador ativos). O compositor gráfico opera sem FPU no caminho crítico e com 0 alocações de heap por quadro, provado com zero discrepância pelo subsistema JAHA.
             </p>
           </div>
         </div>
 
         <h3 class="text-md font-semibold text-white flex items-center gap-2">
           <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-          Marcos de Conquista no Alpha 0.0.3
+          Avanços Tecnológicos Validados no Ecossistema
         </h3>
         <ul class="space-y-1.5 text-xs text-slate-300 list-disc list-inside">
-          <li><strong>Isolamento Ring 3 Estrito:</strong> Driver Manager e Servidor Gráfico Aladdin rodam como processos
-            independentes protegidos por hardware (PML4).</li>
-          <li><strong>Compositor Gráfico sem FPU:</strong> Renderização 2D inteira acelerada por software, operando sem
-            co-processador matemático no caminho crítico.</li>
-          <li><strong>Orçamento Ultrabaixo de Memória:</strong> Sistema completo ativo consumindo menos de 45 MB de RAM.
-          </li>
+          <li><strong>Pilha Criptográfica Soberana:</strong> Implementação nativa de TLS 1.3 (RFC 8446) com Key Schedule HKDF completo, PKI X.509 e ChaCha20-Poly1305 (RFC 8439) em <code>no_std</code>.</li>
+          <li><strong>VFS Multi-partição:</strong> Suporte nativo a partições primárias FAT32 (/disk) com LRU Block Cache e partições secundárias Ext2 (/ext2).</li>
+          <li><strong>Isolamento de Falhas:</strong> Arquitetura de drivers de usuário com supervisor capaz de restaurar serviços sem reiniciar a máquina.</li>
         </ul>
       </div>
     </div>
 
     <!-- Janela 2: O Criador (Geovane da Conceição Estanislau) -->
-    <div class="os-window hidden" id="win-creator" style="top: 80px; left: 140px; width: 680px; height: 520px;">
+    <div class="os-window hidden" id="win-creator" style="top: 80px; left: 140px; width: 680px; height: 530px;">
       <div class="os-window-header">
         <div class="os-window-title">
           <i data-lucide="user-check" class="w-4 h-4 text-blue-400"></i>
-          <span>Perfil do Criador — Geovane da Conceição Estanislau</span>
+          <span>O Criador — Geovane da Conceição Estanislau</span>
         </div>
         <div class="os-window-controls">
           <div class="win-btn min"></div>
@@ -529,12 +545,9 @@
           </div>
           <div>
             <h2 class="text-xl font-bold text-white">Geovane da Conceição Estanislau</h2>
-            <p class="text-xs text-cyan-300 font-medium">Educador, Pesquisador em Computação e Desenvolvedor de Sistemas
-              de Baixo Nível</p>
+            <p class="text-xs text-cyan-300 font-medium">Educador, Pesquisador em Computação e Desenvolvedor de Sistemas de Baixo Nível</p>
             <p class="text-xs text-slate-400 mt-2 leading-relaxed">
-              Arquiteto e criador do <strong>Jinn Microkernel</strong> e do ecossistema de computação
-              <strong>Aladdin</strong>. Dedicado à investigação de sistemas operacionais de alta previsibilidade,
-              isolamento de memória e soberania de infraestrutura computacional.
+              Arquiteto e criador do <strong>Jinn Microkernel</strong> e do ecossistema gráfico de desktop <strong>Aladdin</strong>. Especialista na concepção de sistemas operacionais determinísticos, isolamento formal de privilégios e eficiência máxima em ambientes bare-metal de alta restrição de recursos.
             </p>
           </div>
         </div>
@@ -549,8 +562,8 @@
               <div class="flex items-center gap-3">
                 <i data-lucide="linkedin" class="w-5 h-5 text-blue-400 group-hover:scale-110 transition-transform"></i>
                 <div>
-                  <div class="font-bold text-sm">Perfil no LinkedIn</div>
-                  <div class="text-xs text-slate-400">Trajetória profissional & conexões</div>
+                  <div class="font-bold text-sm">LinkedIn</div>
+                  <div class="text-xs text-slate-300 font-medium">Geovane da Conceição Estanislau</div>
                 </div>
               </div>
               <i data-lucide="external-link" class="w-4 h-4 text-slate-400 group-hover:text-cyan-300"></i>
@@ -563,7 +576,7 @@
                   class="w-5 h-5 text-emerald-400 group-hover:scale-110 transition-transform"></i>
                 <div>
                   <div class="font-bold text-sm">Currículo Lattes</div>
-                  <div class="text-xs text-slate-400">CNPq — Produção Acadêmica & Pesquisa</div>
+                  <div class="text-xs text-slate-300 font-medium">Plataforma Lattes (CNPq)</div>
                 </div>
               </div>
               <i data-lucide="external-link" class="w-4 h-4 text-slate-400 group-hover:text-emerald-300"></i>
@@ -573,11 +586,9 @@
 
         <!-- Visão Técnica -->
         <div class="bg-slate-900/40 p-4 rounded-lg border border-white/5 space-y-2">
-          <h4 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Compromisso com o Código Aberto de
-            Fundação</h4>
+          <h4 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Compromisso com o Código Aberto de Fundação</h4>
           <p class="text-xs text-slate-400 leading-relaxed">
-            "A construção de um sistema operacional moderno em Rust x86_64 não busca reinventar o mundo por vaidade, mas
-            demonstrar que a computação de base pode ser elegante, compreensível, sem monopólios e segura por desenho."
+            "A construção de um sistema operacional moderno em Rust x86_64 não busca reinventar o mundo por vaidade, mas demonstrar que a computação de base pode ser elegante, compreensível, sem monopólios e segura por desenho."
           </p>
         </div>
       </div>
@@ -819,6 +830,11 @@
         </div>
 
         <form id="contact-form" class="space-y-3.5 text-xs">
+          <!-- Campo Honeypot Anti-Spam (invisível para usuários legítimos) -->
+          <div style="display:none;" aria-hidden="true">
+            <input type="text" id="contact-hp" name="website_hp" tabindex="-1" autocomplete="off">
+          </div>
+
           <div>
             <label class="block text-slate-300 font-medium mb-1">Seu Nome / Identificação *</label>
             <input type="text" id="contact-name"
