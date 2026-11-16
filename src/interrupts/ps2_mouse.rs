@@ -6,7 +6,6 @@
 /// com telemetria rigorosa, proteção contra desfasamento de pacotes e sincronização atômica.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
-use crate::interrupts::pic;
 
 const PS2_DATA: u16 = 0x60;
 const PS2_CMD:  u16 = 0x64;
@@ -366,7 +365,6 @@ pub extern "C" fn mouse_irq_handler() {
                 }
             }
         }
-        pic::send_eoi(12);
     }
 }
 

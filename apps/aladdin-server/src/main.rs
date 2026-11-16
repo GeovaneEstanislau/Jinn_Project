@@ -800,13 +800,16 @@ pub extern "C" fn _start() -> ! {
         dequeue_key()
     };
 
+    let mut win_sync_count: usize = 0;
     let mut poll_mouse = || -> (usize, usize, u8) {
         drain_hardware_events();
 
-        // Sincroniza janelas de clientes Ring 3 ativas
-        unsafe {
-            if let Some(sess) = GLOBAL_SESSION.as_mut() {
-                let count = sys_list_client_windows(client_info_list.as_mut_ptr(), 16);
+        // Sincroniza janelas de clientes Ring 3 ativas (amostragem a cada 8 ciclos para aliviar contenção de spinlock)
+        win_sync_count = win_sync_count.wrapping_add(1);
+        if win_sync_count % 8 == 0 {
+            unsafe {
+                if let Some(sess) = GLOBAL_SESSION.as_mut() {
+                    let count = sys_list_client_windows(client_info_list.as_mut_ptr(), 16);
                 let client_map = &mut *core::ptr::addr_of_mut!(CLIENT_MAP);
                 if count > 0 {
                     for i in 0..(count as usize).min(16) {
@@ -892,6 +895,7 @@ pub extern "C" fn _start() -> ! {
                     }
                 }
             }
+        }
         }
 
         unsafe { CURRENT_MOUSE }

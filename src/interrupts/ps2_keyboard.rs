@@ -7,7 +7,6 @@
 #[allow(dead_code)]
 
 use crate::keyboard_buffer;
-use crate::interrupts::pic;
 
 const KBD_DATA: u16 = 0x60;  // PS/2 data port
 const KBD_CMD:  u16 = 0x64;  // PS/2 command/status port
@@ -235,6 +234,5 @@ pub extern "C" fn kbd_irq_handler() {
                 }
             }
         }
-        pic::send_eoi(1);
     }
 }
