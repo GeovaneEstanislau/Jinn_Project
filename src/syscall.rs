@@ -2087,8 +2087,9 @@ fn sys_window_poll_event(win_id: usize, event_ptr: *mut crate::gui::ClientWindow
         return EINVAL;
     }
 
-    // Se canal ainda não inicializado (win_id == 0) e solicitou non-blocking, retorna EAGAIN imediatamente
-    if win_id == 0 && (flags & 1) != 0 {
+    // Se canal ainda não inicializado (win_id == 0), cede ciclos ao compositor e retorna EAGAIN
+    if win_id == 0 {
+        crate::scheduler::yield_now();
         return EAGAIN;
     }
 
@@ -2109,7 +2110,9 @@ fn sys_window_poll_event(win_id: usize, event_ptr: *mut crate::gui::ClientWindow
             }
         }
         Err(err) => {
-            if (flags & 1) != 0 && err == EBADF {
+            if err == EBADF {
+                // Janela ainda não registrada no compositor ou em fase de transição: yield cooperativo e retorna EAGAIN
+                crate::scheduler::yield_now();
                 EAGAIN
             } else {
                 err

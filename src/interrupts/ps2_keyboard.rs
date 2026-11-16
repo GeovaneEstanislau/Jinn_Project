@@ -171,6 +171,7 @@ pub fn process_scancode(sc: u8) {
                     0x51 => keyboard_buffer::push(0x51), // Page Down
                     0x4B => keyboard_buffer::push(0x4B), // Seta Esquerda
                     0x4D => keyboard_buffer::push(0x4D), // Seta Direita
+                    0x1C => keyboard_buffer::push(b'\n'), // Keypad Enter
                     _ => {}
                 }
             }

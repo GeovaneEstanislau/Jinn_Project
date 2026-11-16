@@ -1580,5 +1580,144 @@ pub fn run_tls13_self_tests() -> bool {
         return false; // Rejeição de MAC corrompido é obrigatória
     }
 
+    // 5. Teste de Derivação de Segredos RFC 8446 Key Schedule (Early, Handshake, Master)
+    let mut ks = Tls13KeySchedule::new(CipherSuite::TlsChacha20Poly1305Sha256);
+    let ecdhe_shared = [0x55u8; 32];
+    let th_hello = [0x33u8; 32];
+    ks.derive_handshake_secrets(&ecdhe_shared, &th_hello);
+
+    if ks.handshake_secret.is_none() || ks.client_handshake_traffic_secret.is_none() || ks.server_handshake_traffic_secret.is_none() {
+        return false;
+    }
+    if ks.client_handshake_key_32().is_none() || ks.server_handshake_key_32().is_none() {
+        return false;
+    }
+
+    let th_server_finished = [0x77u8; 32];
+    if ks.derive_master_secrets(&th_server_finished).is_err() {
+        return false;
+    }
+    if ks.master_secret.is_none() || ks.client_app_traffic_secret.is_none() || ks.server_app_traffic_secret.is_none() {
+        return false;
+    }
+    if ks.client_app_key_32().is_none() || ks.server_app_key_32().is_none() {
+        return false;
+    }
+
+    // 6. Teste de Handshake TLS 1.3 Completo Simulado (RFC 8446)
+    let mut client = Tls13Client::new("jinn-os.internal", TrustStore::new());
+    let client_random = [0x11u8; 32];
+    let client_pubkey = [0x22u8; 65];
+    let ch = client.build_client_hello(&client_random, &client_pubkey);
+    if ch.is_empty() || ch[0] != HandshakeType::ClientHello.as_u8() {
+        return false;
+    }
+
+    // ServerHello simulado selecionando TLS_CHACHA20_POLY1305_SHA256
+    let mut sh_body = Vec::new();
+    sh_body.extend_from_slice(&TLS12_LEGACY_VERSION.to_be_bytes());
+    sh_body.extend_from_slice(&[0x33u8; 32]); // server random
+    sh_body.push(32); // session id len
+    sh_body.extend_from_slice(&client_random); // session id echo
+    sh_body.extend_from_slice(&CipherSuite::TlsChacha20Poly1305Sha256.as_u16().to_be_bytes());
+    sh_body.push(0); // compression null
+
+    let mut sh_exts = Vec::new();
+    sh_exts.extend_from_slice(&0x002Bu16.to_be_bytes()); // supported_versions
+    sh_exts.extend_from_slice(&2u16.to_be_bytes());
+    sh_exts.extend_from_slice(&0x0304u16.to_be_bytes()); // TLS 1.3
+    sh_body.extend_from_slice(&(sh_exts.len() as u16).to_be_bytes());
+    sh_body.extend_from_slice(&sh_exts);
+
+    let mut sh_msg = Vec::new();
+    sh_msg.push(HandshakeType::ServerHello.as_u8());
+    let sh_len = sh_body.len();
+    sh_msg.push((sh_len >> 16) as u8);
+    sh_msg.push((sh_len >> 8) as u8);
+    sh_msg.push(sh_len as u8);
+    sh_msg.extend_from_slice(&sh_body);
+
+    let shared_secret = [0x55u8; 32];
+    if client.process_server_hello(&sh_msg, &shared_secret).is_err() {
+        return false;
+    }
+    if client.state != HandshakeState::WaitEncryptedExtensions {
+        return false;
+    }
+
+    // EncryptedExtensions simulado
+    let ee_body = [0u8, 0u8]; // 0 extensões
+    let mut ee_msg = Vec::new();
+    ee_msg.push(HandshakeType::EncryptedExtensions.as_u8());
+    ee_msg.push(0); ee_msg.push(0); ee_msg.push(ee_body.len() as u8);
+    ee_msg.extend_from_slice(&ee_body);
+    if client.process_encrypted_extensions(&ee_msg).is_err() {
+        return false;
+    }
+
+    // ServerFinished simulado com verify_data gerado pelo handshake secret do servidor
+    let s_hs_traffic = match client.key_schedule.server_handshake_traffic_secret {
+        Some(s) => s,
+        None => return false,
+    };
+    let current_th = client.transcript.current_hash();
+    let server_vd = Tls13KeySchedule::compute_finished_verify_data(&s_hs_traffic, &current_th);
+    let mut sf_msg = Vec::new();
+    sf_msg.push(HandshakeType::Finished.as_u8());
+    sf_msg.push(0); sf_msg.push(0); sf_msg.push(32);
+    sf_msg.extend_from_slice(&server_vd);
+
+    let client_finished = match client.process_server_finished(&sf_msg) {
+        Ok(cf) => cf,
+        Err(_) => return false,
+    };
+    if client.state != HandshakeState::Connected {
+        return false;
+    }
+    if client_finished.len() != 36 || client_finished[0] != HandshakeType::Finished.as_u8() {
+        return false;
+    }
+
+    // 7. Teste de Cifragem e Decifragem de Registro de Aplicação (TLSCiphertext - RFC 8446)
+    let app_req = b"GET /api/v1/ping HTTP/1.1\r\nHost: jinn-os.internal\r\n\r\n";
+    let client_record = match client.encrypt_application_record(app_req) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+    if client_record.len() < 5 + app_req.len() + 1 + 16 {
+        return false;
+    }
+    // Tipo de registro externo de TLS 1.3 deve ser ApplicationData (0x17)
+    if client_record[0] != 0x17 {
+        return false;
+    }
+
+    // Servidor simula envio de resposta de aplicação cifrada com server_app_key
+    let s_app_key = match client.key_schedule.server_app_key_32() {
+        Some(k) => k,
+        None => return false,
+    };
+    let s_app_iv = match client.key_schedule.server_app_iv {
+        Some(iv) => iv,
+        None => return false,
+    };
+    let mut s_seq = 0u64;
+    let s_resp = b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nPONG";
+    let s_record = Tls13Client::encrypt_record_with_keys(
+        &s_app_key,
+        &s_app_iv,
+        &mut s_seq,
+        0x17, // inner content type = application_data
+        s_resp,
+    );
+
+    let decrypted = match client.decrypt_application_record(&s_record) {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+    if decrypted.as_slice() != s_resp {
+        return false;
+    }
+
     true
 }

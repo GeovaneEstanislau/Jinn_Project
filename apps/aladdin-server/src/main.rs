@@ -25,52 +25,163 @@ use aladdin::desktop::session::AladdinSession;
 const HEAP_SIZE: usize = 14 * 1024 * 1024;
 static mut HEAP_MEMORY: [u8; HEAP_SIZE] = [0u8; HEAP_SIZE];
 
+const MIN_ALIGN: usize = 16;
+
+#[repr(C)]
+struct FreeNode {
+    size: usize,
+    next: *mut FreeNode,
+}
+
 struct SimpleHeapAllocator {
     offset: core::sync::atomic::AtomicUsize,
     peak:   core::sync::atomic::AtomicUsize,
+    free_list: core::cell::UnsafeCell<*mut FreeNode>,
+    lock: core::sync::atomic::AtomicBool,
+}
+
+unsafe impl Sync for SimpleHeapAllocator {}
+
+impl SimpleHeapAllocator {
+    fn acquire(&self) {
+        while self.lock.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+            core::hint::spin_loop();
+        }
+    }
+
+    fn release(&self) {
+        self.lock.store(false, Ordering::Release);
+    }
+
+    unsafe fn try_alloc_free_list(&self, layout: Layout) -> *mut u8 {
+        let align = layout.align().max(MIN_ALIGN);
+        let size  = (layout.size() + MIN_ALIGN - 1) & !(MIN_ALIGN - 1);
+
+        let head = &mut *self.free_list.get();
+        let mut prev: *mut *mut FreeNode = head as *mut _;
+        let mut cur = *head;
+
+        while !cur.is_null() {
+            let node_size = (*cur).size;
+            let addr = cur as usize;
+            let aligned_start = (addr + align - 1) & !(align - 1);
+            let wasted = aligned_start - addr;
+
+            if node_size >= wasted + size {
+                let remaining = node_size - wasted - size;
+                *prev = (*cur).next;
+
+                if remaining >= core::mem::size_of::<FreeNode>() {
+                    let leftover = (aligned_start + size) as *mut FreeNode;
+                    (*leftover).size = remaining;
+                    (*leftover).next = *prev;
+                    *prev = leftover;
+                }
+
+                return aligned_start as *mut u8;
+            }
+
+            prev = &mut (*cur).next as *mut _;
+            cur  = (*cur).next;
+        }
+
+        core::ptr::null_mut()
+    }
+
+    unsafe fn alloc_bump(&self, layout: Layout) -> *mut u8 {
+        let align = layout.align().max(MIN_ALIGN);
+        let size = layout.size();
+        let current = self.offset.load(Ordering::Relaxed);
+        let aligned = (current + align - 1) & !(align - 1);
+        let next = aligned + size;
+
+        if next > HEAP_SIZE {
+            aladdin_sdk::console::print("[aladdin-server] [OOM] Heap esgotado! offset=");
+            aladdin_sdk::console::print_num(current as u64);
+            aladdin_sdk::console::print(" size=");
+            aladdin_sdk::console::print_num(HEAP_SIZE as u64);
+            aladdin_sdk::console::print(" pedido=");
+            aladdin_sdk::console::print_num(size as u64);
+            aladdin_sdk::console::println("");
+            return core::ptr::null_mut();
+        }
+
+        self.offset.store(next, Ordering::Relaxed);
+        let pk = self.peak.load(Ordering::Relaxed);
+        if next > pk {
+            self.peak.store(next, Ordering::Relaxed);
+        }
+
+        let base = core::ptr::addr_of_mut!(HEAP_MEMORY) as *mut u8;
+        base.add(aligned)
+    }
+
+    /// Retorna (bytes_usados, bytes_total, bytes_pico) para diagnóstico.
+    #[allow(dead_code)]
+    pub fn heap_stats(&self) -> (usize, usize, usize) {
+        (
+            self.offset.load(Ordering::Relaxed),
+            HEAP_SIZE,
+            self.peak.load(Ordering::Relaxed),
+        )
+    }
 }
 
 unsafe impl GlobalAlloc for SimpleHeapAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let align = layout.align();
-        let size = layout.size();
-        loop {
-            let current = self.offset.load(Ordering::Relaxed);
-            let aligned = (current + align - 1) & !(align - 1);
-            let next = aligned + size;
-
-            if next > HEAP_SIZE {
-                // OOM: imprime diagnóstico na porta serial via syscall write
-                aladdin_sdk::console::print("[aladdin-server] [OOM] Heap esgotado! offset=");
-                aladdin_sdk::console::print_num(current as u64);
-                aladdin_sdk::console::print(" size=");
-                aladdin_sdk::console::print_num(HEAP_SIZE as u64);
-                aladdin_sdk::console::print(" pedido=");
-                aladdin_sdk::console::print_num(size as u64);
-                aladdin_sdk::console::println("");
-                return core::ptr::null_mut();
+        self.acquire();
+        let ptr = {
+            let from_free = self.try_alloc_free_list(layout);
+            if !from_free.is_null() {
+                from_free
+            } else {
+                self.alloc_bump(layout)
             }
-
-            // CAS atômico: garante corretude mesmo se IRQ preemptar entre load e store
-            if self.offset.compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
-                // Atualiza pico histórico para diagnóstico
-                let mut pk = self.peak.load(Ordering::Relaxed);
-                while next > pk {
-                    match self.peak.compare_exchange_weak(pk, next, Ordering::Relaxed, Ordering::Relaxed) {
-                        Ok(_) => break,
-                        Err(p) => pk = p,
-                    }
-                }
-                let base = core::ptr::addr_of_mut!(HEAP_MEMORY) as *mut u8;
-                return base.add(aligned);
-            }
-        }
+        };
+        self.release();
+        ptr
     }
 
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
-        // Bump allocator: frees são ignorados (sem fragmentação, sem double-free).
-        // Objetos de longa duração (backbuffer, janelas) nunca são liberados em sessão normal.
-        // Para reciclagem explícita (ex.: fechar janela do browser), use reset_session().
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        if ptr.is_null() { return; }
+        self.acquire();
+        let size = (layout.size() + MIN_ALIGN - 1) & !(MIN_ALIGN - 1);
+        let node = ptr as *mut FreeNode;
+        (*node).size = size.max(core::mem::size_of::<FreeNode>());
+
+        let head = &mut *self.free_list.get();
+        let mut prev_node: Option<*mut FreeNode> = None;
+        let mut prev: *mut *mut FreeNode = head as *mut _;
+        let mut cur  = *head;
+
+        while !cur.is_null() && (cur as usize) < (ptr as usize) {
+            prev_node = Some(cur);
+            prev = &mut (*cur).next as *mut _;
+            cur  = (*cur).next;
+        }
+
+        (*node).next = cur;
+        *prev = node;
+
+        // 1. Coalesce com próximo bloco se adjacente
+        if !cur.is_null() {
+            let node_end = ptr as usize + (*node).size;
+            if node_end == cur as usize {
+                (*node).size += (*cur).size;
+                (*node).next  = (*cur).next;
+            }
+        }
+
+        // 2. Coalesce com bloco anterior se adjacente
+        if let Some(p_node) = prev_node {
+            let p_end = (p_node as usize) + (*p_node).size;
+            if p_end == (node as usize) {
+                (*p_node).size += (*node).size;
+                (*p_node).next  = (*node).next;
+            }
+        }
+
+        self.release();
     }
 
     /// Consulta uso atual do heap para telemetria.
@@ -83,22 +194,12 @@ unsafe impl GlobalAlloc for SimpleHeapAllocator {
     }
 }
 
-impl SimpleHeapAllocator {
-    /// Retorna (bytes_usados, bytes_total, bytes_pico) para diagnóstico.
-    #[allow(dead_code)]
-    pub fn heap_stats(&self) -> (usize, usize, usize) {
-        (
-            self.offset.load(Ordering::Relaxed),
-            HEAP_SIZE,
-            self.peak.load(Ordering::Relaxed),
-        )
-    }
-}
-
 #[global_allocator]
 static ALLOCATOR: SimpleHeapAllocator = SimpleHeapAllocator {
     offset: core::sync::atomic::AtomicUsize::new(0),
     peak:   core::sync::atomic::AtomicUsize::new(0),
+    free_list: core::cell::UnsafeCell::new(core::ptr::null_mut()),
+    lock: core::sync::atomic::AtomicBool::new(false),
 };
 
 // ── ABI e Estruturas de Syscall (72..79) ──────────────────────────────────────
@@ -464,6 +565,9 @@ impl ProcessHost for UserProcess {
         if trimmed.is_empty() {
             return;
         }
+        aladdin_sdk::console::print("[aladdin-server] execute_command: '");
+        aladdin_sdk::console::print(trimmed);
+        aladdin_sdk::console::println("'");
         if trimmed.eq_ignore_ascii_case("browser")
             || trimmed.eq_ignore_ascii_case("spawn browser")
             || trimmed.eq_ignore_ascii_case("/disk/browser.elf")
@@ -648,6 +752,7 @@ pub extern "C" fn _start() -> ! {
     let mut client_cache_buf: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
     // Pré-reserva buffer de transferência de cliente para evitar alocações dinâmicas repetidas no bump allocator
     let _ = client_cache_buf.try_reserve_exact(1024 * 768);
+    client_cache_buf.resize(1024 * 768, 0u32);
 
     #[derive(Clone, Copy)]
     struct ClientWindowMapEntry {

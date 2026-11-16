@@ -3485,114 +3485,37 @@ pub fn parse_pdf_info(bytes: &[u8]) -> Option<NativePdfInfo> {
 pub mod storage {
     #[inline(always)]
     unsafe fn sys_open(path: &[u8], flags: u32) -> i64 {
-        let mut ret: i64;
-        core::arch::asm!(
-            "syscall",
-            inlateout("rax") 15u64 => ret,
-            in("rdi") path.as_ptr() as u64,
-            in("rsi") path.len() as u64,
-            in("rdx") flags as u64,
-            out("rcx") _,
-            out("r11") _,
-            options(nostack, preserves_flags)
-        );
-        ret
+        crate::syscall3(15, path.as_ptr() as u64, path.len() as u64, flags as u64)
     }
 
     #[inline(always)]
     unsafe fn sys_close(fd: u64) -> i64 {
-        let mut ret: i64;
-        core::arch::asm!(
-            "syscall",
-            inlateout("rax") 16u64 => ret,
-            in("rdi") fd,
-            in("rsi") 0u64,
-            in("rdx") 0u64,
-            out("rcx") _,
-            out("r11") _,
-            options(nostack, preserves_flags)
-        );
-        ret
+        crate::syscall3(16, fd, 0, 0)
     }
 
     #[inline(always)]
     unsafe fn sys_write(fd: u64, buf: *const u8, len: u64) -> i64 {
-        let mut ret: i64;
-        core::arch::asm!(
-            "syscall",
-            inlateout("rax") 1u64 => ret,
-            in("rdi") fd,
-            in("rsi") buf as u64,
-            in("rdx") len,
-            out("rcx") _,
-            out("r11") _,
-            options(nostack, preserves_flags)
-        );
-        ret
+        crate::syscall3(1, fd, buf as u64, len)
     }
 
     #[inline(always)]
     unsafe fn sys_read(fd: u64, buf: *mut u8, len: u64) -> i64 {
-        let mut ret: i64;
-        core::arch::asm!(
-            "syscall",
-            inlateout("rax") 2u64 => ret,
-            in("rdi") fd,
-            in("rsi") buf as u64,
-            in("rdx") len,
-            out("rcx") _,
-            out("r11") _,
-            options(nostack, preserves_flags)
-        );
-        ret
+        crate::syscall3(2, fd, buf as u64, len)
     }
 
     #[inline(always)]
     unsafe fn sys_sync() -> i64 {
-        let mut ret: i64;
-        core::arch::asm!(
-            "syscall",
-            inlateout("rax") 23u64 => ret,
-            in("rdi") 0u64,
-            in("rsi") 0u64,
-            in("rdx") 0u64,
-            out("rcx") _,
-            out("r11") _,
-            options(nostack, preserves_flags)
-        );
-        ret
+        crate::syscall3(23, 0, 0, 0)
     }
 
     #[inline(always)]
     unsafe fn sys_mkdir(path: &[u8]) -> i64 {
-        let mut ret: i64;
-        core::arch::asm!(
-            "syscall",
-            inlateout("rax") 51u64 => ret,
-            in("rdi") path.as_ptr() as u64,
-            in("rsi") path.len() as u64,
-            in("rdx") 0u64,
-            out("rcx") _,
-            out("r11") _,
-            options(nostack, preserves_flags)
-        );
-        ret
+        crate::syscall3(51, path.as_ptr() as u64, path.len() as u64, 0)
     }
 
     #[inline(always)]
     unsafe fn sys_unlink(path: &[u8]) -> i64 {
-        let mut ret: i64;
-        core::arch::asm!(
-            "syscall",
-            inlateout("rax") 50u64 => ret,
-            in("rdi") path.as_ptr() as u64,
-            in("rsi") path.len() as u64,
-            in("rdx") 0u64,
-            out("rcx") _,
-            out("r11") _,
-            options(nostack, preserves_flags)
-        );
-        ret
+        crate::syscall3(50, path.as_ptr() as u64, path.len() as u64, 0)
     }
 
     #[repr(C)]
@@ -3611,18 +3534,7 @@ pub mod storage {
             new_ptr: new_path.as_ptr(),
             new_len: new_path.len(),
         };
-        let mut ret: i64;
-        core::arch::asm!(
-            "syscall",
-            inlateout("rax") 52u64 => ret,
-            in("rdi") &args as *const _ as u64,
-            in("rsi") 0u64,
-            in("rdx") 0u64,
-            out("rcx") _,
-            out("r11") _,
-            options(nostack, preserves_flags)
-        );
-        ret
+        crate::syscall3(52, &args as *const _ as u64, 0, 0)
     }
 
     pub const O_RDONLY: u32 = 0x0;

@@ -671,20 +671,45 @@ impl SystemHost for JinnSystem {
     }
 
     fn storage_get_volume(&self, index: usize) -> Option<aladdin::contracts::storage::VolumeDisplayInfo> {
-        let vm = crate::vfs::volume::VOLUME_MANAGER.lock();
-        let vol = vm.get_volume(index)?;
-        let mut v = aladdin::contracts::storage::VolumeDisplayInfo::empty();
-        v.id = vol.id;
+        // Desacoplamento de Trava: copia os campos do volume liberando o VOLUME_MANAGER
+        // imediatamente antes de qualquer chamada a subsistemas externos (ex: statvfs)
+        // para prevenir deadlocks com a trava MOUNTS.
+        let (vol_id, label, label_len, mp, mp_len, fs_kind, total_mb, used_mb, free_mb, is_mounted, is_root, is_busy, pfx_buf, pfx_len) = {
+            let vm = crate::vfs::volume::VOLUME_MANAGER.lock();
+            let vol = vm.get_volume(index)?;
+            let mut p_buf = [0u8; 32];
+            let p_len = vol.mount_point_len.min(31);
+            p_buf[..p_len].copy_from_slice(&vol.mount_point[..p_len]);
+            (
+                vol.id,
+                vol.label,
+                vol.label_len,
+                vol.mount_point,
+                vol.mount_point_len,
+                vol.fs_kind,
+                vol.total_mb as u64,
+                vol.used_mb as u64,
+                vol.free_mb as u64,
+                vol.is_mounted,
+                vol.is_root,
+                vol.open_handles_count > 0,
+                p_buf,
+                p_len,
+            )
+        };
 
-        let l_len = vol.label_len.min(31);
-        v.label[..l_len].copy_from_slice(&vol.label[..l_len]);
+        let mut v = aladdin::contracts::storage::VolumeDisplayInfo::empty();
+        v.id = vol_id;
+
+        let l_len = label_len.min(31);
+        v.label[..l_len].copy_from_slice(&label[..l_len]);
         v.label_len = l_len;
 
-        let m_len = vol.mount_point_len.min(31);
-        v.mount_point[..m_len].copy_from_slice(&vol.mount_point[..m_len]);
+        let m_len = mp_len.min(31);
+        v.mount_point[..m_len].copy_from_slice(&mp[..m_len]);
         v.mount_point_len = m_len;
 
-        let fs_str = match vol.fs_kind {
+        let fs_str = match fs_kind {
             crate::drivers::partition::DetectedFsKind::Fat32 => "FAT32",
             crate::drivers::partition::DetectedFsKind::Ext2 => "Ext2",
             crate::drivers::partition::DetectedFsKind::Iso9660 => "ISO9660",
@@ -695,22 +720,25 @@ impl SystemHost for JinnSystem {
         v.fs_type[..fs_len].copy_from_slice(&fs_bytes[..fs_len]);
         v.fs_type_len = fs_len;
 
-        v.total_mb = vol.total_mb as u64;
-        v.used_mb = vol.used_mb as u64;
-        v.free_mb = vol.free_mb as u64;
-        if vol.is_mounted {
-            let pfx = vol.mount_point_str();
-            if let Ok(st) = crate::vfs::statvfs(pfx) {
-                let total_mb = st.total_bytes / (1024 * 1024);
-                let free_mb = st.free_bytes / (1024 * 1024);
-                v.total_mb = total_mb;
-                v.free_mb = free_mb;
-                v.used_mb = total_mb.saturating_sub(free_mb);
+        v.total_mb = total_mb;
+        v.used_mb = used_mb;
+        v.free_mb = free_mb;
+        v.is_mounted = is_mounted;
+        v.is_root = is_root;
+        v.is_busy = is_busy;
+
+        // Se a capacidade total ainda não estiver preenchida, consulta statvfs fora do lock
+        if is_mounted && total_mb == 0 && pfx_len > 0 {
+            if let Ok(pfx) = core::str::from_utf8(&pfx_buf[..pfx_len]) {
+                if let Ok(st) = crate::vfs::statvfs(pfx) {
+                    let t_mb = st.total_bytes / (1024 * 1024);
+                    let f_mb = st.free_bytes / (1024 * 1024);
+                    v.total_mb = t_mb;
+                    v.free_mb = f_mb;
+                    v.used_mb = t_mb.saturating_sub(f_mb);
+                }
             }
         }
-        v.is_mounted = vol.is_mounted;
-        v.is_root = vol.is_root;
-        v.is_busy = vol.open_handles_count > 0;
         Some(v)
     }
 
@@ -1014,6 +1042,8 @@ pub fn open_window(win_id: usize) {
 /// Inicia o serviço gráfico do Aladdin Desktop em Ring 3 como processo de usuário independente.
 pub fn launch_ring3_desktop() {
     crate::serial_write(b"[GUI] launch_ring3_desktop() chamado\n");
+    // Limpa buffer de teclado residual de selftests do boot
+    while crate::keyboard_buffer::pop().is_some() {}
     let path = "/disk/aladdin.elf";
     let argv = [path, "server"];
     

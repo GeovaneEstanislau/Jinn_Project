@@ -21,7 +21,7 @@ const ENOBUFS: i64 = -105;
 // ── Syscall Helpers ──────────────────────────────────────────────────────────
 
 #[inline(always)]
-unsafe fn syscall3(nr: u64, arg0: u64, arg1: u64, arg2: u64) -> i64 {
+pub(crate) unsafe fn syscall3(nr: u64, arg0: u64, arg1: u64, arg2: u64) -> i64 {
     let ret: i64;
     asm!(
         "int 0x80",
@@ -2804,6 +2804,9 @@ unsafe fn run_browser_interactive() -> ! {
     print_str(b"[BROWSER] Janela criada com sucesso no Compositor! win_id=");
     print_u64(win_id as u64);
     print_str(b"\n");
+    print_str(b"[BROWSER-INTERACTION] WINDOW_CREATED win_id=");
+    print_u64(win_id as u64);
+    print_str(b"\n");
 
     // 3. Renderiza e atualiza primeiro quadro
     session.render(buf_slice);
@@ -2820,8 +2823,14 @@ unsafe fn run_browser_interactive() -> ! {
     let mut ev: ClientWindowEvent = core::mem::zeroed();
     loop {
         let has_ev = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
-        if has_ev < 0 {
-            print_str(b"[BROWSER-INTERACTION] CLOSE poll error or window closed. Encerrando...\n");
+        if has_ev == 0 || has_ev == -11 {
+            // Fila vazia ou canal em transição cooperativa (0 ou -EAGAIN): cede ciclos e continua
+            let _ = sys_sleep(20);
+            continue;
+        } else if has_ev < 0 {
+            print_str(b"[BROWSER-INTERACTION] Erro irrecuperavel no poll (ret=");
+            print_i64(has_ev);
+            print_str(b"). Encerrando...\n");
             sys_exit(0);
         } else if has_ev == 1 {
             match ev.event_type {

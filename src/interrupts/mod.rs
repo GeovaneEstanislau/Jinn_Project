@@ -48,12 +48,14 @@ pub extern "C" fn irq_dispatch(vector: u64, _frame: *mut usize) -> usize {
         33 => {
             // IRQ1 — PS/2 Keyboard
             ps2_keyboard::kbd_irq_handler();
+            pic::send_eoi(1);
             apic::send_eoi();
             0
         }
         44 => {
             // IRQ12 — PS/2 Mouse
             ps2_mouse::mouse_irq_handler();
+            pic::send_eoi(12);
             apic::send_eoi();
             0
         }
