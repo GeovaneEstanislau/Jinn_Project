@@ -1,6 +1,6 @@
 # Portal Web Oficial do Jinn OS (`jinn-os.dev.br`)
 
-Este repositório contém a aplicação web completa do portal oficial do **Jinn OS**, projetada como uma experiência imersiva de simulação de desktop de sistema operacional (baseada na interface XFCE / Cairo-Dock com o papel de parede temático da águia).
+Este repositório contém a aplicação web completa do portal oficial do **Jinn OS**, projetada como uma experiência imersiva de simulação de desktop de sistema operacional (baseada na interface XFCE / Cairo-Dock com o papel de parede temático).
 
 ---
 
@@ -26,26 +26,4 @@ web/
 ├── supabase-schema.sql   # Script SQL para criar tabela e regras de RLS no Supabase
 ├── README.md             # Instruções de configuração e deploy
 └── assets/
-    └── wallpaper-eagle.jpg # Papel de parede de alta resolução da águia
-```
-
----
-
-## 🛠️ Como Testar Localmente
-
-Basta abrir o arquivo `index.html` diretamente em qualquer navegador moderno (Chrome, Firefox, Edge, Safari):
-
-```bash
-# Ou utilizando um servidor estático local:
-cd web
-npx serve .
-# ou
-python -m http.server 8080
-```
-
----
-
-
-     - `185.199.111.153`
-3. No repositório GitHub, vá em **Settings** -> **Pages** -> selecione o branch para publicação e confirme o domínio customizado.
-
+    └── wallpaper.jpg # Papel de parede de alta resolução
