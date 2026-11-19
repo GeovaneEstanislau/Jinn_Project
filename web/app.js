@@ -21,7 +21,7 @@ try {
 function trackConversion(actionName) {
   if (typeof gtag === 'function') {
     gtag('event', 'conversion', {
-      'send_to': 'AW-XXXXXXXXX/conversion_label',
+      'send_to': 'AW-884426711/conversion_label',
       'event_category': 'Engagement',
       'event_label': actionName
     });
