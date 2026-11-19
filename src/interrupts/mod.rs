@@ -60,8 +60,16 @@ pub extern "C" fn irq_dispatch(vector: u64, _frame: *mut usize) -> usize {
             0
         }
         34..=47 => {
-            // Unhandled IRQ: send EOI to both legacy PIC and LAPIC
+            // IRQ level-triggered / PCI devices: despacha para drivers registrados
             let irq = (vector - 32) as u8;
+            if crate::drivers::audio::is_audio_irq(irq) {
+                let handled = crate::drivers::audio::handle_irq(irq);
+                if !handled {
+                    // Isola tempestade de interrupções exclusivamente na linha de áudio PCI
+                    crate::interrupts::pic::mask_irq(irq);
+                    crate::drivers::audio::handle_storm_fault(irq);
+                }
+            }
             pic::send_eoi(irq);
             apic::send_eoi();
             0
@@ -185,9 +193,22 @@ pub extern "C" fn exception_dispatch(vector: u64, error_code: u64, frame: *mut u
         let sched = crate::scheduler::get();
         sched.exit_task(current_pid, 128 + vector as i32);
         crate::ipc::unregister(current_pid);
+        crate::scheduler::set_yielded();
 
         // Força o escalonador a selecionar a próxima tarefa pronta
-        return sched.preempt(frame as usize);
+        let new_rsp = sched.preempt(frame as usize);
+        if new_rsp == frame as usize || new_rsp == 0 {
+            let cpu_id = crate::smp::current_cpu_id();
+            let idle_id = sched.core_idle[cpu_id];
+            if let Some(Some(idle)) = sched.tasks.get_mut(idle_id) {
+                idle.state = crate::scheduler::TaskState::Running;
+                idle.running_on_cpu = Some(cpu_id);
+                sched.core_current[cpu_id] = Some(idle_id);
+                unsafe { crate::memory::paging::load_cr3(idle.pml4_phys); }
+                return idle.saved_rsp;
+            }
+        }
+        return new_rsp;
     }
 
     // Se a falha ocorreu em Ring 0 (código do kernel), pânico irrecuperável:

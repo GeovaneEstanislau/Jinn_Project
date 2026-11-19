@@ -596,11 +596,13 @@ impl ProcessHost for UserProcess {
 
     fn is_process_alive(&self, pid: usize) -> bool {
         if pid == 0 { return false; }
-        let mut stat = [0u8; 128];
+        let mut stat = [0u32; 32];
         let ret = unsafe {
-            aladdin_sdk::syscall::syscall3(25, pid as u64, stat.as_mut_ptr() as u64, stat.len() as u64)
+            aladdin_sdk::syscall::syscall3(25, pid as u64, stat.as_mut_ptr() as u64, (stat.len() * 4) as u64)
         };
-        ret == 0
+        if ret != 0 { return false; }
+        let state = stat[1]; // ProcessResourceStat::state (1=Ready, 2=Running, 3=Blocked, 4=Sleeping, 5=WaitingOn, 6=Zombie, 7=Completed)
+        state >= 1 && state <= 5
     }
 
     fn spawn_app(&mut self, path: &str) -> Result<usize, ()> {
@@ -783,11 +785,33 @@ pub extern "C" fn _start() -> ! {
                 break;
             }
             if ev.kind == 1 {
-                enqueue_key(ev.code as u8);
-            } else if ev.kind >= 3 {
+                let ch = ev.code as u8;
+                aladdin_sdk::console::print("[ALADDIN-INPUT] KeyDown ch=");
+                let ch_slice = [ch];
+                if let Ok(s) = core::str::from_utf8(&ch_slice) {
+                    aladdin_sdk::console::print(s);
+                }
+                aladdin_sdk::console::println("");
+                enqueue_key(ch);
+            } else if ev.kind == 3 {
                 let mx = (ev.x.max(0) as usize).min(fb_w.saturating_sub(1));
                 let my = (ev.y.max(0) as usize).min(fb_h.saturating_sub(1));
                 let btn = ev.code as u8;
+                aladdin_sdk::console::print("[ALADDIN-INPUT] MouseMove x=");
+                aladdin_sdk::console::print_num(mx as u64);
+                aladdin_sdk::console::print(" y=");
+                aladdin_sdk::console::print_num(my as u64);
+                aladdin_sdk::console::println("");
+                unsafe {
+                    CURRENT_MOUSE = (mx, my, btn);
+                }
+            } else if ev.kind == 4 || ev.kind == 5 {
+                let mx = (ev.x.max(0) as usize).min(fb_w.saturating_sub(1));
+                let my = (ev.y.max(0) as usize).min(fb_h.saturating_sub(1));
+                let btn = ev.code as u8;
+                aladdin_sdk::console::print("[ALADDIN-INPUT] MouseBtn btn=");
+                aladdin_sdk::console::print_num(btn as u64);
+                aladdin_sdk::console::println("");
                 unsafe {
                     CURRENT_MOUSE = (mx, my, btn);
                 }
@@ -804,9 +828,9 @@ pub extern "C" fn _start() -> ! {
     let mut poll_mouse = || -> (usize, usize, u8) {
         drain_hardware_events();
 
-        // Sincroniza janelas de clientes Ring 3 ativas (amostragem a cada 8 ciclos para aliviar contenção de spinlock)
+        // Sincroniza janelas de clientes Ring 3 ativas (amostragem a cada 2 ciclos para alta responsividade)
         win_sync_count = win_sync_count.wrapping_add(1);
-        if win_sync_count % 8 == 0 {
+        if win_sync_count % 2 == 0 {
             unsafe {
                 if let Some(sess) = GLOBAL_SESSION.as_mut() {
                     let count = sys_list_client_windows(client_info_list.as_mut_ptr(), 16);
@@ -848,6 +872,10 @@ pub extern "C" fn _start() -> ! {
                                         aladdin_sdk::console::print_num(new_wm_id as u64);
                                         aladdin_sdk::console::println("");
 
+                                        if title_str.contains("Browser") || title_str.contains("browser") || win.owner_pid as usize == sess.browser_pid.unwrap_or(0) {
+                                            sess.browser_win_id = Some(new_wm_id);
+                                        }
+
                                         let mut stored = false;
                                         for map in client_map.iter_mut() {
                                             if !map.active {
@@ -875,7 +903,7 @@ pub extern "C" fn _start() -> ! {
                         };
 
                         // 3. Atualiza superfície quando danificada ou recém-criada (IMP-02)
-                        if win.damaged == 1 || is_new {
+                        if win.damaged != 0 || is_new {
                             let total_px = (win.width as usize) * (win.height as usize);
                             if total_px > 0 && total_px <= 1024 * 768 {
                                 if client_cache_buf.len() < total_px {

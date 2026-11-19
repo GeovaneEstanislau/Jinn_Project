@@ -97,7 +97,7 @@ def main():
         def qcmd(cmd):
             try:
                 s.sendall((cmd.strip() + "\n").encode("utf-8"))
-            except:
+            except Exception:
                 return ""
             res_b = b""
             while True:
@@ -106,7 +106,8 @@ def main():
                     if not chunk: break
                     res_b += chunk
                     if b"(qemu)" in chunk: break
-                except: break
+                except Exception:
+                    break
             return res_b.decode(errors="ignore")
 
         # 1. Inicializa o sistema e aguarda compositor Ring 3
@@ -185,23 +186,47 @@ def main():
 
         time.sleep(2.0)
 
+        # Captura o conteúdo do log antes do encerramento para garantir que todos os buffers estejam comitados
+        if os.path.exists(log_file):
+            try:
+                with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+                    log_content = f.read()
+            except Exception:
+                log_content = ""
+        else:
+            log_content = ""
+
         # Encerramento gracioso
-        qcmd("quit")
-        time.sleep(0.5)
+        try:
+            qcmd("quit")
+        except Exception:
+            pass
+
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
 
     finally:
-        if s: s.close()
+        if s:
+            try: s.close()
+            except Exception: pass
         if proc.poll() is None:
-            proc.kill()
-            proc.wait()
+            try:
+                proc.kill()
+                proc.wait()
+            except Exception: pass
 
     # ── Validação e Auditoria dos Critérios da Seção 8 ──
     print("\n=================================================================")
     print("   AUDITORIA DE CRITÉRIOS DA SEÇÃO 8 — TESTE E2E                 ")
     print("=================================================================")
 
-    with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
-        log_content = f.read()
+    if not log_content and os.path.exists(log_file):
+        with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+            log_content = f.read()
 
     # Critério 2: Teclado inicial funcional
     keys = log_content.count("[ALADDIN-INPUT] KeyDown")

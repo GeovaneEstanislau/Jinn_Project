@@ -169,6 +169,7 @@ pub extern "C" fn _start() -> ! {
 
     w.write_string("[+] Barramento PCI...");
     drivers::pci::init();
+    drivers::audio::init();
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);

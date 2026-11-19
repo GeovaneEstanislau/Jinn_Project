@@ -260,7 +260,19 @@ $mkisoArgs = @(
 )
 
 if ((Split-Path $mkiso -Leaf) -eq "xorriso.exe" -or $mkiso -eq "xorriso") {
-    if (Get-Command cygpath -ErrorAction SilentlyContinue) {
+    $mkisoDir = Split-Path $mkiso -Parent
+    $isCygwinXorriso = if ($mkisoDir) { Test-Path (Join-Path $mkisoDir "cygwin1.dll") } else { $false }
+    if ($isCygwinXorriso) {
+        $toCyg = {
+            param($p)
+            $full = [System.IO.Path]::GetFullPath($p)
+            $drive = (Split-Path $full -Qualifier).TrimEnd(':').ToLower()
+            $rest = (Split-Path $full -NoQualifier) -replace '\\', '/'
+            "/cygdrive/$drive$rest"
+        }
+        $isoPathUnix = & $toCyg $isoPath
+        $bootStageUnix = & $toCyg $bootStage
+    } elseif (Get-Command cygpath -ErrorAction SilentlyContinue) {
         $isoPathUnix = (& cygpath -u $isoPath).Trim()
         $bootStageUnix = (& cygpath -u $bootStage).Trim()
     } elseif (Test-Path "C:\msys64\usr\bin\cygpath.exe") {

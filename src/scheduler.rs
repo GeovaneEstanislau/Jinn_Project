@@ -1165,6 +1165,16 @@ impl Scheduler {
             task.state        = TaskState::Zombie;
             task.exit_code    = code;
             task.running_on_cpu = None;
+
+            // Limpa ponteiros do núcleo para evitar que o escalonador tente reusar a tarefa zumbi
+            for c in 0..crate::gdt::MAX_CPUS {
+                if self.core_current[c] == Some(pid) {
+                    self.core_current[c] = None;
+                }
+            }
+            if self.current == Some(pid) {
+                self.current = None;
+            }
             // Sanitiza estado FPU para evitar vazamento de memória residual pós-morte
             task.fpu_state = crate::fpu::FpuState::new_user_default();
 
@@ -1458,8 +1468,22 @@ impl Scheduler {
                 } else if task.state != TaskState::Running || is_yield || task.quantum_remaining == 0 {
                     force_switch = true;
                 }
+            } else {
+                force_switch = true;
             }
         } else {
+            force_switch = true;
+        }
+
+        // Se a tarefa atual está morta (Zombie, Completed ou None), ela NUNCA pode continuar executando!
+        let is_current_dead = match cur_id_opt {
+            Some(cur) => match &self.tasks[cur] {
+                Some(t) => t.state == TaskState::Zombie || t.state == TaskState::Completed,
+                None => true,
+            },
+            None => true,
+        };
+        if is_current_dead {
             force_switch = true;
         }
 
@@ -1620,6 +1644,24 @@ impl Scheduler {
                     }
                     return idle.saved_rsp;
                 }
+        }
+
+        // Se a tarefa atual estiver morta (Zombie, Completed ou None), ela NUNCA pode retornar
+        // para o frame de usuário pois o PML4 já foi liberado. Força chaveamento para a tarefa Idle do BSP.
+        if is_current_dead {
+            let core_idle_id = if cpu_id < crate::gdt::MAX_CPUS { self.core_idle[cpu_id] } else { 0 };
+            if let Some(idle) = &mut self.tasks[core_idle_id] {
+                idle.state = TaskState::Running;
+                idle.running_on_cpu = Some(cpu_id);
+                self.core_current[cpu_id] = Some(core_idle_id);
+                if cpu_id == 0 {
+                    self.current = Some(core_idle_id);
+                    CURRENT_TASK.store(core_idle_id as i32, Ordering::SeqCst);
+                }
+                crate::smp::set_current_pid(cpu_id, Some(core_idle_id));
+                unsafe { paging::load_cr3(idle.pml4_phys); }
+                return idle.saved_rsp;
+            }
         }
 
         curr_frame_ptr

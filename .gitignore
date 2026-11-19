@@ -67,7 +67,17 @@ node_modules/
 # Python Virtual Environments and Google Ads automation
 venv/
 saved/
+config/
+android_ads_bot/
 google-ads.yaml
+*.yaml
+*.yml
+!/.github/workflows/*.yml
+!/.github/workflows/*.yaml
+client_secret*.json
+client_secrets*.json
+autorizar_ads.py
+gerar_token.py
 *.log
 
 # Internal dev reports and issue templates

@@ -226,6 +226,8 @@ const TERMINAL_HELP = `JINN OS Shell v0.0.3 — Ajuda de Comandos:
   pki      - Redireciona para o módulo de criptografia e certificados X.509
   tls      - Redireciona para o módulo de criptografia e TLS 1.3
   kernel   - Redireciona para a raiz do repositório principal no GitHub
+  jhcs     - Redireciona para o repositório do subsistema heterogêneo JHCS
+  issues   - Abre a lista de issues estratégicas para contribuidores (help wanted)
   history  - Abre a janela do Ensaio Histórico e Filosofia do Jinn OS
   creator  - Apresenta o perfil biográfico do Criador (Geovane Estanislau)
   contact  - Abre o formulário de contato seguro via Supabase
@@ -267,6 +269,18 @@ const GITHUB_ROUTING_MAP = {
   kernel: {
     url: 'https://github.com/GeovaneEstanislau/Jinn_Project',
     desc: 'Repositório Principal do Microkernel Jinn'
+  },
+  jhcs: {
+    url: 'https://github.com/GeovaneEstanislau/jhcs-rs',
+    desc: 'Repositório do Jinn Heterogeneous Compute Service (JHCS)'
+  },
+  contribute: {
+    url: 'https://github.com/GeovaneEstanislau/Jinn_Project/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22',
+    desc: 'Issues Estratégicas para Contribuidores (Embedded & JHCS)'
+  },
+  issues: {
+    url: 'https://github.com/GeovaneEstanislau/Jinn_Project/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22',
+    desc: 'Issues Estratégicas para Contribuidores (Embedded & JHCS)'
   },
   uname: {
     url: 'https://github.com/GeovaneEstanislau/Jinn_Project',

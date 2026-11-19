@@ -283,6 +283,10 @@ impl MiniCss {
 
     pub fn parse_stylesheet(&mut self, css: &[u8]) {
         self.rule_count = 0;
+        self.parse_stylesheet_append(css);
+    }
+
+    pub fn parse_stylesheet_append(&mut self, css: &[u8]) {
         let mut i = 0usize;
         let len = css.len();
 
@@ -876,6 +880,73 @@ pub fn extract_quoted_arg(call: &[u8]) -> Option<&[u8]> {
     }
 }
 
+// ── Utilitários para Leitura de CSS do VFS e Atributos HTML ───────────────────
+
+pub fn extract_attr_val<'a>(tag: &'a [u8], attr: &[u8]) -> Option<&'a [u8]> {
+    let mut i = 0;
+    let len = tag.len();
+    let a_len = attr.len();
+    while i + a_len <= len {
+        if tag[i..i + a_len].eq_ignore_ascii_case(attr) {
+            i += a_len;
+            let quote = if i < len && (tag[i] == b'"' || tag[i] == b'\'') {
+                let q = tag[i];
+                i += 1;
+                Some(q)
+            } else {
+                None
+            };
+            let start = i;
+            while i < len {
+                let c = tag[i];
+                if let Some(q) = quote {
+                    if c == q {
+                        return Some(&tag[start..i]);
+                    }
+                } else if c == b' ' || c == b'>' || c == b'/' {
+                    return Some(&tag[start..i]);
+                }
+                i += 1;
+            }
+            return Some(&tag[start..i]);
+        }
+        i += 1;
+    }
+    None
+}
+
+pub fn read_css_file_from_vfs(href: &[u8], out: &mut [u8]) -> Option<usize> {
+    let mut path_buf = [0u8; 64];
+    let path = if href.starts_with(b"/") {
+        href
+    } else {
+        let prefix = b"/disk/";
+        let mut idx = 0;
+        for &b in prefix {
+            if idx < path_buf.len() - 1 { path_buf[idx] = b; idx += 1; }
+        }
+        for &b in href {
+            if idx < path_buf.len() - 1 { path_buf[idx] = b; idx += 1; }
+        }
+        &path_buf[..idx]
+    };
+
+    let fd = unsafe { storage::sys_open(path, 0) };
+    if fd < 0 {
+        let fd_raw = unsafe { storage::sys_open(href, 0) };
+        if fd_raw < 0 {
+            return None;
+        }
+        let n = unsafe { storage::sys_read(fd_raw as u64, out.as_mut_ptr(), out.len() as u64) };
+        unsafe { storage::sys_close(fd_raw as u64); }
+        if n > 0 { Some(n as usize) } else { None }
+    } else {
+        let n = unsafe { storage::sys_read(fd as u64, out.as_mut_ptr(), out.len() as u64) };
+        unsafe { storage::sys_close(fd as u64); }
+        if n > 0 { Some(n as usize) } else { None }
+    }
+}
+
 // ── Parser HTML Zero-Copy para Flat Vector DOM ────────────────────────────────
 
 pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, js: &mut MiniJsRuntime) {
@@ -973,7 +1044,7 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                     i += 1;
                 }
                 let css_bytes = &html[style_start..i];
-                css.parse_stylesheet(css_bytes);
+                css.parse_stylesheet_append(css_bytes);
                 while i < len && html[i] != b'>' { i += 1; }
                 if i < len { i += 1; }
                 continue;
@@ -1010,8 +1081,32 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                 continue;
             }
 
+            // Trata <link rel="stylesheet" href="...">
+            if tag_name == b"link" {
+                let link_tag_start = i;
+                while i < len && html[i] != b'>' { i += 1; }
+                let link_content = &html[link_tag_start..i];
+                if i < len { i += 1; }
+
+                let is_rel_css = if let Some(rel) = extract_attr_val(link_content, b"rel=") {
+                    rel.eq_ignore_ascii_case(b"stylesheet")
+                } else {
+                    false
+                };
+
+                if let Some(href_val) = extract_attr_val(link_content, b"href=") {
+                    if is_rel_css || href_val.ends_with(b".css") {
+                        let mut css_buf = [0u8; 4096];
+                        if let Some(n) = read_css_file_from_vfs(href_val, &mut css_buf) {
+                            css.parse_stylesheet_append(&css_buf[..n]);
+                        }
+                    }
+                }
+                continue;
+            }
+
             // Ignora tags estruturais não-visuais
-            if tag_name == b"html" || tag_name == b"head" || tag_name == b"body" || tag_name == b"meta" || tag_name == b"link" {
+            if tag_name == b"html" || tag_name == b"head" || tag_name == b"body" || tag_name == b"meta" {
                 while i < len && html[i] != b'>' { i += 1; }
                 if i < len { i += 1; }
                 continue;
@@ -1229,6 +1324,11 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
         } else {
             i += 1;
         }
+    }
+
+    // Passada final de resolução de estilos: assegura cascata completa após carregar <style> e <link>
+    for n in 0..dom.node_count {
+        css.resolve(&mut dom.nodes[n]);
     }
 }
 
@@ -3484,22 +3584,22 @@ pub fn parse_pdf_info(bytes: &[u8]) -> Option<NativePdfInfo> {
 
 pub mod storage {
     #[inline(always)]
-    unsafe fn sys_open(path: &[u8], flags: u32) -> i64 {
+    pub(crate) unsafe fn sys_open(path: &[u8], flags: u32) -> i64 {
         crate::syscall3(15, path.as_ptr() as u64, path.len() as u64, flags as u64)
     }
 
     #[inline(always)]
-    unsafe fn sys_close(fd: u64) -> i64 {
+    pub(crate) unsafe fn sys_close(fd: u64) -> i64 {
         crate::syscall3(16, fd, 0, 0)
     }
 
     #[inline(always)]
-    unsafe fn sys_write(fd: u64, buf: *const u8, len: u64) -> i64 {
+    pub(crate) unsafe fn sys_write(fd: u64, buf: *const u8, len: u64) -> i64 {
         crate::syscall3(1, fd, buf as u64, len)
     }
 
     #[inline(always)]
-    unsafe fn sys_read(fd: u64, buf: *mut u8, len: u64) -> i64 {
+    pub(crate) unsafe fn sys_read(fd: u64, buf: *mut u8, len: u64) -> i64 {
         crate::syscall3(2, fd, buf as u64, len)
     }
 

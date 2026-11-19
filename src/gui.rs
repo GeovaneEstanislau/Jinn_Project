@@ -73,6 +73,7 @@ pub struct KernelClientWindow {
     pub ev_tail: usize,
     pub damaged: bool,
     pub is_open: bool,
+    pub is_minimized: bool,
 }
 
 pub static CLIENT_WINDOWS: SpinLock<[Option<KernelClientWindow>; 32]> = SpinLock::new([
@@ -303,6 +304,7 @@ pub fn client_window_create(owner_pid: usize, title: &str, width: usize, height:
                 ev_tail: 0,
                 damaged: true,
                 is_open: true,
+                is_minimized: false,
             });
 
             // Se o SESSION em kernel estiver ativo, também registra para compatibilidade
@@ -341,6 +343,12 @@ pub fn client_window_update(owner_pid: usize, win_id: usize, buffer: &[u32]) -> 
                 if buffer.len() != expected {
                     return Err(crate::syscall::EINVAL);
                 }
+                if w.is_minimized {
+                    w.is_minimized = false;
+                }
+                if w.buffer.len() != expected {
+                    w.buffer.resize(expected, 0u32);
+                }
                 w.buffer.copy_from_slice(buffer);
                 w.damaged = true;
 
@@ -364,6 +372,9 @@ pub fn client_window_close(owner_pid: usize, win_id: usize) -> Result<(), isize>
                 if w.owner_pid != owner_pid {
                     return Err(crate::syscall::EPERM);
                 }
+                // Zero-Idle GC: devolve o backbuffer integralmente ao heap
+                w.buffer.clear();
+                w.buffer.shrink_to_fit();
                 *slot = None;
                 if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(owner_pid) {
                     task.resources.close_window();
@@ -373,6 +384,52 @@ pub fn client_window_close(owner_pid: usize, win_id: usize) -> Result<(), isize>
                         let _ = session.close_client_window(owner_pid, win_id);
                     }
                 }
+                return Ok(());
+            }
+        }
+    }
+    Err(crate::syscall::EBADF)
+}
+
+pub fn client_window_minimize(owner_pid: usize, win_id: usize) -> Result<(), isize> {
+    let mut windows = CLIENT_WINDOWS.lock();
+    for slot in windows.iter_mut() {
+        if let Some(w) = slot {
+            if w.id == win_id {
+                if w.owner_pid != owner_pid {
+                    return Err(crate::syscall::EPERM);
+                }
+                w.is_minimized = true;
+                // Zero-Idle GC: libera páginas de backbuffer durante dormência/minimização
+                w.buffer.clear();
+                w.buffer.shrink_to_fit();
+                return Ok(());
+            }
+        }
+    }
+    Err(crate::syscall::EBADF)
+}
+
+pub fn client_window_restore(owner_pid: usize, win_id: usize) -> Result<(), isize> {
+    let mut windows = CLIENT_WINDOWS.lock();
+    for slot in windows.iter_mut() {
+        if let Some(w) = slot {
+            if w.id == win_id {
+                if w.owner_pid != owner_pid {
+                    return Err(crate::syscall::EPERM);
+                }
+                w.is_minimized = false;
+                let total = w.width * w.height;
+                if w.buffer.len() < total {
+                    let mut new_buf = alloc::vec::Vec::new();
+                    if new_buf.try_reserve_exact(total).is_err() {
+                        return Err(crate::syscall::ENOMEM);
+                    }
+                    new_buf.resize(total, 0u32);
+                    w.buffer = new_buf;
+                }
+                w.damaged = true;
+                crate::scheduler::get().unblock_task(w.owner_pid);
                 return Ok(());
             }
         }
@@ -444,6 +501,8 @@ pub fn graphics_dispatch_client_event(caller_pid: usize, win_id: usize, event: &
                 }
                 w.events[w.ev_tail % 16] = *event;
                 w.ev_tail = w.ev_tail.wrapping_add(1);
+                // Zero-Idle Wakeup: acorda o dono da janela no escalonador se estiver bloqueado
+                crate::scheduler::get().unblock_task(w.owner_pid);
                 return Ok(());
             }
         }
@@ -1003,6 +1062,8 @@ pub fn close_windows_for_pid(pid: usize) {
     for slot in windows.iter_mut() {
         if let Some(w) = slot {
             if w.owner_pid == pid {
+                w.buffer.clear();
+                w.buffer.shrink_to_fit();
                 *slot = None;
             }
         }

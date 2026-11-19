@@ -1,5 +1,6 @@
 #[allow(dead_code)]
 pub mod ahci;
+pub mod audio;
 pub mod block;
 pub mod device_manager;
 pub mod ide;

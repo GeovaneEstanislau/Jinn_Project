@@ -92,11 +92,32 @@ def main():
         "  jinn[K]> fsinfo /ext2"
     ).encode("ascii")
 
+    style_css = (
+        b"h1 { color: #f9e2af; margin: 8px; }\n"
+        b".card { background-color: #1e1e2e; margin: 6px; }\n"
+        b".btn { background-color: #313244; color: #89dceb; }\n"
+        b"#counter-display { color: #00ffaa; font-weight: bold; }\n"
+    )
     index_html = (
-        b"<!DOCTYPE html>\n<html>\n<head><title>Jinn OS Portal</title></head>\n"
-        b"<body>\n  <h1>Jinn Browser 0.3.0</h1>\n"
-        b"  <p>Bem-vindo ao Jinn Browser rodando nativamente sobre o microkernel Jinn OS e Aladdin Desktop Compositor.</p>\n"
-        b"  <p><a href=\"about.htm\">Sobre o Sistema</a></p>\n</body>\n</html>"
+        b"<!DOCTYPE html>\n<html>\n"
+        b"<head>\n"
+        b"  <title>Jinn OS Portal</title>\n"
+        b"  <link rel=\"stylesheet\" href=\"style.css\">\n"
+        b"  <style>\n"
+        b"    .card { padding: 4px; border-color: #45475a; }\n"
+        b"  </style>\n"
+        b"</head>\n"
+        b"<body>\n"
+        b"  <h1>Jinn Browser 0.6.0</h1>\n"
+        b"  <p>Motor Nativo: HTML + Mini-CSS + JavaScript</p>\n"
+        b"  <div class=\"card\">\n"
+        b"    <p id=\"counter-display\">Cliques: 0</p>\n"
+        b"    <button id=\"btn-count\" class=\"btn\" onclick=\"clicks=clicks+1;document.getElementById('counter-display').innerText='Cliques: '+clicks;\">[ Incrementar Contador ]</button>\n"
+        b"  </div>\n"
+        b"  <script>var clicks = 0;</script>\n"
+        b"  <hr/>\n"
+        b"  <p><a href=\"about.htm\">Sobre o Sistema</a></p>\n"
+        b"</body>\n</html>"
     )
     about_html = (
         b"<!DOCTYPE html>\n<html>\n<head><title>Sobre o Jinn</title></head>\n"
@@ -190,7 +211,8 @@ def main():
         browser_start_clus = ola_start_clus + ola_clusters_needed
         index_clus = browser_start_clus + browser_clusters_needed
         about_clus = index_clus + 1
-        next_free_clus = about_clus + 1
+        style_clus = about_clus + 1
+        next_free_clus = style_clus + 1
 
         # FSInfo Sector (Setor 1 da partição FAT32)
         fsinfo = bytearray(512)
@@ -227,6 +249,7 @@ def main():
 
         set_fat(index_clus, 0x0FFFFFFF)
         set_fat(about_clus, 0x0FFFFFFF)
+        set_fat(style_clus, 0x0FFFFFFF)
 
         fat1_offset = part1_offset + 32 * sector_size
         fat2_offset = part1_offset + (32 + sectors_per_fat) * sector_size
@@ -255,6 +278,7 @@ def main():
         add_dir_entry(3, "INDEX   HTM", 0x20, index_clus, len(index_html))
         add_dir_entry(4, "ABOUT   HTM", 0x20, about_clus, len(about_html))
         add_dir_entry(5, "BROWSER ELF", 0x20, browser_start_clus, len(browser_bytes))
+        add_dir_entry(6, "STYLE   CSS", 0x20, style_clus, len(style_css))
 
         f.seek(data_start_offset1)
         f.write(root_dir)
@@ -278,6 +302,10 @@ def main():
         # Cluster about_clus: ABOUT.HTM
         f.seek(data_start_offset1 + (about_clus - 2) * cluster_size)
         f.write(about_html)
+
+        # Cluster style_clus: STYLE.CSS
+        f.seek(data_start_offset1 + (style_clus - 2) * cluster_size)
+        f.write(style_css)
 
         # ------------------------------------------------------------------
         # 3. FORMATAÇÃO DA PARTIÇÃO 2: Ext2 (/ext2)
@@ -388,6 +416,7 @@ def main():
     print(f"    * BROWSER.ELF: cluster {browser_start_clus}..{browser_start_clus + browser_clusters_needed - 1} ({len(browser_bytes)} bytes)")
     print(f"    * INDEX.HTM: cluster {index_clus} ({len(index_html)} bytes)")
     print(f"    * ABOUT.HTM: cluster {about_clus} ({len(about_html)} bytes)")
+    print(f"    * STYLE.CSS: cluster {style_clus} ({len(style_css)} bytes)")
     print(f"  - Particao 2 (Ext2):  LBA {start_lba2} (31 MiB) -> SERVER.TXT ({len(server_text)} bytes, Read-Only)")
 
 if __name__ == "__main__":

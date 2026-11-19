@@ -272,9 +272,17 @@ pub struct ClientWindowEvent {
     pub timestamp: u64,
 }
 
+pub const POLL_EVENT_NONBLOCK: usize = 1;
+pub const POLL_EVENT_BLOCKING: usize = 2;
+
 #[inline(always)]
 unsafe fn sys_window_poll_event(win_id: usize, event_ptr: *mut ClientWindowEvent) -> i64 {
     syscall3(24, win_id as u64, event_ptr as u64, 0)
+}
+
+#[inline(always)]
+unsafe fn sys_window_wait_event(win_id: usize, event_ptr: *mut ClientWindowEvent) -> i64 {
+    syscall3(24, win_id as u64, event_ptr as u64, POLL_EVENT_BLOCKING as u64)
 }
 
 #[repr(C)]
@@ -2819,13 +2827,16 @@ unsafe fn run_browser_interactive() -> ! {
         print_str(b"[BROWSER] Primeiro frame renderizado.\n");
     }
 
-    // 4. Laço Interativo de Eventos do Aladdin
+    // 4. Laço Interativo de Eventos do Aladdin (Zero-Idle com bloqueio cooperativo)
     let mut ev: ClientWindowEvent = core::mem::zeroed();
     loop {
-        let has_ev = sys_window_poll_event(win_id, &mut ev as *mut ClientWindowEvent);
-        if has_ev == 0 || has_ev == -11 {
-            // Fila vazia ou canal em transição cooperativa (0 ou -EAGAIN): cede ciclos e continua
-            let _ = sys_sleep(20);
+        let has_ev = sys_window_wait_event(win_id, &mut ev as *mut ClientWindowEvent);
+        if has_ev == 0 {
+            // Em chamada bloqueante Zero-Idle, se retornar 0 o processo acordou de um evento
+            continue;
+        } else if has_ev == -11 {
+            // Canal em transição (-EAGAIN): cede ciclos cooperativamente e continua
+            let _ = sys_yield();
             continue;
         } else if has_ev < 0 {
             print_str(b"[BROWSER-INTERACTION] Erro irrecuperavel no poll (ret=");
@@ -4308,24 +4319,7 @@ unsafe fn test_tls13_cryptography_and_syscalls() {
 #[no_mangle]
 pub extern "C" fn _start(argc: usize, argv: *const *const u8, _envp: *const *const u8) -> ! {
     unsafe {
-        let mut is_explicit_main = false;
-        if argc > 1 && !argv.is_null() {
-            let arg1 = *argv.add(1);
-            if streq(arg1, b"child_test") {
-                run_child_task(argc, argv);
-            } else if streq(arg1, b"exec_done") {
-                run_exec_target(argc, argv);
-            } else if str_contains(arg1, b"browser") {
-                run_browser_interactive();
-            } else if streq(arg1, b"worker") {
-                run_worker_task(3);
-            } else if streq(arg1, b"periodic") {
-                run_periodic_task(4);
-            } else if streq(arg1, b"main") {
-                is_explicit_main = true;
-            }
-        }
-
+        // 1. Prioridade máxima absoluta: se invocado como navegador (browser), executa imediatamente
         if argc > 0 && !argv.is_null() {
             let arg0 = *argv;
             if str_contains(arg0, b"browser") {
@@ -4333,16 +4327,18 @@ pub extern "C" fn _start(argc: usize, argv: *const *const u8, _envp: *const *con
             }
         }
 
-        // Consulta o próprio PID para despachar o papel da tarefa caso não especificado em argv
-        if !is_explicit_main {
-            let mut stat: ProcessResourceStat = core::mem::zeroed();
-            let _ = sys_res_stat(0, &mut stat);
-            let pid = stat.pid;
-
-            if pid == 4 {
-                run_worker_task(pid);
-            } else if pid == 5 {
-                run_periodic_task(pid);
+        if argc > 1 && !argv.is_null() {
+            let arg1 = *argv.add(1);
+            if str_contains(arg1, b"browser") {
+                run_browser_interactive();
+            } else if streq(arg1, b"child_test") {
+                run_child_task(argc, argv);
+            } else if streq(arg1, b"exec_done") {
+                run_exec_target(argc, argv);
+            } else if streq(arg1, b"worker") {
+                run_worker_task(3);
+            } else if streq(arg1, b"periodic") {
+                run_periodic_task(4);
             }
         }
 

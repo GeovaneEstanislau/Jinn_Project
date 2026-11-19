@@ -415,7 +415,20 @@ pub extern "C" fn syscall_dispatch_framed(frame: *mut usize) -> usize {
             // sys_exit: encerra a tarefa, libera todos os recursos e faz preempção imediata
             let pid = scheduler::current_pid();
             scheduler::get().exit_task(pid, arg0 as i32);
-            scheduler::get().preempt(frame as usize)
+            scheduler::set_yielded();
+            let new_rsp = scheduler::get().preempt(frame as usize);
+            if new_rsp == frame as usize || new_rsp == 0 {
+                let cpu_id = crate::smp::current_cpu_id();
+                let idle_id = scheduler::get().core_idle[cpu_id];
+                if let Some(Some(idle)) = scheduler::get().tasks.get_mut(idle_id) {
+                    idle.state = scheduler::TaskState::Running;
+                    idle.running_on_cpu = Some(cpu_id);
+                    scheduler::get().core_current[cpu_id] = Some(idle_id);
+                    unsafe { crate::memory::paging::load_cr3(idle.pml4_phys); }
+                    return idle.saved_rsp;
+                }
+            }
+            new_rsp
         }
         3 => {
             // sys_yield: cede a CPU voluntariamente de forma imediata
@@ -428,6 +441,36 @@ pub extern "C" fn syscall_dispatch_framed(frame: *mut usize) -> usize {
             unsafe { *frame.add(14) = ret as usize; }
             scheduler::set_yielded();
             scheduler::get().preempt(frame as usize)
+        }
+        22 => {
+            if arg1 != 0 {
+                let ret = sys_window_poll_event(arg0, arg1 as *mut crate::gui::ClientWindowEvent, arg2);
+                if ret == 0 && (arg2 & 2) != 0 {
+                    let pid = scheduler::current_pid();
+                    scheduler::get().block_task(pid);
+                    unsafe { *frame.add(14) = 0; }
+                    scheduler::set_yielded();
+                    return scheduler::get().preempt(frame as usize);
+                }
+                unsafe { *frame.add(14) = ret as usize; }
+                0
+            } else {
+                let ret = sys_window_close(arg0);
+                unsafe { *frame.add(14) = ret as usize; }
+                0
+            }
+        }
+        24 => {
+            let ret = sys_window_poll_event(arg0, arg1 as *mut crate::gui::ClientWindowEvent, arg2);
+            if ret == 0 && (arg2 & 2) != 0 {
+                let pid = scheduler::current_pid();
+                scheduler::get().block_task(pid);
+                unsafe { *frame.add(14) = 0; }
+                scheduler::set_yielded();
+                return scheduler::get().preempt(frame as usize);
+            }
+            unsafe { *frame.add(14) = ret as usize; }
+            0
         }
         38 => {
             // sys_execve: substitui a imagem do processo atual no mesmo PID
@@ -2104,8 +2147,6 @@ fn sys_window_poll_event(win_id: usize, event_ptr: *mut crate::gui::ClientWindow
             if (flags & 1) != 0 {
                 EAGAIN
             } else {
-                // Preempção cooperativa: cede ciclos ao compositor / outras tarefas para evitar spinloop com 100% CPU
-                crate::scheduler::yield_now();
                 0
             }
         }
