@@ -25,16 +25,21 @@ pub mod graphics;
 pub mod process;
 pub mod console;
 pub mod time;
+pub mod ipc;
 
 // ── Re-exportações Globais e Conveniência ─────────────────────────────────────
 
 pub use syscall::{
     SYS_EXIT, SYS_WRITE, SYS_READ, SYS_YIELD, SYS_GETPID, SYS_SLEEP,
+    SYS_IPC_SEND, SYS_IPC_RECV,
+    SYS_JDA_SHM_ALLOC, SYS_JDA_SHM_RELEASE, SYS_JDA_SHM_SHARE, SYS_JDA_SHM_GET_VADDR,
     SYS_WINDOW_CREATE, SYS_WINDOW_BLIT, SYS_WINDOW_CLOSE, SYS_WINDOW_POLL_EVENT,
     SYS_GRAPHICS_REGISTER, SYS_GRAPHICS_GET_FB_INFO, SYS_GRAPHICS_PRESENT,
     SYS_GRAPHICS_POLL_INPUT, SYS_GRAPHICS_UNREGISTER, SYS_GRAPHICS_READ_CLIENT_SURFACE,
     SYS_GRAPHICS_DISPATCH_CLIENT_EVENT, SYS_GRAPHICS_LIST_CLIENT_WINDOWS,
 };
+
+pub use ipc::{Message, ipc_send, ipc_recv, shm_alloc, shm_release, shm_share, shm_get_vaddr};
 
 pub use events::{
     ClientWindowEvent,

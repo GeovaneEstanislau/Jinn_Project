@@ -672,6 +672,27 @@ pub extern "C" fn _start() -> ! {
         w.write_line("    (Nenhum modulo ELF carregado pelo bootloader)");
     }
 
+    // JHCS Heterogeneous Compute Daemon e Test Suite (Ring 3) — Ativos em todos os perfis
+    if let Some(jhcs_d_elf) = limine::get_module_by_name("jhcs-daemon").or_else(|| limine::get_module_by_name("jhcs")) {
+        let jd_pid = sched.spawn_user_task_from_memory("jhcs-daemon[U3]", jhcs_d_elf, &["jhcs-daemon"], &[]).unwrap_or(0);
+        if jd_pid > 0 {
+            ipc::register(jd_pid);
+            w.write_string("    Processo Ring 3 criado: PID ");
+            w.write_decimal(jd_pid);
+            w.write_line(" (JHCS Compute Daemon)");
+        }
+    }
+
+    if let Some(jhcs_test_elf) = limine::get_module_by_name("jhcs-test") {
+        let jt_pid = sched.spawn_user_task_from_memory("jhcs-test[U3]", jhcs_test_elf, &["jhcs-test"], &[]).unwrap_or(0);
+        if jt_pid > 0 {
+            ipc::register(jt_pid);
+            w.write_string("    Processo Ring 3 criado: PID ");
+            w.write_decimal(jt_pid);
+            w.write_line(" (JHCS Integration Test Suite)");
+        }
+    }
+
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");
     w.set_color(Color::LightGray, Color::Black);

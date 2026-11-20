@@ -1,0 +1,20 @@
+[package]
+name = "jhcs-daemon"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aladdin-sdk = { path = "../../sdk/aladdin-sdk" }
+jhcs-core = { path = "../../../jhcs-rs/crates/jhcs-core", default-features = false }
+jhcs-broker = { path = "../../../jhcs-rs/crates/jhcs-broker", default-features = false }
+jhcs-backend-cpu = { path = "../../../jhcs-rs/crates/jhcs-backend-cpu", default-features = false }
+jhcs-backend-simd = { path = "../../../jhcs-rs/crates/jhcs-backend-simd", default-features = false }
+jhcs-platform-jinn = { path = "../../../jhcs-rs/crates/jhcs-platform-jinn", default-features = false }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true

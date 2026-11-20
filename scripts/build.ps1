@@ -118,6 +118,39 @@ if (-not (Test-Path $serverElfPath)) {
 }
 Copy-Item -Path $serverElfPath -Destination (Join-Path $isoAppsDir "aladdin-server.elf") -Force
 Copy-Item -Path $serverElfPath -Destination (Join-Path $isoAppsDir "aladdin.elf") -Force
+
+# --- Build jhcs-daemon (JHCS Heterogeneous Compute Daemon) ---
+Write-Host "Building jhcs-daemon (JHCS Heterogeneous Compute Daemon)..."
+Push-Location "apps\jhcs-daemon"
+& cargo build --release --target x86_64-unknown-none
+if ($LASTEXITCODE -ne 0) {
+    Pop-Location
+    throw "JHCS Daemon build failed."
+}
+Pop-Location
+
+$jhcsElfPath = "apps\jhcs-daemon\target\x86_64-unknown-none\release\jhcs-daemon"
+if (-not (Test-Path $jhcsElfPath)) {
+    throw "JHCS Daemon ELF not found: $jhcsElfPath"
+}
+Copy-Item -Path $jhcsElfPath -Destination (Join-Path $isoAppsDir "jhcs-daemon.elf") -Force
+Copy-Item -Path $jhcsElfPath -Destination (Join-Path $isoAppsDir "jhcs.elf") -Force
+
+# --- Build jhcs-test (JHCS End-to-End Test Suite) ---
+Write-Host "Building jhcs-test (JHCS End-to-End Test Suite)..."
+Push-Location "apps\jhcs-test"
+& cargo build --release --target x86_64-unknown-none
+if ($LASTEXITCODE -ne 0) {
+    Pop-Location
+    throw "JHCS Test build failed."
+}
+Pop-Location
+
+$jhcsTestElfPath = "apps\jhcs-test\target\x86_64-unknown-none\release\jhcs-test"
+if (-not (Test-Path $jhcsTestElfPath)) {
+    throw "JHCS Test ELF not found: $jhcsTestElfPath"
+}
+Copy-Item -Path $jhcsTestElfPath -Destination (Join-Path $isoAppsDir "jhcs-test.elf") -Force
 $env:RUSTFLAGS = $origRustflags
 
 # --- Gera imagem de disco virtual FAT32 com MBR ---

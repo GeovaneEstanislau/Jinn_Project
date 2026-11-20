@@ -2926,7 +2926,11 @@ fn sys_spawn_process(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> isize
 
             // 2. Fallback resiliente: se o disco não estiver montado ou o arquivo estiver ausente,
             // carrega o binário correspondente a partir dos módulos Limine em memória (garante execução por ISO)
-            let mod_name = if path.contains("browser") || path.contains("BROWSER") {
+            let mod_name = if path.contains("jhcs-test") || path.contains("JHCS-TEST") {
+                Some("jhcs-test")
+            } else if path.contains("jhcs-daemon") || path.contains("jhcs") || path.contains("JHCS") {
+                Some("jhcs-daemon")
+            } else if path.contains("browser") || path.contains("BROWSER") {
                 Some("browser")
             } else if path.contains("aladdin") || path.contains("ALADDIN") {
                 Some("aladdin")
