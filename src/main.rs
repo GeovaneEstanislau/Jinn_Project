@@ -666,19 +666,8 @@ pub extern "C" fn _start() -> ! {
         }
     } else if !prof.is_headless() {
         w.set_color(Color::LightCyan, Color::Black);
-        w.write_line("    Modo Desktop Aladdin: Inicializacao automatica do compositor Ring 3.");
+        w.write_line("    Modo Desktop Aladdin: Inicializacao e supervisao via launch_ring3_desktop.");
         w.set_color(Color::LightGray, Color::Black);
-
-        // Pre-carrega o compositor grafico Aladdin Desktop (Ring 3) a partir do modulo Limine
-        if let Some(aladdin_elf) = limine::get_module_by_name("aladdin").or_else(|| limine::get_module_by_name("aladdin-server")) {
-            let a_pid = sched.spawn_user_task_from_memory("aladdin[U3]", aladdin_elf, &["aladdin", "server"], &[]).unwrap_or(0);
-            if a_pid > 0 {
-                ipc::register(a_pid);
-                w.write_string("    Processo Ring 3 criado: PID ");
-                w.write_decimal(a_pid);
-                w.write_line(" (Aladdin Desktop Compositor)");
-            }
-        }
     } else {
         w.write_line("    (Nenhum modulo ELF carregado pelo bootloader)");
     }
@@ -721,6 +710,6 @@ pub extern "C" fn _start() -> ! {
 
     // Idle loop do processador (Thread 0 / Boot thread abandonada quando preemptada)
     loop {
-        unsafe { core::arch::asm!("hlt") };
+        unsafe { core::arch::asm!("sti; hlt") };
     }
 }

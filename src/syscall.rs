@@ -419,14 +419,19 @@ pub extern "C" fn syscall_dispatch_framed(frame: *mut usize) -> usize {
             let new_rsp = scheduler::get().preempt(frame as usize);
             if new_rsp == frame as usize || new_rsp == 0 {
                 let cpu_id = crate::smp::current_cpu_id();
-                let idle_id = scheduler::get().core_idle[cpu_id];
-                if let Some(Some(idle)) = scheduler::get().tasks.get_mut(idle_id) {
+                let sched = scheduler::get();
+                let idle_id = sched.core_idle[cpu_id];
+                let (idle_rsp, idle_pml4) = if let Some(Some(idle)) = sched.tasks.get_mut(idle_id) {
                     idle.state = scheduler::TaskState::Running;
                     idle.running_on_cpu = Some(cpu_id);
-                    scheduler::get().core_current[cpu_id] = Some(idle_id);
-                    unsafe { crate::memory::paging::load_cr3(idle.pml4_phys); }
-                    return idle.saved_rsp;
-                }
+                    (idle.saved_rsp, idle.pml4_phys)
+                } else {
+                    return new_rsp;
+                };
+                sched.set_core_current(cpu_id, Some(idle_id));
+                crate::smp::set_current_pid(cpu_id, Some(idle_id));
+                unsafe { crate::memory::paging::load_cr3(idle_pml4); }
+                return idle_rsp;
             }
             new_rsp
         }

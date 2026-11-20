@@ -7,9 +7,11 @@
 ///   [ Boot Sector / BPB ] -> [ Setores Reservados ] -> [ FAT 1 ] -> [ FAT 2 ] -> [ Área de Dados (Clusters) ]
 
 use crate::vfs::{self, FileSystem, NodeType, Stat, VfsError, VfsResult};
+use crate::memory::alloc::IrqSafeSpinLock;
 
 pub const FAT32_EOF: u32 = 0x0FFF_FFF8;
 const MAX_OPEN_FILES: usize = 32;
+pub static FAT32_LOCK: IrqSafeSpinLock<()> = IrqSafeSpinLock::new(());
 
 // ── Estruturas de Dados do FAT32 ──────────────────────────────────────────────
 
@@ -815,6 +817,7 @@ impl FileSystem for Fat32Fs {
         }
 
         // Armazena na tabela de arquivos abertos (handle index)
+        let _guard = FAT32_LOCK.lock();
         unsafe {
             let fs_ptr = core::ptr::addr_of_mut!(FAT32_GLOBAL);
             let fs = &mut (*fs_ptr);
@@ -836,9 +839,12 @@ impl FileSystem for Fat32Fs {
             return Err(VfsError::InvalidPath);
         }
 
-        unsafe {
-            let fs_ptr = core::ptr::addr_of_mut!(FAT32_GLOBAL);
-            (*fs_ptr).open_files[idx].is_active = false;
+        {
+            let _guard = FAT32_LOCK.lock();
+            unsafe {
+                let fs_ptr = core::ptr::addr_of_mut!(FAT32_GLOBAL);
+                (*fs_ptr).open_files[idx].is_active = false;
+            }
         }
         let _ = self.sync();
         Ok(())
@@ -850,13 +856,16 @@ impl FileSystem for Fat32Fs {
             return Err(VfsError::InvalidPath);
         }
 
-        let entry = unsafe {
-            let fs_ptr = core::ptr::addr_of!(FAT32_GLOBAL);
-            let slot = &(*fs_ptr).open_files[idx];
-            if !slot.is_active {
-                return Err(VfsError::NotFound);
+        let entry = {
+            let _guard = FAT32_LOCK.lock();
+            unsafe {
+                let fs_ptr = core::ptr::addr_of!(FAT32_GLOBAL);
+                let slot = &(*fs_ptr).open_files[idx];
+                if !slot.is_active {
+                    return Err(VfsError::NotFound);
+                }
+                slot.entry
             }
-            slot.entry
         };
 
         if offset >= entry.size as u64 {
@@ -930,13 +939,16 @@ impl FileSystem for Fat32Fs {
             return Err(VfsError::InvalidPath);
         }
 
-        let mut entry = unsafe {
-            let fs_ptr = core::ptr::addr_of!(FAT32_GLOBAL);
-            let slot = &(*fs_ptr).open_files[idx];
-            if !slot.is_active {
-                return Err(VfsError::NotFound);
+        let mut entry = {
+            let _guard = FAT32_LOCK.lock();
+            unsafe {
+                let fs_ptr = core::ptr::addr_of!(FAT32_GLOBAL);
+                let slot = &(*fs_ptr).open_files[idx];
+                if !slot.is_active {
+                    return Err(VfsError::NotFound);
+                }
+                slot.entry
             }
-            slot.entry
         };
 
         if entry.is_dir {
@@ -1038,9 +1050,12 @@ impl FileSystem for Fat32Fs {
         let end_pos = (offset as usize) + bytes_written;
         if end_pos > entry.size as usize {
             let new_size = end_pos as u32;
-            unsafe {
-                let fs_ptr = core::ptr::addr_of_mut!(FAT32_GLOBAL);
-                (*fs_ptr).open_files[idx].entry.size = new_size;
+            {
+                let _guard = FAT32_LOCK.lock();
+                unsafe {
+                    let fs_ptr = core::ptr::addr_of_mut!(FAT32_GLOBAL);
+                    (*fs_ptr).open_files[idx].entry.size = new_size;
+                }
             }
             let _ = self.update_entry_metadata(entry.dir_sector_lba, entry.dir_entry_offset, entry.first_cluster, new_size);
         }

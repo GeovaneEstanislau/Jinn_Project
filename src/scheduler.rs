@@ -20,10 +20,10 @@
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use crate::vga::Writer;
 use crate::gdt;
-use crate::memory::{paging, SpinLock};
+use crate::memory::{paging, IrqSafeSpinLock};
 
-/// Trava global para acesso concorrente thread-safe / SMP ao escalonador.
-pub static SCHED_LOCK: SpinLock<()> = SpinLock::new(());
+/// Trava global para acesso concorrente thread-safe / SMP ao escalonador (IrqSafe para prevenir deadlocks com ISR timer).
+pub static SCHED_LOCK: IrqSafeSpinLock<()> = IrqSafeSpinLock::new(());
 
 /// Contador global de ticks do escalonador (incrementado a cada preempção).
 static SCHED_TICKS: AtomicU64 = AtomicU64::new(0);
@@ -393,6 +393,17 @@ impl Scheduler {
             core_current: [NONE_CORE; crate::gdt::MAX_CPUS],
             core_idle: [0; crate::gdt::MAX_CPUS],
             slot_generation: [1; MAX_TASKS],
+        }
+    }
+
+    /// Atualiza a tarefa corrente no núcleo especificado e sincroniza CURRENT_TASK no BSP.
+    pub fn set_core_current(&mut self, cpu_id: usize, pid: Option<usize>) {
+        if cpu_id < crate::gdt::MAX_CPUS {
+            self.core_current[cpu_id] = pid;
+            if cpu_id == 0 {
+                self.current = pid;
+                CURRENT_TASK.store(pid.map(|p| p as i32).unwrap_or(-1), Ordering::SeqCst);
+            }
         }
     }
 
@@ -1782,7 +1793,7 @@ fn idle_task_entry() {
         crate::drivers::block::periodic_flush_check();
         // Processa recepção de pacotes de rede e firewall JinnWall
         crate::net::poll();
-        unsafe { core::arch::asm!("hlt"); }
+        unsafe { core::arch::asm!("sti; hlt"); }
     }
 }
 

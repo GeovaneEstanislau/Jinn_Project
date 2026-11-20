@@ -34,7 +34,7 @@ struct AudioHardwareState {
     irq: u8,
 }
 
-static AUDIO_HW: crate::memory::SpinLock<AudioHardwareState> = crate::memory::SpinLock::new(AudioHardwareState {
+static AUDIO_HW: crate::memory::IrqSafeSpinLock<AudioHardwareState> = crate::memory::IrqSafeSpinLock::new(AudioHardwareState {
     ctrl_type: AudioControllerType::None,
     bus: 0,
     slot: 0,

@@ -3,9 +3,9 @@
 /// Gerencia a inicialização, topologia e sincronização de múltiplos núcleos (CPUs)
 /// utilizando o protocolo oficial Limine SMP e Local APIC x86_64.
 
-use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering};
 use crate::limine::{self, LimineSmpInfo};
-use crate::memory::SpinLock;
+use crate::memory::IrqSafeSpinLock;
 use crate::interrupts::apic;
 use crate::gdt;
 
@@ -51,7 +51,7 @@ impl CpuCore {
     }
 }
 
-static CPUS: SpinLock<[CpuCore; MAX_CPUS]> = SpinLock::new([
+static CPUS: IrqSafeSpinLock<[CpuCore; MAX_CPUS]> = IrqSafeSpinLock::new([
     CpuCore::empty(0),
     CpuCore::empty(1),
     CpuCore::empty(2),
@@ -62,10 +62,26 @@ static CPUS: SpinLock<[CpuCore; MAX_CPUS]> = SpinLock::new([
     CpuCore::empty(7),
 ]);
 
-// Mapeamento O(1) de Local APIC ID (0..255) para ID lógico de CPU (0..MAX_CPUS-1)
+// Mapeamento lock-free O(1) de Local APIC ID (0..255) para ID lógico de CPU (0..MAX_CPUS-1)
 static LAPIC_TO_CPUID: [AtomicI32; 256] = {
     const EMPTY: AtomicI32 = AtomicI32::new(-1);
     [EMPTY; 256]
+};
+
+// Telemetria por núcleo lock-free (imune a deadlocks em ISR e preempção)
+static CURRENT_PID_PER_CPU: [AtomicI32; MAX_CPUS] = {
+    const EMPTY: AtomicI32 = AtomicI32::new(-1);
+    [EMPTY; MAX_CPUS]
+};
+
+static CORE_TICKS: [AtomicU64; MAX_CPUS] = {
+    const ZERO: AtomicU64 = AtomicU64::new(0);
+    [ZERO; MAX_CPUS]
+};
+
+static CORE_CTX_SWITCHES: [AtomicU64; MAX_CPUS] = {
+    const ZERO: AtomicU64 = AtomicU64::new(0);
+    [ZERO; MAX_CPUS]
 };
 
 static ONLINE_CPUS: AtomicUsize = AtomicUsize::new(0);
@@ -91,43 +107,54 @@ pub fn online_cpus() -> usize {
 pub fn get_cpu(cpu_id: usize) -> Option<CpuCore> {
     if cpu_id < MAX_CPUS {
         let guard = CPUS.lock();
-        Some(guard[cpu_id])
+        let mut core = guard[cpu_id];
+        core.current_pid = get_current_pid(cpu_id);
+        core.ticks = CORE_TICKS[cpu_id].load(Ordering::Relaxed);
+        core.ctx_switches = CORE_CTX_SWITCHES[cpu_id].load(Ordering::Relaxed);
+        Some(core)
     } else {
         None
     }
 }
 
-/// Define o PID do processo em execução no núcleo informado.
+/// Define o PID do processo em execução no núcleo informado (Lock-Free).
 pub fn set_current_pid(cpu_id: usize, pid: Option<usize>) {
     if cpu_id < MAX_CPUS {
+        let val = match pid {
+            Some(p) => p as i32,
+            None => -1,
+        };
+        CURRENT_PID_PER_CPU[cpu_id].store(val, Ordering::Release);
         let mut guard = CPUS.lock();
         guard[cpu_id].current_pid = pid;
     }
 }
 
-/// Retorna o PID do processo que está executando no núcleo informado.
+/// Retorna o PID do processo que está executando no núcleo informado (Lock-Free).
 pub fn get_current_pid(cpu_id: usize) -> Option<usize> {
     if cpu_id < MAX_CPUS {
-        let guard = CPUS.lock();
-        guard[cpu_id].current_pid
+        let val = CURRENT_PID_PER_CPU[cpu_id].load(Ordering::Acquire);
+        if val >= 0 {
+            Some(val as usize)
+        } else {
+            None
+        }
     } else {
         None
     }
 }
 
-/// Contabiliza um tick de timer no núcleo informado.
+/// Contabiliza um tick de timer no núcleo informado (Lock-Free, seguro em ISR).
 pub fn record_tick(cpu_id: usize) {
     if cpu_id < MAX_CPUS {
-        let mut guard = CPUS.lock();
-        guard[cpu_id].ticks = guard[cpu_id].ticks.wrapping_add(1);
+        CORE_TICKS[cpu_id].fetch_add(1, Ordering::Relaxed);
     }
 }
 
-/// Contabiliza uma troca de contexto (context switch) no núcleo informado.
+/// Contabiliza uma troca de contexto (context switch) no núcleo informado (Lock-Free, seguro em ISR).
 pub fn record_ctx_switch(cpu_id: usize) {
     if cpu_id < MAX_CPUS {
-        let mut guard = CPUS.lock();
-        guard[cpu_id].ctx_switches = guard[cpu_id].ctx_switches.wrapping_add(1);
+        CORE_CTX_SWITCHES[cpu_id].fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -181,7 +208,7 @@ pub unsafe extern "C" fn ap_entry(info: *const LimineSmpInfo) -> ! {
 
     // 9. Loop de espera (Idle Loop do AP enquanto aguarda ou executa tarefas)
     loop {
-        core::arch::asm!("hlt");
+        core::arch::asm!("sti; hlt");
     }
 }
 

@@ -13,7 +13,7 @@ use aladdin::contracts::vfs::VfsHost;
 use aladdin::contracts::process::ProcessHost;
 use aladdin::desktop::session::AladdinSession;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use crate::memory::SpinLock;
+use crate::memory::IrqSafeSpinLock;
 use alloc::vec::Vec;
 
 pub static GRAPHICS_SERVER_PID: AtomicUsize = AtomicUsize::new(0);
@@ -76,14 +76,14 @@ pub struct KernelClientWindow {
     pub is_minimized: bool,
 }
 
-pub static CLIENT_WINDOWS: SpinLock<[Option<KernelClientWindow>; 32]> = SpinLock::new([
+pub static CLIENT_WINDOWS: IrqSafeSpinLock<[Option<KernelClientWindow>; 32]> = IrqSafeSpinLock::new([
     None, None, None, None, None, None, None, None,
     None, None, None, None, None, None, None, None,
     None, None, None, None, None, None, None, None,
     None, None, None, None, None, None, None, None,
 ]);
 
-static LAST_MOUSE_STATE: SpinLock<(usize, usize, u8)> = SpinLock::new((usize::MAX, usize::MAX, 0xFF));
+static LAST_MOUSE_STATE: IrqSafeSpinLock<(usize, usize, u8)> = IrqSafeSpinLock::new((usize::MAX, usize::MAX, 0xFF));
 
 pub fn register_graphics_server(pid: usize, _flags: u32) -> Result<(), isize> {
     let current = GRAPHICS_SERVER_PID.load(Ordering::SeqCst);
@@ -490,24 +490,32 @@ pub fn graphics_dispatch_client_event(caller_pid: usize, win_id: usize, event: &
     if s_pid != 0 && caller_pid != s_pid {
         return Err(crate::syscall::EPERM);
     }
-    let mut windows = CLIENT_WINDOWS.lock();
-    for slot in windows.iter_mut() {
-        if let Some(w) = slot {
-            if w.id == win_id {
-                let count = w.ev_tail.wrapping_sub(w.ev_head);
-                if count >= 16 {
-                    // Descarta o evento mais antigo para evitar que a fila de 16 itens trave o compositor
-                    w.ev_head = w.ev_head.wrapping_add(1);
+    let mut target_owner = None;
+    {
+        let mut windows = CLIENT_WINDOWS.lock();
+        for slot in windows.iter_mut() {
+            if let Some(w) = slot {
+                if w.id == win_id {
+                    let count = w.ev_tail.wrapping_sub(w.ev_head);
+                    if count >= 16 {
+                        // Descarta o evento mais antigo para evitar que a fila de 16 itens trave o compositor
+                        w.ev_head = w.ev_head.wrapping_add(1);
+                    }
+                    w.events[w.ev_tail % 16] = *event;
+                    w.ev_tail = w.ev_tail.wrapping_add(1);
+                    target_owner = Some(w.owner_pid);
+                    break;
                 }
-                w.events[w.ev_tail % 16] = *event;
-                w.ev_tail = w.ev_tail.wrapping_add(1);
-                // Zero-Idle Wakeup: acorda o dono da janela no escalonador se estiver bloqueado
-                crate::scheduler::get().unblock_task(w.owner_pid);
-                return Ok(());
             }
         }
     }
-    Err(crate::syscall::EBADF)
+    if let Some(owner) = target_owner {
+        // Zero-Idle Wakeup: acorda o dono da janela no escalonador de forma segura (fora do lock de janelas)
+        crate::scheduler::get().unblock_task(owner);
+        Ok(())
+    } else {
+        Err(crate::syscall::EBADF)
+    }
 }
 
 pub fn graphics_list_client_windows(caller_pid: usize, out_slice: &mut [ClientWindowInfoUser]) -> Result<usize, isize> {
@@ -1106,61 +1114,66 @@ pub fn launch_ring3_desktop() {
     // Limpa buffer de teclado residual de selftests do boot
     while crate::keyboard_buffer::pop().is_some() {}
 
-    // Verifica se o compositor Aladdin Ring 3 já foi pré-carregado no boot
+    // Verifica se o compositor Aladdin Ring 3 já está registrado ou pré-carregado
     let existing_pid = {
-        let sched = crate::scheduler::get();
-        let mut found = None;
-        for (i, slot) in sched.tasks.iter().enumerate() {
-            if let Some(t) = slot {
-                if t.name.starts_with("aladdin") && t.state != crate::scheduler::TaskState::Zombie && t.state != crate::scheduler::TaskState::Completed {
-                    found = Some(i);
-                    break;
+        let current_g = GRAPHICS_SERVER_PID.load(Ordering::SeqCst);
+        if current_g != 0 {
+            Some(current_g)
+        } else {
+            let sched = crate::scheduler::get();
+            let mut found = None;
+            for (i, slot) in sched.tasks.iter().enumerate() {
+                if let Some(t) = slot {
+                    if t.name.starts_with("aladdin") && t.state != crate::scheduler::TaskState::Zombie && t.state != crate::scheduler::TaskState::Completed {
+                        found = Some(i);
+                        break;
+                    }
                 }
             }
+            found
         }
-        found
     };
 
-    let pid = if let Some(p) = existing_pid {
-        crate::serial_write(b"[GUI] Processo Aladdin Ring 3 pre-carregado detectado!\n");
+    let mut pid = if let Some(p) = existing_pid {
+        crate::serial_write(b"[GUI] Processo Aladdin Ring 3 ativo detectado!\n");
         p
     } else {
-        let path = "/disk/aladdin.elf";
-        let argv = [path, "server"];
+        let argv = ["aladdin", "server"];
         
-        // 1. Tenta carregar do disco FAT32
-        crate::serial_write(b"[GUI] Tentando spawn_user_task_from_vfs(/disk/aladdin.elf)...\n");
-        let spawn_res = crate::scheduler::get().spawn_user_task_from_vfs(path, &argv, &[]);
-        match spawn_res {
-            Ok(p) => {
-                crate::serial_write(b"[GUI] /disk/aladdin.elf carregado com sucesso!\n");
-                p
-            },
-            Err(_e) => {
-                crate::serial_write(b"[GUI] Falha ao carregar /disk/aladdin.elf, tentando /disk/ALADDIN.ELF...\n");
-                // Tenta variante de caixa /disk/ALADDIN.ELF
-                match crate::scheduler::get().spawn_user_task_from_vfs("/disk/ALADDIN.ELF", &argv, &[]) {
-                    Ok(p) => {
-                        crate::serial_write(b"[GUI] /disk/ALADDIN.ELF carregado com sucesso!\n");
-                        p
-                    },
-                    Err(_) => {
-                        crate::serial_write(b"[GUI] Falha no disco, tentando modulo Limine 'aladdin'...\n");
-                        // Fallback para módulos Limine em memória
-                        if let Some(elf_bytes) = limine::get_module_by_name("aladdin").or_else(|| limine::get_module_by_name("aladdin-server")) {
-                            match crate::scheduler::get().spawn_user_task_from_memory("aladdin[U3]", elf_bytes, &argv, &[]) {
-                                Ok(p) => {
-                                    crate::serial_write(b"[GUI] Modulo Limine aladdin carregado com sucesso!\n");
-                                    p
-                                },
-                                Err(_) => {
-                                    crate::serial_write(b"[GUI] Falha ao spawnar modulo Limine, fallback Ring 0\n");
-                                    run_desktop();
-                                    return;
-                                }
-                            }
-                        } else {
-                            crate::serial_write(b"[GUI] Modulo Limine nao encontrado, fallback Ring 0\n");
+        // 1. Prioriza o módulo Limine em memória (instantâneo e sem I/O de disco)
+        if let Some(elf_bytes) = limine::get_module_by_name("aladdin").or_else(|| limine::get_module_by_name("aladdin-server")) {
+            match crate::scheduler::get().spawn_user_task_from_memory("aladdin[U3]", elf_bytes, &argv, &[]) {
+                Ok(p) => {
+                    crate::serial_write(b"[GUI] Modulo Limine aladdin carregado com sucesso!\n");
+                    p
+                },
+                Err(_) => {
+                    crate::serial_write(b"[GUI] Falha ao spawnar modulo Limine, tentando disco...\n");
+                    let path = "/disk/aladdin.elf";
+                    let argv_vfs = [path, "server"];
+                    match crate::scheduler::get().spawn_user_task_from_vfs(path, &argv_vfs, &[]) {
+                        Ok(p) => p,
+                        Err(_) => {
+                            run_desktop();
+                            return;
+                        }
+                    }
+                }
+            }
+        } else {
+            let path = "/disk/aladdin.elf";
+            let argv_vfs = [path, "server"];
+            crate::serial_write(b"[GUI] Tentando spawn_user_task_from_vfs(/disk/aladdin.elf)...\n");
+            match crate::scheduler::get().spawn_user_task_from_vfs(path, &argv_vfs, &[]) {
+                Ok(p) => {
+                    crate::serial_write(b"[GUI] /disk/aladdin.elf carregado com sucesso!\n");
+                    p
+                },
+                Err(_) => {
+                    match crate::scheduler::get().spawn_user_task_from_vfs("/disk/ALADDIN.ELF", &argv_vfs, &[]) {
+                        Ok(p) => p,
+                        Err(_) => {
+                            crate::serial_write(b"[GUI] Falha no disco, fallback Ring 0\n");
                             run_desktop();
                             return;
                         }
@@ -1170,21 +1183,69 @@ pub fn launch_ring3_desktop() {
         }
     };
 
-    crate::ipc::register(pid);
-    crate::serial_write(b"[GUI] Aguardando execucao do compositor Ring 3...\n");
+    let mut restart_attempts = 0usize;
     loop {
-        if crate::scheduler::get().collect_zombie(pid).is_some() {
-            crate::serial_write(b"[GUI] Compositor Ring 3 terminou (zombie coletado)\n");
-            break;
+        crate::ipc::register(pid);
+        crate::serial_write(b"[GUI] Aguardando execucao do compositor Ring 3 (Zero-Idle wait_on)...\n");
+        let waiter_pid = crate::scheduler::current_pid();
+        loop {
+            if let Some(exit_code) = crate::scheduler::get().collect_zombie(pid) {
+                crate::serial_write(b"[GUI] Compositor Ring 3 finalizado. Codigo de saida: ");
+                let mut c_buf = [0u8; 16];
+                let mut c_val = exit_code.unsigned_abs() as u64;
+                let mut c_i = 0;
+                if c_val == 0 {
+                    crate::serial_write(b"0");
+                } else {
+                    if exit_code < 0 { crate::serial_write(b"-"); }
+                    while c_val > 0 {
+                        c_buf[c_i] = b'0' + (c_val % 10) as u8;
+                        c_val /= 10;
+                        c_i += 1;
+                    }
+                    c_buf[..c_i].reverse();
+                    crate::serial_write(&c_buf[..c_i]);
+                }
+                crate::serial_write(b"\n");
+
+                // Limpa registro de servidor gráfico para permitir novo registro limpo sem EBUSY
+                GRAPHICS_SERVER_PID.store(0, Ordering::SeqCst);
+
+                // Auto-recuperação resiliente: se falhou anormalmente (código != 0), reinicia automaticamente
+                if exit_code != 0 && restart_attempts < 3 {
+                    restart_attempts += 1;
+                    crate::serial_write(b"[GUI] [AUTO-RECOVERY] Reiniciando Aladdin Desktop Compositor (Tentativa ");
+                    crate::serial_write_byte(b'0' + restart_attempts as u8);
+                    crate::serial_write(b"/3)...\n");
+
+                    let argv = ["aladdin", "server"];
+                    let new_pid_opt = limine::get_module_by_name("aladdin")
+                        .or_else(|| limine::get_module_by_name("aladdin-server"))
+                        .and_then(|bytes| crate::scheduler::get().spawn_user_task_from_memory("aladdin[U3]", bytes, &argv, &[]).ok())
+                        .or_else(|| {
+                            let path = "/disk/aladdin.elf";
+                            let argv_vfs = [path, "server"];
+                            crate::scheduler::get().spawn_user_task_from_vfs(path, &argv_vfs, &[]).ok()
+                        });
+
+                    if let Some(np) = new_pid_opt {
+                        pid = np;
+                        break; // Reinicia espera externa com novo PID
+                    }
+                }
+                return restore_text_console();
+            }
+            if pid >= crate::scheduler::MAX_TASKS || crate::scheduler::get().tasks[pid].is_none() {
+                GRAPHICS_SERVER_PID.store(0, Ordering::SeqCst);
+                crate::serial_write(b"[GUI] Compositor Ring 3 saiu do slot de tarefas\n");
+                return restore_text_console();
+            }
+            // Bloqueia no escalonador aguardando a finalização da tarefa (Zero-Idle)
+            if !crate::scheduler::get().wait_on(waiter_pid, pid) {
+                crate::scheduler::yield_now();
+            }
         }
-        if pid >= crate::scheduler::MAX_TASKS || crate::scheduler::get().tasks[pid].is_none() {
-            crate::serial_write(b"[GUI] Compositor Ring 3 saiu do slot de tarefas\n");
-            break;
-        }
-        crate::scheduler::yield_now();
     }
-    crate::serial_write(b"[GUI] launch_ring3_desktop finalizado, restaurando console de texto\n");
-    restore_text_console();
 }
 
 pub fn run_desktop() {

@@ -14,7 +14,7 @@
 ///   pid_from (4 B) + pid_to (4 B) + tag (4 B) + _pad (4 B) + payload (64 B)
 
 use core::sync::atomic::{AtomicUsize, Ordering};
-use crate::memory::SpinLock;
+use crate::memory::IrqSafeSpinLock;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 pub const MAX_PROCS:    usize = 64;
@@ -142,7 +142,7 @@ impl IpcTable {
     }
 }
 
-static IPC: SpinLock<IpcTable> = SpinLock::new(IpcTable::new());
+static IPC: IrqSafeSpinLock<IpcTable> = IrqSafeSpinLock::new(IpcTable::new());
 
 // ── Public API ────────────────────────────────────────────────────────────────
 

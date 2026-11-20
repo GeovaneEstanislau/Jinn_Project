@@ -10,7 +10,7 @@
 
 #![allow(dead_code)]
 
-use crate::memory::SpinLock;
+use crate::memory::IrqSafeSpinLock;
 
 /// Estados formais do ciclo de vida supervisionado do driver (JAHA Seção 8.2)
 #[repr(u32)]
@@ -232,7 +232,7 @@ impl DriverSupervisor {
 
 // ── Singleton Global do Supervisor de Drivers ──────────────────────────────────
 
-pub static DRIVER_SUPERVISOR: SpinLock<DriverSupervisor> = SpinLock::new(DriverSupervisor::new());
+pub static DRIVER_SUPERVISOR: IrqSafeSpinLock<DriverSupervisor> = IrqSafeSpinLock::new(DriverSupervisor::new());
 
 pub fn init_canonical_drivers() {
     let mut sup = DRIVER_SUPERVISOR.lock();

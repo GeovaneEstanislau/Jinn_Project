@@ -101,12 +101,18 @@ pub fn mask_irq(irq: u8) {
 }
 
 /// Send an End-Of-Interrupt signal.
-/// Must be called at the end of every IRQ handler.
+/// Uses Specific EOI (0x60 | line) to ensure only the target IRQ is acknowledged,
+/// preventing accidental cancellation of in-service bits or cascade lines.
 pub fn send_eoi(irq: u8) {
     unsafe {
         if irq >= 8 {
-            outb(PIC2_CMD, PIC_EOI);
+            // EOI específico para o Slave PIC (linha irq - 8)
+            outb(PIC2_CMD, 0x60 | (irq - 8));
+            // EOI específico para a linha 2 (cascata) no Master PIC
+            outb(PIC1_CMD, 0x60 | 2);
+        } else {
+            // EOI específico para o Master PIC (linha irq)
+            outb(PIC1_CMD, 0x60 | irq);
         }
-        outb(PIC1_CMD, PIC_EOI);
     }
 }
