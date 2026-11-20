@@ -57,7 +57,7 @@ pub fn serial_write_byte(byte: u8) {
     }
 }
 
-static SERIAL_LOCK: crate::memory::SpinLock<()> = crate::memory::SpinLock::new(());
+static SERIAL_LOCK: crate::memory::IrqSafeSpinLock<()> = crate::memory::IrqSafeSpinLock::new(());
 
 pub fn serial_write(message: &[u8]) {
     let _guard = SERIAL_LOCK.lock();

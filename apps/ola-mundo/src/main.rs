@@ -2832,7 +2832,8 @@ unsafe fn run_browser_interactive() -> ! {
     loop {
         let has_ev = sys_window_wait_event(win_id, &mut ev as *mut ClientWindowEvent);
         if has_ev == 0 {
-            // Em chamada bloqueante Zero-Idle, se retornar 0 o processo acordou de um evento
+            // Em chamada bloqueante Zero-Idle, se retornar 0 cede CPU cooperativamente para evitar contenção
+            let _ = sys_yield();
             continue;
         } else if has_ev == -11 {
             // Canal em transição (-EAGAIN): cede ciclos cooperativamente e continua

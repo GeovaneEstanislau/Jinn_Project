@@ -751,6 +751,31 @@ pub extern "C" fn _start() -> ! {
     };
 
     static mut CURRENT_MOUSE: (usize, usize, u8) = (512usize, 384usize, 0u8);
+    const MOUSE_QUEUE_CAP: usize = 32;
+    static mut MOUSE_QUEUE: [(usize, usize, u8); MOUSE_QUEUE_CAP] = [(512, 384, 0); MOUSE_QUEUE_CAP];
+    static mut MOUSE_HEAD: usize = 0;
+    static mut MOUSE_TAIL: usize = 0;
+
+    let enqueue_mouse = |mx: usize, my: usize, btn: u8| unsafe {
+        let next = (MOUSE_TAIL + 1) % MOUSE_QUEUE_CAP;
+        if next != MOUSE_HEAD {
+            MOUSE_QUEUE[MOUSE_TAIL] = (mx, my, btn);
+            MOUSE_TAIL = next;
+        }
+    };
+
+    let dequeue_mouse = || -> Option<(usize, usize, u8)> {
+        unsafe {
+            if MOUSE_HEAD != MOUSE_TAIL {
+                let ev = MOUSE_QUEUE[MOUSE_HEAD];
+                MOUSE_HEAD = (MOUSE_HEAD + 1) % MOUSE_QUEUE_CAP;
+                Some(ev)
+            } else {
+                None
+            }
+        }
+    };
+
     let mut client_cache_buf: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
     // Pré-reserva buffer de transferência de cliente para evitar alocações dinâmicas repetidas no bump allocator
     let _ = client_cache_buf.try_reserve_exact(1024 * 768);
@@ -786,35 +811,23 @@ pub extern "C" fn _start() -> ! {
             }
             if ev.kind == 1 {
                 let ch = ev.code as u8;
-                aladdin_sdk::console::print("[ALADDIN-INPUT] KeyDown ch=");
-                let ch_slice = [ch];
-                if let Ok(s) = core::str::from_utf8(&ch_slice) {
-                    aladdin_sdk::console::print(s);
-                }
-                aladdin_sdk::console::println("");
                 enqueue_key(ch);
             } else if ev.kind == 3 {
                 let mx = (ev.x.max(0) as usize).min(fb_w.saturating_sub(1));
                 let my = (ev.y.max(0) as usize).min(fb_h.saturating_sub(1));
                 let btn = ev.code as u8;
-                aladdin_sdk::console::print("[ALADDIN-INPUT] MouseMove x=");
-                aladdin_sdk::console::print_num(mx as u64);
-                aladdin_sdk::console::print(" y=");
-                aladdin_sdk::console::print_num(my as u64);
-                aladdin_sdk::console::println("");
                 unsafe {
                     CURRENT_MOUSE = (mx, my, btn);
                 }
+                enqueue_mouse(mx, my, btn);
             } else if ev.kind == 4 || ev.kind == 5 {
                 let mx = (ev.x.max(0) as usize).min(fb_w.saturating_sub(1));
                 let my = (ev.y.max(0) as usize).min(fb_h.saturating_sub(1));
                 let btn = ev.code as u8;
-                aladdin_sdk::console::print("[ALADDIN-INPUT] MouseBtn btn=");
-                aladdin_sdk::console::print_num(btn as u64);
-                aladdin_sdk::console::println("");
                 unsafe {
                     CURRENT_MOUSE = (mx, my, btn);
                 }
+                enqueue_mouse(mx, my, btn);
             }
         }
     };
@@ -827,6 +840,9 @@ pub extern "C" fn _start() -> ! {
     let mut win_sync_count: usize = 0;
     let mut poll_mouse = || -> (usize, usize, u8) {
         drain_hardware_events();
+
+        // Extrai o próximo estado da fila de mouse ou retorna o estado atômico mais recente
+        let res_mouse = dequeue_mouse().unwrap_or(unsafe { CURRENT_MOUSE });
 
         // Sincroniza janelas de clientes Ring 3 ativas (amostragem a cada 2 ciclos para alta responsividade)
         win_sync_count = win_sync_count.wrapping_add(1);
@@ -926,7 +942,7 @@ pub extern "C" fn _start() -> ! {
         }
         }
 
-        unsafe { CURRENT_MOUSE }
+        res_mouse
     };
 
     aladdin_sdk::console::println("[aladdin-server] [OK] Servidor grafico em execucao!");

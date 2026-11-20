@@ -28,17 +28,10 @@ pub extern "C" fn irq_dispatch(vector: u64, _frame: *mut usize) -> usize {
     match vector {
         32 => {
             let cpu_id = crate::smp::current_cpu_id();
-            let is_yield = if cpu_id < crate::gdt::MAX_CPUS {
-                crate::scheduler::YIELDED[cpu_id].load(core::sync::atomic::Ordering::SeqCst)
-            } else {
-                false
-            };
-            if !is_yield {
-                if cpu_id == 0 {
-                    // IRQ0 — PIT timer via legacy PIC no BSP
-                    timer::tick();
-                    pic::send_eoi(0);
-                }
+            if cpu_id == 0 {
+                // IRQ0 — PIT timer via legacy PIC no BSP (incondicional para preservar árbitro do 8259)
+                timer::tick();
+                pic::send_eoi(0);
             }
             // Envia EOI para o Local APIC em todos os núcleos
             apic::send_eoi();
