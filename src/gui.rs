@@ -1105,44 +1105,65 @@ pub fn launch_ring3_desktop() {
     crate::serial_write(b"[GUI] launch_ring3_desktop() chamado\n");
     // Limpa buffer de teclado residual de selftests do boot
     while crate::keyboard_buffer::pop().is_some() {}
-    let path = "/disk/aladdin.elf";
-    let argv = [path, "server"];
-    
-    // 1. Tenta carregar do disco FAT32
-    crate::serial_write(b"[GUI] Tentando spawn_user_task_from_vfs(/disk/aladdin.elf)...\n");
-    let spawn_res = crate::scheduler::get().spawn_user_task_from_vfs(path, &argv, &[]);
-    let pid = match spawn_res {
-        Ok(p) => {
-            crate::serial_write(b"[GUI] /disk/aladdin.elf carregado com sucesso!\n");
-            p
-        },
-        Err(_e) => {
-            crate::serial_write(b"[GUI] Falha ao carregar /disk/aladdin.elf, tentando /disk/ALADDIN.ELF...\n");
-            // Tenta variante de caixa /disk/ALADDIN.ELF
-            match crate::scheduler::get().spawn_user_task_from_vfs("/disk/ALADDIN.ELF", &argv, &[]) {
-                Ok(p) => {
-                    crate::serial_write(b"[GUI] /disk/ALADDIN.ELF carregado com sucesso!\n");
-                    p
-                },
-                Err(_) => {
-                    crate::serial_write(b"[GUI] Falha no disco, tentando modulo Limine 'aladdin'...\n");
-                    // Fallback para módulos Limine em memória
-                    if let Some(elf_bytes) = limine::get_module_by_name("aladdin").or_else(|| limine::get_module_by_name("aladdin-server")) {
-                        match crate::scheduler::get().spawn_user_task_from_memory("aladdin[U3]", elf_bytes, &argv, &[]) {
-                            Ok(p) => {
-                                crate::serial_write(b"[GUI] Modulo Limine aladdin carregado com sucesso!\n");
-                                p
-                            },
-                            Err(_) => {
-                                crate::serial_write(b"[GUI] Falha ao spawnar modulo Limine, fallback Ring 0\n");
-                                run_desktop();
-                                return;
+
+    // Verifica se o compositor Aladdin Ring 3 já foi pré-carregado no boot
+    let existing_pid = {
+        let sched = crate::scheduler::get();
+        let mut found = None;
+        for (i, slot) in sched.tasks.iter().enumerate() {
+            if let Some(t) = slot {
+                if t.name.starts_with("aladdin") && t.state != crate::scheduler::TaskState::Zombie && t.state != crate::scheduler::TaskState::Completed {
+                    found = Some(i);
+                    break;
+                }
+            }
+        }
+        found
+    };
+
+    let pid = if let Some(p) = existing_pid {
+        crate::serial_write(b"[GUI] Processo Aladdin Ring 3 pre-carregado detectado!\n");
+        p
+    } else {
+        let path = "/disk/aladdin.elf";
+        let argv = [path, "server"];
+        
+        // 1. Tenta carregar do disco FAT32
+        crate::serial_write(b"[GUI] Tentando spawn_user_task_from_vfs(/disk/aladdin.elf)...\n");
+        let spawn_res = crate::scheduler::get().spawn_user_task_from_vfs(path, &argv, &[]);
+        match spawn_res {
+            Ok(p) => {
+                crate::serial_write(b"[GUI] /disk/aladdin.elf carregado com sucesso!\n");
+                p
+            },
+            Err(_e) => {
+                crate::serial_write(b"[GUI] Falha ao carregar /disk/aladdin.elf, tentando /disk/ALADDIN.ELF...\n");
+                // Tenta variante de caixa /disk/ALADDIN.ELF
+                match crate::scheduler::get().spawn_user_task_from_vfs("/disk/ALADDIN.ELF", &argv, &[]) {
+                    Ok(p) => {
+                        crate::serial_write(b"[GUI] /disk/ALADDIN.ELF carregado com sucesso!\n");
+                        p
+                    },
+                    Err(_) => {
+                        crate::serial_write(b"[GUI] Falha no disco, tentando modulo Limine 'aladdin'...\n");
+                        // Fallback para módulos Limine em memória
+                        if let Some(elf_bytes) = limine::get_module_by_name("aladdin").or_else(|| limine::get_module_by_name("aladdin-server")) {
+                            match crate::scheduler::get().spawn_user_task_from_memory("aladdin[U3]", elf_bytes, &argv, &[]) {
+                                Ok(p) => {
+                                    crate::serial_write(b"[GUI] Modulo Limine aladdin carregado com sucesso!\n");
+                                    p
+                                },
+                                Err(_) => {
+                                    crate::serial_write(b"[GUI] Falha ao spawnar modulo Limine, fallback Ring 0\n");
+                                    run_desktop();
+                                    return;
+                                }
                             }
+                        } else {
+                            crate::serial_write(b"[GUI] Modulo Limine nao encontrado, fallback Ring 0\n");
+                            run_desktop();
+                            return;
                         }
-                    } else {
-                        crate::serial_write(b"[GUI] Modulo Limine nao encontrado, fallback Ring 0\n");
-                        run_desktop();
-                        return;
                     }
                 }
             }

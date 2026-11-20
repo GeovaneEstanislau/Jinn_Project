@@ -52,14 +52,17 @@ impl KernelHeap {
         }
     }
 
-    fn acquire(&self) {
+    fn acquire(&self) -> usize {
+        let flags = unsafe { crate::memory::save_rflags_and_cli() };
         while self.lock.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
             core::hint::spin_loop();
         }
+        flags
     }
 
-    fn release(&self) {
+    fn release(&self, flags: usize) {
         self.lock.store(false, Ordering::Release);
+        unsafe { crate::memory::restore_rflags(flags) };
     }
 
     /// Initialize the heap: map the first HEAP_SIZE bytes via paging.
@@ -155,7 +158,7 @@ impl KernelHeap {
 
 unsafe impl GlobalAlloc for KernelHeap {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        self.acquire();
+        let flags = self.acquire();
         let ptr = {
             let from_free = self.try_alloc_free_list(layout);
             if !from_free.is_null() {
@@ -164,12 +167,12 @@ unsafe impl GlobalAlloc for KernelHeap {
                 self.alloc_bump(layout)
             }
         };
-        self.release();
+        self.release(flags);
         ptr
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        self.acquire();
+        let flags = self.acquire();
         let size = (layout.size() + MIN_ALIGN - 1) & !(MIN_ALIGN - 1);
         let node = ptr as *mut FreeNode;
         (*node).size = size.max(core::mem::size_of::<FreeNode>());
@@ -207,7 +210,7 @@ unsafe impl GlobalAlloc for KernelHeap {
             }
         }
 
-        self.release();
+        self.release(flags);
     }
 }
 

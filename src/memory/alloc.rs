@@ -132,7 +132,7 @@ impl<'a, T> Drop for IrqSafeSpinLockGuard<'a, T> {
 // ── Physical Page Frame Allocator (Buddy) ────────────────────────────────────
 use crate::memory::buddy::BuddyAllocator;
 
-static FRAME_ALLOCATOR: SpinLock<BuddyAllocator> = SpinLock::new(BuddyAllocator::new());
+static FRAME_ALLOCATOR: IrqSafeSpinLock<BuddyAllocator> = IrqSafeSpinLock::new(BuddyAllocator::new());
 
 
 // ── Kernel Dynamic Heap Allocator (Free List) ────────────────────────────────

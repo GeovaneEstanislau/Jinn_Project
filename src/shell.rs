@@ -2076,6 +2076,9 @@ pub fn task_entry() {
     w.set_position(21, 0);
     let prof = crate::profile::get_system_profile();
     if !prof.is_headless() && crate::gui::is_available() {
+        w.set_color(Color::LightCyan, Color::Black);
+        w.write_line("[+] Inicializando compositor grafico Aladdin Desktop (Ring 3)...");
+        w.set_color(Color::LightGray, Color::Black);
         crate::serial_write(b"[SHELL] Perfil Desktop e GUI disponivel -> Invocando launch_ring3_desktop()\n");
         crate::gui::launch_ring3_desktop();
     } else {

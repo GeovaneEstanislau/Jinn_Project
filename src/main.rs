@@ -668,6 +668,17 @@ pub extern "C" fn _start() -> ! {
         w.set_color(Color::LightCyan, Color::Black);
         w.write_line("    Modo Desktop Aladdin: Inicializacao automatica do compositor Ring 3.");
         w.set_color(Color::LightGray, Color::Black);
+
+        // Pre-carrega o compositor grafico Aladdin Desktop (Ring 3) a partir do modulo Limine
+        if let Some(aladdin_elf) = limine::get_module_by_name("aladdin").or_else(|| limine::get_module_by_name("aladdin-server")) {
+            let a_pid = sched.spawn_user_task_from_memory("aladdin[U3]", aladdin_elf, &["aladdin", "server"], &[]).unwrap_or(0);
+            if a_pid > 0 {
+                ipc::register(a_pid);
+                w.write_string("    Processo Ring 3 criado: PID ");
+                w.write_decimal(a_pid);
+                w.write_line(" (Aladdin Desktop Compositor)");
+            }
+        }
     } else {
         w.write_line("    (Nenhum modulo ELF carregado pelo bootloader)");
     }
@@ -701,11 +712,14 @@ pub extern "C" fn _start() -> ! {
     w.write_line("[SUCCESS] Jinn OS pronto - entregando controle ao Escalonador.");
     w.set_color(Color::LightGray, Color::Black);
 
-    // Habilita interrupções. O APIC Timer vai disparar (IRQ0) e a primeira
-    // preempção vai abandonar a pilha de boot e iniciar as tasks (começando pelo shell).
+    // Habilita interrupções. O APIC Timer a 100 Hz e o PIT garantem preempção contínua.
     unsafe { core::arch::asm!("sti") };
 
-    // Idle loop do processador (Thread 0 / Boot thread abandonada)
+    // Cede voluntariamente a CPU de boot imediatamente para despachar a primeira tarefa pronta (Task 1: Desktop/Shell)
+    serial_write(b"[MAIN] Handoff voluntario para o Escalonador (yield_now)...\n");
+    crate::scheduler::yield_now();
+
+    // Idle loop do processador (Thread 0 / Boot thread abandonada quando preemptada)
     loop {
         unsafe { core::arch::asm!("hlt") };
     }

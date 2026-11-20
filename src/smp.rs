@@ -187,8 +187,10 @@ pub unsafe extern "C" fn ap_entry(info: *const LimineSmpInfo) -> ! {
 
 /// Inicializa o subsistema SMP, registra o BSP e acorda todos os APs detectados.
 pub fn init() -> usize {
-    // 1. Inicializa o Local APIC no BSP (CPU 0)
+    // 1. Inicializa o Local APIC no BSP (CPU 0) e ativa o timer periódico a 100 Hz (vetor 32)
+    // Garante preempção e suporte universal ao escalonador tanto em Uniprocessador (1 core) quanto SMP.
     crate::interrupts::apic::init();
+    crate::interrupts::apic::init_timer(32, 100);
 
     // 2. Inicializa tabela de mapeamento
     for slot in LAPIC_TO_CPUID.iter() {
