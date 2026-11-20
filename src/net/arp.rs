@@ -3,8 +3,8 @@
 pub const ARP_OP_REQUEST: u16 = 1;
 pub const ARP_OP_REPLY:   u16 = 2;
 
-pub const DEFAULT_GATEWAY_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x02];
-pub const DEFAULT_DNS_MAC: [u8; 6]     = [0x52, 0x54, 0x00, 0x12, 0x34, 0x03];
+pub const DEFAULT_GATEWAY_MAC: [u8; 6] = [0x52, 0x55, 0x0A, 0x00, 0x02, 0x02];
+pub const DEFAULT_DNS_MAC: [u8; 6]     = [0x52, 0x55, 0x0A, 0x00, 0x02, 0x03];
 pub const DEFAULT_GATEWAY_MAC_VBOX: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x35, 0x02];
 pub const DEFAULT_DNS_MAC_VBOX: [u8; 6]     = [0x52, 0x54, 0x00, 0x12, 0x35, 0x03];
 
@@ -84,6 +84,18 @@ impl ArpTable {
         for entry_opt in self.entries.iter() {
             if let Some(entry) = entry_opt {
                 if entry.ip == ip {
+                    return Some(entry.mac);
+                }
+            }
+        }
+        None
+    }
+
+    /// Retorna o MAC somente se foi confirmado dinamicamente pela rede (tick > 0)
+    pub fn lookup_confirmed(&self, ip: [u8; 4]) -> Option<[u8; 6]> {
+        for entry_opt in self.entries.iter() {
+            if let Some(entry) = entry_opt {
+                if entry.ip == ip && entry.updated_tick > 0 {
                     return Some(entry.mac);
                 }
             }
@@ -210,13 +222,11 @@ pub fn resolve_mac_for_ip_blocking(dst_ip: [u8; 4], timeout_ticks: u64) -> Optio
     let next_hop = crate::net::ipv4::get_next_hop_ip(dst_ip);
     let start = crate::timer::ticks();
 
-    // 1. Se já está no cache, retorna imediatamente sem bloquear
-    if let Some(mac) = unsafe { ARP_CACHE.lookup(next_hop) } {
+    // 1. Se já está confirmado dinamicamente pelo tráfego da rede, retorna imediatamente
+    if let Some(mac) = unsafe { ARP_CACHE.lookup_confirmed(next_hop) } {
         // Validação de coerência: se for o gateway, não aceitar MAC de DNS (terminando em 0x03)
         let gateway = unsafe { crate::net::dhcp::DHCP_CLIENT.gateway };
-        if next_hop == gateway && mac[5] == 0x03 {
-            // Inválido - continua para re-resolver ou fallback do gateway
-        } else {
+        if !(next_hop == gateway && mac[5] == 0x03) {
             return Some(mac);
         }
     }

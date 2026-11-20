@@ -615,3 +615,17 @@ pub unsafe fn sys_graphics_dispatch_client_event(win_id: usize, event: &crate::g
 pub unsafe fn sys_graphics_list_client_windows(out_ptr: *mut crate::gui::ClientWindowInfoUser, max_count: usize) -> i64 {
     syscall3(79, out_ptr as u64, max_count as u64, 0)
 }
+
+// ── Syscall 83 — net_resolve ──────────────────────────────────────────────────
+/// Resolve um nome de domínio para endereço IPv4 (Syscall 83 e alias da Syscall 40).
+#[inline(always)]
+pub unsafe fn sys_net_resolve(name_ptr: *const u8, name_len: usize, out_ip_ptr: *mut u8) -> i64 {
+    syscall3(83, name_ptr as u64, name_len as u64, out_ip_ptr as u64)
+}
+
+// ── Syscall 84 — net_http_get ─────────────────────────────────────────────────
+/// Baixa arquivo via HTTP/1.1 diretamente para o caminho no VFS (Syscall 84).
+#[inline(always)]
+pub unsafe fn sys_net_http_get(url_ptr: *const u8, url_len: usize, out_path_ptr: *const u8, out_path_len: usize) -> i64 {
+    syscall4(84, url_ptr as u64, url_len as u64, out_path_ptr as u64, out_path_len as u64)
+}

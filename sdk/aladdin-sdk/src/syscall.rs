@@ -34,6 +34,8 @@ pub const SYS_GRAPHICS_LIST_CLIENT_WINDOWS:   u64 = 79;
 pub const SYS_POWEROFF:                      u64 = 80;
 pub const SYS_GRAPHICS_SET_POWER:            u64 = 81;
 pub const SYS_HARDWARE_PROBE:                u64 = 82;
+pub const SYS_NET_RESOLVE:                   u64 = 83;
+pub const SYS_NET_HTTP_GET:                  u64 = 84;
 
 /// Syscall sem argumentos
 #[inline(always)]
@@ -143,5 +145,17 @@ pub unsafe fn syscall4(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> i
         let _ = (nr, arg0, arg1, arg2, arg3);
         0
     }
+}
+
+/// Resolve nome de domínio para endereço IPv4 (Syscall 83)
+#[inline(always)]
+pub unsafe fn sys_net_resolve(name: &[u8], out_ip: &mut [u8; 4]) -> i64 {
+    syscall3(SYS_NET_RESOLVE, name.as_ptr() as u64, name.len() as u64, out_ip.as_mut_ptr() as u64)
+}
+
+/// Baixa arquivo via HTTP/1.1 diretamente para caminho no VFS (Syscall 84)
+#[inline(always)]
+pub unsafe fn sys_net_http_get(url: &[u8], out_path: &[u8]) -> i64 {
+    syscall4(SYS_NET_HTTP_GET, url.as_ptr() as u64, url.len() as u64, out_path.as_ptr() as u64, out_path.len() as u64)
 }
 

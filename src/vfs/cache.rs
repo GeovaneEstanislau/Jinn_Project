@@ -385,7 +385,10 @@ pub struct HardwareIdeBackend;
 impl BlockBackend for HardwareIdeBackend {
     #[inline]
     fn read_sector(&mut self, device: u8, lba: u64, buf: &mut [u8; BLOCK_SIZE]) -> Result<(), &'static str> {
-        if device < 4 {
+        if crate::drivers::virtio_blk::has_virtio_blk() && device == 0 {
+            let mut dev = crate::drivers::virtio_blk::VIRTIO_BLK.lock();
+            dev.execute_request(crate::drivers::virtio_blk::VIRTIO_BLK_T_IN, lba as usize, buf)
+        } else if device < 4 {
             crate::drivers::ide::read_sector(device, lba as u32, buf)
         } else {
             Err("Dispositivo de armazenamento fora do limite do barramento IDE ATA (0..=3)")
@@ -394,7 +397,14 @@ impl BlockBackend for HardwareIdeBackend {
 
     #[inline]
     fn write_sector(&mut self, device: u8, lba: u64, buf: &[u8; BLOCK_SIZE]) -> Result<(), &'static str> {
-        if device < 4 {
+        if crate::drivers::virtio_blk::has_virtio_blk() && device == 0 {
+            let mut dev = crate::drivers::virtio_blk::VIRTIO_BLK.lock();
+            let mut sec_buf = *buf;
+            dev.execute_request(crate::drivers::virtio_blk::VIRTIO_BLK_T_OUT, lba as usize, &mut sec_buf)?;
+            let mut dummy = [0u8; BLOCK_SIZE];
+            let _ = dev.execute_request(crate::drivers::virtio_blk::VIRTIO_BLK_T_FLUSH, 0, &mut dummy);
+            Ok(())
+        } else if device < 4 {
             crate::drivers::ide::write_sector(device, lba as u32, buf)
         } else {
             Err("Dispositivo de armazenamento fora do limite do barramento IDE ATA (0..=3)")

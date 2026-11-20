@@ -3751,22 +3751,44 @@ unsafe fn test_adv_fat32_persistent_write_and_recovery() {
                 let fd_check = sys_open(b"/disk/TEST_SM.TXT", O_RDONLY);
                 if fd_check >= 3 {
                     let mut check_buf = [0u8; 40];
-                    let _ = sys_read(fd_check as u64, check_buf.as_mut_ptr(), 40);
+                    let n_chk = sys_read(fd_check as u64, check_buf.as_mut_ptr(), 40);
                     let _ = sys_close(fd_check as u64);
                     // Bytes 0..10 devem ser "HELLO_FAT3"
                     if &check_buf[..10] == b"HELLO_FAT3" && &check_buf[10..17] == b"PATCHED" {
                         print_str(b"  [PASS] Escrita em offset nao-zero com preservacao de bytes adjacentes validada.\n");
+                    } else {
+                        print_str(b"  [FAIL] check_buf divergente (n=");
+                        print_i64(n_chk);
+                        print_str(b"): '");
+                        if n_chk > 0 {
+                            print_str(&check_buf[..n_chk as usize]);
+                        }
+                        print_str(b"'\n");
                     }
+                } else {
+                    print_str(b"  [FAIL] fd_check falhou: ");
+                    print_i64(fd_check);
+                    print_str(b"\n");
                 }
             } else {
+                print_str(b"  [FAIL] written_patch falhou: ");
+                print_i64(written_patch);
+                print_str(b"\n");
                 let _ = sys_close(fd_patch as u64);
             }
         } else {
+            print_str(b"  [FAIL] seek_res falhou: ");
+            print_i64(seek_res);
+            print_str(b"\n");
             let _ = sys_close(fd_patch as u64);
         }
+    } else {
+        print_str(b"  [FAIL] fd_patch falhou: ");
+        print_i64(fd_patch);
+        print_str(b"\n");
     }
 
-    // 6. Teste de Persistencia e Recuperacao Cold-Reboot (/disk/PERSIST.TXT)
+    // 6. Teste de Persistencia e Recuperacao Cold-Reboot (/disk/PERSIST.TXT e /disk/persistencia.txt)
     let persist_fd = sys_open(b"/disk/PERSIST.TXT", O_RDONLY);
     let deterministic_magic = b"JINN_OS_PERSISTENCE_MAGIC_V11_FAT32_COLD_REBOOT_VALIDATION_TOKEN_987654321";
     if persist_fd >= 3 {
@@ -3786,6 +3808,28 @@ unsafe fn test_adv_fat32_persistent_write_and_recovery() {
             let _ = sys_sync();
             if n == deterministic_magic.len() as i64 {
                 print_str(b"  [PASS] Payload deterministico gravado e sincronizado em /disk/PERSIST.TXT para teste de reboot.\n");
+            }
+        }
+    }
+
+    // 6.1 Teste de Persistencia com Nome Longo LFN (/disk/persistencia.txt)
+    let persist_lfn_fd = sys_open(b"/disk/persistencia.txt", O_RDONLY);
+    let deterministic_lfn_token = b"JINN_OS_PERSISTENCIA_TXT_VALIDATION_TOKEN_123456789";
+    if persist_lfn_fd >= 3 {
+        let mut persist_lfn_buf = [0u8; 128];
+        let n = sys_read(persist_lfn_fd as u64, persist_lfn_buf.as_mut_ptr(), deterministic_lfn_token.len() as u64);
+        let _ = sys_close(persist_lfn_fd as u64);
+        if n == deterministic_lfn_token.len() as i64 && &persist_lfn_buf[..deterministic_lfn_token.len()] == deterministic_lfn_token {
+            print_str(b"  [PASS] PERSISTENCIA COMPROVADA: /disk/persistencia.txt recuperado com integridade apos cold-reboot!\n");
+        }
+    } else {
+        let wr_lfn_fd = sys_open(b"/disk/persistencia.txt", O_WRONLY | O_CREAT | O_TRUNC);
+        if wr_lfn_fd >= 3 {
+            let n = sys_write(wr_lfn_fd as u64, deterministic_lfn_token.as_ptr(), deterministic_lfn_token.len() as u64);
+            let _ = sys_close(wr_lfn_fd as u64);
+            let _ = sys_sync();
+            if n == deterministic_lfn_token.len() as i64 {
+                print_str(b"  [PASS] Arquivo /disk/persistencia.txt gravado e sincronizado com sucesso!\n");
             }
         }
     }

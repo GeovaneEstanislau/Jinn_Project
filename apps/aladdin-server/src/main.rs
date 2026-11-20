@@ -797,17 +797,29 @@ pub extern "C" fn _start() -> ! {
 
     let enqueue_mouse = |mx: usize, my: usize, btn: u8| unsafe {
         let next = (MOUSE_TAIL + 1) % MOUSE_QUEUE_CAP;
-        if next != MOUSE_HEAD {
-            MOUSE_QUEUE[MOUSE_TAIL] = (mx, my, btn);
-            MOUSE_TAIL = next;
+        if next == MOUSE_HEAD {
+            // Se a fila encher, descarta o mais antigo (HEAD) para NUNCA perder MouseUp ou o clique mais recente
+            MOUSE_HEAD = (MOUSE_HEAD + 1) % MOUSE_QUEUE_CAP;
         }
+        MOUSE_QUEUE[MOUSE_TAIL] = (mx, my, btn);
+        MOUSE_TAIL = next;
     };
 
     let dequeue_mouse = || -> Option<(usize, usize, u8)> {
         unsafe {
             if MOUSE_HEAD != MOUSE_TAIL {
-                let ev = MOUSE_QUEUE[MOUSE_HEAD];
+                let mut ev = MOUSE_QUEUE[MOUSE_HEAD];
                 MOUSE_HEAD = (MOUSE_HEAD + 1) % MOUSE_QUEUE_CAP;
+                // Coalesce movimentos sucessivos com o mesmo estado de botoes para eliminar latencia e backlog
+                while MOUSE_HEAD != MOUSE_TAIL {
+                    let next_ev = MOUSE_QUEUE[MOUSE_HEAD];
+                    if next_ev.2 == ev.2 {
+                        ev = next_ev;
+                        MOUSE_HEAD = (MOUSE_HEAD + 1) % MOUSE_QUEUE_CAP;
+                    } else {
+                        break;
+                    }
+                }
                 Some(ev)
             } else {
                 None
@@ -883,9 +895,9 @@ pub extern "C" fn _start() -> ! {
         // Extrai o próximo estado da fila de mouse ou retorna o estado atômico mais recente
         let res_mouse = dequeue_mouse().unwrap_or(unsafe { CURRENT_MOUSE });
 
-        // Sincroniza janelas de clientes Ring 3 ativas (amostragem a cada 2 ciclos para alta responsividade)
+        // Sincroniza janelas de clientes Ring 3 ativas (amostragem a cada 15 ciclos para eliminar contencao de spinlock)
         win_sync_count = win_sync_count.wrapping_add(1);
-        if win_sync_count % 2 == 0 {
+        if win_sync_count % 15 == 0 {
             unsafe {
                 if let Some(sess) = GLOBAL_SESSION.as_mut() {
                     let count = sys_list_client_windows(client_info_list.as_mut_ptr(), 16);

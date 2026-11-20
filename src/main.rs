@@ -628,52 +628,73 @@ pub extern "C" fn _start() -> ! {
     w.write_line("");
 
     let prof = profile::get_system_profile();
-    if prof.is_headless() && mod_count > 0 {
-        if let Some(elf_data) = limine::get_module(0) {
-            w.write_string("    ELF modulo[0]: ");
-            w.write_decimal(elf_data.len());
-            w.write_line(" bytes");
-            let u1_pid = sched.spawn_user_task_from_memory("main[U3]", elf_data, &["ola-mundo", "main"], &[]).unwrap_or(0);
-            if u1_pid > 0 {
-                ipc::register(u1_pid);
-                w.write_string("    Processo Ring 3 criado: PID ");
-                w.write_decimal(u1_pid);
-                w.write_line(" (Suite Principal)");
-            } else {
-                w.set_color(Color::LightRed, Color::Black);
-                w.write_line("    [ERRO] Falha ao carregar ELF para Ring 3!");
-                w.set_color(Color::LightGray, Color::Black);
-            }
-
-            let u2_pid = sched.spawn_user_task_from_memory("worker[U3]", elf_data, &["ola-mundo", "worker"], &[]).unwrap_or(0);
-            if u2_pid > 0 {
-                ipc::register(u2_pid);
-                // Atribui cota de CPU de 25 ticks (250 ms) para a tarefa CPU-Hog
-                if let Some(Some(t)) = sched.tasks.get_mut(u2_pid) {
-                    t.limits.max_cpu_ticks = 25;
+    if mod_count > 0 {
+        if prof.is_headless() {
+            if let Some(elf_data) = limine::get_module_by_name("ola-mundo").or_else(|| limine::get_module(0)) {
+                crate::serial_write(b"[MAIN] Spawning main[U3] (ola-mundo)...\n");
+                w.write_string("    ELF modulo[0]: ");
+                w.write_decimal(elf_data.len());
+                w.write_line(" bytes");
+                let u1_pid = sched.spawn_user_task_from_memory("main[U3]", elf_data, &["ola-mundo", "main"], &[]).unwrap_or(0);
+                if u1_pid > 0 {
+                    ipc::register(u1_pid);
+                    crate::serial_write(b"[MAIN] main[U3] spawned successfully with PID: ");
+                    crate::serial_write_byte(b'0' + (u1_pid as u8));
+                    crate::serial_write(b"\n");
+                    w.write_string("    Processo Ring 3 criado: PID ");
+                    w.write_decimal(u1_pid);
+                    w.write_line(" (Suite Principal)");
+                } else {
+                    crate::serial_write(b"[MAIN] [ERRO] Falha ao carregar ELF para Ring 3!\n");
+                    w.set_color(Color::LightRed, Color::Black);
+                    w.write_line("    [ERRO] Falha ao carregar ELF para Ring 3!");
+                    w.set_color(Color::LightGray, Color::Black);
                 }
-                w.write_string("    Processo Ring 3 criado: PID ");
-                w.write_decimal(u2_pid);
-                w.write_line(" (Worker / CPU-Hog, Cota: 25 ticks)");
-            }
 
-            let u3_pid = sched.spawn_user_task_from_memory("periodic[U3]", elf_data, &["ola-mundo", "periodic"], &[]).unwrap_or(0);
-            if u3_pid > 0 {
-                ipc::register(u3_pid);
-                w.write_string("    Processo Ring 3 criado: PID ");
-                w.write_decimal(u3_pid);
-                w.write_line(" (Tarefa Periodica)");
+                let u2_pid = sched.spawn_user_task_from_memory("worker[U3]", elf_data, &["ola-mundo", "worker"], &[]).unwrap_or(0);
+                if u2_pid > 0 {
+                    ipc::register(u2_pid);
+                    // Atribui cota de CPU de 25 ticks (250 ms) para a tarefa CPU-Hog
+                    if let Some(Some(t)) = sched.tasks.get_mut(u2_pid) {
+                        t.limits.max_cpu_ticks = 25;
+                    }
+                    w.write_string("    Processo Ring 3 criado: PID ");
+                    w.write_decimal(u2_pid);
+                    w.write_line(" (Worker / CPU-Hog, Cota: 25 ticks)");
+                }
+
+                let u3_pid = sched.spawn_user_task_from_memory("periodic[U3]", elf_data, &["ola-mundo", "periodic"], &[]).unwrap_or(0);
+                if u3_pid > 0 {
+                    ipc::register(u3_pid);
+                    w.write_string("    Processo Ring 3 criado: PID ");
+                    w.write_decimal(u3_pid);
+                    w.write_line(" (Tarefa Periodica)");
+                }
             }
+        } else {
+            // Perfil Desktop Aladdin: spawn direto do servidor grafico Ring 3 (aladdin-server)
+            let argv = ["aladdin", "server"];
+            if let Some(elf_bytes) = limine::get_module_by_name("aladdin").or_else(|| limine::get_module_by_name("aladdin-server")) {
+                let aladdin_pid = sched.spawn_user_task_from_memory("aladdin[U3]", elf_bytes, &argv, &[]).unwrap_or(0);
+                if aladdin_pid > 0 {
+                    ipc::register(aladdin_pid);
+                    crate::serial_write(b"[MAIN] aladdin[U3] spawned successfully with PID: ");
+                    crate::serial_write_byte(b'0' + (aladdin_pid as u8));
+                    crate::serial_write(b"\n");
+                    w.write_string("    Processo Ring 3 criado: PID ");
+                    w.write_decimal(aladdin_pid);
+                    w.write_line(" (Aladdin Desktop Display Server)");
+                }
+            }
+            w.set_color(Color::LightCyan, Color::Black);
+            w.write_line("    Modo Desktop Aladdin: Inicializacao e supervisao via launch_ring3_desktop.");
+            w.set_color(Color::LightGray, Color::Black);
         }
-    } else if !prof.is_headless() {
-        w.set_color(Color::LightCyan, Color::Black);
-        w.write_line("    Modo Desktop Aladdin: Inicializacao e supervisao via launch_ring3_desktop.");
-        w.set_color(Color::LightGray, Color::Black);
     } else {
         w.write_line("    (Nenhum modulo ELF carregado pelo bootloader)");
     }
 
-    // JHCS Heterogeneous Compute Daemon e Test Suite (Ring 3) — Ativos em todos os perfis
+    // JHCS Heterogeneous Compute Daemon (Ring 3) — Ativo em todos os perfis
     if let Some(jhcs_d_elf) = limine::get_module_by_name("jhcs-daemon").or_else(|| limine::get_module_by_name("jhcs")) {
         let jd_pid = sched.spawn_user_task_from_memory("jhcs-daemon[U3]", jhcs_d_elf, &["jhcs-daemon"], &[]).unwrap_or(0);
         if jd_pid > 0 {
@@ -684,13 +705,16 @@ pub extern "C" fn _start() -> ! {
         }
     }
 
-    if let Some(jhcs_test_elf) = limine::get_module_by_name("jhcs-test") {
-        let jt_pid = sched.spawn_user_task_from_memory("jhcs-test[U3]", jhcs_test_elf, &["jhcs-test"], &[]).unwrap_or(0);
-        if jt_pid > 0 {
-            ipc::register(jt_pid);
-            w.write_string("    Processo Ring 3 criado: PID ");
-            w.write_decimal(jt_pid);
-            w.write_line(" (JHCS Integration Test Suite)");
+    // JHCS Integration Test Suite — Apenas no perfil headless
+    if prof.is_headless() {
+        if let Some(jhcs_test_elf) = limine::get_module_by_name("jhcs-test") {
+            let jt_pid = sched.spawn_user_task_from_memory("jhcs-test[U3]", jhcs_test_elf, &["jhcs-test"], &[]).unwrap_or(0);
+            if jt_pid > 0 {
+                ipc::register(jt_pid);
+                w.write_string("    Processo Ring 3 criado: PID ");
+                w.write_decimal(jt_pid);
+                w.write_line(" (JHCS Integration Test Suite)");
+            }
         }
     }
 

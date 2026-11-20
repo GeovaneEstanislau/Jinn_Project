@@ -5,7 +5,7 @@ use crate::limine;
 pub use aladdin::contracts::system::{CapabilityMode, JinnWallProfile};
 pub use aladdin::contracts::input::{
     ClientWindowEvent, EVENT_KEY_DOWN, EVENT_KEY_UP, EVENT_MOUSE_DOWN, EVENT_MOUSE_MOVE,
-    EVENT_MOUSE_UP, EVENT_NONE, EVENT_SCROLL, EVENT_WINDOW_CLOSE,
+    EVENT_MOUSE_UP, EVENT_NONE, EVENT_SCROLL, EVENT_WINDOW_CLOSE, EVENT_WINDOW_RESIZE,
 };
 use aladdin::contracts::framebuffer::{DirtyRect, FramebufferDevice};
 use aladdin::contracts::system::{SystemHost, SystemStats};
@@ -527,6 +527,16 @@ pub fn graphics_dispatch_client_event(caller_pid: usize, win_id: usize, event: &
         for slot in windows.iter_mut() {
             if let Some(w) = slot {
                 if w.id == win_id {
+                    if event.event_type == EVENT_WINDOW_RESIZE {
+                        let new_w = event.x as usize;
+                        let new_h = event.y as usize;
+                        if new_w > 0 && new_h > 0 && new_w <= 1024 && new_h <= 768 {
+                            w.width = new_w;
+                            w.height = new_h;
+                            w.buffer.resize(new_w * new_h, 0u32);
+                            w.damaged = true;
+                        }
+                    }
                     let count = w.ev_tail.wrapping_sub(w.ev_head);
                     if count >= 16 {
                         // Descarta o evento mais antigo para evitar que a fila de 16 itens trave o compositor

@@ -54,7 +54,8 @@ $requiredBoot1Milestones = @(
     "Escrita e leitura transpondo fronteira de setor (700B) validadas",
     "Escrita multi-cluster com alocacao dinamica de clusters (5000B) validada",
     "Escrita em offset nao-zero com preservacao de bytes adjacentes validada",
-    "Payload deterministico gravado e sincronizado em /disk/PERSIST.TXT para teste de reboot"
+    "Payload deterministico gravado e sincronizado em /disk/PERSIST.TXT para teste de reboot",
+    "Arquivo /disk/persistencia.txt gravado e sincronizado com sucesso!"
 )
 
 foreach ($m in $requiredBoot1Milestones) {
@@ -131,6 +132,7 @@ Write-Host $log2Content
 
 $requiredBoot2Milestones = @(
     "PERSISTENCIA COMPROVADA: Payload intacto recuperado apos reinicializacao do QEMU!",
+    "PERSISTENCIA COMPROVADA: /disk/persistencia.txt recuperado com integridade apos cold-reboot!",
     "Integridade estrita de arquivos preexistentes (/disk/README.TXT) preservada 100%!",
     "test_adv_fat32_persistent_write_and_recovery: Auditoria e Integridade de Escrita FAT32 APROVADA!"
 )

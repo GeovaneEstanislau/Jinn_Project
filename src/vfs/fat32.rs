@@ -13,11 +13,21 @@ pub const FAT32_EOF: u32 = 0x0FFF_FFF8;
 const MAX_OPEN_FILES: usize = 32;
 pub static FAT32_LOCK: IrqSafeSpinLock<()> = IrqSafeSpinLock::new(());
 
+/// Calcula o checksum de 8 bits do nome curto 8.3 para validação de entradas LFN (RFC VFAT)
+#[inline]
+pub fn lfn_checksum(short_name: &[u8; 11]) -> u8 {
+    let mut sum: u8 = 0;
+    for &b in short_name {
+        sum = (((sum & 1) << 7) | (sum >> 1)).wrapping_add(b);
+    }
+    sum
+}
+
 // ── Estruturas de Dados do FAT32 ──────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
 pub struct FatDirEntry {
-    pub name: [u8; 13], // Nome formatado 8.3 + terminador nulo
+    pub name: [u8; 64], // Nome formatado 8.3 ou LFN decodificado
     pub name_len: usize,
     pub raw_83: [u8; 11], // Nome 8.3 raw direto do setor de diretório (11 bytes)
     pub is_dir: bool,
@@ -30,7 +40,7 @@ pub struct FatDirEntry {
 impl FatDirEntry {
     pub const fn empty() -> Self {
         Self {
-            name: [0; 13],
+            name: [0; 64],
             name_len: 0,
             raw_83: [b' '; 11],
             is_dir: false,
@@ -213,6 +223,11 @@ impl Fat32Fs {
         let mut cur_cluster = if dir_cluster == 0 { self.root_cluster } else { dir_cluster };
         let mut sector_buf = [0u8; 512];
 
+        let mut lfn_buf = [0u8; 64];
+        let mut lfn_len = 0usize;
+        let mut lfn_active = false;
+        let mut lfn_chk = 0u8;
+
         while cur_cluster >= 2 && cur_cluster < FAT32_EOF {
             let start_lba = self.cluster_to_lba(cur_cluster);
 
@@ -229,47 +244,107 @@ impl Fat32Fs {
                     }
                     if first_byte == 0xE5 {
                         // Entrada excluída
+                        lfn_active = false;
+                        lfn_len = 0;
                         continue;
                     }
 
                     let attr = sector_buf[offset + 11];
-                    // Pula entradas Long File Name (0x0F) e Volume ID (0x08)
-                    if attr == 0x0F || (attr & 0x08) != 0 {
+
+                    // Processamento de entradas Long File Name (LFN - 0x0F)
+                    if attr == 0x0F {
+                        let seq = sector_buf[offset];
+                        let chk = sector_buf[offset + 13];
+
+                        if (seq & 0x40) != 0 {
+                            // Última entrada LFN no arquivo físico (primeira a ser lida na ordem direta)
+                            lfn_active = true;
+                            lfn_len = 0;
+                            lfn_chk = chk;
+                            lfn_buf = [0u8; 64];
+                        } else if !lfn_active || chk != lfn_chk {
+                            lfn_active = false;
+                            lfn_len = 0;
+                            continue;
+                        }
+
+                        let seq_num = (seq & 0x1F) as usize;
+                        if seq_num > 0 {
+                            let base_char_idx = (seq_num - 1) * 13;
+                            let char_offsets = [
+                                (1, 11),  // 5 chars
+                                (14, 26), // 6 chars
+                                (28, 32), // 2 chars
+                            ];
+                            let mut c_idx = 0;
+                            for &(start, end) in &char_offsets {
+                                let mut p = start;
+                                while p + 1 < end {
+                                    let ch = (sector_buf[offset + p] as u16) | ((sector_buf[offset + p + 1] as u16) << 8);
+                                    if ch == 0x0000 || ch == 0xFFFF {
+                                        break;
+                                    }
+                                    let target_idx = base_char_idx + c_idx;
+                                    if target_idx < 63 {
+                                        lfn_buf[target_idx] = if ch < 128 { ch as u8 } else { b'?' };
+                                        if target_idx + 1 > lfn_len {
+                                            lfn_len = target_idx + 1;
+                                        }
+                                    }
+                                    c_idx += 1;
+                                    p += 2;
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Pula Volume ID (0x08)
+                    if (attr & 0x08) != 0 {
+                        lfn_active = false;
+                        lfn_len = 0;
                         continue;
                     }
 
                     let mut raw_83 = [b' '; 11];
                     raw_83.copy_from_slice(&sector_buf[offset..offset + 11]);
 
-                    // Extrai nome 8.3 formatado
-                    let mut name = [0u8; 13];
+                    let mut name = [0u8; 64];
                     let mut len = 0;
 
-                    // Nome base (até 8 caracteres)
-                    for i in 0..8 {
-                        let c = sector_buf[offset + i];
-                        if c != b' ' {
-                            name[len] = c.to_ascii_lowercase();
-                            len += 1;
-                        }
-                    }
-
-                    let is_dir = (attr & 0x10) != 0;
-
-                    // Extensão (até 3 caracteres, preservada tanto para arquivos quanto diretórios com ponto)
-                    let ext1 = sector_buf[offset + 8];
-                    let ext2 = sector_buf[offset + 9];
-                    let ext3 = sector_buf[offset + 10];
-                    if ext1 != b' ' || ext2 != b' ' || ext3 != b' ' {
-                        name[len] = b'.';
-                        len += 1;
-                        for &c in &[ext1, ext2, ext3] {
+                    if lfn_active && lfn_len > 0 && lfn_chk == lfn_checksum(&raw_83) {
+                        name[..lfn_len].copy_from_slice(&lfn_buf[..lfn_len]);
+                        len = lfn_len;
+                    } else {
+                        // Extrai nome 8.3 formatado convencional
+                        for i in 0..8 {
+                            let c = sector_buf[offset + i];
                             if c != b' ' {
                                 name[len] = c.to_ascii_lowercase();
                                 len += 1;
                             }
                         }
+
+                        // Extensão (até 3 caracteres)
+                        let ext1 = sector_buf[offset + 8];
+                        let ext2 = sector_buf[offset + 9];
+                        let ext3 = sector_buf[offset + 10];
+                        if ext1 != b' ' || ext2 != b' ' || ext3 != b' ' {
+                            name[len] = b'.';
+                            len += 1;
+                            for &c in &[ext1, ext2, ext3] {
+                                if c != b' ' {
+                                    name[len] = c.to_ascii_lowercase();
+                                    len += 1;
+                                }
+                            }
+                        }
                     }
+
+                    lfn_active = false;
+                    lfn_len = 0;
+
+                    let is_dir = (attr & 0x10) != 0;
 
                     let fst_clus_hi = (sector_buf[offset + 20] as u32) | ((sector_buf[offset + 21] as u32) << 8);
                     let fst_clus_lo = (sector_buf[offset + 26] as u32) | ((sector_buf[offset + 27] as u32) << 8);
@@ -311,8 +386,10 @@ impl Fat32Fs {
         let clean_path = path.trim_matches('/');
         if clean_path.is_empty() {
             // Diretório raiz
+            let mut root_name = [0u8; 64];
+            root_name[0] = b'/';
             return Ok(FatDirEntry {
-                name: *b"/            ",
+                name: root_name,
                 name_len: 1,
                 raw_83: *b"/          ",
                 is_dir: true,
@@ -633,13 +710,14 @@ impl Fat32Fs {
         }
     }
 
-    /// Encontra um slot de diretório de 32 bytes livre (0x00 ou 0xE5) na cadeia de clusters do diretório pai.
+    /// Encontra `num_slots` de diretório de 32 bytes contíguos livres (0x00 ou 0xE5) na cadeia de clusters do diretório pai.
     /// Se todos os clusters existentes estiverem cheios, aloca um novo cluster na FAT, encadeia-o e retorna o primeiro slot.
-    pub fn find_free_dir_slot(&self, parent_cluster: u32) -> VfsResult<(u32, usize)> {
+    pub fn find_free_dir_slots(&self, parent_cluster: u32, num_slots: usize) -> VfsResult<(u32, usize)> {
         let normalized_parent = if parent_cluster == 0 { self.root_cluster } else { parent_cluster };
         let mut cur_cluster = normalized_parent;
         let mut last_cluster = normalized_parent;
         let mut dir_buf = [0u8; 512];
+        let slots_to_find = num_slots.max(1);
 
         while cur_cluster >= 2 && cur_cluster < FAT32_EOF {
             last_cluster = cur_cluster;
@@ -651,11 +729,21 @@ impl Fat32Fs {
                     return Err(VfsError::IoError);
                 }
 
-                for entry_idx in 0..(512 / 32) {
-                    let offset = entry_idx * 32;
-                    let first = dir_buf[offset];
-                    if first == 0x00 || first == 0xE5 {
-                        return Ok((sec_lba, offset));
+                let entries_per_sec = 512 / 32;
+                if slots_to_find <= entries_per_sec {
+                    for entry_idx in 0..=(entries_per_sec - slots_to_find) {
+                        let mut all_free = true;
+                        for k in 0..slots_to_find {
+                            let off = (entry_idx + k) * 32;
+                            let first = dir_buf[off];
+                            if first != 0x00 && first != 0xE5 {
+                                all_free = false;
+                                break;
+                            }
+                        }
+                        if all_free {
+                            return Ok((sec_lba, entry_idx * 32));
+                        }
                     }
                 }
             }
@@ -666,12 +754,17 @@ impl Fat32Fs {
             }
         }
 
-        // Todos os clusters do diretÃ³rio estÃ£o cheios: expande a cadeia de clusters
+        // Todos os clusters do diretório estão cheios: expande a cadeia de clusters
         let new_cluster = self.alloc_cluster()?;
         self.set_next_cluster(last_cluster, new_cluster)?;
 
         let new_lba = self.cluster_to_lba(new_cluster);
         Ok((new_lba, 0))
+    }
+
+    /// Encontra um slot de diretório individual livre
+    pub fn find_free_dir_slot(&self, parent_cluster: u32) -> VfsResult<(u32, usize)> {
+        self.find_free_dir_slots(parent_cluster, 1)
     }
     pub fn update_entry_size(&self, first_cluster: u32, new_size: u32) -> Result<(), VfsError> {
         let root_lba = self.cluster_to_lba(self.root_cluster);
@@ -775,9 +868,9 @@ impl FileSystem for Fat32Fs {
             ((entry.dir_sector_lba as u64) << 16) | (entry.dir_entry_offset as u64 | 0x8000_0000)
         };
         let mode = if entry.is_dir {
-            0o040755
+            0o040777
         } else {
-            0o100644
+            0o100666
         };
         Ok(Stat {
             node_type: if entry.is_dir { NodeType::Directory } else { NodeType::File },
@@ -1060,6 +1153,7 @@ impl FileSystem for Fat32Fs {
             let _ = self.update_entry_metadata(entry.dir_sector_lba, entry.dir_entry_offset, entry.first_cluster, new_size);
         }
 
+        let _ = self.sync();
         Ok(bytes_written)
     }
 
@@ -1081,31 +1175,77 @@ impl FileSystem for Fat32Fs {
         let (parent_cluster, leaf_name) = self.resolve_parent_and_leaf(clean_path)?;
         let name_83 = self.encode_83(leaf_name)?;
 
-        let (sec_lba, offset) = self.find_free_dir_slot(parent_cluster)?;
+        let leaf_bytes = leaf_name.as_bytes();
+        let needs_lfn = leaf_name.len() > 12
+            || leaf_bytes.iter().any(|&b| b.is_ascii_lowercase())
+            || match leaf_name.rsplit_once('.') {
+                Some((b, e)) => b.len() > 8 || e.len() > 3,
+                None => leaf_name.len() > 8,
+            };
+
+        let num_lfn = if needs_lfn {
+            (leaf_bytes.len() + 12) / 13
+        } else {
+            0
+        };
+        let total_slots = num_lfn + 1;
+
+        let (sec_lba, start_offset) = self.find_free_dir_slots(parent_cluster, total_slots)?;
         let mut dir_buf = [0u8; 512];
         if self.read_sec(sec_lba, &mut dir_buf).is_err() {
             return Err(VfsError::IoError);
         }
 
-        // Preenche a entrada de diretório de 32 bytes (formato FAT32)
-        dir_buf[offset..offset + 11].copy_from_slice(&name_83);
-        dir_buf[offset + 11] = 0x20; // Atributo: Arquivo Normal (Archive)
-        for k in 12..20 { dir_buf[offset + k] = 0; }
+        // Grava entradas LFN em ordem reversa (seq N..1) antes da entrada 8.3
+        if needs_lfn && num_lfn > 0 {
+            let chksum = lfn_checksum(&name_83);
+            for i in 0..num_lfn {
+                let seq_num = num_lfn - i;
+                let slot_offset = start_offset + (i * 32);
+                let is_last = i == 0;
 
-        // Arquivo inicial de 0 bytes tem cluster inicial 0 (alocação ocorre na primeira escrita)
-        dir_buf[offset + 20] = 0;
-        dir_buf[offset + 21] = 0;
+                // Preenche os 32 bytes da entrada LFN
+                dir_buf[slot_offset] = (seq_num as u8) | (if is_last { 0x40 } else { 0 });
 
-        for k in 22..26 { dir_buf[offset + k] = 0; }
+                let char_start = (seq_num - 1) * 13;
+                let mut c_idx = 0;
+                let char_offsets = [
+                    (1, 11),  // 5 chars
+                    (14, 26), // 6 chars
+                    (28, 32), // 2 chars
+                ];
 
-        dir_buf[offset + 26] = 0;
-        dir_buf[offset + 27] = 0;
+                for &(off_s, off_e) in &char_offsets {
+                    let mut p = off_s;
+                    while p + 1 < off_e {
+                        let cur_c = char_start + c_idx;
+                        let u16_val = if cur_c < leaf_bytes.len() {
+                            leaf_bytes[cur_c] as u16
+                        } else if cur_c == leaf_bytes.len() {
+                            0x0000 // terminador nulo
+                        } else {
+                            0xFFFF // preenchimento padrão FAT
+                        };
+                        dir_buf[slot_offset + p] = (u16_val & 0xFF) as u8;
+                        dir_buf[slot_offset + p + 1] = ((u16_val >> 8) & 0xFF) as u8;
+                        c_idx += 1;
+                        p += 2;
+                    }
+                }
 
-        // Tamanho inicial = 0 bytes
-        dir_buf[offset + 28] = 0;
-        dir_buf[offset + 29] = 0;
-        dir_buf[offset + 30] = 0;
-        dir_buf[offset + 31] = 0;
+                dir_buf[slot_offset + 11] = 0x0F; // Atributo LFN
+                dir_buf[slot_offset + 12] = 0x00; // Tipo reservado
+                dir_buf[slot_offset + 13] = chksum;
+                dir_buf[slot_offset + 26] = 0x00; // Cluster baixo = 0
+                dir_buf[slot_offset + 27] = 0x00;
+            }
+        }
+
+        // Preenche a entrada de diretório de 32 bytes curta (formato FAT32 8.3)
+        let short_offset = start_offset + (num_lfn * 32);
+        dir_buf[short_offset..short_offset + 11].copy_from_slice(&name_83);
+        dir_buf[short_offset + 11] = 0x20; // Atributo: Arquivo Normal (Archive)
+        for k in 12..32 { dir_buf[short_offset + k] = 0; }
 
         if self.write_sec(sec_lba, &dir_buf).is_err() {
             return Err(VfsError::IoError);

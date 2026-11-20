@@ -122,7 +122,9 @@ pub fn get_next_hop_ip(dst_ip: [u8; 4]) -> [u8; 4] {
     };
     if is_local_subnet(dst_ip, our_ip, netmask) {
         dst_ip
-    } else {
+    } else if gateway != [0, 0, 0, 0] {
         gateway
+    } else {
+        [10, 0, 2, 2]
     }
 }

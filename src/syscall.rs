@@ -604,7 +604,8 @@ pub extern "C" fn syscall_dispatch(
         80 => sys_poweroff(),
         81 => sys_graphics_set_power(arg0 as u32),
         82 => sys_hardware_probe(arg0 as *mut crate::benchmark::HardwareReportUser),
-        83 => sys_mkdir(arg0 as *const u8, arg1),
+        83 => sys_net_resolve(arg0 as *const u8, arg1, arg2 as *mut u8),
+        84 => sys_net_http_get(arg0 as *const u8, arg1, arg2 as *const u8, arg3),
         85 => sys_creat(arg0 as *const u8, arg1, arg2 as u32),
         102 => sys_getuid(),
         104 => sys_getgid(),
@@ -2800,6 +2801,166 @@ fn sys_dns_resolve(name_ptr: *const u8, name_len: usize, out_ip_ptr: *mut u8) ->
         Err(crate::net::dns::DnsResolveError::ServerFailure) => -5, // EIO (Erro reportado pelo servidor DNS / SERVFAIL)
         Err(crate::net::dns::DnsResolveError::InvalidName) => EINVAL, // -22
     }
+}
+
+/// `sys_net_resolve(name_ptr, name_len, out_ip_ptr)` — Resolve nome de domínio para endereço IPv4 (Syscall 83 e alias de Syscall 40).
+fn sys_net_resolve(name_ptr: *const u8, name_len: usize, out_ip_ptr: *mut u8) -> isize {
+    sys_dns_resolve(name_ptr, name_len, out_ip_ptr)
+}
+
+/// `sys_net_http_get(url_ptr, url_len, out_path_ptr, out_path_len)` — Baixa conteúdo via HTTP/1.1 diretamente para arquivo no VFS (Syscall 84).
+fn sys_net_http_get(url_ptr: *const u8, url_len: usize, out_path_ptr: *const u8, out_path_len: usize) -> isize {
+    if url_ptr.is_null() || url_len == 0 || url_len > 512 {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(url_ptr, url_len, false) {
+            return e;
+        }
+        if !out_path_ptr.is_null() && out_path_len > 0 {
+            if let Err(e) = validate_user_buffer(out_path_ptr, out_path_len, false) {
+                return e;
+            }
+        }
+    }
+
+    let url_bytes = unsafe { core::slice::from_raw_parts(url_ptr, url_len) };
+    let url_str = match core::str::from_utf8(url_bytes) {
+        Ok(s) => s.trim(),
+        Err(_) => return EINVAL,
+    };
+
+    let without_proto = if let Some(stripped) = url_str.strip_prefix("http://") {
+        stripped
+    } else {
+        url_str
+    };
+
+    let (host_part, path_part) = match without_proto.find('/') {
+        Some(idx) => (&without_proto[..idx], &without_proto[idx..]),
+        None => (without_proto, "/"),
+    };
+
+    let (host, port) = match host_part.find(':') {
+        Some(idx) => {
+            let h = &host_part[..idx];
+            let p_str = &host_part[idx + 1..];
+            let mut port_num = 0u16;
+            for &b in p_str.as_bytes() {
+                if b.is_ascii_digit() {
+                    port_num = port_num.saturating_mul(10).saturating_add((b - b'0') as u16);
+                } else {
+                    break;
+                }
+            }
+            (h, if port_num == 0 { 80 } else { port_num })
+        }
+        None => (host_part, 80u16),
+    };
+
+    if host.is_empty() {
+        return EINVAL;
+    }
+
+    // 1. Resolução DNS
+    let ip = match crate::net::dns::resolve(host) {
+        Ok(addr) => addr,
+        Err(_) => return -110, // ETIMEDOUT
+    };
+
+    let pid = scheduler::current_pid();
+    let sock_idx = match crate::net::socket::create_socket(pid, 2, 1, 0) {
+        Ok(idx) => idx,
+        Err(e) => return e,
+    };
+
+    // 2. Conecta ao host remoto
+    if let Err(e) = crate::net::socket::connect_socket(pid, sock_idx, ip, port) {
+        let _ = crate::net::socket::close_socket(pid, sock_idx);
+        return e;
+    }
+
+    // 3. Monta e transmite a requisição HTTP GET
+    let mut req_buf = [0u8; 1024];
+    let req_header = b"GET ";
+    let req_mid1 = b" HTTP/1.1\r\nHost: ";
+    let req_end = b"\r\nUser-Agent: JinnOS-HttpDownloader/1.1\r\nConnection: close\r\n\r\n";
+
+    let mut req_len = 0usize;
+    let parts: [&[u8]; 5] = [req_header, path_part.as_bytes(), req_mid1, host.as_bytes(), req_end];
+    for p in &parts {
+        if req_len + p.len() <= req_buf.len() {
+            req_buf[req_len..req_len + p.len()].copy_from_slice(p);
+            req_len += p.len();
+        }
+    }
+
+    if let Err(e) = crate::net::socket::send_socket(pid, sock_idx, &req_buf[..req_len]) {
+        let _ = crate::net::socket::close_socket(pid, sock_idx);
+        return e;
+    }
+
+    // 4. Recebe resposta HTTP
+    let mut rx_buf = [0u8; 4096];
+    let mut total_received = 0usize;
+    let mut body_start = None;
+    let mut accum = alloc::vec::Vec::new();
+
+    let start_ticks = crate::timer::ticks();
+    while crate::timer::ticks().saturating_sub(start_ticks) < 1500 {
+        crate::net::poll();
+        match crate::net::socket::recv_socket(pid, sock_idx, &mut rx_buf) {
+            Ok(n) if n > 0 => {
+                accum.extend_from_slice(&rx_buf[..n]);
+                total_received += n;
+                if body_start.is_none() {
+                    if let Some(pos) = accum.windows(4).position(|w| w == b"\r\n\r\n") {
+                        body_start = Some(pos + 4);
+                    }
+                }
+            }
+            _ => {}
+        }
+        if total_received > 0 && body_start.is_some() {
+            break;
+        }
+        crate::scheduler::yield_now();
+    }
+
+    let _ = crate::net::socket::close_socket(pid, sock_idx);
+
+    let body_bytes = match body_start {
+        Some(start) if start <= accum.len() => &accum[start..],
+        _ => &accum[..],
+    };
+
+    // 5. Se fornecido caminho de saída no VFS, grava no arquivo
+    if !out_path_ptr.is_null() && out_path_len > 0 {
+        let mut path_buf = [0u8; crate::vfs::MAX_PATH_LEN];
+        let path_str = match get_user_path(out_path_ptr, out_path_len, &mut path_buf) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+
+        let handle = match crate::vfs::open(path_str, crate::vfs::O_CREAT | crate::vfs::O_WRONLY | crate::vfs::O_TRUNC) {
+            Ok(h) => h,
+            Err(e) => return vfs_error_to_errno(e),
+        };
+
+        let written = match crate::vfs::write(path_str, handle, 0, body_bytes) {
+            Ok(w) => w,
+            Err(e) => {
+                let _ = crate::vfs::close(path_str, handle);
+                return vfs_error_to_errno(e);
+            }
+        };
+
+        let _ = crate::vfs::close(path_str, handle);
+        let _ = sys_sync();
+        return written as isize;
+    }
+
+    body_bytes.len() as isize
 }
 
 
