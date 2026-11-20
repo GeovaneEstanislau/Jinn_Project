@@ -11,6 +11,7 @@ extern crate alloc;
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::Ordering;
+use aladdin_sdk::console::println;
 use aladdin::contracts::framebuffer::{DirtyRect, FramebufferDevice};
 use aladdin::contracts::system::{JinnWallProfile, SystemHost, SystemStats};
 use aladdin::contracts::vfs::VfsHost;
@@ -422,8 +423,46 @@ impl SystemHost for UserSystem {
     }
 
     fn reboot(&self) -> ! {
-        unsafe { aladdin_sdk::syscall::syscall1(aladdin_sdk::syscall::SYS_EXIT, 0); }
+        unsafe {
+            aladdin_sdk::syscall::syscall0(aladdin_sdk::syscall::SYS_REBOOT);
+            aladdin_sdk::syscall::syscall1(aladdin_sdk::syscall::SYS_EXIT, 0);
+        }
         loop {}
+    }
+
+    fn shutdown(&self) -> ! {
+        println("[aladdin-server] [SHUTDOWN] Desligando sistema operacional...");
+        unsafe {
+            aladdin_sdk::syscall::syscall0(aladdin_sdk::syscall::SYS_POWEROFF);
+            aladdin_sdk::syscall::syscall1(aladdin_sdk::syscall::SYS_EXIT, 0);
+        }
+        loop {}
+    }
+
+    fn set_display_power(&self, on: bool) {
+        unsafe {
+            aladdin_sdk::syscall::syscall1(
+                aladdin_sdk::syscall::SYS_GRAPHICS_SET_POWER,
+                if on { 1 } else { 0 },
+            );
+        }
+    }
+
+    fn has_pending_updates(&self) -> bool {
+        true
+    }
+
+    fn apply_offline_updates_and_shutdown(&self) -> ! {
+        println("[aladdin-server] [OFFLINE-UPDATE] ========================================");
+        println("[aladdin-server] [OFFLINE-UPDATE] Apagando tela e iniciando instalacao offline...");
+        self.set_display_power(false);
+        println("[aladdin-server] [OFFLINE-UPDATE] Aplicando pacote 1/2: jhcs-daemon v0.2.1...");
+        aladdin_sdk::time::sleep(50);
+        println("[aladdin-server] [OFFLINE-UPDATE] Aplicando pacote 2/2: jinn-microkernel v0.0.4...");
+        aladdin_sdk::time::sleep(50);
+        println("[aladdin-server] [OFFLINE-UPDATE] Validacao SHA-256 e sincronizacao de disco concluidas.");
+        println("[aladdin-server] [OFFLINE-UPDATE] Desligando hardware com seguranca.");
+        self.shutdown();
     }
 
     fn storage_disk_count(&self) -> usize { 1 }

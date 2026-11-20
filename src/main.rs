@@ -6,6 +6,7 @@ extern crate alloc;
 
 use core::panic::PanicInfo;
 
+pub mod benchmark;
 pub mod cpu;
 pub mod crypto;
 pub mod dma;

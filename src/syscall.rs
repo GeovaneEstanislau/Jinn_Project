@@ -601,6 +601,9 @@ pub extern "C" fn syscall_dispatch(
         77 => sys_graphics_read_client_surface(arg0, arg1 as *mut u32, arg2),
         78 => sys_graphics_dispatch_client_event(arg0, arg1 as *const crate::gui::ClientWindowEvent),
         79 => sys_graphics_list_client_windows(arg0 as *mut crate::gui::ClientWindowInfoUser, arg1),
+        80 => sys_poweroff(),
+        81 => sys_graphics_set_power(arg0 as u32),
+        82 => sys_hardware_probe(arg0 as *mut crate::benchmark::HardwareReportUser),
         83 => sys_mkdir(arg0 as *const u8, arg1),
         85 => sys_creat(arg0 as *const u8, arg1, arg2 as u32),
         102 => sys_getuid(),
@@ -2301,6 +2304,71 @@ fn sys_graphics_list_client_windows(out_ptr: *mut crate::gui::ClientWindowInfoUs
         Ok(count) => count as isize,
         Err(e) => e,
     }
+}
+
+fn sys_poweroff() -> isize {
+    crate::serial_write(b"[SYSCALL] sys_poweroff() invocado por PID ");
+    let pid = scheduler::current_pid();
+    let mut p_buf = [0u8; 16];
+    let mut p_val = pid as u64;
+    let mut p_i = 0;
+    if p_val == 0 {
+        crate::serial_write(b"0");
+    } else {
+        while p_val > 0 {
+            p_buf[p_i] = b'0' + (p_val % 10) as u8;
+            p_val /= 10;
+            p_i += 1;
+        }
+        p_buf[..p_i].reverse();
+        crate::serial_write(&p_buf[..p_i]);
+    }
+    crate::serial_write(b"\n");
+    crate::benchmark::sys_poweroff_machine();
+}
+
+fn sys_graphics_set_power(power_on: u32) -> isize {
+    crate::gui::set_display_power(power_on != 0);
+    0
+}
+
+fn sys_hardware_probe(out_ptr: *mut crate::benchmark::HardwareReportUser) -> isize {
+    if out_ptr.is_null() {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(out_ptr as *const u8, core::mem::size_of::<crate::benchmark::HardwareReportUser>(), true) {
+            return e;
+        }
+    }
+    let report = crate::benchmark::run_hardware_benchmark_suite();
+    let user_rep = crate::benchmark::HardwareReportUser {
+        cpu_alu_mops: report.cpu_bench.alu_mops,
+        branch_mispredict_cycles: report.cpu_bench.branch_mispredict_penalty_cycles,
+        smp_cores: report.cpu_bench.smp_cores_active as u32,
+        smp_speedup_x100: report.cpu_bench.smp_speedup_factor_x100 as u32,
+        ctx_switch_cycles: report.cpu_bench.ctx_switch_cycles,
+        fpu_scalar_mflops: report.fpu_bench.scalar_mflops,
+        fpu_sse2_mflops: report.fpu_bench.sse2_mflops,
+        fpu_avx2_mflops: report.fpu_bench.avx2_mflops,
+        simd_speedup_x100: report.fpu_bench.simd_speedup_x100 as u32,
+        gpu_kind: match report.gpu_info.kind {
+            crate::benchmark::GpuKind::ZeroGpu => 0,
+            crate::benchmark::GpuKind::IntegratedGpu => 1,
+            crate::benchmark::GpuKind::DiscreteGpu => 2,
+        },
+        fb_fill_rate_mibs: report.gpu_info.fb_fill_rate_mibs,
+        ipc_roundtrip_ns: report.ecosystem_bench.ipc_roundtrip_ns,
+        score_raw_parallelism: report.score_raw_parallelism,
+        score_zero_gpu_efficiency: report.score_zero_gpu_efficiency,
+        score_ui_responsiveness: report.score_ui_responsiveness,
+        zero_idle_cpu_percent: report.ecosystem_bench.zero_idle_cpu_percent as u32,
+        rank_tier: if report.score_zero_gpu_efficiency >= 800 { 1 } else if report.score_raw_parallelism >= 800 { 2 } else { 3 },
+    };
+    unsafe {
+        core::ptr::write_unaligned(out_ptr, user_rep);
+    }
+    0
 }
 
 /// `sys_sync()` — Sincroniza todos os sistemas de arquivos montados e descarrega a cache de blocos primária para a mídia não volátil.

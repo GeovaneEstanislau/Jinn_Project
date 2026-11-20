@@ -17,6 +17,34 @@ use crate::memory::IrqSafeSpinLock;
 use alloc::vec::Vec;
 
 pub static GRAPHICS_SERVER_PID: AtomicUsize = AtomicUsize::new(0);
+pub static DISPLAY_POWER_STATE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+
+pub fn set_display_power(on: bool) {
+    DISPLAY_POWER_STATE.store(on, Ordering::Release);
+    if !on {
+        if let Some(fb) = limine::framebuffer() {
+            let total_bytes = (fb.pitch as usize) * (fb.height as usize);
+            unsafe {
+                core::ptr::write_bytes(fb.address, 0x00, total_bytes);
+            }
+        }
+        unsafe {
+            core::arch::asm!("out dx, al", in("dx") 0x3C4u16, in("al") 0x01u8, options(nomem, nostack));
+            let clk: u8;
+            core::arch::asm!("in al, dx", in("dx") 0x3C5u16, out("al") clk, options(nomem, nostack));
+            core::arch::asm!("out dx, al", in("dx") 0x3C5u16, in("al") clk | 0x20, options(nomem, nostack));
+        }
+        crate::serial_write(b"[GUI] Display Power: OFF (Screen blanked, 0 rendering load)\n");
+    } else {
+        unsafe {
+            core::arch::asm!("out dx, al", in("dx") 0x3C4u16, in("al") 0x01u8, options(nomem, nostack));
+            let clk: u8;
+            core::arch::asm!("in al, dx", in("dx") 0x3C5u16, out("al") clk, options(nomem, nostack));
+            core::arch::asm!("out dx, al", in("dx") 0x3C5u16, in("al") clk & !0x20, options(nomem, nostack));
+        }
+        crate::serial_write(b"[GUI] Display Power: ON\n");
+    }
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +173,9 @@ pub fn get_fb_info() -> Result<GraphicsFbInfo, isize> {
 }
 
 pub fn present_rect(caller_pid: usize, rect: &PresentRect, buffer: &[u32]) -> Result<(), isize> {
+    if !DISPLAY_POWER_STATE.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     let s_pid = GRAPHICS_SERVER_PID.load(Ordering::SeqCst);
     if s_pid != 0 && caller_pid != s_pid {
         return Err(crate::syscall::EPERM);
@@ -700,6 +731,24 @@ impl SystemHost for JinnSystem {
             core::arch::asm!("lidt [{}]", "int 3", in(reg) null_idt.as_ptr(), options(nostack));
         }
         loop { core::hint::spin_loop(); }
+    }
+
+    fn shutdown(&self) -> ! {
+        crate::benchmark::sys_poweroff_machine();
+    }
+
+    fn set_display_power(&self, on: bool) {
+        set_display_power(on);
+    }
+
+    fn has_pending_updates(&self) -> bool {
+        true
+    }
+
+    fn apply_offline_updates_and_shutdown(&self) -> ! {
+        crate::serial_write(b"[OFFLINE-UPDATE] Apagando tela e aplicando atualizacoes offline...\n");
+        set_display_power(false);
+        crate::benchmark::sys_poweroff_machine();
     }
 
     fn storage_disk_count(&self) -> usize {

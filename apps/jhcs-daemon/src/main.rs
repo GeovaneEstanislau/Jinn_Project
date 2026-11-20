@@ -35,6 +35,19 @@ static mut HEAP_MEMORY: [u8; HEAP_SIZE] = [0u8; HEAP_SIZE];
 
 const MIN_ALIGN: usize = 64;
 
+#[repr(C, align(64))]
+struct StaticScratchBuffer {
+    buf_a: [f32; 1024],
+    buf_b: [f32; 1024],
+    buf_c: [f32; 1024],
+}
+
+static mut STATIC_SCRATCH: StaticScratchBuffer = StaticScratchBuffer {
+    buf_a: [1.0f32; 1024],
+    buf_b: [2.0f32; 1024],
+    buf_c: [0.0f32; 1024],
+};
+
 #[repr(C)]
 struct FreeNode {
     size: usize,
@@ -212,9 +225,10 @@ pub extern "C" fn _start() -> ! {
 
     // 1. Inicializa o Adapter de Plataforma nativo do Jinn OS e o Broker
     let _platform = JinnPlatformAdapter::new();
-    let mut broker = ComputeBroker::new().with_policy(DispatchPolicy::PreferSimd);
+    let mut broker = ComputeBroker::new().with_policy(DispatchPolicy::ZeroGpuOptimized);
 
     println("[jhcs-daemon] ComputeBroker inicializado com sucesso.");
+    println("[jhcs-daemon] Politica de Despacho: ZeroGpuOptimized (SIMD / Custo-Zero Ativo)");
     println("[jhcs-daemon] Suporte Vetorial: SSE2 Ativo (128-bit seguro via fxsave64)");
     println("[jhcs-daemon] Modo Zero-Idle Ativado: Aguardando requisicoes IPC...");
 
@@ -325,17 +339,18 @@ fn handle_ipc_request(broker: &mut ComputeBroker, msg: &Message, req_idx: u64) {
                     resp.status = -1; // EFAULT
                 }
             } else {
-                // Operação com buffer local Ring 3
+                // Operação com buffer local Ring 3 (Static Scratch Buffer .bss, zero heap allocations)
                 let m = m.max(2).min(16);
                 let k = k.max(2).min(16);
                 let n = n.max(2).min(16);
-                let total_a = m * k;
-                let total_b = k * n;
-                let total_c = m * n;
+                let total_a = (m * k).min(1024);
+                let total_b = (k * n).min(1024);
+                let total_c = (m * n).min(1024);
 
-                let buf_a = alloc::vec![1.0f32; total_a];
-                let buf_b = alloc::vec![2.0f32; total_b];
-                let mut buf_c = alloc::vec![0.0f32; total_c];
+                let scratch = unsafe { &mut *core::ptr::addr_of_mut!(STATIC_SCRATCH) };
+                for val in scratch.buf_a[..total_a].iter_mut() { *val = 1.0f32; }
+                for val in scratch.buf_b[..total_b].iter_mut() { *val = 2.0f32; }
+                for val in scratch.buf_c[..total_c].iter_mut() { *val = 0.0f32; }
 
                 let task = ComputeTask::new(
                     TaskId::new(req_idx),
@@ -350,14 +365,14 @@ fn handle_ipc_request(broker: &mut ComputeBroker, msg: &Message, req_idx: u64) {
                     allow_fallback: true,
                 });
 
-                let outcome = broker.execute_matmul(&task, &buf_a, &buf_b, &mut buf_c, m, k, n);
+                let outcome = broker.execute_matmul(&task, &scratch.buf_a[..total_a], &scratch.buf_b[..total_b], &mut scratch.buf_c[..total_c], m, k, n);
                 resp.backend = match outcome.executed_by {
                     BackendKind::CpuSimd => 2,
                     BackendKind::CpuScalar => 1,
                     _ => 0,
                 };
                 resp.processed_elements = total_c as u32;
-                resp.result_val = buf_c[0];
+                resp.result_val = scratch.buf_c[0];
             }
 
             print("[jhcs-daemon] [MATMUL] Executado ");
@@ -372,10 +387,11 @@ fn handle_ipc_request(broker: &mut ComputeBroker, msg: &Message, req_idx: u64) {
         }
 
         REQ_OP_VECTOR_ADD => {
-            let len = (req.m as usize).max(4).min(256);
-            let vec_a = alloc::vec![req.inline_data[0]; len];
-            let vec_b = alloc::vec![req.inline_data[1]; len];
-            let mut vec_c = alloc::vec![0.0f32; len];
+            let len = (req.m as usize).max(4).min(1024);
+            let scratch = unsafe { &mut *core::ptr::addr_of_mut!(STATIC_SCRATCH) };
+            for val in scratch.buf_a[..len].iter_mut() { *val = req.inline_data[0]; }
+            for val in scratch.buf_b[..len].iter_mut() { *val = req.inline_data[1]; }
+            for val in scratch.buf_c[..len].iter_mut() { *val = 0.0f32; }
 
             let task = ComputeTask::new(
                 TaskId::new(req_idx),
@@ -390,13 +406,13 @@ fn handle_ipc_request(broker: &mut ComputeBroker, msg: &Message, req_idx: u64) {
                 allow_fallback: true,
             });
 
-            let outcome = broker.execute_vector_add(&task, &vec_a, &vec_b, &mut vec_c);
+            let outcome = broker.execute_vector_add(&task, &scratch.buf_a[..len], &scratch.buf_b[..len], &mut scratch.buf_c[..len]);
             resp.backend = match outcome.executed_by {
                 BackendKind::CpuSimd => 2,
                 _ => 1,
             };
             resp.processed_elements = len as u32;
-            resp.result_val = vec_c[0];
+            resp.result_val = scratch.buf_c[0];
 
             print("[jhcs-daemon] [VECTOR_ADD] Executado len=");
             print_num(len as u64);

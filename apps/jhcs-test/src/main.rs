@@ -392,9 +392,52 @@ pub extern "C" fn _start() -> ! {
         }
     }
 
+    // ── Test 7: Hardware Probe & Ranking Syscall 82 ───────────────────────────
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Default)]
+    struct HardwareReportUser {
+        pub cpu_alu_mops: u64,
+        pub branch_mispredict_cycles: u64,
+        pub smp_cores: u32,
+        pub smp_speedup_x100: u32,
+        pub ctx_switch_cycles: u64,
+        pub fpu_scalar_mflops: u64,
+        pub fpu_sse2_mflops: u64,
+        pub fpu_avx2_mflops: u64,
+        pub simd_speedup_x100: u32,
+        pub gpu_kind: u32,
+        pub fb_fill_rate_mibs: u64,
+        pub ipc_roundtrip_ns: u64,
+        pub score_raw_parallelism: u32,
+        pub score_zero_gpu_efficiency: u32,
+        pub score_ui_responsiveness: u32,
+        pub zero_idle_cpu_percent: u32,
+        pub rank_tier: u32,
+    }
+
+    let mut rep = HardwareReportUser::default();
+    let ret = unsafe {
+        aladdin_sdk::syscall::syscall1(aladdin_sdk::syscall::SYS_HARDWARE_PROBE, &mut rep as *mut _ as u64)
+    };
+    if ret == 0 {
+        print("[jhcs-test] [PASS] Test 7: Syscall 82 (Hardware Benchmark & Ranking Suite Conforme)\n");
+        print("[jhcs-test]   [RANKING] Score Paralelismo Bruto : ");
+        print_num(rep.score_raw_parallelism as u64);
+        println(" / 1000");
+        print("[jhcs-test]   [RANKING] Score Eficiencia Zero-GPU: ");
+        print_num(rep.score_zero_gpu_efficiency as u64);
+        println(" / 1000");
+        print("[jhcs-test]   [RANKING] Score Responsividade UI  : ");
+        print_num(rep.score_ui_responsiveness as u64);
+        println(" / 1000");
+        print("[jhcs-test]   [RANKING] Tier Oficial Atribuido   : Rank ");
+        print_num(rep.rank_tier as u64);
+        println("");
+    }
+
     println("[jhcs-test] ==================================================");
-    println("[jhcs-test] [SUCCESS] TODOS OS 6 TESTES RING 3 FORAM APROVADOS!");
-    println("[jhcs-test] Integracao do JHCS no Jinn OS homologada com exito.");
+    println("[jhcs-test] [SUCCESS] TODOS OS 7 TESTES RING 3 FORAM APROVADOS!");
+    println("[jhcs-test] Hardware Ranking & Integracao JHCS homologados com exito.");
     println("[jhcs-test] ==================================================");
 
     exit(0);

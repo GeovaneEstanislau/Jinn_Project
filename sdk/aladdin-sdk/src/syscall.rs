@@ -31,6 +31,9 @@ pub const SYS_GRAPHICS_UNREGISTER:           u64 = 76;
 pub const SYS_GRAPHICS_READ_CLIENT_SURFACE:   u64 = 77;
 pub const SYS_GRAPHICS_DISPATCH_CLIENT_EVENT: u64 = 78;
 pub const SYS_GRAPHICS_LIST_CLIENT_WINDOWS:   u64 = 79;
+pub const SYS_POWEROFF:                      u64 = 80;
+pub const SYS_GRAPHICS_SET_POWER:            u64 = 81;
+pub const SYS_HARDWARE_PROBE:                u64 = 82;
 
 /// Syscall sem argumentos
 #[inline(always)]

@@ -134,6 +134,8 @@ fn dispatch(w: &mut Writer, line: &[u8], len: usize) {
 
         // ── Sistema ───────────────────────────────────────────────────────────
         "reboot" => cmd_reboot(w),
+        "poweroff" | "shutdown" => cmd_poweroff(w),
+        "bench" | "hwrank" => cmd_hwrank(w),
 
         _ => {
             w.set_color(Color::LightRed, Color::Black);
@@ -2067,6 +2069,84 @@ fn cmd_reboot(w: &mut Writer) -> ! {
         );
     }
     loop { core::hint::spin_loop(); }
+}
+
+/// `poweroff` — Desliga o sistema via portas de controle ACPI / Hipervisor.
+fn cmd_poweroff(w: &mut Writer) -> ! {
+    w.set_color(Color::LightRed, Color::Black);
+    w.write_line("Desligando hardware via ACPI...");
+    crate::benchmark::sys_poweroff_machine();
+}
+
+/// `bench` / `hwrank` — Executa microbenchmarks e gera o ranking oficial de hardware no Jinn OS.
+fn cmd_hwrank(w: &mut Writer) {
+    w.set_color(Color::LightCyan, Color::Black);
+    w.write_line("=== Jinn OS Hardware Benchmark & Ranking Suite ===");
+    w.set_color(Color::LightGray, Color::Black);
+    w.write_line("Executando bateria de testes CPU, FPU/SIMD e Topologia de Video...");
+
+    let report = crate::benchmark::run_hardware_benchmark_suite();
+
+    w.set_color(Color::Yellow, Color::Black);
+    w.write_string("Topologia GPU: ");
+    w.set_color(Color::White, Color::Black);
+    w.write_string(report.gpu_info.kind.as_str());
+    w.write_string(" (");
+    w.write_string(report.gpu_info.vendor_name);
+    w.write_line(")");
+
+    w.set_color(Color::LightGreen, Color::Black);
+    w.write_string("  CPU ALU Throughput: ");
+    w.set_color(Color::White, Color::Black);
+    w.write_decimal(report.cpu_bench.alu_mops as usize);
+    w.write_line(" MOPS");
+
+    w.set_color(Color::LightGreen, Color::Black);
+    w.write_string("  SMP Speedup (");
+    w.write_decimal(report.cpu_bench.smp_cores_active);
+    w.write_string(" cores): ");
+    w.set_color(Color::White, Color::Black);
+    w.write_decimal((report.cpu_bench.smp_speedup_factor_x100 / 100) as usize);
+    w.write_string(".");
+    w.write_decimal((report.cpu_bench.smp_speedup_factor_x100 % 100) as usize);
+    w.write_line("x");
+
+    w.set_color(Color::LightGreen, Color::Black);
+    w.write_string("  FPU Scalar / SSE2 / AVX2: ");
+    w.set_color(Color::White, Color::Black);
+    w.write_decimal(report.fpu_bench.scalar_mflops as usize);
+    w.write_string(" / ");
+    w.write_decimal(report.fpu_bench.sse2_mflops as usize);
+    w.write_string(" / ");
+    w.write_decimal(report.fpu_bench.avx2_mflops as usize);
+    w.write_line(" MFLOPS");
+
+    w.set_color(Color::LightGreen, Color::Black);
+    w.write_string("  SIMD Acceleration: ");
+    w.set_color(Color::White, Color::Black);
+    w.write_decimal((report.fpu_bench.simd_speedup_x100 / 100) as usize);
+    w.write_string(".");
+    w.write_decimal((report.fpu_bench.simd_speedup_x100 % 100) as usize);
+    w.write_line("x speedup (Paridade: 100% precisa)");
+
+    w.set_color(Color::LightCyan, Color::Black);
+    w.write_line("--- Scorecard e Ranking ---");
+    w.set_color(Color::White, Color::Black);
+    w.write_string("  Paralelismo Bruto        : ");
+    w.write_decimal(report.score_raw_parallelism as usize);
+    w.write_line(" / 1000");
+    w.write_string("  Eficiencia Zero-GPU      : ");
+    w.write_decimal(report.score_zero_gpu_efficiency as usize);
+    w.write_line(" / 1000");
+    w.write_string("  Responsividade Aladdin UI: ");
+    w.write_decimal(report.score_ui_responsiveness as usize);
+    w.write_line(" / 1000");
+
+    w.set_color(Color::Pink, Color::Black);
+    w.write_string("Categoria Concedida: ");
+    w.set_color(Color::White, Color::Black);
+    w.write_line(report.rank_category);
+    w.set_color(Color::LightGray, Color::Black);
 }
 
 /// Ponto de entrada do shell como uma task (Ring 0).
