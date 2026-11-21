@@ -2761,6 +2761,103 @@ fn get_cstr_len(s: &[u8]) -> usize {
     l
 }
 
+#[inline(always)]
+unsafe fn sys_mkdir(path: &[u8]) -> i64 {
+    syscall3(51, path.as_ptr() as u64, path.len() as u64, 0)
+}
+
+unsafe fn apply_wallpaper_action(target: &[u8]) {
+    print_str(b"[BROWSER-WALLPAPER] Aplicando papel de parede: ");
+    print_str(target);
+    print_str(b"\n");
+
+    let mut full_path = [0u8; 128];
+    let mut full_len = 0;
+    if target.starts_with(b"/") {
+        let l = target.len().min(127);
+        full_path[..l].copy_from_slice(&target[..l]);
+        full_len = l;
+    } else {
+        let prefix = b"/disk/wallpapers/";
+        full_path[..prefix.len()].copy_from_slice(prefix);
+        let l = target.len().min(127 - prefix.len());
+        full_path[prefix.len()..prefix.len() + l].copy_from_slice(&target[..l]);
+        full_len = prefix.len() + l;
+    }
+
+    // Lê arquivo original
+    let fd = sys_open(&full_path[..full_len], 0);
+    let mut valid_data = false;
+    let mut bytes_read = 0i64;
+    if fd >= 0 {
+        bytes_read = sys_read(fd as u64, HTML_FILE_BUF.as_mut_ptr(), HTML_FILE_BUF.len() as u64);
+        let _ = sys_close(fd as u64);
+        if bytes_read > 0 {
+            valid_data = true;
+        }
+    }
+
+    if !valid_data && !target.starts_with(b"/") {
+        // Tenta /disk/<target>
+        let prefix = b"/disk/";
+        full_path[..prefix.len()].copy_from_slice(prefix);
+        let l = target.len().min(127 - prefix.len());
+        full_path[prefix.len()..prefix.len() + l].copy_from_slice(&target[..l]);
+        full_len = prefix.len() + l;
+        let fd2 = sys_open(&full_path[..full_len], 0);
+        if fd2 >= 0 {
+            bytes_read = sys_read(fd2 as u64, HTML_FILE_BUF.as_mut_ptr(), HTML_FILE_BUF.len() as u64);
+            let _ = sys_close(fd2 as u64);
+            if bytes_read > 0 {
+                valid_data = true;
+            }
+        }
+    }
+
+    // Garante infraestrutura do diretório de wallpapers
+    let _ = sys_mkdir(b"/disk/wallpapers");
+
+    if valid_data && bytes_read > 0 {
+        let cur_wp_path = b"/disk/wallpapers/current_wallpaper.bmp";
+        let out_fd = sys_open(cur_wp_path, 0x01 | 0x40 | 0x200); // O_WRONLY | O_CREAT | O_TRUNC
+        if out_fd >= 0 {
+            let _ = sys_write(out_fd as u64, HTML_FILE_BUF.as_ptr(), bytes_read as u64);
+            let _ = sys_close(out_fd as u64);
+            print_str(b"[BROWSER-WALLPAPER] Copiado para /disk/wallpapers/current_wallpaper.bmp\n");
+        }
+    }
+
+    // Grava /disk/desktop.cfg
+    let mut cfg_buf = [0u8; 256];
+    let mut cfg_len = 0;
+    let p_wp = b"WALLPAPER=";
+    cfg_buf[..p_wp.len()].copy_from_slice(p_wp);
+    cfg_len += p_wp.len();
+    let path_to_write = &full_path[..full_len];
+    cfg_buf[cfg_len..cfg_len + path_to_write.len()].copy_from_slice(path_to_write);
+    cfg_len += path_to_write.len();
+    cfg_buf[cfg_len] = b'\n';
+    cfg_len += 1;
+
+    let cfg_fd = sys_open(b"/disk/desktop.cfg", 0x01 | 0x40 | 0x200);
+    if cfg_fd >= 0 {
+        let _ = sys_write(cfg_fd as u64, cfg_buf.as_ptr(), cfg_len as u64);
+        let _ = sys_close(cfg_fd as u64);
+        print_str(b"[BROWSER-WALLPAPER] Gravado com sucesso em /disk/desktop.cfg\n");
+    }
+
+    // Atualiza /disk/SETTINGS.CFG do Aladdin Desktop
+    let set_text = b"# ALADDIN_CONFIG_V1\nMODE=1\nWALLPAPER=12\nWALLPAPER_AUDIO=0\nWALLPAPER_VOL=40\n";
+    let set_fd = sys_open(b"/disk/SETTINGS.CFG", 0x01 | 0x40 | 0x200);
+    if set_fd >= 0 {
+        let _ = sys_write(set_fd as u64, set_text.as_ptr(), set_text.len() as u64);
+        let _ = sys_close(set_fd as u64);
+        print_str(b"[BROWSER-WALLPAPER] Atualizado /disk/SETTINGS.CFG (WALLPAPER=12)\n");
+    }
+
+    print_str(b"[BROWSER-WALLPAPER] [OK] Papel de parede definido com sucesso!\n");
+}
+
 unsafe fn run_browser_interactive() -> ! {
     print_str(b"[BROWSER] Iniciando processo...\n");
     print_str(b"\n==================================================================\n");
@@ -2957,6 +3054,18 @@ unsafe fn run_browser_interactive() -> ! {
                             print_i64(delta as i64);
                             print_str(b"\n");
                             session.scroll_by(delta);
+                            session.render(buf_cur);
+                            let _ = sys_window_update(win_id, buf_cur);
+                        }
+                        browser::BrowserAction::SetWallpaper(target, len) => {
+                            print_str(b"[BROWSER-INTERACTION] ACTION SetWallpaper\n");
+                            apply_wallpaper_action(&target[..len]);
+                            session.render(buf_cur);
+                            let _ = sys_window_update(win_id, buf_cur);
+                        }
+                        browser::BrowserAction::SaveWallpaper(target, len) => {
+                            print_str(b"[BROWSER-INTERACTION] ACTION SaveWallpaper\n");
+                            apply_wallpaper_action(&target[..len]);
                             session.render(buf_cur);
                             let _ = sys_window_update(win_id, buf_cur);
                         }

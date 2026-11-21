@@ -688,8 +688,108 @@ pub fn handle_dns_reply(payload: &[u8]) {
 }
 
 /// Transmite uma consulta DNS padrão para o servidor DNS do gateway
+#[derive(Debug, Clone, Copy)]
+pub struct DnsConfig {
+    pub primary: [u8; 4],
+    pub secondary: [u8; 4],
+    pub fallback: [u8; 4],
+}
+
+pub static mut DNS_CONFIG: DnsConfig = DnsConfig {
+    primary: [1, 1, 1, 1],
+    secondary: [8, 8, 8, 8],
+    fallback: [10, 0, 2, 3],
+};
+
+pub fn load_dns_config_from_vfs() {
+    let mut buf = [0u8; 512];
+    if let Ok(handle) = crate::vfs::open("/disk/net.cfg", crate::vfs::O_RDONLY) {
+        if let Ok(n) = crate::vfs::read("/disk/net.cfg", handle, 0, &mut buf) {
+            let _ = crate::vfs::close("/disk/net.cfg", handle);
+            if n > 0 {
+                if let Ok(text) = core::str::from_utf8(&buf[..n]) {
+                    let mut found_primary = false;
+                    for line in text.lines() {
+                        let line = line.trim();
+                        if let Some(val) = line.strip_prefix("DNS_PRIMARY=") {
+                            if let Some(ip) = parse_ipv4_literal(val.trim()) {
+                                unsafe { DNS_CONFIG.primary = ip; }
+                                found_primary = true;
+                            }
+                        } else if let Some(val) = line.strip_prefix("DNS_SECONDARY=") {
+                            if let Some(ip) = parse_ipv4_literal(val.trim()) {
+                                unsafe { DNS_CONFIG.secondary = ip; }
+                            }
+                        }
+                    }
+                    if found_primary {
+                        return;
+                    }
+                }
+            }
+        } else {
+            let _ = crate::vfs::close("/disk/net.cfg", handle);
+        }
+    }
+    save_dns_config_to_vfs();
+}
+
+pub fn save_dns_config_to_vfs() {
+    let (p, s) = unsafe { (DNS_CONFIG.primary, DNS_CONFIG.secondary) };
+    let mut out = [0u8; 256];
+    let mut pos = 0;
+    let p1 = b"DNS_PRIMARY=";
+    out[pos..pos + p1.len()].copy_from_slice(p1);
+    pos += p1.len();
+    pos += format_ip_into(&mut out[pos..], p);
+    out[pos] = b'\n';
+    pos += 1;
+
+    let p2 = b"DNS_SECONDARY=";
+    out[pos..pos + p2.len()].copy_from_slice(p2);
+    pos += p2.len();
+    pos += format_ip_into(&mut out[pos..], s);
+    out[pos] = b'\n';
+    pos += 1;
+
+    let _ = crate::vfs::create("/disk/net.cfg");
+    if let Ok(handle) = crate::vfs::open("/disk/net.cfg", crate::vfs::O_WRONLY | crate::vfs::O_TRUNC) {
+        let _ = crate::vfs::write("/disk/net.cfg", handle, 0, &out[..pos]);
+        let _ = crate::vfs::close("/disk/net.cfg", handle);
+    }
+}
+
+pub fn format_ip_into(dst: &mut [u8], ip: [u8; 4]) -> usize {
+    let mut p = 0;
+    for i in 0..4 {
+        if i > 0 {
+            dst[p] = b'.';
+            p += 1;
+        }
+        let b = ip[i];
+        if b >= 100 {
+            dst[p] = b'0' + (b / 100);
+            p += 1;
+            dst[p] = b'0' + ((b / 10) % 10);
+            p += 1;
+            dst[p] = b'0' + (b % 10);
+            p += 1;
+        } else if b >= 10 {
+            dst[p] = b'0' + (b / 10);
+            p += 1;
+            dst[p] = b'0' + (b % 10);
+            p += 1;
+        } else {
+            dst[p] = b'0' + b;
+            p += 1;
+        }
+    }
+    p
+}
+
 pub fn send_query(name: &str, tx_id: u16) -> Result<(), DnsError> {
-    send_query_to(name, tx_id, None)
+    let primary = unsafe { DNS_CONFIG.primary };
+    send_query_to(name, tx_id, Some(primary))
 }
 
 pub fn send_query_to(name: &str, tx_id: u16, server_override: Option<[u8; 4]>) -> Result<(), DnsError> {
@@ -702,9 +802,9 @@ pub fn send_query_to(name: &str, tx_id: u16, server_override: Option<[u8; 4]>) -
     };
 
     let our_ip = unsafe { DHCP_CLIENT.ip };
-    let mut dns_server_ip = server_override.unwrap_or(unsafe { DHCP_CLIENT.dns });
+    let mut dns_server_ip = server_override.unwrap_or(unsafe { DNS_CONFIG.primary });
     if dns_server_ip == [0, 0, 0, 0] {
-        dns_server_ip = [10, 0, 2, 3];
+        dns_server_ip = [1, 1, 1, 1];
     }
     let our_mac = dev.mac_address();
     let target_mac = crate::net::arp::resolve_mac_for_ip(dns_server_ip);
@@ -786,7 +886,7 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
         PENDING_DNS_TABLE.insert(query_entry);
     }
 
-    // 5. Transmite consulta pela rede (primária + fallback secundário)
+    // 5. Transmite consulta pela rede (primária: Cloudflare 1.1.1.1)
     if send_query(name, tx_id).is_err() {
         unsafe {
             PENDING_QUERY = None;
@@ -797,7 +897,7 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
 
     let start_tick = crate::timer::ticks();
     let mut last_tx = start_tick;
-    let mut tried_fallback = false;
+    let mut stage = 0u8; // 0: primary (1.1.1.1), 1: secondary (8.8.8.8), 2: fallback (10.0.2.3)
 
     // Aguarda até 350 ticks (3,5s a 100 Hz APIC) com polling e retransmissão
     while crate::timer::ticks().saturating_sub(start_tick) < 350 {
@@ -822,11 +922,24 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
                     return Err(DnsResolveError::NxDomain);
                 }
                 DnsQueryStatus::ServerError => {
-                    unsafe {
-                        PENDING_QUERY = None;
-                        PENDING_DNS_TABLE.remove(tx_id);
+                    // Se o servidor primário falhar, avança para o secundário imediatamente
+                    if stage == 0 {
+                        stage = 1;
+                        let sec = unsafe { DNS_CONFIG.secondary };
+                        let _ = send_query_to(name, tx_id, Some(sec));
+                        last_tx = crate::timer::ticks();
+                    } else if stage == 1 {
+                        stage = 2;
+                        let fb = unsafe { DNS_CONFIG.fallback };
+                        let _ = send_query_to(name, tx_id, Some(fb));
+                        last_tx = crate::timer::ticks();
+                    } else {
+                        unsafe {
+                            PENDING_QUERY = None;
+                            PENDING_DNS_TABLE.remove(tx_id);
+                        }
+                        return Err(DnsResolveError::ServerFailure);
                     }
-                    return Err(DnsResolveError::ServerFailure);
                 }
                 DnsQueryStatus::Pending => {}
             }
@@ -840,14 +953,29 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
             return Ok(cached_ip);
         }
 
-        if crate::timer::ticks().saturating_sub(last_tx) >= 80 {
+        let elapsed = crate::timer::ticks().saturating_sub(start_tick);
+        let since_last = crate::timer::ticks().saturating_sub(last_tx);
+
+        if elapsed >= 120 && stage < 2 {
+            stage = 2;
             last_tx = crate::timer::ticks();
-            if crate::timer::ticks().saturating_sub(start_tick) >= 160 && !tried_fallback {
-                tried_fallback = true;
-                let _ = send_query_to(name, tx_id, Some([8, 8, 8, 8]));
-            } else {
-                let _ = send_query(name, tx_id);
-            }
+            let fb = unsafe { DNS_CONFIG.fallback };
+            let _ = send_query_to(name, tx_id, Some(fb));
+        } else if elapsed >= 50 && stage < 1 {
+            stage = 1;
+            last_tx = crate::timer::ticks();
+            let sec = unsafe { DNS_CONFIG.secondary };
+            let _ = send_query_to(name, tx_id, Some(sec));
+        } else if since_last >= 40 {
+            last_tx = crate::timer::ticks();
+            let target_server = unsafe {
+                match stage {
+                    0 => DNS_CONFIG.primary,
+                    1 => DNS_CONFIG.secondary,
+                    _ => DNS_CONFIG.fallback,
+                }
+            };
+            let _ = send_query_to(name, tx_id, Some(target_server));
         }
         crate::scheduler::yield_now();
     }

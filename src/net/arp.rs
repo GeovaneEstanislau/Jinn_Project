@@ -3,8 +3,8 @@
 pub const ARP_OP_REQUEST: u16 = 1;
 pub const ARP_OP_REPLY:   u16 = 2;
 
-pub const DEFAULT_GATEWAY_MAC: [u8; 6] = [0x52, 0x55, 0x0A, 0x00, 0x02, 0x02];
-pub const DEFAULT_DNS_MAC: [u8; 6]     = [0x52, 0x55, 0x0A, 0x00, 0x02, 0x03];
+pub const DEFAULT_GATEWAY_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x35, 0x02];
+pub const DEFAULT_DNS_MAC: [u8; 6]     = [0x52, 0x54, 0x00, 0x12, 0x35, 0x03];
 pub const DEFAULT_GATEWAY_MAC_VBOX: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x35, 0x02];
 pub const DEFAULT_DNS_MAC_VBOX: [u8; 6]     = [0x52, 0x54, 0x00, 0x12, 0x35, 0x03];
 
@@ -106,19 +106,13 @@ impl ArpTable {
     /// Inicializa a tabela de cache ARP com estado limpo
     pub fn init_defaults(&mut self) {
         *self = Self::new();
-        // Pre-popula gateway e DNS conhecidos para evitar stalls de ARP em QEMU e VirtualBox
+        // Pre-popula gateway e DNS conhecidos com updated_tick = 1 para evitar stalls de ARP em QEMU e VirtualBox
         let gw = unsafe { crate::net::dhcp::DHCP_CLIENT.gateway };
         let dns = unsafe { crate::net::dhcp::DHCP_CLIENT.dns };
-        if gw != [0, 0, 0, 0] {
-            self.insert(gw, default_gateway_mac(), 0);
-        } else {
-            self.insert([10, 0, 2, 2], default_gateway_mac(), 0);
-        }
-        if dns != [0, 0, 0, 0] {
-            self.insert(dns, default_dns_mac(), 0);
-        } else {
-            self.insert([10, 0, 2, 3], default_dns_mac(), 0);
-        }
+        let gw_ip = if gw != [0, 0, 0, 0] { gw } else { [10, 0, 2, 2] };
+        let dns_ip = if dns != [0, 0, 0, 0] { dns } else { [10, 0, 2, 3] };
+        self.insert(gw_ip, default_gateway_mac(), 1);
+        self.insert(dns_ip, default_dns_mac(), 1);
     }
 }
 

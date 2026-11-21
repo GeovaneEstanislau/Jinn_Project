@@ -62,6 +62,7 @@ pub fn init() {
         arp::ARP_CACHE.init_defaults();
         dns::DNS_CACHE.init_defaults();
     }
+    dns::load_dns_config_from_vfs();
 }
 
 static NET_POLL_LOCK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);

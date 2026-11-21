@@ -636,13 +636,18 @@ pub fn mkdir(path: &str) -> VfsResult<()> {
     fs.mkdir(rel)
 }
 
-/// Garante a criação da infraestrutura de diretórios dedicada do Jinn Browser (/disk/browser/)
+/// Garante a criação da infraestrutura de diretórios dedicada do Jinn Browser (/disk/browser/) e Wallpapers (/disk/wallpapers/)
 pub fn ensure_browser_directories() {
     let _ = mkdir("/disk/browser");
     let _ = mkdir("/disk/browser/cache");
     let _ = mkdir("/disk/browser/cookies");
     let _ = mkdir("/disk/browser/history");
     let _ = mkdir("/disk/browser/bookmark");
+    let _ = mkdir("/disk/wallpapers");
+    let _ = mkdir("/disk/wallpapers/genios");
+    let _ = mkdir("/disk/wallpapers/montanhas");
+    let _ = mkdir("/disk/wallpapers/informatica");
+    let _ = mkdir("/disk/wallpapers/corpos-celestes");
 }
 
 /// Copia um arquivo no VFS com integridade garantida bloco a bloco.

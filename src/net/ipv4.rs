@@ -100,6 +100,9 @@ impl<'a> Ipv4Packet<'a> {
 
 /// Determina se um endereço IP de destino reside na sub-rede local ou requer roteamento via gateway padrão
 pub fn is_local_subnet(dst_ip: [u8; 4], our_ip: [u8; 4], netmask: [u8; 4]) -> bool {
+    if netmask == [0, 0, 0, 0] || our_ip == [0, 0, 0, 0] {
+        return false;
+    }
     (dst_ip[0] & netmask[0] == our_ip[0] & netmask[0])
         && (dst_ip[1] & netmask[1] == our_ip[1] & netmask[1])
         && (dst_ip[2] & netmask[2] == our_ip[2] & netmask[2])

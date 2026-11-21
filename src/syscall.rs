@@ -607,6 +607,8 @@ pub extern "C" fn syscall_dispatch(
         83 => sys_net_resolve(arg0 as *const u8, arg1, arg2 as *mut u8),
         84 => sys_net_http_get(arg0 as *const u8, arg1, arg2 as *const u8, arg3),
         85 => sys_creat(arg0 as *const u8, arg1, arg2 as u32),
+        86 => sys_net_set_dns(arg0 as *const u8, arg1 as *const u8),
+        87 => sys_net_get_dns(arg0 as *mut u8, arg1 as *mut u8),
         102 => sys_getuid(),
         104 => sys_getgid(),
         107 => sys_geteuid(),
@@ -2961,6 +2963,68 @@ fn sys_net_http_get(url_ptr: *const u8, url_len: usize, out_path_ptr: *const u8,
     }
 
     body_bytes.len() as isize
+}
+
+/// `sys_net_set_dns(primary_ptr, secondary_ptr)` — Define servidores DNS primário e secundário (Syscall 86).
+fn sys_net_set_dns(primary_ptr: *const u8, secondary_ptr: *const u8) -> isize {
+    if primary_ptr.is_null() && secondary_ptr.is_null() {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if !primary_ptr.is_null() {
+            if let Err(e) = validate_user_buffer(primary_ptr, 4, false) {
+                return e;
+            }
+        }
+        if !secondary_ptr.is_null() {
+            if let Err(e) = validate_user_buffer(secondary_ptr, 4, false) {
+                return e;
+            }
+        }
+    }
+    unsafe {
+        if !primary_ptr.is_null() {
+            let mut p = [0u8; 4];
+            core::ptr::copy_nonoverlapping(primary_ptr, p.as_mut_ptr(), 4);
+            crate::net::dns::DNS_CONFIG.primary = p;
+        }
+        if !secondary_ptr.is_null() {
+            let mut s = [0u8; 4];
+            core::ptr::copy_nonoverlapping(secondary_ptr, s.as_mut_ptr(), 4);
+            crate::net::dns::DNS_CONFIG.secondary = s;
+        }
+        crate::net::dns::save_dns_config_to_vfs();
+    }
+    0
+}
+
+/// `sys_net_get_dns(primary_out, secondary_out)` — Lê servidores DNS primário e secundário atuais (Syscall 87).
+fn sys_net_get_dns(primary_out: *mut u8, secondary_out: *mut u8) -> isize {
+    if primary_out.is_null() && secondary_out.is_null() {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if !primary_out.is_null() {
+            if let Err(e) = validate_user_buffer(primary_out, 4, true) {
+                return e;
+            }
+        }
+        if !secondary_out.is_null() {
+            if let Err(e) = validate_user_buffer(secondary_out, 4, true) {
+                return e;
+            }
+        }
+    }
+    unsafe {
+        let (p, s) = (crate::net::dns::DNS_CONFIG.primary, crate::net::dns::DNS_CONFIG.secondary);
+        if !primary_out.is_null() {
+            core::ptr::copy_nonoverlapping(p.as_ptr(), primary_out, 4);
+        }
+        if !secondary_out.is_null() {
+            core::ptr::copy_nonoverlapping(s.as_ptr(), secondary_out, 4);
+        }
+    }
+    0
 }
 
 

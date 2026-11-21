@@ -618,9 +618,6 @@ pub extern "C" fn _start() -> ! {
         sched.core_idle[c] = ap_idle;
     }
 
-    // O Shell (Ring 0) como task normal do escalonador
-    let _shell_pid = sched.add_task("shell[K]", shell::task_entry);
-
     // Processos de usuário (Ring 3) — carregados via ELF Loader
     let mod_count = limine::module_count();
     w.write_string("\n    Modulos Limine: ");
@@ -717,6 +714,9 @@ pub extern "C" fn _start() -> ! {
             }
         }
     }
+
+    // O Shell (Ring 0) como task normal do escalonador, instanciado após todos os daemons e processos Ring 3
+    let _shell_pid = sched.add_task("shell[K]", shell::task_entry);
 
     w.set_color(Color::LightGreen, Color::Black);
     w.write_line(" OK");

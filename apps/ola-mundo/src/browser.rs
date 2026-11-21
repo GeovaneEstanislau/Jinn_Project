@@ -2228,6 +2228,8 @@ pub enum BrowserAction {
     Scroll(i32),
     ToggleFullscreen,
     ExitFullscreen,
+    SetWallpaper([u8; 128], usize),
+    SaveWallpaper([u8; 128], usize),
 }
 
 // ── Sessão Interativa do Navegador ────────────────────────────────────────────
@@ -2640,9 +2642,36 @@ impl BrowserSession {
                     if r.is_js {
                         return BrowserAction::JsAction(r.node_idx);
                     } else {
+                        let target_slice = &r.target[..r.target_len];
+                        if target_slice.starts_with(b"set_wallpaper:") {
+                            let mut target = [0u8; 128];
+                            let param = &target_slice[b"set_wallpaper:".len()..];
+                            let plen = param.len().min(128);
+                            target[..plen].copy_from_slice(&param[..plen]);
+                            return BrowserAction::SetWallpaper(target, plen);
+                        } else if target_slice.starts_with(b"save_wallpaper:") {
+                            let mut target = [0u8; 128];
+                            let param = &target_slice[b"save_wallpaper:".len()..];
+                            let plen = param.len().min(128);
+                            target[..plen].copy_from_slice(&param[..plen]);
+                            return BrowserAction::SaveWallpaper(target, plen);
+                        }
                         let mut target = [0u8; 128];
                         target[..r.target_len].copy_from_slice(&r.target[..r.target_len]);
                         return BrowserAction::NavigateTarget(target, r.target_len);
+                    }
+                }
+            }
+
+            // Hit-test em imagens: clicar sobre imagem define como papel de parede
+            for i in 0..self.layout.image_count {
+                let img = &self.layout.images[i];
+                if click_x >= img.x && click_x <= img.x + img.w && doc_y >= img.y && doc_y <= img.y + img.h {
+                    if img.src_len > 0 {
+                        let mut target = [0u8; 128];
+                        let slen = img.src_len.min(128);
+                        target[..slen].copy_from_slice(&img.src[..slen]);
+                        return BrowserAction::SetWallpaper(target, slen);
                     }
                 }
             }
@@ -2845,6 +2874,348 @@ fn draw_rect_border(buf: &mut [u32], stride_w: usize, max_h: usize, rx: usize, r
     }
 }
 
+// ── Decodificadores de Imagem Sem Alocação Dinâmica (#![no_std]) ───────────────
+
+pub const MAX_IMAGE_SCRATCH_W: usize = 320;
+pub const MAX_IMAGE_SCRATCH_H: usize = 240;
+pub const MAX_IMAGE_SCRATCH_PIXELS: usize = MAX_IMAGE_SCRATCH_W * MAX_IMAGE_SCRATCH_H;
+
+static mut IMG_FILE_SCRATCH: [u8; 65536] = [0u8; 65536];
+static mut IMG_DECODED_PIXELS: [u32; MAX_IMAGE_SCRATCH_PIXELS] = [0u32; MAX_IMAGE_SCRATCH_PIXELS];
+static mut IMG_SCALED_PIXELS: [u32; MAX_IMAGE_SCRATCH_PIXELS] = [0u32; MAX_IMAGE_SCRATCH_PIXELS];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageFormat {
+    PpmBinary,
+    PpmAscii,
+    Bmp24,
+    Bmp32,
+    Png,
+    Jpeg,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ImageProbeInfo {
+    pub format: ImageFormat,
+    pub width: usize,
+    pub height: usize,
+}
+
+/// Helper para obter próximo token de texto em cabeçalho PPM (ignora espaços e comentários '#' até '\n')
+fn ppm_next_token<'a>(data: &'a [u8], offset: &mut usize) -> Option<&'a [u8]> {
+    while *offset < data.len() {
+        let b = data[*offset];
+        if b == b'#' {
+            while *offset < data.len() && data[*offset] != b'\n' {
+                *offset += 1;
+            }
+        } else if b == b' ' || b == b'\t' || b == b'\r' || b == b'\n' {
+            *offset += 1;
+        } else {
+            break;
+        }
+    }
+    if *offset >= data.len() {
+        return None;
+    }
+    let start = *offset;
+    while *offset < data.len() {
+        let b = data[*offset];
+        if b == b' ' || b == b'\t' || b == b'\r' || b == b'\n' || b == b'#' {
+            break;
+        }
+        *offset += 1;
+    }
+    Some(&data[start..*offset])
+}
+
+fn parse_ascii_usize(bytes: &[u8]) -> Option<usize> {
+    let mut val = 0usize;
+    if bytes.is_empty() { return None; }
+    for &b in bytes {
+        if b >= b'0' && b <= b'9' {
+            val = val.saturating_mul(10).saturating_add((b - b'0') as usize);
+        } else {
+            return None;
+        }
+    }
+    Some(val)
+}
+
+/// Decodificador de Netpbm PPM (P6 binário e P3 ASCII)
+pub fn decode_ppm(
+    data: &[u8],
+    out_pixels: &mut [u32],
+    max_w: usize,
+    max_h: usize,
+) -> Option<(usize, usize)> {
+    if data.len() < 8 || data[0] != b'P' {
+        return None;
+    }
+    let is_p6 = data[1] == b'6';
+    let is_p3 = data[1] == b'3';
+    if !is_p6 && !is_p3 {
+        return None;
+    }
+
+    let mut offset = 2;
+    let w_bytes = ppm_next_token(data, &mut offset)?;
+    let h_bytes = ppm_next_token(data, &mut offset)?;
+    let maxval_bytes = ppm_next_token(data, &mut offset)?;
+
+    let width = parse_ascii_usize(w_bytes)?;
+    let height = parse_ascii_usize(h_bytes)?;
+    let maxval = parse_ascii_usize(maxval_bytes)?;
+
+    if width == 0 || height == 0 || maxval == 0 || maxval > 255 {
+        return None;
+    }
+
+    let dec_w = width.min(max_w);
+    let dec_h = height.min(max_h);
+
+    if is_p6 {
+        if offset < data.len() && (data[offset] == b' ' || data[offset] == b'\n' || data[offset] == b'\r') {
+            offset += 1;
+            if offset < data.len() && data[offset] == b'\n' && data[offset - 1] == b'\r' {
+                offset += 1;
+            }
+        }
+
+        for y in 0..dec_h {
+            let row_start = offset + y * width * 3;
+            let dst_row = y * dec_w;
+            for x in 0..dec_w {
+                let px_idx = row_start + x * 3;
+                if px_idx + 2 < data.len() {
+                    let r = data[px_idx] as u32;
+                    let g = data[px_idx + 1] as u32;
+                    let b = data[px_idx + 2] as u32;
+                    out_pixels[dst_row + x] = 0xFF00_0000 | (r << 16) | (g << 8) | b;
+                }
+            }
+        }
+    } else {
+        // P3 ASCII
+        for y in 0..dec_h {
+            let dst_row = y * dec_w;
+            for x in 0..width {
+                let r_bytes = ppm_next_token(data, &mut offset)?;
+                let g_bytes = ppm_next_token(data, &mut offset)?;
+                let b_bytes = ppm_next_token(data, &mut offset)?;
+                if x < dec_w {
+                    let r = parse_ascii_usize(r_bytes).unwrap_or(0).min(255) as u32;
+                    let g = parse_ascii_usize(g_bytes).unwrap_or(0).min(255) as u32;
+                    let b = parse_ascii_usize(b_bytes).unwrap_or(0).min(255) as u32;
+                    out_pixels[dst_row + x] = 0xFF00_0000 | (r << 16) | (g << 8) | b;
+                }
+            }
+        }
+    }
+
+    Some((dec_w, dec_h))
+}
+
+/// Decodificador de Windows BMP (24-bit e 32-bit não-comprimido, BI_RGB)
+pub fn decode_bmp(
+    data: &[u8],
+    out_pixels: &mut [u32],
+    max_w: usize,
+    max_h: usize,
+) -> Option<(usize, usize)> {
+    if data.len() < 54 || data[0] != b'B' || data[1] != b'M' {
+        return None;
+    }
+
+    let off_bits = u32::from_le_bytes([data[10], data[11], data[12], data[13]]) as usize;
+    let bi_size = u32::from_le_bytes([data[14], data[15], data[16], data[17]]) as usize;
+    if bi_size < 40 || off_bits >= data.len() {
+        return None;
+    }
+
+    let bi_width = i32::from_le_bytes([data[18], data[19], data[20], data[21]]);
+    let bi_height = i32::from_le_bytes([data[22], data[23], data[24], data[25]]);
+    let bi_planes = u16::from_le_bytes([data[26], data[27]]);
+    let bi_bit_count = u16::from_le_bytes([data[28], data[29]]);
+    let bi_compression = u32::from_le_bytes([data[30], data[31], data[32], data[33]]);
+
+    if bi_planes != 1 || bi_width <= 0 || bi_height == 0 {
+        return None;
+    }
+    if bi_bit_count != 24 && bi_bit_count != 32 {
+        return None;
+    }
+    if bi_compression != 0 && bi_compression != 3 {
+        return None;
+    }
+
+    let width = bi_width as usize;
+    let height = bi_height.unsigned_abs() as usize;
+    let is_bottom_up = bi_height > 0;
+
+    let dec_w = width.min(max_w);
+    let dec_h = height.min(max_h);
+
+    let bytes_per_pixel = (bi_bit_count / 8) as usize;
+    let row_stride = ((width * bytes_per_pixel + 3) / 4) * 4;
+
+    for y in 0..dec_h {
+        let src_y = if is_bottom_up {
+            height.saturating_sub(1 + y)
+        } else {
+            y
+        };
+        let row_start = off_bits + src_y * row_stride;
+        let dst_row = y * dec_w;
+
+        if row_start >= data.len() {
+            continue;
+        }
+
+        for x in 0..dec_w {
+            let px_offset = row_start + x * bytes_per_pixel;
+            if px_offset + bytes_per_pixel <= data.len() {
+                let b = data[px_offset] as u32;
+                let g = data[px_offset + 1] as u32;
+                let r = data[px_offset + 2] as u32;
+                let a = if bytes_per_pixel == 4 {
+                    let alpha = data[px_offset + 3] as u32;
+                    if alpha == 0 { 0xFF } else { alpha }
+                } else {
+                    0xFF
+                };
+                out_pixels[dst_row + x] = (a << 24) | (r << 16) | (g << 8) | b;
+            }
+        }
+    }
+
+    Some((dec_w, dec_h))
+}
+
+/// Identificador de formato e cabeçalho de imagem (PPM, BMP, PNG, JPEG)
+pub fn probe_image(data: &[u8]) -> Option<ImageProbeInfo> {
+    if data.len() >= 8 && data[0] == b'P' && (data[1] == b'6' || data[1] == b'3') {
+        let mut offset = 2;
+        if let (Some(wb), Some(hb)) = (ppm_next_token(data, &mut offset), ppm_next_token(data, &mut offset)) {
+            if let (Some(w), Some(h)) = (parse_ascii_usize(wb), parse_ascii_usize(hb)) {
+                return Some(ImageProbeInfo {
+                    format: if data[1] == b'6' { ImageFormat::PpmBinary } else { ImageFormat::PpmAscii },
+                    width: w,
+                    height: h,
+                });
+            }
+        }
+    } else if data.len() >= 26 && data[0] == b'B' && data[1] == b'M' {
+        let bi_w = i32::from_le_bytes([data[18], data[19], data[20], data[21]]);
+        let bi_h = i32::from_le_bytes([data[22], data[23], data[24], data[25]]);
+        let bpp = u16::from_le_bytes([data[28], data[29]]);
+        if bi_w > 0 && bi_h != 0 {
+            return Some(ImageProbeInfo {
+                format: if bpp == 32 { ImageFormat::Bmp32 } else { ImageFormat::Bmp24 },
+                width: bi_w as usize,
+                height: bi_h.unsigned_abs() as usize,
+            });
+        }
+    } else if data.len() >= 24 && data.starts_with(b"\x89PNG\r\n\x1a\n") {
+        let w = u32::from_be_bytes([data[16], data[17], data[18], data[19]]) as usize;
+        let h = u32::from_be_bytes([data[20], data[21], data[22], data[23]]) as usize;
+        return Some(ImageProbeInfo {
+            format: ImageFormat::Png,
+            width: w,
+            height: h,
+        });
+    } else if data.len() >= 10 && data.starts_with(b"\xFF\xD8\xFF") {
+        let mut idx = 2;
+        while idx + 8 < data.len() {
+            if data[idx] == 0xFF {
+                let m = data[idx + 1];
+                if m == 0xC0 || m == 0xC1 || m == 0xC2 {
+                    let h = u16::from_be_bytes([data[idx + 5], data[idx + 6]]) as usize;
+                    let w = u16::from_be_bytes([data[idx + 7], data[idx + 8]]) as usize;
+                    return Some(ImageProbeInfo {
+                        format: ImageFormat::Jpeg,
+                        width: w,
+                        height: h,
+                    });
+                } else if m == 0xD9 || m == 0xDA {
+                    break;
+                } else if m != 0x00 && m != 0xFF {
+                    let seg_len = u16::from_be_bytes([data[idx + 2], data[idx + 3]]) as usize;
+                    idx += 2 + seg_len;
+                    continue;
+                }
+            }
+            idx += 1;
+        }
+        return Some(ImageProbeInfo {
+            format: ImageFormat::Jpeg,
+            width: 0,
+            height: 0,
+        });
+    }
+    None
+}
+
+/// Redimensionamento bilinear de imagens RGBA com aceleração por inteiros de ponto fixo (16.16)
+pub fn scale_image_rgba_simd(
+    src: &[u32],
+    src_w: usize,
+    src_h: usize,
+    dst: &mut [u32],
+    dst_w: usize,
+    dst_h: usize,
+) {
+    if src_w == 0 || src_h == 0 || dst_w == 0 || dst_h == 0 {
+        return;
+    }
+    if src.len() < src_w * src_h || dst.len() < dst_w * dst_h {
+        return;
+    }
+
+    let x_ratio = ((src_w << 16) / dst_w) as u32;
+    let y_ratio = ((src_h << 16) / dst_h) as u32;
+
+    for y in 0..dst_h {
+        let sy = (y as u32 * y_ratio) >> 16;
+        let y_diff = ((y as u32 * y_ratio) & 0xFFFF) as u32;
+        let y_diff_inv = 0x10000 - y_diff;
+        let sy1 = (sy + 1).min(src_h as u32 - 1) as usize;
+        let sy0 = sy as usize;
+
+        let row_dst = y * dst_w;
+        let row_src0 = sy0 * src_w;
+        let row_src1 = sy1 * src_w;
+
+        for x in 0..dst_w {
+            let sx = (x as u32 * x_ratio) >> 16;
+            let x_diff = ((x as u32 * x_ratio) & 0xFFFF) as u32;
+            let x_diff_inv = 0x10000 - x_diff;
+            let sx1 = (sx + 1).min(src_w as u32 - 1) as usize;
+            let sx0 = sx as usize;
+
+            let p00 = src[row_src0 + sx0];
+            let p10 = src[row_src0 + sx1];
+            let p01 = src[row_src1 + sx0];
+            let p11 = src[row_src1 + sx1];
+
+            let mut out_pixel = 0u32;
+            for shift in [0, 8, 16, 24] {
+                let c00 = ((p00 >> shift) & 0xFF) as u32;
+                let c10 = ((p10 >> shift) & 0xFF) as u32;
+                let c01 = ((p01 >> shift) & 0xFF) as u32;
+                let c11 = ((p11 >> shift) & 0xFF) as u32;
+
+                let top = (c00 * x_diff_inv + c10 * x_diff) >> 16;
+                let bottom = (c01 * x_diff_inv + c11 * x_diff) >> 16;
+                let final_c = ((top * y_diff_inv + bottom * y_diff) >> 16) & 0xFF;
+                out_pixel |= final_c << shift;
+            }
+            dst[row_dst + x] = out_pixel;
+        }
+    }
+}
+
 pub fn render_image_element(
     buf: &mut [u32],
     w: usize,
@@ -2857,26 +3228,134 @@ pub fn render_image_element(
 ) {
     if img.w == 0 || draw_h == 0 { return; }
 
-    // Fundo da imagem (Catppuccin Surface)
+    // Fundo padrão da imagem (Catppuccin Surface)
     fill_rect(buf, w, h, img.x, draw_y, img.w, draw_h, 0x0031_3244);
     draw_rect_border(buf, w, h, img.x, draw_y, img.w, draw_h, 0x0045_475A);
 
-    // Renderiza selo e descrição se houver altura visível
-    if draw_h >= 14 && img.w >= 28 {
-        let text_y = draw_y + 2;
-        if text_y + font::FONT_HEIGHT <= clip_bottom {
-            let label = b"[IMG]";
-            font::draw_text_clipped(buf, w, h, img.x + 3, text_y, label, COLOR_H1, None, clip_top, clip_bottom);
+    let mut decoded_ok = false;
+    let mut probe_res: Option<ImageProbeInfo> = None;
 
-            let alt_x = img.x + 3 + label.len() * font::FONT_WIDTH + 4;
-            let max_text_w = (img.x + img.w).saturating_sub(alt_x + 2);
-            if max_text_w >= font::FONT_WIDTH {
-                if img.alt_len > 0 {
-                    let alt_slice = &img.alt[..img.alt_len];
-                    font::draw_text_clipped(buf, w, h, alt_x, text_y, alt_slice, COLOR_TEXT, None, clip_top, clip_bottom);
-                } else if img.src_len > 0 {
-                    let src_slice = &img.src[..img.src_len];
-                    font::draw_text_clipped(buf, w, h, alt_x, text_y, src_slice, 0x00A6_ADC8, None, clip_top, clip_bottom);
+    if img.src_len > 0 {
+        let src_slice = &img.src[..img.src_len];
+        let mut path_buf = [0u8; 128];
+        let mut path_len = 0;
+
+        if src_slice.starts_with(b"/") {
+            let l = src_slice.len().min(127);
+            path_buf[..l].copy_from_slice(&src_slice[..l]);
+            path_len = l;
+        } else {
+            let prefix = b"/disk/";
+            path_buf[..prefix.len()].copy_from_slice(prefix);
+            let l = src_slice.len().min(127 - prefix.len());
+            path_buf[prefix.len()..prefix.len() + l].copy_from_slice(&src_slice[..l]);
+            path_len = prefix.len() + l;
+        }
+
+        unsafe {
+            let fd = storage::sys_open(&path_buf[..path_len], storage::O_RDONLY);
+            let mut read_fd = fd;
+            if read_fd < 0 && !src_slice.starts_with(b"/") {
+                let wp_prefix = b"/disk/wallpapers/";
+                path_buf[..wp_prefix.len()].copy_from_slice(wp_prefix);
+                let l = src_slice.len().min(127 - wp_prefix.len());
+                path_buf[wp_prefix.len()..wp_prefix.len() + l].copy_from_slice(&src_slice[..l]);
+                path_len = wp_prefix.len() + l;
+                read_fd = storage::sys_open(&path_buf[..path_len], storage::O_RDONLY);
+            }
+
+            if read_fd >= 0 {
+                let bytes_read = storage::sys_read(read_fd as u64, IMG_FILE_SCRATCH.as_mut_ptr(), IMG_FILE_SCRATCH.len() as u64);
+                let _ = storage::sys_close(read_fd as u64);
+
+                if bytes_read > 0 {
+                    let raw_slice = &IMG_FILE_SCRATCH[..bytes_read as usize];
+                    probe_res = probe_image(raw_slice);
+
+                    let dec_res = if raw_slice.starts_with(b"P6") || raw_slice.starts_with(b"P3") {
+                        decode_ppm(raw_slice, &mut IMG_DECODED_PIXELS, MAX_IMAGE_SCRATCH_W, MAX_IMAGE_SCRATCH_H)
+                    } else if raw_slice.starts_with(b"BM") {
+                        decode_bmp(raw_slice, &mut IMG_DECODED_PIXELS, MAX_IMAGE_SCRATCH_W, MAX_IMAGE_SCRATCH_H)
+                    } else {
+                        None
+                    };
+
+                    if let Some((dec_w, dec_h)) = dec_res {
+                        let target_w = img.w.min(MAX_IMAGE_SCRATCH_W);
+                        let target_h = img.h.min(MAX_IMAGE_SCRATCH_H);
+
+                        scale_image_rgba_simd(
+                            &IMG_DECODED_PIXELS[..dec_w * dec_h],
+                            dec_w,
+                            dec_h,
+                            &mut IMG_SCALED_PIXELS[..target_w * target_h],
+                            target_w,
+                            target_h,
+                        );
+
+                        for y in 0..draw_h {
+                            let screen_y = draw_y + y;
+                            if screen_y >= clip_top && screen_y < clip_bottom && screen_y < h {
+                                let scaled_y = y.min(target_h.saturating_sub(1));
+                                let src_row = scaled_y * target_w;
+                                let dst_row = screen_y * w;
+
+                                for x in 0..target_w.min(img.w) {
+                                    let screen_x = img.x + x;
+                                    if screen_x < w {
+                                        let p = IMG_SCALED_PIXELS[src_row + x];
+                                        let alpha = (p >> 24) & 0xFF;
+                                        if alpha >= 250 {
+                                            buf[dst_row + screen_x] = p & 0x00FF_FFFF;
+                                        } else if alpha > 10 {
+                                            let bg = buf[dst_row + screen_x];
+                                            let inv_a = 255 - alpha;
+                                            let r = ((((p >> 16) & 0xFF) * alpha + ((bg >> 16) & 0xFF) * inv_a) >> 8) & 0xFF;
+                                            let g = ((((p >> 8) & 0xFF) * alpha + ((bg >> 8) & 0xFF) * inv_a) >> 8) & 0xFF;
+                                            let b = (((p & 0xFF) * alpha + (bg & 0xFF) * inv_a) >> 8) & 0xFF;
+                                            buf[dst_row + screen_x] = (r << 16) | (g << 8) | b;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        draw_rect_border(buf, w, h, img.x, draw_y, img.w, draw_h, COLOR_BORDER);
+                        decoded_ok = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if !decoded_ok {
+        if draw_h >= 14 && img.w >= 28 {
+            let text_y = draw_y + 2;
+            if text_y + font::FONT_HEIGHT <= clip_bottom {
+                let (tag, tag_color) = if let Some(probe) = probe_res {
+                    match probe.format {
+                        ImageFormat::Png => (b"[PNG]" as &[u8], 0x0089_DCEB),
+                        ImageFormat::Jpeg => (b"[JPG]" as &[u8], 0x00FAB387),
+                        ImageFormat::Bmp24 | ImageFormat::Bmp32 => (b"[BMP]" as &[u8], 0x00A6_E3A1),
+                        ImageFormat::PpmBinary | ImageFormat::PpmAscii => (b"[PPM]" as &[u8], 0x00F9_E2AF),
+                        _ => (b"[IMG]" as &[u8], COLOR_H1),
+                    }
+                } else {
+                    (b"[IMG]" as &[u8], COLOR_H1)
+                };
+
+                font::draw_text_clipped(buf, w, h, img.x + 3, text_y, tag, tag_color, None, clip_top, clip_bottom);
+
+                let alt_x = img.x + 3 + tag.len() * font::FONT_WIDTH + 4;
+                let max_text_w = (img.x + img.w).saturating_sub(alt_x + 2);
+                if max_text_w >= font::FONT_WIDTH {
+                    if img.alt_len > 0 {
+                        let alt_slice = &img.alt[..img.alt_len];
+                        font::draw_text_clipped(buf, w, h, alt_x, text_y, alt_slice, COLOR_TEXT, None, clip_top, clip_bottom);
+                    } else if img.src_len > 0 {
+                        let src_slice = &img.src[..img.src_len];
+                        font::draw_text_clipped(buf, w, h, alt_x, text_y, src_slice, 0x00A6_ADC8, None, clip_top, clip_bottom);
+                    }
                 }
             }
         }

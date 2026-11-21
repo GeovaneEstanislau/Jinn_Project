@@ -80,6 +80,12 @@ unsafe fn syscall0(nr: u64) -> i64 {
     ret
 }
 
+/// Emite `int 0x80` com 2 argumentos.
+#[inline(always)]
+unsafe fn syscall2(nr: u64, arg0: u64, arg1: u64) -> i64 {
+    syscall3(nr, arg0, arg1, 0)
+}
+
 // ── Syscall 0 — exit ──────────────────────────────────────────────────────────
 
 /// Finaliza o processo atual com um código de saída.
@@ -628,4 +634,18 @@ pub unsafe fn sys_net_resolve(name_ptr: *const u8, name_len: usize, out_ip_ptr: 
 #[inline(always)]
 pub unsafe fn sys_net_http_get(url_ptr: *const u8, url_len: usize, out_path_ptr: *const u8, out_path_len: usize) -> i64 {
     syscall4(84, url_ptr as u64, url_len as u64, out_path_ptr as u64, out_path_len as u64)
+}
+
+// ── Syscall 86 — net_set_dns ──────────────────────────────────────────────────
+/// Define servidores DNS primário e secundário (Syscall 86).
+#[inline(always)]
+pub unsafe fn sys_net_set_dns(primary: *const u8, secondary: *const u8) -> i64 {
+    syscall2(86, primary as u64, secondary as u64)
+}
+
+// ── Syscall 87 — net_get_dns ──────────────────────────────────────────────────
+/// Obtém servidores DNS primário e secundário configurados (Syscall 87).
+#[inline(always)]
+pub unsafe fn sys_net_get_dns(primary_out: *mut u8, secondary_out: *mut u8) -> i64 {
+    syscall2(87, primary_out as u64, secondary_out as u64)
 }

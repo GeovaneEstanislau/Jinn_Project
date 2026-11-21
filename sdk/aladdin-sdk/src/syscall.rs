@@ -36,6 +36,8 @@ pub const SYS_GRAPHICS_SET_POWER:            u64 = 81;
 pub const SYS_HARDWARE_PROBE:                u64 = 82;
 pub const SYS_NET_RESOLVE:                   u64 = 83;
 pub const SYS_NET_HTTP_GET:                  u64 = 84;
+pub const SYS_NET_SET_DNS:                   u64 = 86;
+pub const SYS_NET_GET_DNS:                   u64 = 87;
 
 /// Syscall sem argumentos
 #[inline(always)]
@@ -157,5 +159,17 @@ pub unsafe fn sys_net_resolve(name: &[u8], out_ip: &mut [u8; 4]) -> i64 {
 #[inline(always)]
 pub unsafe fn sys_net_http_get(url: &[u8], out_path: &[u8]) -> i64 {
     syscall4(SYS_NET_HTTP_GET, url.as_ptr() as u64, url.len() as u64, out_path.as_ptr() as u64, out_path.len() as u64)
+}
+
+/// Define servidores DNS primário e secundário (Syscall 86)
+#[inline(always)]
+pub unsafe fn sys_net_set_dns(primary: &[u8; 4], secondary: &[u8; 4]) -> i64 {
+    syscall2(SYS_NET_SET_DNS, primary.as_ptr() as u64, secondary.as_ptr() as u64)
+}
+
+/// Obtém servidores DNS primário e secundário configurados (Syscall 87)
+#[inline(always)]
+pub unsafe fn sys_net_get_dns(primary_out: &mut [u8; 4], secondary_out: &mut [u8; 4]) -> i64 {
+    syscall2(SYS_NET_GET_DNS, primary_out.as_mut_ptr() as u64, secondary_out.as_mut_ptr() as u64)
 }
 

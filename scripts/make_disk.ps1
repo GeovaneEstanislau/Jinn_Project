@@ -282,6 +282,173 @@ for ($y = 0; $y -lt $ppmH; $y++) {
     }
 }
 
+function New-Bmp24Data([int]$w, [int]$h, [scriptblock]$fn) {
+    $rowStride = [int][Math]::Ceiling(($w * 3) / 4.0) * 4
+    $dataSize = $rowStride * $h
+    $fileSize = 54 + $dataSize
+    $bytes = [byte[]]::new($fileSize)
+    $bytes[0] = 0x42; $bytes[1] = 0x4D # "BM"
+    [System.BitConverter]::GetBytes([uint32]$fileSize).CopyTo($bytes, 2)
+    [System.BitConverter]::GetBytes([uint32]54).CopyTo($bytes, 10)
+    [System.BitConverter]::GetBytes([uint32]40).CopyTo($bytes, 14)
+    [System.BitConverter]::GetBytes([int32]$w).CopyTo($bytes, 18)
+    [System.BitConverter]::GetBytes([int32]$h).CopyTo($bytes, 22)
+    [System.BitConverter]::GetBytes([uint16]1).CopyTo($bytes, 26)
+    [System.BitConverter]::GetBytes([uint16]24).CopyTo($bytes, 28)
+    [System.BitConverter]::GetBytes([uint32]0).CopyTo($bytes, 30)
+    [System.BitConverter]::GetBytes([uint32]$dataSize).CopyTo($bytes, 34)
+    for ($y = 0; $y -lt $h; $y++) {
+        $imgY = ($h - 1) - $y
+        $rowOff = 54 + $y * $rowStride
+        for ($x = 0; $x -lt $w; $x++) {
+            $rgb = & $fn $x $imgY
+            $pxOff = $rowOff + $x * 3
+            $bytes[$pxOff + 0] = [byte]$rgb[2] # Blue
+            $bytes[$pxOff + 1] = [byte]$rgb[1] # Green
+            $bytes[$pxOff + 2] = [byte]$rgb[0] # Red
+        }
+    }
+    return $bytes
+}
+
+# 4. EVEREST.BMP (Alpine Dawn Mountain - 160x100 24-bit BMP)
+$everestBytes = New-Bmp24Data 160 100 {
+    param($x, $y)
+    $w = 160; $h = 100
+    $horizon = 65
+    if ($y -lt $horizon) {
+        $t = $y / [double]$horizon
+        $r = [byte](30 + (215 * $t))
+        $g = [byte](25 + (145 * $t))
+        $b = [byte](65 + (20 * (1.0 - $t)))
+        $cx = $w * 0.5; $peak_y = 22
+        if ($y -ge $peak_y) {
+            $hw = ($y - $peak_y) * 0.85
+            if ([Math]::Abs($x - $cx) -lt $hw) {
+                if ($y -lt ($peak_y + 16)) {
+                    $r = 240; $g = 245; $b = 255
+                } else {
+                    $r = 45; $g = 40; $b = 55
+                }
+            }
+        }
+        return @($r, $g, $b)
+    } else {
+        $t = ($y - $horizon) / [double]($h - $horizon)
+        $r = [byte](70 - (45 * $t))
+        $g = [byte](40 - (25 * $t))
+        $b = [byte](60 - (35 * $t))
+        return @($r, $g, $b)
+    }
+}
+
+# 5. MATRIX.BMP (Digital Rain Stream - 160x100 24-bit BMP)
+$matrixBytes = New-Bmp24Data 160 100 {
+    param($x, $y)
+    $col = ($x / 8) % 7
+    $speed = ($col * 17 + 13) % 100
+    $pos = ($y + $speed) % 100
+    if ($pos -lt 6) {
+        return @([byte]220, [byte]255, [byte]230)
+    } elseif ($pos -lt 35) {
+        $fade = (35 - $pos) / 29.0
+        return @([byte](15 * $fade), [byte](230 * $fade), [byte](40 * $fade))
+    } else {
+        return @([byte]2, [byte]12, [byte]4)
+    }
+}
+
+# 6. TURING.PPM (Alan Turing & Cryptography Tribute - 160x100 PPM P6)
+$turingW = 160; $turingH = 100
+$turingHeader = [System.Text.Encoding]::ASCII.GetBytes("P6`n$turingW $turingH`n255`n")
+$turingBytes = [byte[]]::new($turingHeader.Length + $turingW * $turingH * 3)
+[System.Array]::Copy($turingHeader, $turingBytes, $turingHeader.Length)
+$tIdx = $turingHeader.Length
+for ($y = 0; $y -lt $turingH; $y++) {
+    for ($x = 0; $x -lt $turingW; $x++) {
+        $dx = $x - 80; $dy = $y - 50
+        $d = [Math]::Sqrt($dx*$dx + $dy*$dy)
+        $ring = [int]($d / 12) % 2
+        $r = [byte]22; $g = [byte]28; $b = [byte]45
+        if ($d -lt 45 -and $ring -eq 0) {
+            $r = [byte]215; $g = [byte]185; $b = [byte]105
+        } elseif ($d -lt 45) {
+            $r = [byte]55; $g = [byte]65; $b = [byte]95
+        }
+        $turingBytes[$tIdx++] = $r
+        $turingBytes[$tIdx++] = $g
+        $turingBytes[$tIdx++] = $b
+    }
+}
+
+# Configurações de Rede (/disk/NET.CFG) e Desktop (/disk/DESKTOP.CFG)
+$netCfgText = "DNS_PRIMARY=1.1.1.1`nDNS_SECONDARY=8.8.8.8`n"
+$netCfgBytes = [System.Text.Encoding]::ASCII.GetBytes($netCfgText)
+
+$desktopCfgText = "WALLPAPER=/disk/landscp.ppm`n"
+$desktopCfgBytes = [System.Text.Encoding]::ASCII.GetBytes($desktopCfgText)
+
+# Galeria Curada de Wallpapers (/disk/WALLPAPR.HTM)
+$wallpaprHtmlText = @"
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Galeria de Wallpapers - Jinn OS</title>
+  <style>
+    h1 { color: #f9e2af; margin: 8px; }
+    h2 { color: #89dceb; margin: 6px; }
+    .card { background-color: #1e1e2e; border-color: #45475a; margin: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Galeria de Wallpapers</h1>
+  <p>Papeis de parede curados e acelerados pelo JHCS (SIMD/Zero-GPU).</p>
+
+  <h2>1. Corpos Celestes</h2>
+  <div class="card">
+    <img src="nebula.ppm" width="160" height="96" alt="Carina Nebula"/>
+    <p><b>NASA Carina Cosmic Nebula (PPM)</b></p>
+    <p><a href="nebula.ppm">Visualizar</a> | <a href="set_wallpaper:nebula.ppm">[ Definir como Papel de Parede ]</a></p>
+  </div>
+  <div class="card">
+    <img src="cosmos.ppm" width="160" height="96" alt="Deep Space Webb"/>
+    <p><b>JWST Deep Cosmic Field (PPM)</b></p>
+    <p><a href="cosmos.ppm">Visualizar</a> | <a href="set_wallpaper:cosmos.ppm">[ Definir como Papel de Parede ]</a></p>
+  </div>
+
+  <h2>2. Montanhas</h2>
+  <div class="card">
+    <img src="landscp.ppm" width="160" height="96" alt="Mount Fuji"/>
+    <p><b>Mount Fuji Sunset Silhouette (PPM)</b></p>
+    <p><a href="landscp.ppm">Visualizar</a> | <a href="set_wallpaper:landscp.ppm">[ Definir como Papel de Parede ]</a></p>
+  </div>
+  <div class="card">
+    <img src="everest.bmp" width="160" height="96" alt="Everest Dawn"/>
+    <p><b>Everest Alpine Dawn (BMP)</b></p>
+    <p><a href="everest.bmp">Visualizar</a> | <a href="set_wallpaper:everest.bmp">[ Definir como Papel de Parede ]</a></p>
+  </div>
+
+  <h2>3. Informatica & Cyber</h2>
+  <div class="card">
+    <img src="matrix.bmp" width="160" height="96" alt="Matrix Cyber Code"/>
+    <p><b>Matrix Rain Digital Stream (BMP)</b></p>
+    <p><a href="matrix.bmp">Visualizar</a> | <a href="set_wallpaper:matrix.bmp">[ Definir como Papel de Parede ]</a></p>
+  </div>
+
+  <h2>4. Genios da Computacao</h2>
+  <div class="card">
+    <img src="turing.ppm" width="160" height="96" alt="Alan Turing Tribute"/>
+    <p><b>Alan Turing & Cryptography (PPM)</b></p>
+    <p><a href="turing.ppm">Visualizar</a> | <a href="set_wallpaper:turing.ppm">[ Definir como Papel de Parede ]</a></p>
+  </div>
+
+  <hr/>
+  <p><a href="index.htm">Voltar ao Inicio</a></p>
+</body>
+</html>
+"@
+$wallpaprHtmlBytes = [System.Text.Encoding]::ASCII.GetBytes($wallpaprHtmlText)
+
 $clusterBytes = 8 * 512 # 4096 bytes
 $olaClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($elfBytes.Length / $clusterBytes))
 $browserClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($browserBytes.Length / $clusterBytes))
@@ -291,6 +458,12 @@ $nebulaClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($nebulaBytes.Length 
 $landscpClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($landscpBytes.Length / $clusterBytes))
 $cosmosClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($cosmosBytes.Length / $clusterBytes))
 $aladdinClustersNeeded = if ($aladdinBytes.Length -gt 0) { [Math]::Max(1, [int][Math]::Ceiling($aladdinBytes.Length / $clusterBytes)) } else { 0 }
+$everestClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($everestBytes.Length / $clusterBytes))
+$matrixClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($matrixBytes.Length / $clusterBytes))
+$turingClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($turingBytes.Length / $clusterBytes))
+$netCfgClustersNeeded = 1
+$desktopCfgClustersNeeded = 1
+$wallpaprClustersNeeded = [Math]::Max(1, [int][Math]::Ceiling($wallpaprHtmlBytes.Length / $clusterBytes))
 
 $olaStartClus = 4
 $browserStartClus = $olaStartClus + $olaClustersNeeded
@@ -312,7 +485,15 @@ $nebulaStartClus = $prevEnd
 $landscpStartClus = $nebulaStartClus + $nebulaClustersNeeded
 $cosmosStartClus = $landscpStartClus + $landscpClustersNeeded
 $aladdinStartClus = if ($aladdinClustersNeeded -gt 0) { $cosmosStartClus + $cosmosClustersNeeded } else { 0 }
-$nextFreeClus = if ($aladdinClustersNeeded -gt 0) { $aladdinStartClus + $aladdinClustersNeeded } else { $cosmosStartClus + $cosmosClustersNeeded }
+$baseNext = if ($aladdinClustersNeeded -gt 0) { $aladdinStartClus + $aladdinClustersNeeded } else { $cosmosStartClus + $cosmosClustersNeeded }
+
+$everestStartClus = $baseNext
+$matrixStartClus = $everestStartClus + $everestClustersNeeded
+$turingStartClus = $matrixStartClus + $matrixClustersNeeded
+$netCfgStartClus = $turingStartClus + $turingClustersNeeded
+$desktopCfgStartClus = $netCfgStartClus + 1
+$wallpaprStartClus = $desktopCfgStartClus + 1
+$nextFreeClus = $wallpaprStartClus + $wallpaprClustersNeeded
 
 # FSInfo Sector (Setor 1 da partição FAT32)
 $fsinfo = [byte[]]::new(512)
@@ -422,6 +603,49 @@ if ($aladdinClustersNeeded -gt 0) {
     }
 }
 
+# Cadeia EVEREST.BMP
+for ($i = 0; $i -lt $everestClustersNeeded; $i++) {
+    $currentClus = $everestStartClus + $i
+    if ($i -eq $everestClustersNeeded - 1) {
+        Set-FatEntry $currentClus 0x0FFFFFFF
+    } else {
+        Set-FatEntry $currentClus ([uint32]($currentClus + 1))
+    }
+}
+
+# Cadeia MATRIX.BMP
+for ($i = 0; $i -lt $matrixClustersNeeded; $i++) {
+    $currentClus = $matrixStartClus + $i
+    if ($i -eq $matrixClustersNeeded - 1) {
+        Set-FatEntry $currentClus 0x0FFFFFFF
+    } else {
+        Set-FatEntry $currentClus ([uint32]($currentClus + 1))
+    }
+}
+
+# Cadeia TURING.PPM
+for ($i = 0; $i -lt $turingClustersNeeded; $i++) {
+    $currentClus = $turingStartClus + $i
+    if ($i -eq $turingClustersNeeded - 1) {
+        Set-FatEntry $currentClus 0x0FFFFFFF
+    } else {
+        Set-FatEntry $currentClus ([uint32]($currentClus + 1))
+    }
+}
+
+Set-FatEntry $netCfgStartClus 0x0FFFFFFF
+Set-FatEntry $desktopCfgStartClus 0x0FFFFFFF
+
+# Cadeia WALLPAPR.HTM
+for ($i = 0; $i -lt $wallpaprClustersNeeded; $i++) {
+    $currentClus = $wallpaprStartClus + $i
+    if ($i -eq $wallpaprClustersNeeded - 1) {
+        Set-FatEntry $currentClus 0x0FFFFFFF
+    } else {
+        Set-FatEntry $currentClus ([uint32]($currentClus + 1))
+    }
+}
+
 $fat1Offset = $part1ByteOffset + [long]32 * $sectorSize
 $fat2Offset = $part1ByteOffset + [long](32 + $sectorsPerFat) * $sectorSize
 Write-BytesAt $fat1Offset $fatTable
@@ -474,6 +698,9 @@ $indexHtmlText = @"
   <p>- <a href="http://example.com">Dominio de Teste (example.com)</a></p>
   <p>- <a href="about.htm">Sobre o Jinn Microkernel</a></p>
   <hr/>
+  <p><b>Galeria de Papeis de Parede:</b></p>
+  <p>- <a href="wallpapr.htm">[ Abrir Galeria Curada de Wallpapers (PPM / BMP) ]</a></p>
+  <hr/>
   <p><b>Papeis de Parede em Dominio Publico (PPM):</b></p>
   <p>- <a href="nebula.ppm">NASA Carina Cosmic Nebula</a></p>
   <p>- <a href="landscp.ppm">Mount Fuji Sunset Silhouette</a></p>
@@ -514,6 +741,12 @@ Add-DirEntry 10 "COSMOS  PPM" 0x20 $cosmosStartClus ($cosmosBytes.Length)
 if ($aladdinBytes.Length -gt 0) {
     Add-DirEntry 11 "ALADDIN ELF" 0x20 $aladdinStartClus ($aladdinBytes.Length)
 }
+Add-DirEntry 12 "EVEREST BMP" 0x20 $everestStartClus ($everestBytes.Length)
+Add-DirEntry 13 "MATRIX  BMP" 0x20 $matrixStartClus ($matrixBytes.Length)
+Add-DirEntry 14 "TURING  PPM" 0x20 $turingStartClus ($turingBytes.Length)
+Add-DirEntry 15 "NET     CFG" 0x20 $netCfgStartClus ($netCfgBytes.Length)
+Add-DirEntry 16 "DESKTOP CFG" 0x20 $desktopCfgStartClus ($desktopCfgBytes.Length)
+Add-DirEntry 17 "WALLPAPRHTM" 0x20 $wallpaprStartClus ($wallpaprHtmlBytes.Length)
 
 Write-BytesAt $dataStartByteOffset1 $rootDir
 Write-BytesAt ($dataStartByteOffset1 + [long](3 - 2) * $clusterBytes) $readmeBytes
@@ -533,6 +766,12 @@ Write-BytesAt ($dataStartByteOffset1 + [long]($cosmosStartClus - 2) * $clusterBy
 if ($aladdinBytes.Length -gt 0) {
     Write-BytesAt ($dataStartByteOffset1 + [long]($aladdinStartClus - 2) * $clusterBytes) $aladdinBytes
 }
+Write-BytesAt ($dataStartByteOffset1 + [long]($everestStartClus - 2) * $clusterBytes) $everestBytes
+Write-BytesAt ($dataStartByteOffset1 + [long]($matrixStartClus - 2) * $clusterBytes) $matrixBytes
+Write-BytesAt ($dataStartByteOffset1 + [long]($turingStartClus - 2) * $clusterBytes) $turingBytes
+Write-BytesAt ($dataStartByteOffset1 + [long]($netCfgStartClus - 2) * $clusterBytes) $netCfgBytes
+Write-BytesAt ($dataStartByteOffset1 + [long]($desktopCfgStartClus - 2) * $clusterBytes) $desktopCfgBytes
+Write-BytesAt ($dataStartByteOffset1 + [long]($wallpaprStartClus - 2) * $clusterBytes) $wallpaprHtmlBytes
 
 # ======================================================================
 # 3. FORMATAÇÃO DA PARTIÇÃO 2: Ext2 (/ext2)
