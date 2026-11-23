@@ -32,6 +32,20 @@
     gtag('config', 'AW-884426711');
   </script>
 
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript"
+          src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push( basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
   <!-- Supabase Public Configuration -->
   <script>
     window.NEXT_PUBLIC_SUPABASE_URL = "https://krtxsjnvyijfeycxdqjy.supabase.co";

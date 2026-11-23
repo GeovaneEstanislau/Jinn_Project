@@ -7,6 +7,7 @@
   <meta name="description" content="Como resolvemos travamentos de interrupção e atingimos 0.00% de CPU em repouso no microkernel Rust Jinn OS através de EOI incondicional no PIC 8259A e kernels AVX2 no JHCS.">
   <link rel="canonical" href="https://jinn-os.dev.br/post-mortem-pic-eoi-zero-gpu.html">
   <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases" href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
 
   <!-- Open Graph -->
   <meta property="og:type" content="article">
@@ -14,6 +15,29 @@
   <meta property="og:title" content="Post-Mortem: EOI no PIC 8259A e Zero-GPU SIMD no Jinn OS">
   <meta property="og:description" content="Auditoria de sistemas: eliminando travamentos de hardware e alcançando 0.00% de CPU ociosa em bare-metal com Rust.">
   <meta property="og:image" content="https://jinn-os.dev.br/assets/wallpaper.jpg">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript"
+          src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push( basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
 
   <!-- Tailwind CSS & Lucide Icons -->
   <script src="https://cdn.tailwindcss.com"></script>
