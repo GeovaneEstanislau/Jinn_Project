@@ -147,9 +147,7 @@ impl VirtioBlkDevice {
         };
 
         // Habilita Bus Master e I/O space no PCI
-        unsafe {
-            pci::enable_bus_mastering(pci_dev.bus, pci_dev.slot, pci_dev.func);
-        }
+        pci::enable_bus_mastering(pci_dev.bus, pci_dev.slot, pci_dev.func);
 
         self.io_base = (pci_dev.bar0 & 0xFFFC) as u16;
         if self.io_base == 0 {

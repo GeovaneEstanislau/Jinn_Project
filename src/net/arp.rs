@@ -11,21 +11,58 @@ pub const DEFAULT_DNS_MAC_VBOX: [u8; 6]     = [0x52, 0x54, 0x00, 0x12, 0x35, 0x0
 pub const DEFAULT_GATEWAY_MAC: [u8; 6] = DEFAULT_GATEWAY_MAC_QEMU;
 pub const DEFAULT_DNS_MAC: [u8; 6]     = DEFAULT_DNS_MAC_QEMU;
 
-pub fn default_gateway_mac() -> [u8; 6] {
-    unsafe {
-        match crate::drivers::net::DETECTED_NIC_TYPE {
-            crate::drivers::net::NicType::Pcnet => DEFAULT_GATEWAY_MAC_VBOX,
-            _ => DEFAULT_GATEWAY_MAC_QEMU,
+/// Detecta confiavelmente se o sistema está executando dentro do Oracle VirtualBox
+/// via CPUID hypervisor signature (leaf 0x40000000), barramento PCI (vendor 0x80EE) ou NIC PCnet.
+pub fn is_hypervisor_virtualbox() -> bool {
+    // 1. Inspeciona CPUID hypervisor signature (leaf 0x4000_0000)
+    let (_eax, ebx, ecx, _edx) = unsafe { crate::cpu::cpuid(0x4000_0000) };
+    // "VBox" em ASCII Little-Endian: 'V'=0x56, 'B'=0x42, 'o'=0x6F, 'x'=0x78 => 0x786F4256
+    if ebx == 0x786F_4256 || ecx == 0x786F_4256 {
+        return true;
+    }
+
+    // 2. Inspeciona barramento PCI por dispositivos Oracle/InnoTek VirtualBox (Vendor 0x80EE)
+    let dev_count = crate::drivers::pci::device_count();
+    let dev_slice = crate::drivers::pci::devices();
+    for i in 0..dev_count {
+        if let Some(dev) = dev_slice.get(i).copied().flatten() {
+            if dev.vendor_id == 0x80EE {
+                return true;
+            }
         }
+    }
+
+    // 3. Placa de rede AMD PCnet (usada predominantemente no VirtualBox)
+    unsafe {
+        if crate::drivers::net::DETECTED_NIC_TYPE == crate::drivers::net::NicType::Pcnet {
+            return true;
+        }
+    }
+
+    // 4. Inspeciona o MAC address da interface ativa: VirtualBox usa OUI 08:00:27 por padrão
+    if let Some(dev) = crate::drivers::net::get_device() {
+        let mac = dev.mac_address();
+        if mac[0] == 0x08 && mac[1] == 0x00 && mac[2] == 0x27 {
+            return true;
+        }
+    }
+
+    false
+}
+
+pub fn default_gateway_mac() -> [u8; 6] {
+    if is_hypervisor_virtualbox() {
+        DEFAULT_GATEWAY_MAC_VBOX
+    } else {
+        DEFAULT_GATEWAY_MAC_QEMU
     }
 }
 
 pub fn default_dns_mac() -> [u8; 6] {
-    unsafe {
-        match crate::drivers::net::DETECTED_NIC_TYPE {
-            crate::drivers::net::NicType::Pcnet => DEFAULT_DNS_MAC_VBOX,
-            _ => DEFAULT_DNS_MAC_QEMU,
-        }
+    if is_hypervisor_virtualbox() {
+        DEFAULT_DNS_MAC_VBOX
+    } else {
+        DEFAULT_DNS_MAC_QEMU
     }
 }
 
@@ -115,9 +152,18 @@ impl ArpTable {
         let dns = unsafe { crate::net::dhcp::DHCP_CLIENT.dns };
         let gw_ip = if gw != [0, 0, 0, 0] { gw } else { [10, 0, 2, 2] };
         let dns_ip = if dns != [0, 0, 0, 0] { dns } else { [10, 0, 2, 3] };
-        // updated_tick = 0 indica entrada não confirmada (pendente de ARP dinâmico)
-        self.insert(gw_ip, default_gateway_mac(), 0);
-        self.insert(dns_ip, default_dns_mac(), 0);
+
+        let is_vbox = is_hypervisor_virtualbox();
+        if is_vbox {
+            // No VirtualBox NAT, insere como confirmado (tick = 1) para evitar bloqueio por ARP estático
+            self.insert(gw_ip, DEFAULT_GATEWAY_MAC_VBOX, 1);
+            self.insert(dns_ip, DEFAULT_DNS_MAC_VBOX, 1);
+            log_gateway_mac(gw_ip, DEFAULT_GATEWAY_MAC_VBOX);
+        } else {
+            // No QEMU, updated_tick = 0 indica entrada não confirmada (pendente de ARP dinâmico)
+            self.insert(gw_ip, DEFAULT_GATEWAY_MAC_QEMU, 0);
+            self.insert(dns_ip, DEFAULT_DNS_MAC_QEMU, 0);
+        }
     }
 }
 

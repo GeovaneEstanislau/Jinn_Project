@@ -113,3 +113,14 @@ jobs:
           else
             echo "Feeds RSS inalterados, nenhum commit necessario."
           fi
+
+      - name: Notify WebSub Hub
+        run: |
+          echo "Disparando ping WebSub para o hub Google / PubSubHubbub..."
+          curl -s -o /dev/null -w "WebSub rss.xml HTTP %{http_code}\n" -X POST "https://pubsubhubbub.appspot.com/" \
+            -d "hub.mode=publish" \
+            -d "hub.url=https://jinn-os.dev.br/rss.xml"
+          curl -s -o /dev/null -w "WebSub feed.xml HTTP %{http_code}\n" -X POST "https://pubsubhubbub.appspot.com/" \
+            -d "hub.mode=publish" \
+            -d "hub.url=https://jinn-os.dev.br/feed.xml"
+

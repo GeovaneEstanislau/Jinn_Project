@@ -920,8 +920,11 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
         PENDING_DNS_TABLE.insert(query_entry);
     }
 
-    // 5. Transmite consulta pela rede (primária: Cloudflare 1.1.1.1 ou configurada)
-    let primary = unsafe { DNS_CONFIG.primary };
+    // 5. Transmite consulta pela rede (no VirtualBox NAT, prioriza o host proxy 10.0.2.3 com fallback rápido)
+    let is_vbox = crate::net::arp::is_hypervisor_virtualbox();
+    let primary = if is_vbox { [10, 0, 2, 3] } else { unsafe { DNS_CONFIG.primary } };
+    let secondary = if is_vbox { [1, 1, 1, 1] } else { unsafe { DNS_CONFIG.secondary } };
+    let fallback = if is_vbox { [8, 8, 8, 8] } else { unsafe { DNS_CONFIG.fallback } };
     log_dns_resolving(name, primary);
 
     if send_query_to(name, tx_id, Some(primary)).is_err() {
@@ -934,7 +937,7 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
 
     let start_tick = crate::timer::ticks();
     let mut last_tx = start_tick;
-    let mut stage = 0u8; // 0: primary (1.1.1.1), 1: secondary (8.8.8.8), 2: fallback (10.0.2.3)
+    let mut stage = 0u8; // 0: primary, 1: secondary, 2: fallback
 
     // Aguarda até 200 ticks (2,0s a 100 Hz APIC) com polling cooperativo, cascateamento e retransmissão
     while crate::timer::ticks().saturating_sub(start_tick) < 200 {
@@ -963,15 +966,13 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
                     // Se o servidor primário falhar, avança para o secundário imediatamente
                     if stage == 0 {
                         stage = 1;
-                        let sec = unsafe { DNS_CONFIG.secondary };
-                        log_dns_switch("secundario", sec);
-                        let _ = send_query_to(name, tx_id, Some(sec));
+                        log_dns_switch("secundario", secondary);
+                        let _ = send_query_to(name, tx_id, Some(secondary));
                         last_tx = crate::timer::ticks();
                     } else if stage == 1 {
                         stage = 2;
-                        let fb = unsafe { DNS_CONFIG.fallback };
-                        log_dns_switch("fallback", fb);
-                        let _ = send_query_to(name, tx_id, Some(fb));
+                        log_dns_switch("fallback", fallback);
+                        let _ = send_query_to(name, tx_id, Some(fallback));
                         last_tx = crate::timer::ticks();
                     } else {
                         unsafe {
@@ -1000,23 +1001,19 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
         if elapsed >= 100 && stage < 2 {
             stage = 2;
             last_tx = crate::timer::ticks();
-            let fb = unsafe { DNS_CONFIG.fallback };
-            log_dns_switch("fallback", fb);
-            let _ = send_query_to(name, tx_id, Some(fb));
+            log_dns_switch("fallback", fallback);
+            let _ = send_query_to(name, tx_id, Some(fallback));
         } else if elapsed >= 50 && stage < 1 {
             stage = 1;
             last_tx = crate::timer::ticks();
-            let sec = unsafe { DNS_CONFIG.secondary };
-            log_dns_switch("secundario", sec);
-            let _ = send_query_to(name, tx_id, Some(sec));
+            log_dns_switch("secundario", secondary);
+            let _ = send_query_to(name, tx_id, Some(secondary));
         } else if since_last >= 35 {
             last_tx = crate::timer::ticks();
-            let target_server = unsafe {
-                match stage {
-                    0 => DNS_CONFIG.primary,
-                    1 => DNS_CONFIG.secondary,
-                    _ => DNS_CONFIG.fallback,
-                }
+            let target_server = match stage {
+                0 => primary,
+                1 => secondary,
+                _ => fallback,
             };
             let _ = send_query_to(name, tx_id, Some(target_server));
         }

@@ -280,6 +280,31 @@ def dispatch_bluesky(handle, app_password, text, dry_run=False):
     except Exception as e:
         print(f"  [FAIL] Falha ao publicar no Bluesky: {e}")
 
+def dispatch_websub(feed_urls=None, hub_url="https://pubsubhubbub.appspot.com/", dry_run=False):
+    """Notifica hubs WebSub / PubSubHubbub do Google sobre atualizações nos feeds RSS/Atom."""
+    if feed_urls is None:
+        feed_urls = [f"{DEFAULT_PORTAL_URL}/rss.xml", f"{DEFAULT_PORTAL_URL}/feed.xml"]
+
+    for feed_url in feed_urls:
+        if dry_run:
+            print(f"  [DRY-RUN] WebSub ping para {feed_url} em {hub_url} preparado.")
+            continue
+        try:
+            import urllib.parse
+            payload = urllib.parse.urlencode({"hub.mode": "publish", "hub.url": feed_url}).encode("utf-8")
+            req = urllib.request.Request(
+                hub_url,
+                data=payload,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": "Jinn-WebSub-Publisher/1.0"
+                }
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                print(f"  [PASS] WebSub Hub Ping ({feed_url}) -> Status: {resp.status} {resp.reason}")
+        except Exception as e:
+            print(f"  [FAIL] Falha no WebSub Hub Ping ({feed_url}): {e}")
+
 def main():
     parser = argparse.ArgumentParser(description="Pipeline de Sindicação e Difusão de Engenharia do Jinn OS")
     parser.add_argument("--title", type=str, help="Titulo tecnico do release / devlog")
@@ -343,6 +368,7 @@ def main():
 
     # 3. Despacho Multicanal
     print("\n[+] Executando difusão nos canais configurados...")
+    dispatch_websub(dry_run=args.dry_run)
     dispatch_discord(os.environ.get("DISCORD_WEBHOOK_URL"), discord_payload, args.dry_run)
     dispatch_telegram(os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID"), telegram_text, args.dry_run)
     dispatch_mastodon(os.environ.get("MASTODON_INSTANCE_URL"), os.environ.get("MASTODON_ACCESS_TOKEN"), microblog_text, args.dry_run)
