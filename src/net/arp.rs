@@ -3,16 +3,19 @@
 pub const ARP_OP_REQUEST: u16 = 1;
 pub const ARP_OP_REPLY:   u16 = 2;
 
-pub const DEFAULT_GATEWAY_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x35, 0x02];
-pub const DEFAULT_DNS_MAC: [u8; 6]     = [0x52, 0x54, 0x00, 0x12, 0x35, 0x03];
+pub const DEFAULT_GATEWAY_MAC_QEMU: [u8; 6] = [0x52, 0x55, 0x0a, 0x00, 0x02, 0x02];
+pub const DEFAULT_DNS_MAC_QEMU: [u8; 6]     = [0x52, 0x55, 0x0a, 0x00, 0x02, 0x03];
 pub const DEFAULT_GATEWAY_MAC_VBOX: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x35, 0x02];
 pub const DEFAULT_DNS_MAC_VBOX: [u8; 6]     = [0x52, 0x54, 0x00, 0x12, 0x35, 0x03];
+
+pub const DEFAULT_GATEWAY_MAC: [u8; 6] = DEFAULT_GATEWAY_MAC_QEMU;
+pub const DEFAULT_DNS_MAC: [u8; 6]     = DEFAULT_DNS_MAC_QEMU;
 
 pub fn default_gateway_mac() -> [u8; 6] {
     unsafe {
         match crate::drivers::net::DETECTED_NIC_TYPE {
-            crate::drivers::net::NicType::Pcnet | crate::drivers::net::NicType::E1000 => DEFAULT_GATEWAY_MAC_VBOX,
-            _ => DEFAULT_GATEWAY_MAC,
+            crate::drivers::net::NicType::Pcnet => DEFAULT_GATEWAY_MAC_VBOX,
+            _ => DEFAULT_GATEWAY_MAC_QEMU,
         }
     }
 }
@@ -20,8 +23,8 @@ pub fn default_gateway_mac() -> [u8; 6] {
 pub fn default_dns_mac() -> [u8; 6] {
     unsafe {
         match crate::drivers::net::DETECTED_NIC_TYPE {
-            crate::drivers::net::NicType::Pcnet | crate::drivers::net::NicType::E1000 => DEFAULT_DNS_MAC_VBOX,
-            _ => DEFAULT_DNS_MAC,
+            crate::drivers::net::NicType::Pcnet => DEFAULT_DNS_MAC_VBOX,
+            _ => DEFAULT_DNS_MAC_QEMU,
         }
     }
 }
@@ -103,16 +106,43 @@ impl ArpTable {
         None
     }
 
-    /// Inicializa a tabela de cache ARP com estado limpo
+    /// Inicializa a tabela de cache ARP com estado limpo.
+    /// Não insere entradas confirmadas para que o ARP dinâmico resolva
+    /// o MAC real da máquina virtual em tempo de execução (QEMU 52:55:0a:00:02:02 vs VirtualBox 52:54:00:12:35:02).
     pub fn init_defaults(&mut self) {
         *self = Self::new();
-        // Pre-popula gateway e DNS conhecidos com updated_tick = 1 para evitar stalls de ARP em QEMU e VirtualBox
         let gw = unsafe { crate::net::dhcp::DHCP_CLIENT.gateway };
         let dns = unsafe { crate::net::dhcp::DHCP_CLIENT.dns };
         let gw_ip = if gw != [0, 0, 0, 0] { gw } else { [10, 0, 2, 2] };
         let dns_ip = if dns != [0, 0, 0, 0] { dns } else { [10, 0, 2, 3] };
-        self.insert(gw_ip, default_gateway_mac(), 1);
-        self.insert(dns_ip, default_dns_mac(), 1);
+        // updated_tick = 0 indica entrada não confirmada (pendente de ARP dinâmico)
+        self.insert(gw_ip, default_gateway_mac(), 0);
+        self.insert(dns_ip, default_dns_mac(), 0);
+    }
+}
+
+static LAST_LOGGED_GW_MAC: crate::memory::IrqSafeSpinLock<[u8; 6]> = crate::memory::IrqSafeSpinLock::new([0; 6]);
+
+/// Registra no log serial a resolução do MAC do Gateway no formato exigido:
+/// `[NET-ARP] Gateway 10.0.2.2 resolvido para MAC xx:xx:xx:xx:xx:xx`
+pub fn log_gateway_mac(ip: [u8; 4], mac: [u8; 6]) {
+    let mut last = LAST_LOGGED_GW_MAC.lock();
+    if *last != mac {
+        *last = mac;
+        drop(last);
+        crate::serial_write(b"[NET-ARP] Gateway ");
+        let mut ip_buf = [0u8; 16];
+        let len = crate::net::dns::format_ip_into(&mut ip_buf, ip);
+        crate::serial_write(&ip_buf[..len]);
+        crate::serial_write(b" resolvido para MAC ");
+        let hex = b"0123456789abcdef";
+        for (i, &b) in mac.iter().enumerate() {
+            if i > 0 {
+                crate::serial_write(b":");
+            }
+            crate::serial_write(&[hex[(b >> 4) as usize], hex[(b & 0x0F) as usize]]);
+        }
+        crate::serial_write(b"\n");
     }
 }
 
@@ -221,6 +251,9 @@ pub fn resolve_mac_for_ip_blocking(dst_ip: [u8; 4], timeout_ticks: u64) -> Optio
         // Validação de coerência: se for o gateway, não aceitar MAC de DNS (terminando em 0x03)
         let gateway = unsafe { crate::net::dhcp::DHCP_CLIENT.gateway };
         if !(next_hop == gateway && mac[5] == 0x03) {
+            if next_hop == gateway || next_hop == [10, 0, 2, 2] {
+                log_gateway_mac(next_hop, mac);
+            }
             return Some(mac);
         }
     }
@@ -231,9 +264,12 @@ pub fn resolve_mac_for_ip_blocking(dst_ip: [u8; 4], timeout_ticks: u64) -> Optio
 
     while crate::timer::ticks().saturating_sub(start) < timeout_ticks {
         crate::net::poll();
-        if let Some(mac) = unsafe { ARP_CACHE.lookup(next_hop) } {
+        if let Some(mac) = unsafe { ARP_CACHE.lookup_confirmed(next_hop) } {
             let gateway = unsafe { crate::net::dhcp::DHCP_CLIENT.gateway };
             if !(next_hop == gateway && mac[5] == 0x03) {
+                if next_hop == gateway || next_hop == [10, 0, 2, 2] {
+                    log_gateway_mac(next_hop, mac);
+                }
                 return Some(mac);
             }
         }
@@ -256,18 +292,20 @@ pub fn resolve_mac_for_ip_blocking(dst_ip: [u8; 4], timeout_ticks: u64) -> Optio
             return Some(dns_mac);
         }
         let mac = default_dns_mac();
-        unsafe { ARP_CACHE.insert(next_hop, mac, crate::timer::ticks()); }
+        unsafe { ARP_CACHE.insert(next_hop, mac, crate::timer::ticks().max(1)); }
         return Some(mac);
     }
 
     if next_hop == gateway || next_hop == [10, 0, 2, 2] {
         if let Some(gw_mac) = unsafe { ARP_CACHE.lookup(gateway) } {
             if gw_mac[5] != 0x03 {
+                log_gateway_mac(next_hop, gw_mac);
                 return Some(gw_mac);
             }
         }
         let mac = default_gateway_mac();
-        unsafe { ARP_CACHE.insert(next_hop, mac, crate::timer::ticks()); }
+        unsafe { ARP_CACHE.insert(next_hop, mac, crate::timer::ticks().max(1)); }
+        log_gateway_mac(next_hop, mac);
         return Some(mac);
     }
 

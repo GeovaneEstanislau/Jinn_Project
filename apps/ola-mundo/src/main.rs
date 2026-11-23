@@ -1782,22 +1782,22 @@ unsafe fn fetch_http_document(
         let dns_res = sys_dns_resolve(parsed.host.as_ptr(), parsed.host_len, ip.as_mut_ptr());
         if dns_res < 0 {
             if dns_res == -2 {
-                print_str(b"[DIAG-FLOW] DNS: ERRO: Dominio inexistente (NXDOMAIN)!\n");
+                print_str(b"[DIAG-FLOW] DNS: ERRO [NxDomain]: Dominio inexistente (NXDOMAIN)!\n");
                 return Err(FetchError::DnsNxDomain);
             } else if dns_res == -110 {
-                print_str(b"[DIAG-FLOW] DNS: ERRO: Timeout do servidor DNS upstream!\n");
+                print_str(b"[DIAG-FLOW] DNS: ERRO [Timeout]: Timeout do servidor DNS upstream!\n");
                 return Err(FetchError::DnsTimeout);
             } else if dns_res == -113 {
-                print_str(b"[DIAG-FLOW] DNS: ERRO: Falha de resolucao ARP na rede local!\n");
+                print_str(b"[DIAG-FLOW] DNS: ERRO [ArpUnresolved]: Falha de resolucao ARP na rede local!\n");
                 return Err(FetchError::DnsArpFailed);
             } else if dns_res == -100 {
-                print_str(b"[DIAG-FLOW] DNS: ERRO: Interface de rede inoperante!\n");
+                print_str(b"[DIAG-FLOW] DNS: ERRO [NoNetDriver]: Interface de rede inoperante!\n");
                 return Err(FetchError::DnsNetDown);
             } else if dns_res == -5 {
-                print_str(b"[DIAG-FLOW] DNS: ERRO: Falha reportada pelo servidor DNS (SERVFAIL)!\n");
+                print_str(b"[DIAG-FLOW] DNS: ERRO [ServerFailure]: Falha reportada pelo servidor DNS (SERVFAIL)!\n");
                 return Err(FetchError::DnsServerFailure);
             } else {
-                print_str(b"[DIAG-FLOW] DNS: ERRO: Falha ao resolver DNS com codigo: ");
+                print_str(b"[DIAG-FLOW] DNS: ERRO [DnsFailed]: Falha ao resolver DNS com codigo: ");
                 print_i64(dns_res);
                 print_str(b"\n");
                 return Err(FetchError::DnsFailed);

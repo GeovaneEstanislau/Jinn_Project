@@ -608,6 +608,7 @@ impl ProcessHost for UserProcess {
         aladdin_sdk::console::print(trimmed);
         aladdin_sdk::console::println("'");
         if trimmed.eq_ignore_ascii_case("browser")
+            || trimmed.ends_with("browser")
             || trimmed.eq_ignore_ascii_case("spawn browser")
             || trimmed.eq_ignore_ascii_case("/disk/browser.elf")
         {

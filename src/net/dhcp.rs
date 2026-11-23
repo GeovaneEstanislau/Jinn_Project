@@ -110,15 +110,13 @@ pub fn handle_dhcp_reply(payload: &[u8]) {
             }
             if router_ip != [0, 0, 0, 0] {
                 DHCP_CLIENT.gateway = router_ip;
-                if crate::net::arp::ARP_CACHE.lookup_confirmed(router_ip).is_none() {
-                    crate::net::arp::ARP_CACHE.insert(router_ip, crate::net::arp::default_gateway_mac(), crate::timer::ticks());
-                }
+                // Dispara resolução ARP real para descobrir o MAC do gateway
+                crate::net::arp::send_arp_request(router_ip);
             }
             if dns_ip != [0, 0, 0, 0] {
                 DHCP_CLIENT.dns = dns_ip;
-                if crate::net::arp::ARP_CACHE.lookup_confirmed(dns_ip).is_none() {
-                    crate::net::arp::ARP_CACHE.insert(dns_ip, crate::net::arp::default_dns_mac(), crate::timer::ticks());
-                }
+                crate::net::dns::DNS_CONFIG.fallback = dns_ip;
+                crate::net::arp::send_arp_request(dns_ip);
             }
             DHCP_CLIENT.state = DhcpState::Bound(yiaddr);
         }

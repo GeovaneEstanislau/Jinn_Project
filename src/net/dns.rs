@@ -787,6 +787,39 @@ pub fn format_ip_into(dst: &mut [u8], ip: [u8; 4]) -> usize {
     p
 }
 
+pub fn log_dns_resolving(name: &str, server_ip: [u8; 4]) {
+    crate::serial_write(b"[NET-DNS] Resolvendo '");
+    crate::serial_write(name.as_bytes());
+    crate::serial_write(b"' via upstream ");
+    let mut ip_buf = [0u8; 16];
+    let len = format_ip_into(&mut ip_buf, server_ip);
+    crate::serial_write(&ip_buf[..len]);
+    crate::serial_write(b"...\n");
+}
+
+pub fn log_dns_switch(target_name: &str, server_ip: [u8; 4]) {
+    crate::serial_write(b"[NET-DNS] Timeout/falha no ");
+    if target_name == "secundario" {
+        crate::serial_write(b"primario. Chaveando para secundario ");
+    } else {
+        crate::serial_write(b"secundario. Chaveando para fallback ");
+    }
+    let mut ip_buf = [0u8; 16];
+    let len = format_ip_into(&mut ip_buf, server_ip);
+    crate::serial_write(&ip_buf[..len]);
+    crate::serial_write(b"...\n");
+}
+
+pub fn log_dns_resolved(name: &str, ip: [u8; 4]) {
+    crate::serial_write(b"[NET-DNS] '");
+    crate::serial_write(name.as_bytes());
+    crate::serial_write(b"' resolvido com sucesso para ");
+    let mut ip_buf = [0u8; 16];
+    let len = format_ip_into(&mut ip_buf, ip);
+    crate::serial_write(&ip_buf[..len]);
+    crate::serial_write(b"\n");
+}
+
 pub fn send_query(name: &str, tx_id: u16) -> Result<(), DnsError> {
     let primary = unsafe { DNS_CONFIG.primary };
     send_query_to(name, tx_id, Some(primary))
@@ -855,6 +888,7 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
 
     // 2. Consulta cache local
     if let Some(cached_ip) = unsafe { DNS_CACHE.lookup(name, ticks) } {
+        log_dns_resolved(name, cached_ip);
         return Ok(cached_ip);
     }
 
@@ -886,8 +920,11 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
         PENDING_DNS_TABLE.insert(query_entry);
     }
 
-    // 5. Transmite consulta pela rede (primária: Cloudflare 1.1.1.1)
-    if send_query(name, tx_id).is_err() {
+    // 5. Transmite consulta pela rede (primária: Cloudflare 1.1.1.1 ou configurada)
+    let primary = unsafe { DNS_CONFIG.primary };
+    log_dns_resolving(name, primary);
+
+    if send_query_to(name, tx_id, Some(primary)).is_err() {
         unsafe {
             PENDING_QUERY = None;
             PENDING_DNS_TABLE.remove(tx_id);
@@ -899,8 +936,8 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
     let mut last_tx = start_tick;
     let mut stage = 0u8; // 0: primary (1.1.1.1), 1: secondary (8.8.8.8), 2: fallback (10.0.2.3)
 
-    // Aguarda até 350 ticks (3,5s a 100 Hz APIC) com polling e retransmissão
-    while crate::timer::ticks().saturating_sub(start_tick) < 350 {
+    // Aguarda até 200 ticks (2,0s a 100 Hz APIC) com polling cooperativo, cascateamento e retransmissão
+    while crate::timer::ticks().saturating_sub(start_tick) < 200 {
         crate::net::poll();
 
         // Verifica status da consulta pendente
@@ -911,6 +948,7 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
                         PENDING_QUERY = None;
                         PENDING_DNS_TABLE.remove(tx_id);
                     }
+                    log_dns_resolved(name, ip);
                     return Ok(ip);
                 }
                 DnsQueryStatus::NxDomain => {
@@ -926,11 +964,13 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
                     if stage == 0 {
                         stage = 1;
                         let sec = unsafe { DNS_CONFIG.secondary };
+                        log_dns_switch("secundario", sec);
                         let _ = send_query_to(name, tx_id, Some(sec));
                         last_tx = crate::timer::ticks();
                     } else if stage == 1 {
                         stage = 2;
                         let fb = unsafe { DNS_CONFIG.fallback };
+                        log_dns_switch("fallback", fb);
                         let _ = send_query_to(name, tx_id, Some(fb));
                         last_tx = crate::timer::ticks();
                     } else {
@@ -950,23 +990,26 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
                 PENDING_QUERY = None;
                 PENDING_DNS_TABLE.remove(tx_id);
             }
+            log_dns_resolved(name, cached_ip);
             return Ok(cached_ip);
         }
 
         let elapsed = crate::timer::ticks().saturating_sub(start_tick);
         let since_last = crate::timer::ticks().saturating_sub(last_tx);
 
-        if elapsed >= 120 && stage < 2 {
+        if elapsed >= 100 && stage < 2 {
             stage = 2;
             last_tx = crate::timer::ticks();
             let fb = unsafe { DNS_CONFIG.fallback };
+            log_dns_switch("fallback", fb);
             let _ = send_query_to(name, tx_id, Some(fb));
         } else if elapsed >= 50 && stage < 1 {
             stage = 1;
             last_tx = crate::timer::ticks();
             let sec = unsafe { DNS_CONFIG.secondary };
+            log_dns_switch("secundario", sec);
             let _ = send_query_to(name, tx_id, Some(sec));
-        } else if since_last >= 40 {
+        } else if since_last >= 35 {
             last_tx = crate::timer::ticks();
             let target_server = unsafe {
                 match stage {

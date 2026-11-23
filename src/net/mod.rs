@@ -25,10 +25,21 @@ use jinnwall::{FilterVerdict, JINNWALL};
 
 /// Inicializa a pilha de rede e descobre controladores NIC.
 pub fn init() {
-    let has_virtio = crate::drivers::net::init();
-    if has_virtio {
+    let has_nic = crate::drivers::net::init();
+    if has_nic {
         if let Some(dev) = crate::drivers::net::get_device() {
             let mac = dev.mac_address();
+            let nic_name = crate::drivers::net::active_nic_name();
+            crate::serial_write(b"[NET-INIT] Driver ativo detectado: ");
+            crate::serial_write(nic_name.as_bytes());
+            crate::serial_write(b" (MAC ");
+            let hex = b"0123456789abcdef";
+            for (i, &b) in mac.iter().enumerate() {
+                if i > 0 { crate::serial_write(b":"); }
+                crate::serial_write(&[hex[(b >> 4) as usize], hex[(b & 0x0F) as usize]]);
+            }
+            crate::serial_write(b")\n");
+
             // Dispara DHCP Discover na inicialização
             let mut discover_buf = [0u8; 1536];
             let dhcp_len = dhcp::build_dhcp_discover(&mut discover_buf[42..], mac);
@@ -63,6 +74,9 @@ pub fn init() {
         dns::DNS_CACHE.init_defaults();
     }
     dns::load_dns_config_from_vfs();
+
+    // Dispara requisição ARP proativa para o default gateway
+    arp::send_arp_request([10, 0, 2, 2]);
 }
 
 static NET_POLL_LOCK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -109,11 +123,17 @@ pub fn poll() {
         match frame.ethertype {
             ETHERTYPE_ARP => {
                 if let Some(arp) = arp::parse_arp(frame.payload) {
-                    let ticks = crate::timer::ticks();
+                    let ticks = crate::timer::ticks().max(1);
                     unsafe {
                         arp::ARP_CACHE.insert(arp.sender_ip, arp.sender_mac, ticks);
                     }
                     NET_DIAGNOSTICS.record_arp_reply_rcvd();
+
+                    let gw = unsafe { dhcp::DHCP_CLIENT.gateway };
+                    let gw_ip = if gw != [0, 0, 0, 0] { gw } else { [10, 0, 2, 2] };
+                    if arp.sender_ip == gw_ip {
+                        arp::log_gateway_mac(gw_ip, arp.sender_mac);
+                    }
 
                     // Se for requisição ARP procurando nosso IP, responde
                     let our_ip = unsafe { dhcp::DHCP_CLIENT.ip };
