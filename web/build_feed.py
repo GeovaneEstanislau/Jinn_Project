@@ -67,9 +67,10 @@ def get_announced_commits(limit=15):
 
 def build_rss():
     print(f"[+] Construindo RSS Feed em {FEED_PATH} e {RSS_PATH}...")
-    rss = ET.Element("rss", version="2.0")
-    rss.set("xmlns:atom", "http://www.w3.org/2005/Atom")
+    ET.register_namespace('atom', 'http://www.w3.org/2005/Atom')
+    ET.register_namespace('media', 'http://search.yahoo.com/mrss/')
 
+    rss = ET.Element("rss", version="2.0")
     channel = ET.SubElement(rss, "channel")
     ET.SubElement(channel, "title").text = "Jinn OS — Devlog & Microkernel Releases"
     ET.SubElement(channel, "link").text = SITE_URL
@@ -79,10 +80,17 @@ def build_rss():
     )
     ET.SubElement(channel, "language").text = "pt-br"
 
+    # Suporte WebSub (antigo PubSubHubbub) para indexação em tempo real
+    hub_link = ET.SubElement(channel, "{http://www.w3.org/2005/Atom}link")
+    hub_link.set("href", "https://pubsubhubbub.appspot.com/")
+    hub_link.set("rel", "hub")
+
     atom_link = ET.SubElement(channel, "{http://www.w3.org/2005/Atom}link")
-    atom_link.set("href", f"{SITE_URL}/feed.xml")
+    atom_link.set("href", f"{SITE_URL}/rss.xml")
     atom_link.set("rel", "self")
     atom_link.set("type", "application/rss+xml")
+
+    default_image_url = f"{SITE_URL}/assets/wallpaper.jpg"
 
     # 1. Artigos Destacados / Post-Mortems Técnicos
     for feat in FEATURED_POSTS:
@@ -94,6 +102,12 @@ def build_rss():
         guid_el.set("isPermaLink", "false")
         ET.SubElement(item, "pubDate").text = feat["date"]
         ET.SubElement(item, "description").text = feat["body"]
+
+        # Imagem destacada / Media Enclosure (W3C / Google News / Flipboard compatível)
+        enc = ET.SubElement(item, "enclosure")
+        enc.set("url", default_image_url)
+        enc.set("length", "70707")
+        enc.set("type", "image/jpeg")
 
     # 2. Commits Técnicos & Releases
     commits = get_announced_commits(15)
@@ -107,6 +121,12 @@ def build_rss():
         guid_el.set("isPermaLink", "false")
         ET.SubElement(item, "pubDate").text = c["date"]
         ET.SubElement(item, "description").text = c["body"]
+
+        # Imagem destacada padrão para agregadores
+        enc = ET.SubElement(item, "enclosure")
+        enc.set("url", default_image_url)
+        enc.set("length", "70707")
+        enc.set("type", "image/jpeg")
 
     tree = ET.ElementTree(rss)
     ET.indent(tree, space="  ")
