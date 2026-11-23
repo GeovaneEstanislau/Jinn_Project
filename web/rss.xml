@@ -1,70 +1,127 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+<?xml version='1.0' encoding='utf-8'?>
+<rss xmlns:ns0="http://www.w3.org/2005/Atom" version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
-    <title>Jinn OS — Devlog de Engenharia de Microkernel</title>
-    <link>https://jinn-os.dev.br/</link>
-    <description>Changelogs técnicos, benchmarks de latência, post-mortems e arquitetura de microkernel zero-trust em Rust bare-metal (x86_64, #![no_std]).</description>
-    <language>pt-BR</language>
-    <lastBuildDate>Mon, 23 Nov 2026 02:57:27 +0000</lastBuildDate>
-    <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
-
-        <item>
-      <title>Hardening de Microkernel e Pipeline SIMD Zero-GPU</title>
-      <link>https://jinn-os.dev.br</link>
-      <guid isPermaLink="false">jinn-os-hardening-de-microkernel-e-pipeline-simd-zero-gpu-202611222357</guid>
-      <pubDate>Mon, 23 Nov 2026 02:57:27 +0000</pubDate>
-      <description><![CDATA[
-        <p>Consolidamos o suporte a resolucao DNS cascateada (Cloudflare/Google), decodificacao de imagens bare-metal no Jinn Browser, aceleracao SIMD AVX2 no JHCS e persistencia estrita em disco FAT32 com zero-idle.</p>
-      ]]></description>
+    <title>Jinn OS — Devlog &amp; Microkernel Releases</title>
+    <link>https://jinn-os.dev.br</link>
+    <description>Atualizações técnicas, benchmarks de latência SIMD/AVX2, post-mortems e releases do microkernel bare-metal x86_64 em Rust (jinn-os.dev.br).</description>
+    <language>pt-br</language>
+    <ns0:link href="https://jinn-os.dev.br/feed.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>Post-Mortem: Como o EOI Incondicional no PIC 8259A e o Motor Zero-GPU Viabilizaram 0.00% de CPU em Repouso</title>
+      <link>https://jinn-os.dev.br/post-mortem-pic-eoi-zero-gpu.html</link>
+      <guid isPermaLink="false">jinn-os-post-mortem-pic-eoi-zero-gpu</guid>
+      <pubDate>Sun, 22 Nov 2026 21:00:00 -0300</pubDate>
+      <description>Auditoria aprofundada sobre a eliminação de congelamentos de interrupção (IRQs 1 e 12) via EOI incondicional no PIC mestre e escravo, combinada com a arquitetura Zero-GPU do JHCS (AVX2/FMA sem alocações no laço quente), atingindo o Rank 1 de eficiência energética com 0.00% de CPU em repouso absoluto.</description>
     </item>
     <item>
-      <title>Hardening de Rede &amp; DNS Google/Cloudflare: Roteamento L2/L3 e Zero-Idle no QEMU</title>
-      <link>https://jinn-os.dev.br/#net-dns-hardening</link>
-      <guid isPermaLink="false">jinn-os-net-dns-hardening-20261122</guid>
-      <pubDate>Sun, 22 Nov 2026 20:00:00 -0300</pubDate>
-      <description><![CDATA[
-        <p>Implementamos resolução DNS cascateada no microkernel Jinn OS com fallback resiliente: Cloudflare (1.1.1.1) primário, Google (8.8.8.8) secundário e SLIRP local (10.0.2.3). Corrigimos o roteamento IPv4 para encapsulamento imediato com o MAC do gateway SLIRP (52:54:00:12:35:02) e cache ARP de 0 ticks, além de expor as Syscalls 86 e 87 para configuração dinâmica com persistência em /disk/net.cfg.</p>
-      ]]></description>
+      <title>feat(broadcast): trigger on tags v* and release commits with automated technical title extraction</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/8ed37455b0833dade86df62833f029bbcb952dfd</link>
+      <guid isPermaLink="false">8ed37455b0833dade86df62833f029bbcb952dfd</guid>
+      <pubDate>Mon, 23 Nov 2026 00:00:43 -0300</pubDate>
+      <description>feat(broadcast): trigger on tags v* and release commits with automated technical title extraction</description>
     </item>
-
     <item>
-      <title>Decodificação de Imagens #![no_std] e Pipeline SIMD AVX2 no Motor Vetorial JHCS</title>
-      <link>https://jinn-os.dev.br/#jhcs-simd-image-decoder</link>
-      <guid isPermaLink="false">jinn-os-jhcs-simd-image-decoder-20261121</guid>
-      <pubDate>Sat, 21 Nov 2026 17:00:00 -0300</pubDate>
-      <description><![CDATA[
-        <p>Integração de decodificadores bare-metal para formatos BMP (24/32-bit uncompressed) e PPM (P6/P3) no Jinn Browser em Ring 3, acompanhado de probe de cabeçalhos PNG e JPEG. O redimensionamento bilinear em ponto fixo 16.16 é acelerado via kernels SIMD AVX2/FMA do JHCS (_mm256_fmadd_ps), permitindo renderizar imagens e aplicar papéis de parede persistentes em FAT32 sem consumo de GPU e retornando a 0.00% de CPU em repouso.</p>
-      ]]></description>
+      <title>feat(syndication): automated multi-channel broadcast pipeline, RSS/Atom feed, and engineering-as-marketing playbook</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/38338dc9e9af5618099c7877068087facdc7c710</link>
+      <guid isPermaLink="false">38338dc9e9af5618099c7877068087facdc7c710</guid>
+      <pubDate>Sun, 22 Nov 2026 23:58:28 -0300</pubDate>
+      <description>feat(syndication): automated multi-channel broadcast pipeline, RSS/Atom feed, and engineering-as-marketing playbook</description>
     </item>
-
     <item>
-      <title>Post-Mortem SMP: Resolução da Condição de Corrida de Inicialização do Aladdin Desktop</title>
-      <link>https://jinn-os.dev.br/#smp-aladdin-race-condition</link>
-      <guid isPermaLink="false">jinn-os-smp-aladdin-race-condition-20261121</guid>
-      <pubDate>Sat, 21 Nov 2026 12:30:00 -0300</pubDate>
-      <description><![CDATA[
-        <p>Auditoria pós-falha de concorrência em sistemas multi-core: no boot com 4 vCPUs, o núcleo AP 1 executava o shell e tentava instanciar o Aladdin Desktop enquanto o BSP (Core 0) ainda realizava o carregamento do módulo ELF, resultando em erro EBUSY no display server. A reorganização do escalonamento garantiu despacho atômico e supervisão limpa de auto-recovery no Ring 3.</p>
-      ]]></description>
+      <title>feat(net/dns/browser/vfs): configurable Google/Cloudflare DNS, native image rendering, curated wallpaper repo, and E2E browser automation</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/24b443c50d38fd00eb48ec6dd870160e50924afa</link>
+      <guid isPermaLink="false">24b443c50d38fd00eb48ec6dd870160e50924afa</guid>
+      <pubDate>Sat, 21 Nov 2026 17:14:17 -0300</pubDate>
+      <description>feat(net/dns/browser/vfs): configurable Google/Cloudflare DNS, native image rendering, curated wallpaper repo, and E2E browser automation</description>
     </item>
-
     <item>
-      <title>Persistência Real em Disco FAT32, Alocação Dinâmica de Clusters e Recuperação a Frio</title>
-      <link>https://jinn-os.dev.br/#fat32-persistent-write</link>
-      <guid isPermaLink="false">jinn-os-fat32-persistent-write-20261120</guid>
-      <pubDate>Fri, 20 Nov 2026 18:00:00 -0300</pubDate>
-      <description><![CDATA[
-        <p>Evolução do VFS com suporte à gravação transacional em FAT32: atualização simultânea de FAT1/FAT2, criação de entradas de diretório 8.3/LFN, expansão multi-cluster e sincronização forçada via Syscall 23 (sys_sync). Validação forense em disco RAW e integridade comprovada após reinicialização completa (cold-reboot) no QEMU.</p>
-      ]]></description>
+      <title>feat(kernel/gui/vfs/net): direct desktop spawn, dynamic window resizing, VFS persistence, and hardened event queues</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/c32e273db001e3b5be8a60827a5b827824bf0f35</link>
+      <guid isPermaLink="false">c32e273db001e3b5be8a60827a5b827824bf0f35</guid>
+      <pubDate>Fri, 20 Nov 2026 19:09:47 -0300</pubDate>
+      <description>feat(kernel/gui/vfs/net): direct desktop spawn, dynamic window resizing, VFS persistence, and hardened event queues</description>
     </item>
-
     <item>
-      <title>Aladdin Desktop: Janelas Fluidas com Drag-to-Resize e Efeito Vidro Translúcido a 60 FPS</title>
-      <link>https://jinn-os.dev.br/#aladdin-window-resize</link>
-      <guid isPermaLink="false">jinn-os-aladdin-window-resize-20261119</guid>
-      <pubDate>Thu, 19 Nov 2026 21:00:00 -0300</pubDate>
-      <description><![CDATA[
-        <p>Implementação de grips de redimensionamento de 6px nas bordas e cantos das janelas de usuário, com despacho de EVENT_WINDOW_RESIZE para recálculo de layout no Jinn Browser e realocação segura de backbuffers protegida por IrqSafeSpinLock no microkernel.</p>
-      ]]></description>
+      <title>feat(bench,jhcs,power): implement hardware ranking suite, zero-gpu simd, and offline update on shutdown</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/031ae162bce7c356c03a3e2b0009ad6fe2edf908</link>
+      <guid isPermaLink="false">031ae162bce7c356c03a3e2b0009ad6fe2edf908</guid>
+      <pubDate>Fri, 20 Nov 2026 11:45:57 -0300</pubDate>
+      <description>feat(bench,jhcs,power): implement hardware ranking suite, zero-gpu simd, and offline update on shutdown</description>
+    </item>
+    <item>
+      <title>fix(kernel/smp/gui): eliminate ISR spinlock deadlocks, resolve dual compositor spawn race, and enforce 8259A specific EOI</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/260155ee3503fda9109347c7016b3bcdcce01c8b</link>
+      <guid isPermaLink="false">260155ee3503fda9109347c7016b3bcdcce01c8b</guid>
+      <pubDate>Fri, 20 Nov 2026 01:52:19 -0300</pubDate>
+      <description>fix(kernel/smp/gui): eliminate ISR spinlock deadlocks, resolve dual compositor spawn race, and enforce 8259A specific EOI</description>
+    </item>
+    <item>
+      <title>fix(boot/scheduler): fix uniprocessor preemption, irq-safe allocators and auto-launch aladdin</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/0d957079aa2603d755227e433648f337be68fde2</link>
+      <guid isPermaLink="false">0d957079aa2603d755227e433648f337be68fde2</guid>
+      <pubDate>Fri, 20 Nov 2026 00:52:55 -0300</pubDate>
+      <description>fix(boot/scheduler): fix uniprocessor preemption, irq-safe allocators and auto-launch aladdin</description>
+    </item>
+    <item>
+      <title>fix(kernel/input): correcao de EOI incondicional no 8259 PIC, IrqSafeSpinLock e auto-recuperacao no Aladdin</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/a2fc85e59f38eaca2d4eec280f35f2210fd8f7c6</link>
+      <guid isPermaLink="false">a2fc85e59f38eaca2d4eec280f35f2210fd8f7c6</guid>
+      <pubDate>Fri, 20 Nov 2026 00:07:52 -0300</pubDate>
+      <description>fix(kernel/input): correcao de EOI incondicional no 8259 PIC, IrqSafeSpinLock e auto-recuperacao no Aladdin</description>
+    </item>
+    <item>
+      <title>feat(jhcs): integrate jhcs-daemon and jhcs-test in Ring 3 with zero-idle IPC and JDA shmem</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/85350f545fd0fb83d172ba1b7bb5b20cd9841b29</link>
+      <guid isPermaLink="false">85350f545fd0fb83d172ba1b7bb5b20cd9841b29</guid>
+      <pubDate>Thu, 19 Nov 2026 22:58:27 -0300</pubDate>
+      <description>feat(jhcs): integrate jhcs-daemon and jhcs-test in Ring 3 with zero-idle IPC and JDA shmem</description>
+    </item>
+    <item>
+      <title>feat(web): configure Google Ads gtag tracking tag AW-884426711</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/83756b7bab8722b84fa4f23ed68b4fea53249486</link>
+      <guid isPermaLink="false">83756b7bab8722b84fa4f23ed68b4fea53249486</guid>
+      <pubDate>Thu, 19 Nov 2026 11:24:01 -0300</pubDate>
+      <description>feat(web): configure Google Ads gtag tracking tag AW-884426711</description>
+    </item>
+    <item>
+      <title>feat(kernel,jhcs,web): zero-idle allocation, PCI audio driver, browser evolution, and JHCS strategic issues</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/53d37f538f9686ea9a824c46392d1dfcd06baa55</link>
+      <guid isPermaLink="false">53d37f538f9686ea9a824c46392d1dfcd06baa55</guid>
+      <pubDate>Thu, 19 Nov 2026 01:18:56 -0300</pubDate>
+      <description>- Drivers &amp; Interrupts: Add PCI AC97 / Intel HDA driver with page-aligned DMA buffers and storm protection; shield PIC cascade line (IRQ 2) and PS/2 mouse (IRQ 12).
+- Scheduler &amp; Syscalls: Enforce strict Zero-Idle policy; blocked tasks consume 0% CPU; implement blocking event polling (syscalls 22/24) with immediate unblock on compositor dispatch.
+- Aladdin &amp; GUI: Implement active garbage collection for client window backbuffers (freeing 3 MiB on close/minimize).
+- Jinn Browser: Add external CSS stylesheet support via VFS (/disk/STYLE.CSS), rich tag/class/id styling, and reactive MiniJsRuntime with DOM manipulation on click events.
+- JHCS Strategic Issues: Add 6 structured contributor issues in docs/strategic-issues/ and publishing script scripts/publish_strategic_issues.ps1.
+- Web &amp; Landing Page: Add 'Contribute to Jinn Edge &amp; JHCS' card in Whisker menu and terminal routing for 'jhcs' and 'issues' commands.</description>
+    </item>
+    <item>
+      <title>fix(interrupts, aladdin-server): eliminate duplicate PIC EOI and throttle client window listing</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/f4c79a7f8bc2493c3cbc8477fbf73dd0996b4423</link>
+      <guid isPermaLink="false">f4c79a7f8bc2493c3cbc8477fbf73dd0996b4423</guid>
+      <pubDate>Mon, 16 Nov 2026 20:41:09 -0300</pubDate>
+      <description>fix(interrupts, aladdin-server): eliminate duplicate PIC EOI and throttle client window listing</description>
+    </item>
+    <item>
+      <title>feat(web): update institutional portal with Supabase anti-spam contact form, creator profiles, and prototype-safe GitHub shell dispatcher</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/ee5fcd8bb477708d94b95855e05c29c9f0c02893</link>
+      <guid isPermaLink="false">ee5fcd8bb477708d94b95855e05c29c9f0c02893</guid>
+      <pubDate>Mon, 16 Nov 2026 19:07:32 -0300</pubDate>
+      <description>feat(web): update institutional portal with Supabase anti-spam contact form, creator profiles, and prototype-safe GitHub shell dispatcher</description>
+    </item>
+    <item>
+      <title>fix(ring3): fix browser ABI to int 0x80, PS/2 PIC EOI, aladdin free-list heap, and add TLS 1.3 RFC 8446 Phase 3</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/31324bec616d39fca87cf23ee2795165fcb038ac</link>
+      <guid isPermaLink="false">31324bec616d39fca87cf23ee2795165fcb038ac</guid>
+      <pubDate>Mon, 16 Nov 2026 18:57:00 -0300</pubDate>
+      <description>fix(ring3): fix browser ABI to int 0x80, PS/2 PIC EOI, aladdin free-list heap, and add TLS 1.3 RFC 8446 Phase 3</description>
+    </item>
+    <item>
+      <title>feat(web): interactive shell command routing to GitHub repository</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/a0b2fe5c3dd170f90eb8978dd01bf3c13e24a059</link>
+      <guid isPermaLink="false">a0b2fe5c3dd170f90eb8978dd01bf3c13e24a059</guid>
+      <pubDate>Mon, 16 Nov 2026 17:22:35 -0300</pubDate>
+      <description>---END---</description>
     </item>
   </channel>
 </rss>
