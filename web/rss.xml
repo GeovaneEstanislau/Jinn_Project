@@ -6,6 +6,15 @@
     <description>Atualizações técnicas, benchmarks de latência SIMD/AVX2, post-mortems e releases do microkernel bare-metal x86_64 em Rust (jinn-os.dev.br).</description>
     <language>pt-br</language>
     <ns0:link href="https://jinn-os.dev.br/feed.xml" rel="self" type="application/rss+xml" />
+        <item>
+      <title>resolucao dinamica ARP de gateway e hardening DNS cascateado para e1000 e virtio</title>
+      <link>https://jinn-os.dev.br</link>
+      <guid isPermaLink="false">jinn-os-resolucao-dinamica-arp-de-gateway-e-hardening-dns-cascateado-para-e1000-e-virtio-202611230333</guid>
+      <pubDate>Mon, 23 Nov 2026 03:33:52 +0000</pubDate>
+      <description><![CDATA[
+        <p>Consolidamos o suporte a resolucao DNS cascateada (Cloudflare/Google), decodificacao de imagens bare-metal no Jinn Browser, aceleracao SIMD AVX2 no JHCS e persistencia estrita em disco FAT32 com zero-idle.</p>
+      ]]></description>
+    </item>
     <item>
       <title>Post-Mortem: Como o EOI Incondicional no PIC 8259A e o Motor Zero-GPU Viabilizaram 0.00% de CPU em Repouso</title>
       <link>https://jinn-os.dev.br/post-mortem-pic-eoi-zero-gpu.html</link>
