@@ -16,6 +16,14 @@
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
+      <title>feat(web/feed): add WebSub hub and W3C media enclosure tags for tech aggregators</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/8fad178b055255581288d5f1d508f9f55a22ceea</link>
+      <guid isPermaLink="false">8fad178b055255581288d5f1d508f9f55a22ceea</guid>
+      <pubDate>Mon, 23 Nov 2026 00:36:21 -0300</pubDate>
+      <description>feat(web/feed): add WebSub hub and W3C media enclosure tags for tech aggregators</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
       <title>fix(net): resolucao dinamica ARP de gateway e hardening DNS cascateado para e1000 e virtio [announce]</title>
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/0c7b48d82f86380244b33131efecd1207ac017ee</link>
       <guid isPermaLink="false">0c7b48d82f86380244b33131efecd1207ac017ee</guid>
@@ -129,15 +137,8 @@
 - Aladdin &amp; GUI: Implement active garbage collection for client window backbuffers (freeing 3 MiB on close/minimize).
 - Jinn Browser: Add external CSS stylesheet support via VFS (/disk/STYLE.CSS), rich tag/class/id styling, and reactive MiniJsRuntime with DOM manipulation on click events.
 - JHCS Strategic Issues: Add 6 structured contributor issues in docs/strategic-issues/ and publishing script scripts/publish_strategic_issues.ps1.
-- Web &amp; Landing Page: Add 'Contribute to Jinn Edge &amp; JHCS' card in Whisker menu and terminal routing for 'jhcs' and 'issues' commands.</description>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>fix(interrupts, aladdin-server): eliminate duplicate PIC EOI and throttle client window listing</title>
-      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/f4c79a7f8bc2493c3cbc8477fbf73dd0996b4423</link>
-      <guid isPermaLink="false">f4c79a7f8bc2493c3cbc8477fbf73dd0996b4423</guid>
-      <pubDate>Mon, 16 Nov 2026 20:41:09 -0300</pubDate>
-      <description>---END---</description>
+- Web &amp; Landing Page: Add 'Contribute to Jinn Edge &amp; JHCS' card in Whisker menu and terminal routing for 'jhcs' and 'issues' commands.
+---END---</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
   </channel>
