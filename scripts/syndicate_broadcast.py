@@ -24,22 +24,32 @@ import re
 DEFAULT_PORTAL_URL = "https://jinn-os.dev.br"
 DEFAULT_REPO_URL = "https://github.com/GeovaneEstanislau/Jinn_Project"
 
-def get_git_info():
-    """Obtém tag, hash do commit e última mensagem caso não especificados via CLI."""
-    info = {"tag": "v0.0.3-alpha", "commit": "HEAD", "message": "Atualizacao de Engenharia do Jinn OS"}
+def get_git_info(commit_ref="HEAD"):
+    """Obtém tag, hash do commit e mensagem completa do commit."""
+    info = {
+        "tag": "v0.0.3-alpha",
+        "commit": "HEAD",
+        "message": "Atualizacao de Engenharia do Jinn OS",
+        "body": ""
+    }
     try:
         tag = subprocess.check_output(["git", "describe", "--tags", "--always"], stderr=subprocess.DEVNULL).decode().strip()
         if tag: info["tag"] = tag
     except Exception: pass
 
     try:
-        commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL).decode().strip()
+        commit = subprocess.check_output(["git", "rev-parse", "--short", commit_ref], stderr=subprocess.DEVNULL).decode().strip()
         if commit: info["commit"] = commit
     except Exception: pass
 
     try:
-        msg = subprocess.check_output(["git", "log", "-1", "--pretty=%s"], stderr=subprocess.DEVNULL).decode().strip()
+        msg = subprocess.check_output(["git", "log", "-1", commit_ref, "--pretty=%s"], stderr=subprocess.DEVNULL).decode().strip()
         if msg: info["message"] = msg
+    except Exception: pass
+
+    try:
+        body = subprocess.check_output(["git", "log", "-1", commit_ref, "--pretty=%b"], stderr=subprocess.DEVNULL).decode().strip()
+        if body: info["body"] = body
     except Exception: pass
 
     return info
@@ -276,13 +286,28 @@ def main():
     parser.add_argument("--version", type=str, help="Versao do release (ex: v0.4.3-alpha)")
     parser.add_argument("--summary", type=str, help="Sumario executivo de engenharia")
     parser.add_argument("--link", type=str, help="URL de destino para o post completo / release")
+    parser.add_argument("--commit", type=str, default="HEAD", help="Hash ou referencia do commit a inspecionar")
     parser.add_argument("--update-feed", action="store_true", help="Atualiza web/feed.xml e web/rss.xml com a nova entrada")
     parser.add_argument("--dry-run", action="store_true", help="Gera os formatos e simula o despacho sem efetuar chamadas de rede")
 
     args = parser.parse_args()
-    git_info = get_git_info()
+    git_info = get_git_info(args.commit)
 
-    title = args.title or f"Hardening de Microkernel e Pipeline SIMD Zero-GPU"
+    # Limpeza e formatacao automatica de titulo se nao fornecido
+    if args.title:
+        title = args.title
+    elif git_info["message"]:
+        raw_msg = git_info["message"]
+        cleaned = re.sub(r'^(feat|fix|release|chore|refactor)(\([^)]+\))?:\s*', '', raw_msg, flags=re.I)
+        cleaned = re.sub(r'\[announce\]', '', cleaned, flags=re.I).strip()
+        # Se for o commit de release, gera titulo técnico atraente
+        if "configurable google/cloudflare dns" in cleaned.lower():
+            title = "Native SIMD image decoding in Ring 3, SMP spawn race fix, and forensic VFS cold-reboot tests"
+        else:
+            title = cleaned[:80] if cleaned else "Hardening de Microkernel e Pipeline SIMD Zero-GPU"
+    else:
+        title = "Native SIMD image decoding in Ring 3, SMP spawn race fix, and forensic VFS cold-reboot tests"
+
     version = args.version or git_info["tag"]
     summary = args.summary or (
         "Consolidamos o suporte a resolucao DNS cascateada (Cloudflare/Google), decodificacao de imagens "
