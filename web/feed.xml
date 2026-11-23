@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Jinn OS — Devlog de Engenharia de Microkernel</title>
+    <link>https://jinn-os.dev.br/</link>
+    <description>Changelogs técnicos, benchmarks de latência, post-mortems e arquitetura de microkernel zero-trust em Rust bare-metal (x86_64, #![no_std]).</description>
+    <language>pt-BR</language>
+    <lastBuildDate>Mon, 23 Nov 2026 02:57:27 +0000</lastBuildDate>
+    <atom:link href="https://jinn-os.dev.br/feed.xml" rel="self" type="application/rss+xml" />
+
+        <item>
+      <title>Hardening de Microkernel e Pipeline SIMD Zero-GPU</title>
+      <link>https://jinn-os.dev.br</link>
+      <guid isPermaLink="false">jinn-os-hardening-de-microkernel-e-pipeline-simd-zero-gpu-202611222357</guid>
+      <pubDate>Mon, 23 Nov 2026 02:57:27 +0000</pubDate>
+      <description><![CDATA[
+        <p>Consolidamos o suporte a resolucao DNS cascateada (Cloudflare/Google), decodificacao de imagens bare-metal no Jinn Browser, aceleracao SIMD AVX2 no JHCS e persistencia estrita em disco FAT32 com zero-idle.</p>
+      ]]></description>
+    </item>
+    <item>
+      <title>Hardening de Rede &amp; DNS Google/Cloudflare: Roteamento L2/L3 e Zero-Idle no QEMU</title>
+      <link>https://jinn-os.dev.br/#net-dns-hardening</link>
+      <guid isPermaLink="false">jinn-os-net-dns-hardening-20261122</guid>
+      <pubDate>Sun, 22 Nov 2026 20:00:00 -0300</pubDate>
+      <description><![CDATA[
+        <p>Implementamos resolução DNS cascateada no microkernel Jinn OS com fallback resiliente: Cloudflare (1.1.1.1) primário, Google (8.8.8.8) secundário e SLIRP local (10.0.2.3). Corrigimos o roteamento IPv4 para encapsulamento imediato com o MAC do gateway SLIRP (52:54:00:12:35:02) e cache ARP de 0 ticks, além de expor as Syscalls 86 e 87 para configuração dinâmica com persistência em /disk/net.cfg.</p>
+      ]]></description>
+    </item>
+
+    <item>
+      <title>Decodificação de Imagens #![no_std] e Pipeline SIMD AVX2 no Motor Vetorial JHCS</title>
+      <link>https://jinn-os.dev.br/#jhcs-simd-image-decoder</link>
+      <guid isPermaLink="false">jinn-os-jhcs-simd-image-decoder-20261121</guid>
+      <pubDate>Sat, 21 Nov 2026 17:00:00 -0300</pubDate>
+      <description><![CDATA[
+        <p>Integração de decodificadores bare-metal para formatos BMP (24/32-bit uncompressed) e PPM (P6/P3) no Jinn Browser em Ring 3, acompanhado de probe de cabeçalhos PNG e JPEG. O redimensionamento bilinear em ponto fixo 16.16 é acelerado via kernels SIMD AVX2/FMA do JHCS (_mm256_fmadd_ps), permitindo renderizar imagens e aplicar papéis de parede persistentes em FAT32 sem consumo de GPU e retornando a 0.00% de CPU em repouso.</p>
+      ]]></description>
+    </item>
+
+    <item>
+      <title>Post-Mortem SMP: Resolução da Condição de Corrida de Inicialização do Aladdin Desktop</title>
+      <link>https://jinn-os.dev.br/#smp-aladdin-race-condition</link>
+      <guid isPermaLink="false">jinn-os-smp-aladdin-race-condition-20261121</guid>
+      <pubDate>Sat, 21 Nov 2026 12:30:00 -0300</pubDate>
+      <description><![CDATA[
+        <p>Auditoria pós-falha de concorrência em sistemas multi-core: no boot com 4 vCPUs, o núcleo AP 1 executava o shell e tentava instanciar o Aladdin Desktop enquanto o BSP (Core 0) ainda realizava o carregamento do módulo ELF, resultando em erro EBUSY no display server. A reorganização do escalonamento garantiu despacho atômico e supervisão limpa de auto-recovery no Ring 3.</p>
+      ]]></description>
+    </item>
+
+    <item>
+      <title>Persistência Real em Disco FAT32, Alocação Dinâmica de Clusters e Recuperação a Frio</title>
+      <link>https://jinn-os.dev.br/#fat32-persistent-write</link>
+      <guid isPermaLink="false">jinn-os-fat32-persistent-write-20261120</guid>
+      <pubDate>Fri, 20 Nov 2026 18:00:00 -0300</pubDate>
+      <description><![CDATA[
+        <p>Evolução do VFS com suporte à gravação transacional em FAT32: atualização simultânea de FAT1/FAT2, criação de entradas de diretório 8.3/LFN, expansão multi-cluster e sincronização forçada via Syscall 23 (sys_sync). Validação forense em disco RAW e integridade comprovada após reinicialização completa (cold-reboot) no QEMU.</p>
+      ]]></description>
+    </item>
+
+    <item>
+      <title>Aladdin Desktop: Janelas Fluidas com Drag-to-Resize e Efeito Vidro Translúcido a 60 FPS</title>
+      <link>https://jinn-os.dev.br/#aladdin-window-resize</link>
+      <guid isPermaLink="false">jinn-os-aladdin-window-resize-20261119</guid>
+      <pubDate>Thu, 19 Nov 2026 21:00:00 -0300</pubDate>
+      <description><![CDATA[
+        <p>Implementação de grips de redimensionamento de 6px nas bordas e cantos das janelas de usuário, com despacho de EVENT_WINDOW_RESIZE para recálculo de layout no Jinn Browser e realocação segura de backbuffers protegida por IrqSafeSpinLock no microkernel.</p>
+      ]]></description>
+    </item>
+  </channel>
+</rss>

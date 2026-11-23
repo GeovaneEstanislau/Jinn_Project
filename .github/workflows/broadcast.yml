@@ -1,0 +1,108 @@
+name: Engineering Broadcast & RSS Syndication
+
+on:
+  release:
+    types: [published]
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      title:
+        description: 'Título do Devlog / Release'
+        required: false
+        default: ''
+      version:
+        description: 'Tag de Versão (ex: v0.4.3-alpha)'
+        required: false
+        default: ''
+      summary:
+        description: 'Sumário Executivo de Engenharia'
+        required: false
+        default: ''
+      link:
+        description: 'URL de destino (Devlog ou Release)'
+        required: false
+        default: 'https://jinn-os.dev.br'
+      dry_run:
+        description: 'Simulação (Dry-Run sem disparos de rede)'
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: 'broadcast'
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  syndicate:
+    # Dispara se for release publicada, workflow_dispatch manual ou commit na main contendo [announce]
+    if: >-
+      github.event_name == 'release' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[announce]'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Execute Syndicate Broadcast Pipeline
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MASTODON_INSTANCE_URL: ${{ secrets.MASTODON_INSTANCE_URL }}
+          MASTODON_ACCESS_TOKEN: ${{ secrets.MASTODON_ACCESS_TOKEN }}
+          BLUESKY_HANDLE: ${{ secrets.BLUESKY_HANDLE }}
+          BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
+        run: |
+          ARGS="--update-feed"
+          
+          # Parametrização condicional
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ -n "${{ github.event.inputs.title }}" ]; then
+              ARGS="$ARGS --title \"${{ github.event.inputs.title }}\""
+            fi
+            if [ -n "${{ github.event.inputs.version }}" ]; then
+              ARGS="$ARGS --version \"${{ github.event.inputs.version }}\""
+            fi
+            if [ -n "${{ github.event.inputs.summary }}" ]; then
+              ARGS="$ARGS --summary \"${{ github.event.inputs.summary }}\""
+            fi
+            if [ -n "${{ github.event.inputs.link }}" ]; then
+              ARGS="$ARGS --link \"${{ github.event.inputs.link }}\""
+            fi
+            if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+              ARGS="$ARGS --dry-run"
+            fi
+          elif [ "${{ github.event_name }}" = "release" ]; then
+            ARGS="$ARGS --title \"${{ github.event.release.name || github.event.release.tag_name }}\""
+            ARGS="$ARGS --version \"${{ github.event.release.tag_name }}\""
+            ARGS="$ARGS --link \"${{ github.event.release.html_url }}\""
+          fi
+
+          echo "Executando: python scripts/syndicate_broadcast.py $ARGS"
+          eval python scripts/syndicate_broadcast.py $ARGS
+
+      - name: Commit and Push Updated RSS Feeds
+        run: |
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git status
+          if ! git diff --quiet web/feed.xml web/rss.xml; then
+            git add web/feed.xml web/rss.xml
+            git commit -m "chore(feed): update RSS/Atom feeds via engineering broadcast [skip ci]"
+            git push origin main
+          else
+            echo "Feeds RSS inalterados, nenhum commit necessario."
+          fi
