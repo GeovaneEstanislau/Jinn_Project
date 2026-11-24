@@ -7,6 +7,15 @@
     <language>pt-br</language>
     <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
     <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
+        <item>
+      <title>docs(web): publish technical articles on e1000/DNS, SIMD glassmorphism, and FAT3</title>
+      <link>https://jinn-os.dev.br</link>
+      <guid isPermaLink="false">jinn-os-docs-web---publish-technical-articles-on-e1000-dns--simd-glassmorphism--and-fat3-202611242258</guid>
+      <pubDate>Tue, 24 Nov 2026 22:58:54 +0000</pubDate>
+      <description><![CDATA[
+        <p>Consolidamos o suporte a resolucao DNS cascateada (Cloudflare/Google), decodificacao de imagens bare-metal no Jinn Browser, aceleracao SIMD AVX2 no JHCS e persistencia estrita em disco FAT32 com zero-idle.</p>
+      ]]></description>
+    </item>
     <item>
       <title>Resolução ARP Dinâmica, DNS em Cascata e Hardening Intel e1000: Do QEMU ao VirtualBox Bare-Metal</title>
       <link>https://jinn-os.dev.br/artigos/resolucao-arp-dinamica-dns-cascata-virtualbox-qemu.html</link>
