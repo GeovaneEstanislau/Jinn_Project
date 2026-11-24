@@ -205,5 +205,12 @@ pub fn get_device() -> Option<&'static mut ActiveNicWrapper> {
 }
 
 pub fn packet_stats() -> (u64, u64) {
-    unsafe { ACTIVE_NIC.packet_stats() }
+    if let Some(nic) = get_device() {
+        nic.packet_stats()
+    } else {
+        (
+            crate::net::NET_DIAGNOSTICS.tx_packets.load(core::sync::atomic::Ordering::Relaxed),
+            crate::net::NET_DIAGNOSTICS.rx_packets.load(core::sync::atomic::Ordering::Relaxed),
+        )
+    }
 }

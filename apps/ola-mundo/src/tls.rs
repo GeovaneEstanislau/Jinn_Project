@@ -108,6 +108,11 @@ impl Sha256 {
         digest
     }
 
+    pub fn current_digest(&self) -> [u8; 32] {
+        let copy = *self;
+        copy.finalize()
+    }
+
     pub fn digest(data: &[u8]) -> [u8; 32] {
         let mut h = Self::new();
         h.update(data);
@@ -771,7 +776,7 @@ impl ChaCha20Poly1305 {
     }
 }
 
-// ── TLS 1.3 Client Handshake Protocol (Buffer Estático) ─────────────────────
+// ── TLS 1.3 Client Handshake Protocol (Buffer Estático RFC 8446) ─────────────
 
 pub struct Tls13ClientSession {
     pub client_priv: [u8; 32],
@@ -779,16 +784,25 @@ pub struct Tls13ClientSession {
     pub client_random: [u8; 32],
     pub server_random: [u8; 32],
     pub transcript: Sha256,
+    pub handshake_secret: [u8; 32],
+    pub master_secret: [u8; 32],
+    pub client_hs_traffic_secret: [u8; 32],
+    pub server_hs_traffic_secret: [u8; 32],
     pub client_hs_key: [u8; 32],
     pub client_hs_iv: [u8; 12],
     pub server_hs_key: [u8; 32],
     pub server_hs_iv: [u8; 12],
+    pub client_app_traffic_secret: [u8; 32],
+    pub server_app_traffic_secret: [u8; 32],
     pub client_app_key: [u8; 32],
     pub client_app_iv: [u8; 12],
     pub server_app_key: [u8; 32],
     pub server_app_iv: [u8; 12],
+    pub client_hs_seq: u64,
+    pub server_hs_seq: u64,
     pub client_seq: u64,
     pub server_seq: u64,
+    pub has_server_hello: bool,
     pub is_established: bool,
 }
 
@@ -807,21 +821,30 @@ impl Tls13ClientSession {
             client_random,
             server_random: [0u8; 32],
             transcript: Sha256::new(),
+            handshake_secret: [0u8; 32],
+            master_secret: [0u8; 32],
+            client_hs_traffic_secret: [0u8; 32],
+            server_hs_traffic_secret: [0u8; 32],
             client_hs_key: [0u8; 32],
             client_hs_iv: [0u8; 12],
             server_hs_key: [0u8; 32],
             server_hs_iv: [0u8; 12],
+            client_app_traffic_secret: [0u8; 32],
+            server_app_traffic_secret: [0u8; 32],
             client_app_key: [0u8; 32],
             client_app_iv: [0u8; 12],
             server_app_key: [0u8; 32],
             server_app_iv: [0u8; 12],
+            client_hs_seq: 0,
+            server_hs_seq: 0,
             client_seq: 0,
             server_seq: 0,
+            has_server_hello: false,
             is_established: false,
         }
     }
 
-    /// Gera o pacote ClientHello gravando diretamente no buffer de saída
+    /// Gera o pacote ClientHello com extensões completas RFC 8446 (SNI, supported_groups, signature_algorithms, supported_versions, key_share)
     pub fn build_client_hello(&mut self, hostname: &[u8], out: &mut [u8]) -> usize {
         let mut p = 0;
 
@@ -840,21 +863,23 @@ impl Tls13ClientSession {
         out[p] = 0x03; out[p + 1] = 0x03; p += 2;
         // Client random (32 bytes)
         out[p..p + 32].copy_from_slice(&self.client_random); p += 32;
-        // Legacy session ID (32 bytes)
+        // Legacy session ID (32 bytes para Middlebox Compatibility)
         out[p] = 32; p += 1;
         for i in 0..32 { out[p + i] = 0x42; } p += 32;
 
-        // Cipher suites: TLS_CHACHA20_POLY1305_SHA256 (0x1303)
-        out[p] = 0x00; out[p + 1] = 0x02; out[p + 2] = 0x13; out[p + 3] = 0x03; p += 4;
-        // Compression
+        // Cipher suites: TLS_CHACHA20_POLY1305_SHA256 (0x1303) e TLS_AES_128_GCM_SHA256 (0x1301)
+        out[p] = 0x00; out[p + 1] = 0x04; p += 2;
+        out[p] = 0x13; out[p + 1] = 0x03; p += 2;
+        out[p] = 0x13; out[p + 1] = 0x01; p += 2;
+        // Compression (null)
         out[p] = 0x01; out[p + 1] = 0x00; p += 2;
 
         // Extensions Length pos
         let ext_len_pos = p; p += 2;
         let ext_start = p;
 
-        // 1. SNI
-        out[p] = 0x00; out[p + 1] = 0x00; p += 2; // ext type 0
+        // 1. server_name (SNI - 0x0000)
+        out[p] = 0x00; out[p + 1] = 0x00; p += 2;
         let sni_len = 2 + 1 + 2 + hostname.len();
         out[p] = (sni_len >> 8) as u8; out[p + 1] = sni_len as u8; p += 2;
         let list_len = (hostname.len() + 3) as u16;
@@ -863,19 +888,28 @@ impl Tls13ClientSession {
         out[p] = (hostname.len() >> 8) as u8; out[p + 1] = hostname.len() as u8; p += 2;
         out[p..p + hostname.len()].copy_from_slice(hostname); p += hostname.len();
 
-        // 2. Supported Groups: X25519 (0x001D)
+        // 2. supported_groups (0x000A): X25519 (0x001D) e secp256r1 (0x0017)
         out[p] = 0x00; out[p + 1] = 0x0A; p += 2;
-        out[p] = 0x00; out[p + 1] = 0x04; p += 2;
-        out[p] = 0x00; out[p + 1] = 0x02; p += 2;
-        out[p] = 0x00; out[p + 1] = 0x1D; p += 2;
+        out[p] = 0x00; out[p + 1] = 0x06; p += 2; // ext_len = 6
+        out[p] = 0x00; out[p + 1] = 0x04; p += 2; // list_len = 4
+        out[p] = 0x00; out[p + 1] = 0x1D; p += 2; // X25519
+        out[p] = 0x00; out[p + 1] = 0x17; p += 2; // secp256r1
 
-        // 3. Supported Versions: TLS 1.3 (0x0304)
+        // 3. signature_algorithms (0x000D): ECDSA P-256, RSA-PSS e RSA PKCS#1 SHA-256
+        out[p] = 0x00; out[p + 1] = 0x0D; p += 2;
+        out[p] = 0x00; out[p + 1] = 0x08; p += 2; // ext_len = 8
+        out[p] = 0x00; out[p + 1] = 0x06; p += 2; // list_len = 6
+        out[p] = 0x04; out[p + 1] = 0x03; p += 2; // ecdsa_secp256r1_sha256 (0x0403)
+        out[p] = 0x08; out[p + 1] = 0x04; p += 2; // rsa_pss_rsae_sha256 (0x0804)
+        out[p] = 0x04; out[p + 1] = 0x01; p += 2; // rsa_pkcs1_sha256 (0x0401)
+
+        // 4. supported_versions (0x002B): TLS 1.3 (0x0304)
         out[p] = 0x00; out[p + 1] = 0x2B; p += 2;
-        out[p] = 0x00; out[p + 1] = 0x03; p += 2;
-        out[p] = 0x02; p += 1;
-        out[p] = 0x03; out[p + 1] = 0x04; p += 2;
+        out[p] = 0x00; out[p + 1] = 0x03; p += 2; // ext_len = 3
+        out[p] = 0x02; p += 1;                   // list_len = 2
+        out[p] = 0x03; out[p + 1] = 0x04; p += 2; // TLS 1.3
 
-        // 4. Key Share: Client X25519 Public Key
+        // 5. key_share (0x0033): Chave Pública Efêmera X25519 (32 bytes)
         out[p] = 0x00; out[p + 1] = 0x33; p += 2;
         let ks_len = 2 + 2 + 2 + 32;
         out[p] = (ks_len >> 8) as u8; out[p + 1] = ks_len as u8; p += 2;
@@ -900,7 +934,7 @@ impl Tls13ClientSession {
         out[record_len_pos] = (rec_data_len >> 8) as u8;
         out[record_len_pos + 1] = rec_data_len as u8;
 
-        // Update transcript hash with the Handshake message
+        // Atualiza transcript hash com o ClientHello
         self.transcript.update(&out[hs_start..p]);
 
         p
@@ -955,35 +989,176 @@ impl Tls13ClientSession {
         // Deriva segredo compartilhado X25519
         let shared_secret = x25519(&self.client_priv, &server_pub);
 
-        // Deriva Early Secret e Handshake Secret
+        // Deriva Early Secret e Handshake Secret (RFC 8446 Seção 7.1)
         let early_secret = hkdf_extract(&[0u8; 32], &[0u8; 32]);
         let empty_hash = Sha256::digest(&[]);
         let derived_secret = derive_secret(&early_secret, b"derived", &empty_hash);
-        let handshake_secret = hkdf_extract(&derived_secret, &shared_secret);
+        self.handshake_secret = hkdf_extract(&derived_secret, &shared_secret);
 
-        let transcript_hash = self.transcript.finalize();
-        let client_hs_secret = derive_secret(&handshake_secret, b"c hs traffic", &transcript_hash);
-        let server_hs_secret = derive_secret(&handshake_secret, b"s hs traffic", &transcript_hash);
+        let transcript_hash = self.transcript.current_digest();
+        self.client_hs_traffic_secret = derive_secret(&self.handshake_secret, b"c hs traffic", &transcript_hash);
+        self.server_hs_traffic_secret = derive_secret(&self.handshake_secret, b"s hs traffic", &transcript_hash);
 
-        hkdf_expand_label(&client_hs_secret, b"key", &[], &mut self.client_hs_key);
-        hkdf_expand_label(&client_hs_secret, b"iv", &[], &mut self.client_hs_iv);
-        hkdf_expand_label(&server_hs_secret, b"key", &[], &mut self.server_hs_key);
-        hkdf_expand_label(&server_hs_secret, b"iv", &[], &mut self.server_hs_iv);
+        hkdf_expand_label(&self.client_hs_traffic_secret, b"key", &[], &mut self.client_hs_key);
+        hkdf_expand_label(&self.client_hs_traffic_secret, b"iv", &[], &mut self.client_hs_iv);
+        hkdf_expand_label(&self.server_hs_traffic_secret, b"key", &[], &mut self.server_hs_key);
+        hkdf_expand_label(&self.server_hs_traffic_secret, b"iv", &[], &mut self.server_hs_iv);
 
-        // Deriva Master Secret e Application Traffic Secrets
-        let derived_app = derive_secret(&handshake_secret, b"derived", &empty_hash);
-        let master_secret = hkdf_extract(&derived_app, &[0u8; 32]);
-
-        let client_app_secret = derive_secret(&master_secret, b"c ap traffic", &transcript_hash);
-        let server_app_secret = derive_secret(&master_secret, b"s ap traffic", &transcript_hash);
-
-        hkdf_expand_label(&client_app_secret, b"key", &[], &mut self.client_app_key);
-        hkdf_expand_label(&client_app_secret, b"iv", &[], &mut self.client_app_iv);
-        hkdf_expand_label(&server_app_secret, b"key", &[], &mut self.server_app_key);
-        hkdf_expand_label(&server_app_secret, b"iv", &[], &mut self.server_app_iv);
-
-        self.is_established = true;
+        self.server_hs_seq = 0;
+        self.client_hs_seq = 0;
+        self.has_server_hello = true;
         true
+    }
+
+    /// Processa registros cifrados de Handshake recebidos (EncryptedExtensions, Certificate, CertificateVerify, Finished)
+    /// Quando o Finished do servidor é autenticado, deriva as chaves de aplicação e constrói o Finished do cliente.
+    pub fn process_handshake_record(&mut self, record: &[u8], client_finished_out: &mut [u8]) -> Result<Option<usize>, &'static str> {
+        if record.len() < 5 + 16 + 1 {
+            return Err("Tamanho de registro insuficiente");
+        }
+        let ct_len = ((record[3] as usize) << 8) | (record[4] as usize);
+        if 5 + ct_len > record.len() {
+            return Err("Registro TLS truncado");
+        }
+
+        let mut nonce = self.server_hs_iv;
+        let seq_bytes = self.server_hs_seq.to_be_bytes();
+        for i in 0..8 { nonce[4 + i] ^= seq_bytes[i]; }
+        self.server_hs_seq += 1;
+
+        let pt_and_type_len = ct_len - 16;
+        let aad = &record[0..5];
+        let mut expected_tag = [0u8; 16];
+        expected_tag.copy_from_slice(&record[5 + pt_and_type_len..5 + ct_len]);
+
+        // Buffer estático para decifrar a carga útil do handshake sem alocação dinâmica
+        static mut HS_DECRYPT_BUF: [u8; 8192] = [0u8; 8192];
+        if pt_and_type_len > 8192 {
+            return Err("Mensagem de handshake excede limite de 8KB");
+        }
+        let pt_buf = unsafe { &mut HS_DECRYPT_BUF[..pt_and_type_len] };
+        pt_buf.copy_from_slice(&record[5..5 + pt_and_type_len]);
+
+        let ok = ChaCha20Poly1305::decrypt(
+            &self.server_hs_key,
+            &nonce,
+            aad,
+            pt_buf,
+            &expected_tag,
+        );
+        if !ok {
+            return Err("Falha de autenticacao Poly1305 no handshake");
+        }
+
+        let mut end = pt_and_type_len;
+        while end > 0 && pt_buf[end - 1] == 0 { end -= 1; }
+        if end == 0 { return Err("Payload do handshake vazio"); }
+        let inner_type = pt_buf[end - 1];
+        end -= 1;
+
+        if inner_type != CONTENT_HANDSHAKE {
+            return Err("Tipo interno nao eh Handshake");
+        }
+
+        // Itera sobre as mensagens de handshake no interior do bloco
+        let mut pos = 0;
+        let mut generated_client_finished = None;
+
+        while pos + 4 <= end {
+            let msg_type = pt_buf[pos];
+            let msg_len = ((pt_buf[pos + 1] as usize) << 16) | ((pt_buf[pos + 2] as usize) << 8) | (pt_buf[pos + 3] as usize);
+            let full_msg_len = 4 + msg_len;
+            if pos + full_msg_len > end {
+                return Err("Mensagem handshake fragmentada ou truncada");
+            }
+            let full_msg = &pt_buf[pos..pos + full_msg_len];
+            let body = &pt_buf[pos + 4..pos + full_msg_len];
+
+            if msg_type == 20 { // Finished
+                if body.len() < 32 {
+                    return Err("Finished do servidor invalido");
+                }
+                let mut server_finished_key = [0u8; 32];
+                hkdf_expand_label(&self.server_hs_traffic_secret, b"finished", &[], &mut server_finished_key);
+                let transcript_before_sf = self.transcript.current_digest();
+                let expected_server_verify_data = hmac_sha256(&server_finished_key, &transcript_before_sf);
+
+                let mut diff = 0u8;
+                for i in 0..32 {
+                    diff |= body[i] ^ expected_server_verify_data[i];
+                }
+                if diff != 0 {
+                    return Err("Server Finished verify_data HMAC rejeitado!");
+                }
+
+                // Finished autenticado! Atualiza transcript com a mensagem do servidor
+                self.transcript.update(full_msg);
+
+                // Transição para Master Secret e chaves de tráfego de aplicação (RFC 8446 Seção 7.1)
+                let empty_hash = Sha256::digest(&[]);
+                let derived_app = derive_secret(&self.handshake_secret, b"derived", &empty_hash);
+                self.master_secret = hkdf_extract(&derived_app, &[0u8; 32]);
+
+                let transcript_after_sf = self.transcript.current_digest();
+                self.client_app_traffic_secret = derive_secret(&self.master_secret, b"c ap traffic", &transcript_after_sf);
+                self.server_app_traffic_secret = derive_secret(&self.master_secret, b"s ap traffic", &transcript_after_sf);
+
+                hkdf_expand_label(&self.client_app_traffic_secret, b"key", &[], &mut self.client_app_key);
+                hkdf_expand_label(&self.client_app_traffic_secret, b"iv", &[], &mut self.client_app_iv);
+                hkdf_expand_label(&self.server_app_traffic_secret, b"key", &[], &mut self.server_app_key);
+                hkdf_expand_label(&self.server_app_traffic_secret, b"iv", &[], &mut self.server_app_iv);
+
+                self.client_seq = 0;
+                self.server_seq = 0;
+
+                // Constrói Finished do cliente
+                let mut client_finished_key = [0u8; 32];
+                hkdf_expand_label(&self.client_hs_traffic_secret, b"finished", &[], &mut client_finished_key);
+                let client_verify_data = hmac_sha256(&client_finished_key, &transcript_after_sf);
+
+                let mut client_fin_msg = [0u8; 36];
+                client_fin_msg[0] = 20; // HandshakeType::Finished
+                client_fin_msg[1] = 0; client_fin_msg[2] = 0; client_fin_msg[3] = 32;
+                client_fin_msg[4..36].copy_from_slice(&client_verify_data);
+
+                // Atualiza transcript com o Finished do cliente
+                self.transcript.update(&client_fin_msg);
+
+                // Criptografa o Finished do cliente com as chaves de handshake
+                let mut fin_nonce = self.client_hs_iv;
+                let seq_bytes = self.client_hs_seq.to_be_bytes();
+                for i in 0..8 { fin_nonce[4 + i] ^= seq_bytes[i]; }
+                self.client_hs_seq += 1;
+
+                let out_ct_len = 36 + 1 + 16;
+                client_finished_out[0] = CONTENT_APPLICATION_DATA;
+                client_finished_out[1] = 0x03; client_finished_out[2] = 0x03;
+                client_finished_out[3] = (out_ct_len >> 8) as u8;
+                client_finished_out[4] = out_ct_len as u8;
+
+                client_finished_out[5..41].copy_from_slice(&client_fin_msg);
+                client_finished_out[41] = CONTENT_HANDSHAKE;
+
+                let fin_aad = [client_finished_out[0], client_finished_out[1], client_finished_out[2], client_finished_out[3], client_finished_out[4]];
+                let tag = ChaCha20Poly1305::encrypt(
+                    &self.client_hs_key,
+                    &fin_nonce,
+                    &fin_aad,
+                    &mut client_finished_out[5..42],
+                );
+                client_finished_out[42..58].copy_from_slice(&tag);
+
+                self.is_established = true;
+                generated_client_finished = Some(58);
+            } else {
+                // EncryptedExtensions (8), Certificate (11), CertificateVerify (15):
+                // Atualiza transcript
+                self.transcript.update(full_msg);
+            }
+            pos += full_msg_len;
+        }
+
+        Ok(generated_client_finished)
     }
 
     /// Criptografa dados em um registro TLSCiphertext
@@ -1051,6 +1226,9 @@ impl Tls13ClientSession {
 
         if inner_type == CONTENT_APPLICATION_DATA {
             Some(end)
+        } else if inner_type == CONTENT_HANDSHAKE {
+            // NewSessionTicket post-handshake emitido pelo Cloudflare/Google: ignora e retorna 0 bytes
+            Some(0)
         } else {
             None
         }

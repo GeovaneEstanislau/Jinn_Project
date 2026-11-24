@@ -3833,8 +3833,8 @@ impl BrowserSession {
         // 1. Fundo Geral
         fill_rect(buf, w, h, 0, 0, w, h, COLOR_BG);
 
-        // 2. Barra Superior de Navegação (Chrome) - Estilo Glassmorphism / Dark Modern
-        fill_rect(buf, w, h, 0, 0, w, 26, 0x0011_1827);
+        // 2. Barra Superior de Navegação (Chrome) - Estilo Glassmorphism / Frosted Glass translúcido (alpha ~140)
+        fill_rect_alpha(buf, w, h, 0, 0, w, 26, 0x000F_172A, 140);
         draw_rect_border(buf, w, h, 0, 0, w, 26, 0x001E_293B);
 
         // Botões arredondados em cápsula: [<] [>] [R]
@@ -4028,6 +4028,30 @@ fn fill_rect(buf: &mut [u32], stride_w: usize, max_h: usize, rx: usize, ry: usiz
             let idx = row + x;
             if idx < buf.len() {
                 buf[idx] = color;
+            }
+        }
+    }
+}
+
+#[inline(always)]
+fn alpha_blend(bg: u32, fg: u32, alpha: u8) -> u32 {
+    let a = alpha as u32;
+    let inv_a = 255 - a;
+    let r = ((((fg >> 16) & 0xFF) * a + ((bg >> 16) & 0xFF) * inv_a) >> 8) & 0xFF;
+    let g = ((((fg >> 8) & 0xFF) * a + ((bg >> 8) & 0xFF) * inv_a) >> 8) & 0xFF;
+    let b = (((fg & 0xFF) * a + (bg & 0xFF) * inv_a) >> 8) & 0xFF;
+    (r << 16) | (g << 8) | b
+}
+
+fn fill_rect_alpha(buf: &mut [u32], stride_w: usize, max_h: usize, rx: usize, ry: usize, rw: usize, rh: usize, color: u32, alpha: u8) {
+    let x_end = (rx + rw).min(stride_w);
+    let y_end = (ry + rh).min(max_h);
+    for y in ry..y_end {
+        let row = y * stride_w;
+        for x in rx..x_end {
+            let idx = row + x;
+            if idx < buf.len() {
+                buf[idx] = alpha_blend(buf[idx], color, alpha);
             }
         }
     }

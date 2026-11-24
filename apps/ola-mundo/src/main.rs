@@ -1895,54 +1895,109 @@ unsafe fn fetch_http_document(
                 return Err(FetchError::SendFailed);
             }
 
-            print_str(b"[DIAG-FLOW] TLS: Aguardando resposta ServerHello do servidor...\n");
+            print_str(b"[DIAG-FLOW] TLS: Aguardando fluxo de Handshake do servidor...\n");
             let rx_ptr = core::ptr::addr_of_mut!(HTTP_RX_BUF) as *mut u8;
-            let mut sh_len = 0usize;
-            let mut sh_spins = 0usize;
-            while sh_len < 5 {
-                let n = sys_recv(sockfd, rx_ptr.add(sh_len), 2048 - sh_len);
-                if n > 0 {
-                    sh_len += n as usize;
-                } else if n == -11 {
-                    sh_spins += 1;
-                    if sh_spins > 600 {
-                        print_str(b"[DIAG-FLOW] TLS: Timeout aguardando ServerHello (3.0s)\n");
+            let mut rx_len = 0usize;
+            let mut hs_spins = 0usize;
+            let mut client_fin_buf = [0u8; 128];
+
+            while !sess.is_established {
+                // Aguarda pelo menos 5 bytes para o cabeçalho do próximo registro TLS
+                while rx_len < 5 {
+                    let space = HTTP_BUF_SIZE.saturating_sub(rx_len);
+                    let n = sys_recv(sockfd, rx_ptr.add(rx_len), space.min(4096));
+                    if n > 0 {
+                        rx_len += n as usize;
+                        hs_spins = 0;
+                    } else if n == -11 {
+                        hs_spins += 1;
+                        if hs_spins > 600 {
+                            print_str(b"[DIAG-FLOW] TLS: Timeout aguardando handshake (3.0s)\n");
+                            let _ = sys_close(sockfd);
+                            return Err(FetchError::RecvTimeout);
+                        }
+                        let _ = sys_sleep(5);
+                    } else {
                         let _ = sys_close(sockfd);
-                        return Err(FetchError::RecvTimeout);
+                        return Err(FetchError::TlsHandshakeFailed);
                     }
-                    let _ = sys_sleep(5);
-                } else {
-                    let _ = sys_close(sockfd);
-                    return Err(FetchError::TlsHandshakeFailed);
                 }
-            }
-            let record_len = (((*rx_ptr.add(3)) as usize) << 8) | ((*rx_ptr.add(4)) as usize);
-            let target_sh_len = (5 + record_len).min(4096);
-            while sh_len < target_sh_len {
-                let n = sys_recv(sockfd, rx_ptr.add(sh_len), target_sh_len - sh_len);
-                if n > 0 {
-                    sh_len += n as usize;
-                } else if n == -11 {
-                    let _ = sys_sleep(5);
-                } else {
-                    break;
+
+                let rec_type = *rx_ptr;
+                let rec_len = (((*rx_ptr.add(3)) as usize) << 8) | ((*rx_ptr.add(4)) as usize);
+                let total_rec_len = 5 + rec_len;
+
+                // Garante recebimento do registro completo
+                while rx_len < total_rec_len {
+                    let need = total_rec_len - rx_len;
+                    let n = sys_recv(sockfd, rx_ptr.add(rx_len), need);
+                    if n > 0 {
+                        rx_len += n as usize;
+                        hs_spins = 0;
+                    } else if n == -11 {
+                        hs_spins += 1;
+                        if hs_spins > 600 {
+                            let _ = sys_close(sockfd);
+                            return Err(FetchError::RecvTimeout);
+                        }
+                        let _ = sys_sleep(5);
+                    } else {
+                        let _ = sys_close(sockfd);
+                        return Err(FetchError::TlsHandshakeFailed);
+                    }
                 }
+
+                let rec_slice = core::slice::from_raw_parts(rx_ptr as *const u8, total_rec_len);
+
+                if rec_type == tls::CONTENT_HANDSHAKE && !sess.has_server_hello {
+                    // Processa ServerHello inicial
+                    if !sess.process_server_hello(rec_slice) {
+                        print_str(b"[DIAG-FLOW] TLS: Handshake TLS 1.3 ServerHello rejeitado!\n");
+                        let _ = sys_close(sockfd);
+                        return Err(FetchError::TlsHandshakeFailed);
+                    }
+                    print_str(b"[DIAG-FLOW] TLS: ServerHello aceito! Segredos de handshake derivados.\n");
+                } else if rec_type == 0x14 {
+                    // ChangeCipherSpec (Middlebox compat) - ignora silenciosamente
+                    print_str(b"[DIAG-FLOW] TLS: ChangeCipherSpec recebido (Middlebox compat).\n");
+                } else if rec_type == tls::CONTENT_APPLICATION_DATA {
+                    // Registros cifrados de Handshake (EncryptedExtensions, Certificate, CertificateVerify, Finished)
+                    match sess.process_handshake_record(rec_slice, &mut client_fin_buf) {
+                        Ok(Some(fin_len)) => {
+                            print_str(b"[DIAG-FLOW] TLS: Finished do servidor autenticado! Enviando Client Finished...\n");
+                            // Envia registro ChangeCipherSpec (Middlebox compat)
+                            let ccs = [0x14u8, 0x03, 0x03, 0x00, 0x01, 0x01];
+                            let _ = sys_send(sockfd, ccs.as_ptr(), ccs.len());
+                            // Envia Client Finished cifrado
+                            let sent_fin = sys_send(sockfd, client_fin_buf.as_ptr(), fin_len);
+                            if sent_fin < 0 {
+                                let _ = sys_close(sockfd);
+                                return Err(FetchError::SendFailed);
+                            }
+                            print_str(b"[DIAG-FLOW] TLS: Handshake TLS 1.3 concluido com sucesso! Canal seguro ativo.\n");
+                        }
+                        Ok(None) => {
+                            // Mais mensagens de handshake processadas (EncryptedExtensions/Cert), continuando
+                        }
+                        Err(e) => {
+                            print_str(b"[DIAG-FLOW] TLS: Falha no handshake cifrado: ");
+                            print_str(e.as_bytes());
+                            print_str(b"\n");
+                            let _ = sys_close(sockfd);
+                            return Err(FetchError::TlsHandshakeFailed);
+                        }
+                    }
+                }
+
+                // Desloca os bytes restantes no buffer
+                let remaining = rx_len.saturating_sub(total_rec_len);
+                if remaining > 0 {
+                    core::ptr::copy(rx_ptr.add(total_rec_len), rx_ptr, remaining);
+                }
+                rx_len = remaining;
             }
 
-            let sh_slice = core::slice::from_raw_parts(rx_ptr as *const u8, target_sh_len);
-            if !sess.process_server_hello(sh_slice) {
-                print_str(b"[DIAG-FLOW] TLS: Handshake TLS 1.3 ServerHello rejeitado ou falha de negociacao!\n");
-                let _ = sys_close(sockfd);
-                return Err(FetchError::TlsHandshakeFailed);
-            }
-            print_str(b"[DIAG-FLOW] TLS: Handshake TLS 1.3 negociado com exito! Canal cifrado ativo.\n");
-
-            let leftover = sh_len.saturating_sub(target_sh_len);
-            if leftover > 0 {
-                core::ptr::copy(rx_ptr.add(target_sh_len), rx_ptr, leftover);
-            }
-            rx_total = leftover;
-
+            rx_total = rx_len;
             Some(sess)
         } else {
             None

@@ -27,7 +27,7 @@
       <title>Glassmorphism Sem GPU no Aladdin e Hardening de Rede e1000 no VirtualBox</title>
       <link>https://jinn-os.dev.br/artigos/glassmorphism-simd-e1000-virtualbox.html</link>
       <guid isPermaLink="false">jinn-os-artigo-glassmorphism-simd-e1000-virtualbox</guid>
-      <pubDate>Mon, 23 Nov 2026 12:00:00 -0300</pubDate>
+      <pubDate>Tue, 24 Nov 2026 12:19:56 -0300</pubDate>
       <description>Engenharia de sistemas operacionais: como implementamos Glassmorphism e desfoque real em Ring 3 no_std sem aceleração por GPU, e eliminamos o timeout de DNS no VirtualBox através do anel MMIO do Intel e1000.</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
@@ -51,7 +51,7 @@
       <title>Post-Mortem: EOI Incondicional no PIC 8259A e Zero-GPU SIMD</title>
       <link>https://jinn-os.dev.br/artigos/post-mortem-pic-eoi-zero-gpu.html</link>
       <guid isPermaLink="false">jinn-os-artigo-post-mortem-pic-eoi-zero-gpu</guid>
-      <pubDate>Tue, 24 Nov 2026 11:31:54 -0300</pubDate>
+      <pubDate>Tue, 24 Nov 2026 12:19:56 -0300</pubDate>
       <description>Como resolvemos travamentos de interrupção e atingimos 0.00% de CPU em repouso no microkernel Rust Jinn OS através de EOI incondicional no PIC 8259A e kernels AVX2 no JHCS.</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
@@ -61,6 +61,14 @@
       <guid isPermaLink="false">jinn-os-artigo-resiliencia-vfs-multiparticao-fat32-ext2</guid>
       <pubDate>Tue, 24 Nov 2026 11:31:54 -0300</pubDate>
       <description>Como o microkernel Jinn OS implementa um sistema de arquivos virtual (VFS) com suporte simultâneo a partições FAT32 e Ext2 com cache de blocos LRU.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
+      <title>feat(net,browser,web): harden Intel e1000 driver &amp; VirtualBox ARP fallback, modernize Jinn Browser UI, add technical article and publish RSS/sitemap feeds</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/6508b00473d17b28f2ef2b49277f5b047004dc62</link>
+      <guid isPermaLink="false">6508b00473d17b28f2ef2b49277f5b047004dc62</guid>
+      <pubDate>Tue, 24 Nov 2026 12:19:56 -0300</pubDate>
+      <description>feat(net,browser,web): harden Intel e1000 driver &amp; VirtualBox ARP fallback, modernize Jinn Browser UI, add technical article and publish RSS/sitemap feeds</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
@@ -132,14 +140,6 @@
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/0c7b48d82f86380244b33131efecd1207ac017ee</link>
       <guid isPermaLink="false">0c7b48d82f86380244b33131efecd1207ac017ee</guid>
       <pubDate>Mon, 23 Nov 2026 00:33:35 -0300</pubDate>
-      <description>fix(net): resolucao dinamica ARP de gateway e hardening DNS cascateado para e1000 e virtio [announce]</description>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>feat(tools): add publish_release.py turnkey release and broadcast tool</title>
-      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/885f06894904fa48c22b207fe9090ff5c8985e19</link>
-      <guid isPermaLink="false">885f06894904fa48c22b207fe9090ff5c8985e19</guid>
-      <pubDate>Mon, 23 Nov 2026 00:09:58 -0300</pubDate>
       <description>---END---</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
