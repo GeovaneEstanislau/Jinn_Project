@@ -153,17 +153,11 @@ impl ArpTable {
         let gw_ip = if gw != [0, 0, 0, 0] { gw } else { [10, 0, 2, 2] };
         let dns_ip = if dns != [0, 0, 0, 0] { dns } else { [10, 0, 2, 3] };
 
-        let is_vbox = is_hypervisor_virtualbox();
-        if is_vbox {
-            // No VirtualBox NAT, insere como confirmado (tick = 1) para evitar bloqueio por ARP estático
-            self.insert(gw_ip, DEFAULT_GATEWAY_MAC_VBOX, 1);
-            self.insert(dns_ip, DEFAULT_DNS_MAC_VBOX, 1);
-            log_gateway_mac(gw_ip, DEFAULT_GATEWAY_MAC_VBOX);
-        } else {
-            // No QEMU, updated_tick = 0 indica entrada não confirmada (pendente de ARP dinâmico)
-            self.insert(gw_ip, DEFAULT_GATEWAY_MAC_QEMU, 0);
-            self.insert(dns_ip, DEFAULT_DNS_MAC_QEMU, 0);
-        }
+        // Insere entradas padrão com updated_tick = 0 (não confirmadas, permitindo resolução ARP real em runtime)
+        let gw_mac = default_gateway_mac();
+        let dns_mac = default_dns_mac();
+        self.insert(gw_ip, gw_mac, 0);
+        self.insert(dns_ip, dns_mac, 0);
     }
 }
 

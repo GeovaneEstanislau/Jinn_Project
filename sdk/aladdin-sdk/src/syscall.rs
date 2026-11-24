@@ -38,6 +38,32 @@ pub const SYS_NET_RESOLVE:                   u64 = 83;
 pub const SYS_NET_HTTP_GET:                  u64 = 84;
 pub const SYS_NET_SET_DNS:                   u64 = 86;
 pub const SYS_NET_GET_DNS:                   u64 = 87;
+pub const SYS_GET_SYSTEM_STATS:              u64 = 88;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemStatsUser {
+    pub uptime_secs: u64,
+    pub task_count: u64,
+    pub sched_ticks: u64,
+    pub used_ram_mb: u64,
+    pub total_ram_mb: u64,
+    pub current_tick: u64,
+    pub net_ip: [u8; 4],
+    pub net_adapter: [u8; 32],
+    pub net_state_desc: [u8; 32],
+    pub jinnwall_active_conns: u64,
+    pub jinnwall_drops: u64,
+    pub jinnwall_inspected: u64,
+    pub jinnwall_accepted: u64,
+    pub jinnwall_profile: u32,
+    pub physical_frames_used: u64,
+    pub physical_frames_total: u64,
+    pub dynamic_pages_allocated: u64,
+    pub dynamic_pages_freed: u64,
+    pub vfs_open_fds: u64,
+    pub vfs_mounted_volumes: u64,
+}
 
 /// Syscall sem argumentos
 #[inline(always)]

@@ -110,8 +110,8 @@ pub enum TaskDescriptor {
 /// Tamanho da pilha de kernel de cada tarefa (32 KiB — ring 0).
 pub const KSTACK_SIZE: usize = 32768;
 
-/// Tamanho da pilha de usuário de cada tarefa (256 KiB — ring 3).
-pub const USTACK_SIZE: usize = 262144;
+/// Tamanho da pilha de usuário de cada tarefa (512 KiB — ring 3).
+pub const USTACK_SIZE: usize = 524288;
 
 /// Endereço virtual base das pilhas de usuário.
 /// Cada tarefa recebe: USER_STACK_BASE - (id * USTACK_SIZE).

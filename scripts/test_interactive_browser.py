@@ -150,6 +150,22 @@ def main():
         qemu_send("sendkey ret")
         time.sleep(2.5)
 
+        # 3b. Test External Navigation: http://68k.news
+        print("[TEST] Testing External Navigation to 'http://68k.news'...")
+        qemu_send("sendkey slash")
+        time.sleep(0.5)
+        for ch in "http://68k.news":
+            if ch == ':':
+                qemu_send("sendkey shift-semicolon")
+            elif ch == '/':
+                qemu_send("sendkey slash")
+            elif ch == '.':
+                qemu_send("sendkey dot")
+            else:
+                qemu_send(f"sendkey {ch}")
+        qemu_send("sendkey ret")
+        time.sleep(4.0)
+
         # 4. Test History Navigation: Back, Forward, Reload
         print("[TEST] Testing History: Back ('b')...")
         qemu_send("sendkey b")

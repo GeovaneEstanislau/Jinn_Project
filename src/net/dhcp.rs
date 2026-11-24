@@ -67,6 +67,52 @@ pub fn build_dhcp_discover(buffer: &mut [u8], mac: [u8; 6]) -> usize {
     300 // Tamanho padrão de datagrama DHCP
 }
 
+pub fn build_dhcp_request(buffer: &mut [u8], mac: [u8; 6], req_ip: [u8; 4], server_ip: [u8; 4]) -> usize {
+    for b in buffer.iter_mut() { *b = 0; }
+
+    buffer[0] = 1; // Boot Request
+    buffer[1] = 1; // Ethernet
+    buffer[2] = 6; // MAC Len
+    buffer[3] = 0; // Hops
+
+    // XID
+    buffer[4..8].copy_from_slice(&[0x12, 0x34, 0x56, 0x78]);
+    // Flags (Broadcast 0x8000)
+    buffer[10..12].copy_from_slice(&[0x80, 0x00]);
+    // Client MAC
+    buffer[28..34].copy_from_slice(&mac);
+
+    // Magic Cookie em offset 236
+    buffer[236..240].copy_from_slice(&MAGIC_COOKIE);
+
+    // Opção 53: DHCP Request (len 1, val 3)
+    buffer[240] = 53;
+    buffer[241] = 1;
+    buffer[242] = 3;
+
+    // Opção 50: Requested IP Address (len 4)
+    buffer[243] = 50;
+    buffer[244] = 4;
+    buffer[245..249].copy_from_slice(&req_ip);
+
+    // Opção 54: Server Identifier (len 4)
+    buffer[249] = 54;
+    buffer[250] = 4;
+    buffer[251..255].copy_from_slice(&server_ip);
+
+    // Opção 55: Parameter Request List (1=Subnet, 3=Router, 6=DNS)
+    buffer[255] = 55;
+    buffer[256] = 3;
+    buffer[257] = 1;
+    buffer[258] = 3;
+    buffer[259] = 6;
+
+    // Opção 255: End
+    buffer[260] = 255;
+
+    300
+}
+
 pub fn handle_dhcp_reply(payload: &[u8]) {
     if payload.len() < 240 {
         return;
@@ -79,6 +125,7 @@ pub fn handle_dhcp_reply(payload: &[u8]) {
     let mut subnet_mask = [0u8; 4];
     let mut router_ip = [0u8; 4];
     let mut dns_ip = [0u8; 4];
+    let mut server_id = [0u8; 4];
 
     let mut i = 240;
     while i < payload.len() {
@@ -97,11 +144,44 @@ pub fn handle_dhcp_reply(payload: &[u8]) {
             router_ip = [opt_data[0], opt_data[1], opt_data[2], opt_data[3]];
         } else if opt == 6 && opt_data.len() >= 4 {
             dns_ip = [opt_data[0], opt_data[1], opt_data[2], opt_data[3]];
+        } else if opt == 54 && opt_data.len() >= 4 {
+            server_id = [opt_data[0], opt_data[1], opt_data[2], opt_data[3]];
         }
         i += 2 + opt_len;
     }
 
     unsafe {
+        if msg_type == 2 && yiaddr != [0, 0, 0, 0] {
+            // DHCP Offer recebido: responde com DHCP Request
+            if let Some(dev) = crate::drivers::net::get_device() {
+                let mac = dev.mac_address();
+                let mut req_buf = [0u8; 1536];
+                let dhcp_len = build_dhcp_request(&mut req_buf[42..], mac, yiaddr, if server_id != [0, 0, 0, 0] { server_id } else { [10, 0, 2, 2] });
+
+                crate::net::ethernet::EthernetFrame::write_header(
+                    &mut req_buf[0..14],
+                    crate::net::ethernet::BROADCAST_MAC,
+                    mac,
+                    crate::net::ethernet::ETHERTYPE_IPV4,
+                );
+                crate::net::ipv4::Ipv4Packet::write_header(
+                    &mut req_buf[14..34],
+                    [0, 0, 0, 0],
+                    [255, 255, 255, 255],
+                    crate::net::ipv4::PROTO_UDP,
+                    8 + dhcp_len,
+                );
+                crate::net::udp::UdpPacket::write_header(
+                    &mut req_buf[34..42],
+                    DHCP_CLIENT_PORT,
+                    DHCP_SERVER_PORT,
+                    dhcp_len,
+                );
+                let _ = dev.transmit(&req_buf[..(14 + 20 + 8 + dhcp_len)]);
+            }
+            DHCP_CLIENT.state = DhcpState::Requesting(yiaddr);
+        }
+
         // Se for Offer (2) ou Ack (5)
         if (msg_type == 2 || msg_type == 5) && yiaddr != [0, 0, 0, 0] {
             DHCP_CLIENT.ip = yiaddr;
@@ -118,7 +198,9 @@ pub fn handle_dhcp_reply(payload: &[u8]) {
                 crate::net::dns::DNS_CONFIG.fallback = dns_ip;
                 crate::net::arp::send_arp_request(dns_ip);
             }
-            DHCP_CLIENT.state = DhcpState::Bound(yiaddr);
+            if msg_type == 5 {
+                DHCP_CLIENT.state = DhcpState::Bound(yiaddr);
+            }
         }
     }
 }

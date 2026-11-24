@@ -6,6 +6,7 @@ pub use aladdin::contracts::system::{CapabilityMode, JinnWallProfile};
 pub use aladdin::contracts::input::{
     ClientWindowEvent, EVENT_KEY_DOWN, EVENT_KEY_UP, EVENT_MOUSE_DOWN, EVENT_MOUSE_MOVE,
     EVENT_MOUSE_UP, EVENT_NONE, EVENT_SCROLL, EVENT_WINDOW_CLOSE, EVENT_WINDOW_RESIZE,
+    EVENT_WINDOW_EXPOSE,
 };
 use aladdin::contracts::framebuffer::{DirtyRect, FramebufferDevice};
 use aladdin::contracts::system::{SystemHost, SystemStats};

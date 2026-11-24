@@ -44,11 +44,54 @@ pub enum DomNodeType {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DisplayMode {
+    Block,
+    Inline,
+    InlineBlock,
+    Flex,
+    None,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FlexDirection {
+    Row,
+    Column,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum JustifyContent {
+    FlexStart,
+    Center,
+    FlexEnd,
+    SpaceBetween,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AlignItems {
+    FlexStart,
+    Center,
+    FlexEnd,
+    Stretch,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TextAlign {
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ComputedStyle {
     pub color: u32,
     pub bg_color: Option<u32>,
     pub border_color: Option<u32>,
+    pub border_width: usize,
+    pub border_radius: usize,
     pub font_size: usize,
+    pub width: Option<usize>,
+    pub height: Option<usize>,
+    pub max_width: Option<usize>,
     pub margin_top: usize,
     pub margin_bottom: usize,
     pub margin_left: usize,
@@ -59,6 +102,11 @@ pub struct ComputedStyle {
     pub padding_right: usize,
     pub is_bold: bool,
     pub display_block: bool,
+    pub display: DisplayMode,
+    pub flex_direction: FlexDirection,
+    pub justify_content: JustifyContent,
+    pub align_items: AlignItems,
+    pub text_align: TextAlign,
 }
 
 impl ComputedStyle {
@@ -67,7 +115,12 @@ impl ComputedStyle {
             color: COLOR_TEXT,
             bg_color: None,
             border_color: None,
+            border_width: 1,
+            border_radius: 0,
             font_size: 12,
+            width: None,
+            height: None,
+            max_width: None,
             margin_top: 2,
             margin_bottom: 4,
             margin_left: 0,
@@ -78,6 +131,11 @@ impl ComputedStyle {
             padding_right: 0,
             is_bold: false,
             display_block: true,
+            display: DisplayMode::Block,
+            flex_direction: FlexDirection::Row,
+            justify_content: JustifyContent::FlexStart,
+            align_items: AlignItems::FlexStart,
+            text_align: TextAlign::Left,
         }
     }
 }
@@ -93,9 +151,9 @@ pub struct DomNode {
     pub tag_len: usize,
     pub id_attr: [u8; 32],
     pub id_len: usize,
-    pub class_attr: [u8; 32],
+    pub class_attr: [u8; 64],
     pub class_len: usize,
-    pub style_attr: [u8; 64],
+    pub style_attr: [u8; 128],
     pub style_len: usize,
     pub href_attr: [u8; 64],
     pub href_len: usize,
@@ -105,7 +163,7 @@ pub struct DomNode {
     pub height_attr: u16,
     pub alt_attr: [u8; 32],
     pub alt_len: usize,
-    pub onclick_attr: [u8; 128],
+    pub onclick_attr: [u8; 256],
     pub onclick_len: usize,
     pub text: [u8; 256],
     pub text_len: usize,
@@ -124,9 +182,9 @@ impl DomNode {
             tag_len: 0,
             id_attr: [0; 32],
             id_len: 0,
-            class_attr: [0; 32],
+            class_attr: [0; 64],
             class_len: 0,
-            style_attr: [0; 64],
+            style_attr: [0; 128],
             style_len: 0,
             href_attr: [0; 64],
             href_len: 0,
@@ -136,7 +194,7 @@ impl DomNode {
             height_attr: 0,
             alt_attr: [0; 32],
             alt_len: 0,
-            onclick_attr: [0; 128],
+            onclick_attr: [0; 256],
             onclick_len: 0,
             text: [0; 256],
             text_len: 0,
@@ -180,13 +238,105 @@ impl DomArena {
     }
 
     pub fn find_by_id(&self, id_bytes: &[u8]) -> Option<usize> {
+        let clean = id_bytes.trim_ascii();
+        let target = if !clean.is_empty() && clean[0] == b'#' { &clean[1..] } else { clean };
         for i in 0..self.node_count {
             let node = &self.nodes[i];
-            if node.id_len == id_bytes.len() && &node.id_attr[..node.id_len] == id_bytes {
+            if node.id_len == target.len() && &node.id_attr[..node.id_len] == target {
                 return Some(i);
             }
         }
         None
+    }
+
+    pub fn find_by_class(&self, class_bytes: &[u8]) -> Option<usize> {
+        let clean = class_bytes.trim_ascii();
+        let target = if !clean.is_empty() && clean[0] == b'.' { &clean[1..] } else { clean };
+        for i in 0..self.node_count {
+            if self.has_class(i, target) {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    pub fn find_by_tag(&self, tag_bytes: &[u8]) -> Option<usize> {
+        let clean = tag_bytes.trim_ascii();
+        for i in 0..self.node_count {
+            let node = &self.nodes[i];
+            if node.tag_len == clean.len() && node.tag[..node.tag_len].eq_ignore_ascii_case(clean) {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    pub fn find_by_selector(&self, sel: &[u8]) -> Option<usize> {
+        let s = sel.trim_ascii();
+        if s.is_empty() { return None; }
+        if s[0] == b'#' {
+            self.find_by_id(&s[1..])
+        } else if s[0] == b'.' {
+            self.find_by_class(&s[1..])
+        } else {
+            self.find_by_tag(s)
+        }
+    }
+
+    pub fn has_class(&self, idx: usize, class_name: &[u8]) -> bool {
+        if idx >= self.node_count { return false; }
+        let c_attr = &self.nodes[idx].class_attr[..self.nodes[idx].class_len];
+        for word in c_attr.split(|&b| b == b' ' || b == b'\t' || b == b'\r' || b == b'\n') {
+            if !word.is_empty() && word.eq_ignore_ascii_case(class_name) {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn add_class(&mut self, idx: usize, class_name: &[u8]) {
+        if idx >= self.node_count || self.has_class(idx, class_name) { return; }
+        let node = &mut self.nodes[idx];
+        if node.class_len + 1 + class_name.len() <= node.class_attr.len() {
+            if node.class_len > 0 {
+                node.class_attr[node.class_len] = b' ';
+                node.class_len += 1;
+            }
+            node.class_attr[node.class_len..node.class_len + class_name.len()].copy_from_slice(class_name);
+            node.class_len += class_name.len();
+        }
+    }
+
+    pub fn remove_class(&mut self, idx: usize, class_name: &[u8]) {
+        if idx >= self.node_count { return; }
+        let node = &mut self.nodes[idx];
+        let mut new_buf = [0u8; 64];
+        let mut new_len = 0;
+        let c_attr = &node.class_attr[..node.class_len];
+        for word in c_attr.split(|&b| b == b' ' || b == b'\t' || b == b'\r' || b == b'\n') {
+            if word.is_empty() || word.eq_ignore_ascii_case(class_name) {
+                continue;
+            }
+            if new_len > 0 && new_len < 63 {
+                new_buf[new_len] = b' ';
+                new_len += 1;
+            }
+            let cpy = word.len().min(64 - new_len);
+            new_buf[new_len..new_len + cpy].copy_from_slice(&word[..cpy]);
+            new_len += cpy;
+        }
+        node.class_attr = new_buf;
+        node.class_len = new_len;
+    }
+
+    pub fn toggle_class(&mut self, idx: usize, class_name: &[u8]) -> bool {
+        if self.has_class(idx, class_name) {
+            self.remove_class(idx, class_name);
+            false
+        } else {
+            self.add_class(idx, class_name);
+            true
+        }
     }
 
     pub fn set_text_content(&mut self, idx: usize, new_text: &[u8]) {
@@ -209,17 +359,25 @@ impl DomArena {
             self.nodes[idx].computed_style.bg_color = Some(col);
         }
     }
+
+    pub fn set_style_display(&mut self, idx: usize, mode: DisplayMode) {
+        if idx < self.node_count {
+            self.nodes[idx].computed_style.display = mode;
+            self.nodes[idx].computed_style.display_block = mode == DisplayMode::Block;
+        }
+    }
 }
 
 // ── Mini-CSS e Resolução de Estilos ──────────────────────────────────────────
 
-pub const MAX_CSS_RULES: usize = 32;
+pub const MAX_CSS_RULES: usize = 128;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SelectorKind {
     Tag,
     Class,
     Id,
+    Descendant,
 }
 
 #[allow(dead_code)]
@@ -228,10 +386,18 @@ pub struct CssRule {
     pub kind: SelectorKind,
     pub selector: [u8; 32],
     pub selector_len: usize,
+    pub parent_selector: [u8; 32],
+    pub parent_selector_len: usize,
+    pub specificity: u16,
     pub color: Option<u32>,
     pub bg_color: Option<u32>,
     pub border_color: Option<u32>,
+    pub border_width: Option<usize>,
+    pub border_radius: Option<usize>,
     pub font_size: Option<usize>,
+    pub width: Option<usize>,
+    pub height: Option<usize>,
+    pub max_width: Option<usize>,
     pub margin_top: Option<usize>,
     pub margin_bottom: Option<usize>,
     pub margin_left: Option<usize>,
@@ -241,7 +407,11 @@ pub struct CssRule {
     pub padding_left: Option<usize>,
     pub padding_right: Option<usize>,
     pub is_bold: Option<bool>,
-    pub display_block: Option<bool>,
+    pub display: Option<DisplayMode>,
+    pub flex_direction: Option<FlexDirection>,
+    pub justify_content: Option<JustifyContent>,
+    pub align_items: Option<AlignItems>,
+    pub text_align: Option<TextAlign>,
 }
 
 impl CssRule {
@@ -250,10 +420,18 @@ impl CssRule {
             kind: SelectorKind::Tag,
             selector: [0; 32],
             selector_len: 0,
+            parent_selector: [0; 32],
+            parent_selector_len: 0,
+            specificity: 1,
             color: None,
             bg_color: None,
             border_color: None,
+            border_width: None,
+            border_radius: None,
             font_size: None,
+            width: None,
+            height: None,
+            max_width: None,
             margin_top: None,
             margin_bottom: None,
             margin_left: None,
@@ -263,7 +441,11 @@ impl CssRule {
             padding_left: None,
             padding_right: None,
             is_bold: None,
-            display_block: None,
+            display: None,
+            flex_direction: None,
+            justify_content: None,
+            align_items: None,
+            text_align: None,
         }
     }
 }
@@ -296,6 +478,16 @@ impl MiniCss {
             }
             if i >= len { break; }
 
+            // Comentário CSS /* ... */
+            if i + 1 < len && css[i] == b'/' && css[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < len && !(css[i] == b'*' && css[i + 1] == b'/') {
+                    i += 1;
+                }
+                if i + 1 < len { i += 2; }
+                continue;
+            }
+
             let sel_start = i;
             while i < len && css[i] != b'{' && css[i] != b'}' {
                 i += 1;
@@ -303,22 +495,6 @@ impl MiniCss {
             if i >= len || css[i] != b'{' { break; }
             let sel_raw = css[sel_start..i].trim_ascii();
             i += 1;
-
-            if sel_raw.is_empty() { continue; }
-
-            let (kind, sel_name) = if sel_raw[0] == b'.' {
-                (SelectorKind::Class, &sel_raw[1..])
-            } else if sel_raw[0] == b'#' {
-                (SelectorKind::Id, &sel_raw[1..])
-            } else {
-                (SelectorKind::Tag, sel_raw)
-            };
-
-            let mut rule = CssRule::empty();
-            rule.kind = kind;
-            let copy_sel = sel_name.len().min(31);
-            rule.selector[..copy_sel].copy_from_slice(&sel_name[..copy_sel]);
-            rule.selector_len = copy_sel;
 
             let body_start = i;
             while i < len && css[i] != b'}' {
@@ -329,102 +505,446 @@ impl MiniCss {
                 i += 1;
             }
 
-            for decl in body.split(|&b| b == b';') {
-                let decl_clean = decl.trim_ascii();
-                if decl_clean.is_empty() { continue; }
-                if let Some(colon) = decl_clean.iter().position(|&b| b == b':') {
-                    let prop = decl_clean[..colon].trim_ascii();
-                    let val = decl_clean[colon + 1..].trim_ascii();
+            if sel_raw.is_empty() { continue; }
 
-                    if prop.eq_ignore_ascii_case(b"color") {
-                        rule.color = parse_hex_color(val);
-                    } else if prop.eq_ignore_ascii_case(b"background-color") || prop.eq_ignore_ascii_case(b"background") {
-                        rule.bg_color = parse_hex_color(val);
-                    } else if prop.eq_ignore_ascii_case(b"border-color") {
-                        rule.border_color = parse_hex_color(val);
-                    } else if prop.eq_ignore_ascii_case(b"margin") {
-                        if let Some((v, h)) = parse_one_or_two_px(val) {
-                            rule.margin_top = Some(v);
-                            rule.margin_bottom = Some(v);
-                            rule.margin_left = Some(h);
-                            rule.margin_right = Some(h);
-                        }
-                    } else if prop.eq_ignore_ascii_case(b"margin-top") {
-                        rule.margin_top = parse_px(val);
-                    } else if prop.eq_ignore_ascii_case(b"margin-bottom") {
-                        rule.margin_bottom = parse_px(val);
-                    } else if prop.eq_ignore_ascii_case(b"margin-left") {
-                        rule.margin_left = parse_px(val);
-                    } else if prop.eq_ignore_ascii_case(b"margin-right") {
-                        rule.margin_right = parse_px(val);
-                    } else if prop.eq_ignore_ascii_case(b"padding") {
-                        if let Some((v, h)) = parse_one_or_two_px(val) {
-                            rule.padding_top = Some(v);
-                            rule.padding_bottom = Some(v);
-                            rule.padding_left = Some(h);
-                            rule.padding_right = Some(h);
-                        }
-                    } else if prop.eq_ignore_ascii_case(b"padding-top") {
-                        rule.padding_top = parse_px(val);
-                    } else if prop.eq_ignore_ascii_case(b"padding-bottom") {
-                        rule.padding_bottom = parse_px(val);
-                    } else if prop.eq_ignore_ascii_case(b"padding-left") {
-                        rule.padding_left = parse_px(val);
-                    } else if prop.eq_ignore_ascii_case(b"padding-right") {
-                        rule.padding_right = parse_px(val);
-                    } else if prop.eq_ignore_ascii_case(b"font-weight") {
-                        if val.eq_ignore_ascii_case(b"bold") {
-                            rule.is_bold = Some(true);
-                        }
-                    } else if prop.eq_ignore_ascii_case(b"display") {
-                        if val.eq_ignore_ascii_case(b"none") {
-                            rule.display_block = Some(false);
-                        } else if val.eq_ignore_ascii_case(b"block") {
-                            rule.display_block = Some(true);
-                        } else if val.eq_ignore_ascii_case(b"inline") {
-                            rule.display_block = Some(false);
+            // Suporta seletores múltiplos separados por vírgula (ex: "h1, h2, h3")
+            for sub_sel in sel_raw.split(|&b| b == b',') {
+                let s_clean = sub_sel.trim_ascii();
+                if s_clean.is_empty() || self.rule_count >= MAX_CSS_RULES { continue; }
+
+                let mut rule = CssRule::empty();
+
+                // Verifica se é seletor descendente simples com espaço ("nav a", ".card .btn", "div p")
+                if let Some(space_pos) = s_clean.iter().position(|&b| b == b' ' || b == b'\t') {
+                    let parent_part = s_clean[..space_pos].trim_ascii();
+                    let child_part = s_clean[space_pos + 1..].trim_ascii();
+
+                    rule.kind = SelectorKind::Descendant;
+                    let p_cpy = parent_part.len().min(31);
+                    rule.parent_selector[..p_cpy].copy_from_slice(&parent_part[..p_cpy]);
+                    rule.parent_selector_len = p_cpy;
+
+                    let c_cpy = child_part.len().min(31);
+                    rule.selector[..c_cpy].copy_from_slice(&child_part[..c_cpy]);
+                    rule.selector_len = c_cpy;
+                    rule.specificity = 2;
+                } else if s_clean[0] == b'.' {
+                    rule.kind = SelectorKind::Class;
+                    let sel_name = &s_clean[1..];
+                    let cpy = sel_name.len().min(31);
+                    rule.selector[..cpy].copy_from_slice(&sel_name[..cpy]);
+                    rule.selector_len = cpy;
+                    rule.specificity = 10;
+                } else if s_clean[0] == b'#' {
+                    rule.kind = SelectorKind::Id;
+                    let sel_name = &s_clean[1..];
+                    let cpy = sel_name.len().min(31);
+                    rule.selector[..cpy].copy_from_slice(&sel_name[..cpy]);
+                    rule.selector_len = cpy;
+                    rule.specificity = 100;
+                } else {
+                    rule.kind = SelectorKind::Tag;
+                    let cpy = s_clean.len().min(31);
+                    rule.selector[..cpy].copy_from_slice(&s_clean[..cpy]);
+                    rule.selector_len = cpy;
+                    rule.specificity = 1;
+                }
+
+                // Parser de declarações
+                for decl in body.split(|&b| b == b';') {
+                    let decl_clean = decl.trim_ascii();
+                    if decl_clean.is_empty() { continue; }
+                    if let Some(colon) = decl_clean.iter().position(|&b| b == b':') {
+                        let prop = decl_clean[..colon].trim_ascii();
+                        let val = decl_clean[colon + 1..].trim_ascii();
+
+                        if prop.eq_ignore_ascii_case(b"color") {
+                            rule.color = parse_color(val);
+                        } else if prop.eq_ignore_ascii_case(b"background-color") || prop.eq_ignore_ascii_case(b"background") {
+                            rule.bg_color = parse_color(val);
+                        } else if prop.eq_ignore_ascii_case(b"border") {
+                            let (bw, bc) = parse_border(val);
+                            if bw.is_some() { rule.border_width = bw; }
+                            if bc.is_some() { rule.border_color = bc; }
+                        } else if prop.eq_ignore_ascii_case(b"border-color") {
+                            rule.border_color = parse_color(val);
+                        } else if prop.eq_ignore_ascii_case(b"border-width") {
+                            rule.border_width = parse_px(val);
+                        } else if prop.eq_ignore_ascii_case(b"border-radius") {
+                            rule.border_radius = parse_px(val);
+                        } else if prop.eq_ignore_ascii_case(b"font-size") {
+                            rule.font_size = parse_px(val);
+                        } else if prop.eq_ignore_ascii_case(b"width") {
+                            rule.width = parse_px(val);
+                        } else if prop.eq_ignore_ascii_case(b"height") {
+                            rule.height = parse_px(val);
+                        } else if prop.eq_ignore_ascii_case(b"max-width") {
+                            rule.max_width = parse_px(val);
+                        } else if prop.eq_ignore_ascii_case(b"margin") {
+                            if let Some((v, h)) = parse_one_or_two_px(val) {
+                                rule.margin_top = Some(v);
+                                rule.margin_bottom = Some(v);
+                                rule.margin_left = Some(h);
+                                rule.margin_right = Some(h);
+                            }
+                        } else if prop.eq_ignore_ascii_case(b"margin-top") {
+                            rule.margin_top = parse_px(val);
+                        } else if prop.eq_ignore_ascii_case(b"margin-bottom") {
+                            rule.margin_bottom = parse_px(val);
+                        } else if prop.eq_ignore_ascii_case(b"margin-left") {
+                            rule.margin_left = parse_px(val);
+                        } else if prop.eq_ignore_ascii_case(b"margin-right") {
+                            rule.margin_right = parse_px(val);
+                        } else if prop.eq_ignore_ascii_case(b"padding") {
+                            if let Some((v, h)) = parse_one_or_two_px(val) {
+                                rule.padding_top = Some(v);
+                                rule.padding_bottom = Some(v);
+                                rule.padding_left = Some(h);
+                                rule.padding_right = Some(h);
+                            }
+                        } else if prop.eq_ignore_ascii_case(b"padding-top") {
+                            rule.padding_top = parse_px(val);
+                        } else if prop.eq_ignore_ascii_case(b"padding-bottom") {
+                            rule.padding_bottom = parse_px(val);
+                        } else if prop.eq_ignore_ascii_case(b"padding-left") {
+                            rule.padding_left = parse_px(val);
+                        } else if prop.eq_ignore_ascii_case(b"padding-right") {
+                            rule.padding_right = parse_px(val);
+                        } else if prop.eq_ignore_ascii_case(b"font-weight") {
+                            if val.eq_ignore_ascii_case(b"bold") {
+                                rule.is_bold = Some(true);
+                            } else if val.eq_ignore_ascii_case(b"normal") {
+                                rule.is_bold = Some(false);
+                            }
+                        } else if prop.eq_ignore_ascii_case(b"display") {
+                            rule.display = parse_display(val);
+                        } else if prop.eq_ignore_ascii_case(b"flex-direction") {
+                            rule.flex_direction = parse_flex_direction(val);
+                        } else if prop.eq_ignore_ascii_case(b"justify-content") {
+                            rule.justify_content = parse_justify_content(val);
+                        } else if prop.eq_ignore_ascii_case(b"align-items") {
+                            rule.align_items = parse_align_items(val);
+                        } else if prop.eq_ignore_ascii_case(b"text-align") {
+                            rule.text_align = parse_text_align(val);
                         }
                     }
                 }
-            }
 
-            self.rules[self.rule_count] = rule;
-            self.rule_count += 1;
+                self.rules[self.rule_count] = rule;
+                self.rule_count += 1;
+            }
         }
     }
 
+    pub fn resolve_all(&self, dom: &mut DomArena) {
+        for i in 0..dom.node_count {
+            self.resolve_node(dom, i);
+        }
+    }
+
+    pub fn resolve_node(&self, dom: &mut DomArena, node_idx: usize) {
+        if node_idx >= dom.node_count { return; }
+
+        let tag = dom.nodes[node_idx].tag;
+        let tag_len = dom.nodes[node_idx].tag_len;
+        let tag_bytes = &tag[..tag_len];
+
+        // 1. Estilos Padrão do User-Agent baseados na Tag
+        let mut style = ComputedStyle::default();
+        if tag_bytes == b"h1" {
+            style.color = COLOR_H1;
+            style.font_size = 16;
+            style.margin_top = 8;
+            style.margin_bottom = 6;
+            style.is_bold = true;
+            style.display = DisplayMode::Block;
+            style.display_block = true;
+        } else if tag_bytes == b"h2" {
+            style.color = 0x00F3_8BA8;
+            style.font_size = 14;
+            style.margin_top = 6;
+            style.margin_bottom = 4;
+            style.is_bold = true;
+            style.display = DisplayMode::Block;
+            style.display_block = true;
+        } else if tag_bytes == b"h3" {
+            style.color = 0x00A6_E3A1;
+            style.font_size = 13;
+            style.margin_top = 4;
+            style.margin_bottom = 4;
+            style.is_bold = true;
+            style.display = DisplayMode::Block;
+            style.display_block = true;
+        } else if tag_bytes == b"h4" || tag_bytes == b"h5" || tag_bytes == b"h6" {
+            style.color = 0x00F9_E2AF;
+            style.margin_top = 3;
+            style.margin_bottom = 3;
+            style.is_bold = true;
+            style.display = DisplayMode::Block;
+            style.display_block = true;
+        } else if tag_bytes == b"p" {
+            style.color = COLOR_TEXT;
+            style.margin_top = 2;
+            style.margin_bottom = 4;
+            style.display = DisplayMode::Block;
+            style.display_block = true;
+        } else if tag_bytes == b"a" {
+            style.color = COLOR_LINK;
+            style.display = DisplayMode::Inline;
+            style.display_block = false;
+        } else if tag_bytes == b"button" {
+            style.color = COLOR_BTN_TEXT;
+            style.bg_color = Some(0x0031_3244);
+            style.border_color = Some(0x0045_475A);
+            style.border_width = 1;
+            style.border_radius = 3;
+            style.margin_top = 3;
+            style.margin_bottom = 3;
+            style.margin_left = 2;
+            style.margin_right = 2;
+            style.padding_top = 2;
+            style.padding_bottom = 2;
+            style.padding_left = 6;
+            style.padding_right = 6;
+            style.display = DisplayMode::InlineBlock;
+            style.display_block = false;
+        } else if tag_bytes == b"div" || tag_bytes == b"nav" || tag_bytes == b"header" || tag_bytes == b"section" || tag_bytes == b"main" || tag_bytes == b"article" || tag_bytes == b"footer" {
+            style.display = DisplayMode::Block;
+            style.display_block = true;
+            style.margin_top = 0;
+            style.margin_bottom = 0;
+        } else if tag_bytes == b"hr" {
+            style.display = DisplayMode::Block;
+            style.display_block = true;
+            style.margin_top = 6;
+            style.margin_bottom = 6;
+        } else if tag_bytes == b"b" || tag_bytes == b"strong" {
+            style.is_bold = true;
+            style.display = DisplayMode::Inline;
+            style.display_block = false;
+        } else if tag_bytes == b"ul" {
+            style.display = DisplayMode::Block;
+            style.display_block = true;
+            style.margin_top = 4;
+            style.margin_bottom = 4;
+            style.padding_left = 8;
+        } else if tag_bytes == b"li" {
+            style.display = DisplayMode::Block;
+            style.display_block = true;
+            style.margin_top = 2;
+            style.margin_bottom = 2;
+        } else if tag_bytes == b"span" {
+            style.display = DisplayMode::Inline;
+            style.display_block = false;
+        } else if tag_bytes == b"input" {
+            style.color = COLOR_TEXT;
+            style.bg_color = Some(0x0018_1825);
+            style.border_color = Some(0x0045_475A);
+            style.border_width = 1;
+            style.border_radius = 2;
+            style.padding_top = 2;
+            style.padding_bottom = 2;
+            style.padding_left = 4;
+            style.padding_right = 4;
+            style.display = DisplayMode::InlineBlock;
+            style.display_block = false;
+        }
+
+        // 2. Cascata CSS: Tag (1) -> Descendente (2) -> Classe (10) -> ID (100) -> Inline (1000)
+
+        // 2.1. Regras de Tag
+        for i in 0..self.rule_count {
+            let r = &self.rules[i];
+            if r.kind == SelectorKind::Tag && tag_len == r.selector_len && tag_bytes.eq_ignore_ascii_case(&r.selector[..r.selector_len]) {
+                apply_rule_to_style(&mut style, r);
+            }
+        }
+
+        // 2.2. Regras Descendentes ("nav a", ".card .btn")
+        for i in 0..self.rule_count {
+            let r = &self.rules[i];
+            if r.kind == SelectorKind::Descendant {
+                let r_sel = &r.selector[..r.selector_len];
+                let matches_child = (r_sel.starts_with(b".") && dom.has_class(node_idx, &r_sel[1..]))
+                    || (r_sel.starts_with(b"#") && dom.nodes[node_idx].id_len == r_sel.len() - 1 && &dom.nodes[node_idx].id_attr[..dom.nodes[node_idx].id_len] == &r_sel[1..])
+                    || (tag_len == r_sel.len() && tag_bytes.eq_ignore_ascii_case(r_sel));
+
+                if matches_child {
+                    let mut matched_ancestor = false;
+                    let mut cur_parent = dom.nodes[node_idx].parent;
+                    let p_sel = &r.parent_selector[..r.parent_selector_len];
+                    while let Some(pid) = cur_parent {
+                        let pnode = &dom.nodes[pid];
+                        let matches_parent = (p_sel.starts_with(b".") && dom.has_class(pid, &p_sel[1..]))
+                            || (p_sel.starts_with(b"#") && pnode.id_len == p_sel.len() - 1 && &pnode.id_attr[..pnode.id_len] == &p_sel[1..])
+                            || (pnode.tag_len == p_sel.len() && pnode.tag[..pnode.tag_len].eq_ignore_ascii_case(p_sel));
+                        if matches_parent {
+                            matched_ancestor = true;
+                            break;
+                        }
+                        cur_parent = pnode.parent;
+                    }
+                    if matched_ancestor {
+                        apply_rule_to_style(&mut style, r);
+                    }
+                }
+            }
+        }
+
+        // 2.3. Regras de Classe (.btn, .card)
+        for i in 0..self.rule_count {
+            let r = &self.rules[i];
+            if r.kind == SelectorKind::Class {
+                let r_sel = &r.selector[..r.selector_len];
+                if dom.has_class(node_idx, r_sel) {
+                    apply_rule_to_style(&mut style, r);
+                }
+            }
+        }
+
+        // 2.4. Regras de ID (#app, #counter)
+        for i in 0..self.rule_count {
+            let r = &self.rules[i];
+            if r.kind == SelectorKind::Id {
+                let r_sel = &r.selector[..r.selector_len];
+                if dom.nodes[node_idx].id_len == r.selector_len && &dom.nodes[node_idx].id_attr[..dom.nodes[node_idx].id_len] == r_sel {
+                    apply_rule_to_style(&mut style, r);
+                }
+            }
+        }
+
+        // 2.5. Estilos Inline (style="...")
+        if dom.nodes[node_idx].style_len > 0 {
+            let inline = dom.nodes[node_idx].style_attr;
+            let inline_len = dom.nodes[node_idx].style_len;
+            let inline_slice = &inline[..inline_len];
+            for decl in inline_slice.split(|&b| b == b';') {
+                let decl_clean = decl.trim_ascii();
+                if let Some(colon) = decl_clean.iter().position(|&b| b == b':') {
+                    let prop = decl_clean[..colon].trim_ascii();
+                    let val = decl_clean[colon + 1..].trim_ascii();
+                    if prop.eq_ignore_ascii_case(b"color") {
+                        if let Some(c) = parse_color(val) { style.color = c; }
+                    } else if prop.eq_ignore_ascii_case(b"background-color") || prop.eq_ignore_ascii_case(b"background") {
+                        if let Some(bg) = parse_color(val) { style.bg_color = Some(bg); }
+                    } else if prop.eq_ignore_ascii_case(b"border") {
+                        let (bw, bc) = parse_border(val);
+                        if let Some(w) = bw { style.border_width = w; }
+                        if let Some(c) = bc { style.border_color = Some(c); }
+                    } else if prop.eq_ignore_ascii_case(b"border-color") {
+                        if let Some(bc) = parse_color(val) { style.border_color = Some(bc); }
+                    } else if prop.eq_ignore_ascii_case(b"border-width") {
+                        if let Some(w) = parse_px(val) { style.border_width = w; }
+                    } else if prop.eq_ignore_ascii_case(b"border-radius") {
+                        if let Some(r) = parse_px(val) { style.border_radius = r; }
+                    } else if prop.eq_ignore_ascii_case(b"font-size") {
+                        if let Some(fs) = parse_px(val) { style.font_size = fs; }
+                    } else if prop.eq_ignore_ascii_case(b"width") {
+                        if let Some(w) = parse_px(val) { style.width = Some(w); }
+                    } else if prop.eq_ignore_ascii_case(b"height") {
+                        if let Some(h) = parse_px(val) { style.height = Some(h); }
+                    } else if prop.eq_ignore_ascii_case(b"max-width") {
+                        if let Some(mw) = parse_px(val) { style.max_width = Some(mw); }
+                    } else if prop.eq_ignore_ascii_case(b"margin") {
+                        if let Some((v, h)) = parse_one_or_two_px(val) {
+                            style.margin_top = v;
+                            style.margin_bottom = v;
+                            style.margin_left = h;
+                            style.margin_right = h;
+                        }
+                    } else if prop.eq_ignore_ascii_case(b"margin-top") {
+                        if let Some(m) = parse_px(val) { style.margin_top = m; }
+                    } else if prop.eq_ignore_ascii_case(b"margin-bottom") {
+                        if let Some(m) = parse_px(val) { style.margin_bottom = m; }
+                    } else if prop.eq_ignore_ascii_case(b"margin-left") {
+                        if let Some(m) = parse_px(val) { style.margin_left = m; }
+                    } else if prop.eq_ignore_ascii_case(b"margin-right") {
+                        if let Some(m) = parse_px(val) { style.margin_right = m; }
+                    } else if prop.eq_ignore_ascii_case(b"padding") {
+                        if let Some((v, h)) = parse_one_or_two_px(val) {
+                            style.padding_top = v;
+                            style.padding_bottom = v;
+                            style.padding_left = h;
+                            style.padding_right = h;
+                        }
+                    } else if prop.eq_ignore_ascii_case(b"padding-top") {
+                        if let Some(p) = parse_px(val) { style.padding_top = p; }
+                    } else if prop.eq_ignore_ascii_case(b"padding-bottom") {
+                        if let Some(p) = parse_px(val) { style.padding_bottom = p; }
+                    } else if prop.eq_ignore_ascii_case(b"padding-left") {
+                        if let Some(p) = parse_px(val) { style.padding_left = p; }
+                    } else if prop.eq_ignore_ascii_case(b"padding-right") {
+                        if let Some(p) = parse_px(val) { style.padding_right = p; }
+                    } else if prop.eq_ignore_ascii_case(b"font-weight") {
+                        if val.eq_ignore_ascii_case(b"bold") {
+                            style.is_bold = true;
+                        } else if val.eq_ignore_ascii_case(b"normal") {
+                            style.is_bold = false;
+                        }
+                    } else if prop.eq_ignore_ascii_case(b"display") {
+                        if let Some(d) = parse_display(val) {
+                            style.display = d;
+                            style.display_block = d == DisplayMode::Block;
+                        }
+                    } else if prop.eq_ignore_ascii_case(b"flex-direction") {
+                        if let Some(fd) = parse_flex_direction(val) { style.flex_direction = fd; }
+                    } else if prop.eq_ignore_ascii_case(b"justify-content") {
+                        if let Some(jc) = parse_justify_content(val) { style.justify_content = jc; }
+                    } else if prop.eq_ignore_ascii_case(b"align-items") {
+                        if let Some(ai) = parse_align_items(val) { style.align_items = ai; }
+                    } else if prop.eq_ignore_ascii_case(b"text-align") {
+                        if let Some(ta) = parse_text_align(val) { style.text_align = ta; }
+                    }
+                }
+            }
+        }
+
+        dom.nodes[node_idx].computed_style = style;
+    }
+
     pub fn resolve(&self, node: &mut DomNode) {
+        // Compatibilidade com nós isolados
         let tag = &node.tag[..node.tag_len];
         if tag == b"h1" {
             node.computed_style.color = COLOR_H1;
+            node.computed_style.font_size = 16;
             node.computed_style.margin_top = 8;
             node.computed_style.margin_bottom = 6;
             node.computed_style.is_bold = true;
+            node.computed_style.display = DisplayMode::Block;
             node.computed_style.display_block = true;
         } else if tag == b"h2" {
             node.computed_style.color = 0x00F3_8BA8;
+            node.computed_style.font_size = 14;
             node.computed_style.margin_top = 6;
             node.computed_style.margin_bottom = 4;
             node.computed_style.is_bold = true;
+            node.computed_style.display = DisplayMode::Block;
             node.computed_style.display_block = true;
         } else if tag == b"h3" {
             node.computed_style.color = 0x00A6_E3A1;
+            node.computed_style.font_size = 13;
             node.computed_style.margin_top = 4;
             node.computed_style.margin_bottom = 4;
             node.computed_style.is_bold = true;
+            node.computed_style.display = DisplayMode::Block;
             node.computed_style.display_block = true;
         } else if tag == b"p" {
             node.computed_style.color = COLOR_TEXT;
             node.computed_style.margin_top = 2;
             node.computed_style.margin_bottom = 4;
+            node.computed_style.display = DisplayMode::Block;
             node.computed_style.display_block = true;
         } else if tag == b"a" {
             node.computed_style.color = COLOR_LINK;
+            node.computed_style.display = DisplayMode::Inline;
             node.computed_style.display_block = false;
         } else if tag == b"button" {
             node.computed_style.color = COLOR_BTN_TEXT;
             node.computed_style.bg_color = Some(0x0031_3244);
             node.computed_style.border_color = Some(0x0045_475A);
+            node.computed_style.border_width = 1;
+            node.computed_style.border_radius = 3;
             node.computed_style.margin_top = 3;
             node.computed_style.margin_bottom = 3;
             node.computed_style.margin_left = 2;
@@ -433,138 +953,81 @@ impl MiniCss {
             node.computed_style.padding_bottom = 2;
             node.computed_style.padding_left = 6;
             node.computed_style.padding_right = 6;
+            node.computed_style.display = DisplayMode::InlineBlock;
             node.computed_style.display_block = false;
-        } else if tag == b"div" {
+        } else if tag == b"div" || tag == b"nav" || tag == b"header" || tag == b"section" {
+            node.computed_style.display = DisplayMode::Block;
             node.computed_style.display_block = true;
             node.computed_style.margin_top = 0;
             node.computed_style.margin_bottom = 0;
         } else if tag == b"hr" {
+            node.computed_style.display = DisplayMode::Block;
             node.computed_style.display_block = true;
             node.computed_style.margin_top = 6;
             node.computed_style.margin_bottom = 6;
         } else if tag == b"b" || tag == b"strong" {
             node.computed_style.is_bold = true;
+            node.computed_style.display = DisplayMode::Inline;
             node.computed_style.display_block = false;
         } else if tag == b"ul" {
+            node.computed_style.display = DisplayMode::Block;
             node.computed_style.display_block = true;
             node.computed_style.margin_top = 4;
             node.computed_style.margin_bottom = 4;
             node.computed_style.padding_left = 8;
         } else if tag == b"li" {
+            node.computed_style.display = DisplayMode::Block;
             node.computed_style.display_block = true;
             node.computed_style.margin_top = 2;
             node.computed_style.margin_bottom = 2;
         } else if tag == b"span" {
+            node.computed_style.display = DisplayMode::Inline;
             node.computed_style.display_block = false;
         }
 
-        let apply_rule = |node: &mut DomNode, r: &CssRule| {
-            if let Some(c) = r.color { node.computed_style.color = c; }
-            if let Some(bg) = r.bg_color { node.computed_style.bg_color = Some(bg); }
-            if let Some(bc) = r.border_color { node.computed_style.border_color = Some(bc); }
-            if let Some(mt) = r.margin_top { node.computed_style.margin_top = mt; }
-            if let Some(mb) = r.margin_bottom { node.computed_style.margin_bottom = mb; }
-            if let Some(ml) = r.margin_left { node.computed_style.margin_left = ml; }
-            if let Some(mr) = r.margin_right { node.computed_style.margin_right = mr; }
-            if let Some(pt) = r.padding_top { node.computed_style.padding_top = pt; }
-            if let Some(pb) = r.padding_bottom { node.computed_style.padding_bottom = pb; }
-            if let Some(pl) = r.padding_left { node.computed_style.padding_left = pl; }
-            if let Some(pr) = r.padding_right { node.computed_style.padding_right = pr; }
-            if let Some(b) = r.is_bold { node.computed_style.is_bold = b; }
-            if let Some(d) = r.display_block { node.computed_style.display_block = d; }
-        };
-
-        // 1. Tag rules
         for i in 0..self.rule_count {
             let r = &self.rules[i];
-            if r.kind == SelectorKind::Tag && node.tag_len == r.selector_len && &node.tag[..node.tag_len] == &r.selector[..r.selector_len] {
-                apply_rule(node, r);
-            }
-        }
-        // 2. Class rules
-        for i in 0..self.rule_count {
-            let r = &self.rules[i];
-            if r.kind == SelectorKind::Class {
-                let class_slice = &node.class_attr[..node.class_len];
-                let r_sel = &r.selector[..r.selector_len];
-                if class_slice.contains_ignore_ascii_case(r_sel) {
-                    apply_rule(node, r);
-                }
-            }
-        }
-        // 3. ID rules
-        for i in 0..self.rule_count {
-            let r = &self.rules[i];
-            if r.kind == SelectorKind::Id && node.id_len == r.selector_len && &node.id_attr[..node.id_len] == &r.selector[..r.selector_len] {
-                apply_rule(node, r);
-            }
-        }
-
-        if node.style_len > 0 {
-            let inline = &node.style_attr[..node.style_len];
-            for decl in inline.split(|&b| b == b';') {
-                let decl_clean = decl.trim_ascii();
-                if let Some(colon) = decl_clean.iter().position(|&b| b == b':') {
-                    let prop = decl_clean[..colon].trim_ascii();
-                    let val = decl_clean[colon + 1..].trim_ascii();
-                    if prop.eq_ignore_ascii_case(b"color") {
-                        if let Some(c) = parse_hex_color(val) { node.computed_style.color = c; }
-                    } else if prop.eq_ignore_ascii_case(b"background-color") || prop.eq_ignore_ascii_case(b"background") {
-                        if let Some(bg) = parse_hex_color(val) { node.computed_style.bg_color = Some(bg); }
-                    } else if prop.eq_ignore_ascii_case(b"border-color") {
-                        if let Some(bc) = parse_hex_color(val) { node.computed_style.border_color = Some(bc); }
-                    } else if prop.eq_ignore_ascii_case(b"margin") {
-                        if let Some((v, h)) = parse_one_or_two_px(val) {
-                            node.computed_style.margin_top = v;
-                            node.computed_style.margin_bottom = v;
-                            node.computed_style.margin_left = h;
-                            node.computed_style.margin_right = h;
-                        }
-                    } else if prop.eq_ignore_ascii_case(b"margin-top") {
-                        if let Some(m) = parse_px(val) { node.computed_style.margin_top = m; }
-                    } else if prop.eq_ignore_ascii_case(b"margin-bottom") {
-                        if let Some(m) = parse_px(val) { node.computed_style.margin_bottom = m; }
-                    } else if prop.eq_ignore_ascii_case(b"margin-left") {
-                        if let Some(m) = parse_px(val) { node.computed_style.margin_left = m; }
-                    } else if prop.eq_ignore_ascii_case(b"margin-right") {
-                        if let Some(m) = parse_px(val) { node.computed_style.margin_right = m; }
-                    } else if prop.eq_ignore_ascii_case(b"padding") {
-                        if let Some((v, h)) = parse_one_or_two_px(val) {
-                            node.computed_style.padding_top = v;
-                            node.computed_style.padding_bottom = v;
-                            node.computed_style.padding_left = h;
-                            node.computed_style.padding_right = h;
-                        }
-                    } else if prop.eq_ignore_ascii_case(b"padding-top") {
-                        if let Some(p) = parse_px(val) { node.computed_style.padding_top = p; }
-                    } else if prop.eq_ignore_ascii_case(b"padding-bottom") {
-                        if let Some(p) = parse_px(val) { node.computed_style.padding_bottom = p; }
-                    } else if prop.eq_ignore_ascii_case(b"padding-left") {
-                        if let Some(p) = parse_px(val) { node.computed_style.padding_left = p; }
-                    } else if prop.eq_ignore_ascii_case(b"padding-right") {
-                        if let Some(p) = parse_px(val) { node.computed_style.padding_right = p; }
-                    } else if prop.eq_ignore_ascii_case(b"font-weight") {
-                        if val.eq_ignore_ascii_case(b"bold") {
-                            node.computed_style.is_bold = true;
-                        }
-                    } else if prop.eq_ignore_ascii_case(b"display") {
-                        if val.eq_ignore_ascii_case(b"none") {
-                            node.computed_style.display_block = false;
-                        } else if val.eq_ignore_ascii_case(b"block") {
-                            node.computed_style.display_block = true;
-                        } else if val.eq_ignore_ascii_case(b"inline") {
-                            node.computed_style.display_block = false;
-                        }
-                    }
-                }
+            if r.kind == SelectorKind::Tag && node.tag_len == r.selector_len && node.tag[..node.tag_len].eq_ignore_ascii_case(&r.selector[..r.selector_len]) {
+                apply_rule_to_style(&mut node.computed_style, r);
             }
         }
     }
 }
 
+fn apply_rule_to_style(style: &mut ComputedStyle, r: &CssRule) {
+    if let Some(c) = r.color { style.color = c; }
+    if let Some(bg) = r.bg_color { style.bg_color = Some(bg); }
+    if let Some(bc) = r.border_color { style.border_color = Some(bc); }
+    if let Some(bw) = r.border_width { style.border_width = bw; }
+    if let Some(br) = r.border_radius { style.border_radius = br; }
+    if let Some(fs) = r.font_size { style.font_size = fs; }
+    if let Some(w) = r.width { style.width = Some(w); }
+    if let Some(h) = r.height { style.height = Some(h); }
+    if let Some(mw) = r.max_width { style.max_width = Some(mw); }
+    if let Some(mt) = r.margin_top { style.margin_top = mt; }
+    if let Some(mb) = r.margin_bottom { style.margin_bottom = mb; }
+    if let Some(ml) = r.margin_left { style.margin_left = ml; }
+    if let Some(mr) = r.margin_right { style.margin_right = mr; }
+    if let Some(pt) = r.padding_top { style.padding_top = pt; }
+    if let Some(pb) = r.padding_bottom { style.padding_bottom = pb; }
+    if let Some(pl) = r.padding_left { style.padding_left = pl; }
+    if let Some(pr) = r.padding_right { style.padding_right = pr; }
+    if let Some(b) = r.is_bold { style.is_bold = b; }
+    if let Some(d) = r.display {
+        style.display = d;
+        style.display_block = d == DisplayMode::Block;
+    }
+    if let Some(fd) = r.flex_direction { style.flex_direction = fd; }
+    if let Some(jc) = r.justify_content { style.justify_content = jc; }
+    if let Some(ai) = r.align_items { style.align_items = ai; }
+    if let Some(ta) = r.text_align { style.text_align = ta; }
+}
+
 // ── Mini-JS Runtime para Ring 3 (no_std) ──────────────────────────────────────
 
-pub const MAX_JS_VARS: usize = 16;
+pub const MAX_JS_VARS: usize = 32;
+pub const MAX_JS_ELEMS: usize = 16;
+pub const MAX_JS_FUNCS: usize = 16;
 
 #[allow(dead_code)]
 #[derive(Clone, Copy)]
@@ -590,9 +1053,50 @@ impl JsVar {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct JsElemRef {
+    pub name: [u8; 16],
+    pub name_len: usize,
+    pub dom_idx: usize,
+}
+
+impl JsElemRef {
+    pub const fn empty() -> Self {
+        Self {
+            name: [0; 16],
+            name_len: 0,
+            dom_idx: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct JsFunc {
+    pub name: [u8; 24],
+    pub name_len: usize,
+    pub body: [u8; 512],
+    pub body_len: usize,
+}
+
+impl JsFunc {
+    pub const fn empty() -> Self {
+        Self {
+            name: [0; 24],
+            name_len: 0,
+            body: [0; 512],
+            body_len: 0,
+        }
+    }
+}
+
 pub struct MiniJsRuntime {
     pub vars: [JsVar; MAX_JS_VARS],
     pub var_count: usize,
+    pub elems: [JsElemRef; MAX_JS_ELEMS],
+    pub elem_count: usize,
+    pub funcs: [JsFunc; MAX_JS_FUNCS],
+    pub func_count: usize,
+    pub dom_dirty: bool,
 }
 
 impl MiniJsRuntime {
@@ -600,6 +1104,11 @@ impl MiniJsRuntime {
         Self {
             vars: [JsVar::empty(); MAX_JS_VARS],
             var_count: 0,
+            elems: [JsElemRef::empty(); MAX_JS_ELEMS],
+            elem_count: 0,
+            funcs: [JsFunc::empty(); MAX_JS_FUNCS],
+            func_count: 0,
+            dom_dirty: false,
         }
     }
 
@@ -637,58 +1146,346 @@ impl MiniJsRuntime {
         }
     }
 
+    pub fn get_str<'a>(&'a self, name: &[u8]) -> Option<&'a [u8]> {
+        for i in 0..self.var_count {
+            let v = &self.vars[i];
+            if v.name_len == name.len() && &v.name[..v.name_len] == name {
+                if !v.is_num {
+                    return Some(&v.val_str[..v.val_str_len]);
+                }
+            }
+        }
+        None
+    }
+
+    pub fn set_str(&mut self, name: &[u8], val: &[u8]) {
+        for i in 0..self.var_count {
+            let v = &mut self.vars[i];
+            if v.name_len == name.len() && &v.name[..v.name_len] == name {
+                let cpy = val.len().min(63);
+                v.val_str[..cpy].copy_from_slice(&val[..cpy]);
+                v.val_str_len = cpy;
+                v.is_num = false;
+                return;
+            }
+        }
+        if self.var_count < MAX_JS_VARS {
+            let idx = self.var_count;
+            let mut v = JsVar::empty();
+            let cpy_n = name.len().min(15);
+            v.name[..cpy_n].copy_from_slice(&name[..cpy_n]);
+            v.name_len = cpy_n;
+            let cpy_v = val.len().min(63);
+            v.val_str[..cpy_v].copy_from_slice(&val[..cpy_v]);
+            v.val_str_len = cpy_v;
+            v.is_num = false;
+            self.vars[idx] = v;
+            self.var_count += 1;
+        }
+    }
+
+    pub fn find_elem(&self, name: &[u8]) -> Option<usize> {
+        for i in 0..self.elem_count {
+            let e = &self.elems[i];
+            if e.name_len == name.len() && &e.name[..e.name_len] == name {
+                return Some(e.dom_idx);
+            }
+        }
+        None
+    }
+
+    pub fn bind_elem(&mut self, name: &[u8], dom_idx: usize) {
+        for i in 0..self.elem_count {
+            if self.elems[i].name_len == name.len() && &self.elems[i].name[..self.elems[i].name_len] == name {
+                self.elems[i].dom_idx = dom_idx;
+                return;
+            }
+        }
+        if self.elem_count < MAX_JS_ELEMS {
+            let idx = self.elem_count;
+            let mut e = JsElemRef::empty();
+            let cpy = name.len().min(15);
+            e.name[..cpy].copy_from_slice(&name[..cpy]);
+            e.name_len = cpy;
+            e.dom_idx = dom_idx;
+            self.elems[idx] = e;
+            self.elem_count += 1;
+        }
+    }
+
+    pub fn register_func(&mut self, name: &[u8], body: &[u8]) {
+        for i in 0..self.func_count {
+            if self.funcs[i].name_len == name.len() && &self.funcs[i].name[..self.funcs[i].name_len] == name {
+                let cpy = body.len().min(511);
+                self.funcs[i].body[..cpy].copy_from_slice(&body[..cpy]);
+                self.funcs[i].body_len = cpy;
+                return;
+            }
+        }
+        if self.func_count < MAX_JS_FUNCS {
+            let idx = self.func_count;
+            let mut f = JsFunc::empty();
+            let n_cpy = name.len().min(23);
+            f.name[..n_cpy].copy_from_slice(&name[..n_cpy]);
+            f.name_len = n_cpy;
+            let b_cpy = body.len().min(511);
+            f.body[..b_cpy].copy_from_slice(&body[..b_cpy]);
+            f.body_len = b_cpy;
+            self.funcs[idx] = f;
+            self.func_count += 1;
+        }
+    }
+
+    pub fn get_func<'a>(&'a self, name: &[u8]) -> Option<&'a [u8]> {
+        for i in 0..self.func_count {
+            if self.funcs[i].name_len == name.len() && &self.funcs[i].name[..self.funcs[i].name_len] == name {
+                return Some(&self.funcs[i].body[..self.funcs[i].body_len]);
+            }
+        }
+        None
+    }
+
+    pub fn resolve_elem_target(&self, dom: &DomArena, expr: &[u8]) -> Option<usize> {
+        let e = expr.trim_ascii();
+        if e.starts_with(b"document.getElementById(") {
+            let arg = extract_quoted_arg(e)?;
+            dom.find_by_id(arg)
+        } else if e.starts_with(b"document.querySelector(") {
+            let arg = extract_quoted_arg(e)?;
+            dom.find_by_selector(arg)
+        } else if let Some(idx) = self.find_elem(e) {
+            Some(idx)
+        } else {
+            dom.find_by_id(e).or_else(|| dom.find_by_selector(e))
+        }
+    }
+
     pub fn eval_script(&mut self, script: &[u8], dom: &mut DomArena) {
+        let mut cur = script;
+
+        // Pré-processamento: registra declarações de função `function name() { body }`
+        while let Some(func_pos) = find_subslice(cur, b"function ") {
+            let rest = &cur[func_pos + 9..];
+            if let Some(lparen) = rest.iter().position(|&b| b == b'(') {
+                let func_name = rest[..lparen].trim_ascii();
+                if let Some(lbrace) = rest.iter().position(|&b| b == b'{') {
+                    // Encontra rbrace correspondente
+                    let mut depth = 1usize;
+                    let mut rbrace = None;
+                    for idx in (lbrace + 1)..rest.len() {
+                        if rest[idx] == b'{' { depth += 1; }
+                        else if rest[idx] == b'}' {
+                            depth -= 1;
+                            if depth == 0 {
+                                rbrace = Some(idx);
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(rb) = rbrace {
+                        let body = &rest[lbrace + 1..rb].trim_ascii();
+                        self.register_func(func_name, body);
+                        cur = &rest[rb + 1..];
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+
+        // Execução sequencial de instruções divididas por ';' ou '\n'
         for stmt_raw in script.split(|&b| b == b';' || b == b'\n') {
             let stmt = stmt_raw.trim_ascii();
             if stmt.is_empty() { continue; }
 
+            // Ignora a declaração de função inline se já foi registrada
+            if stmt.starts_with(b"function ") || stmt.starts_with(b"}") {
+                continue;
+            }
+
+            // 1. Chamada de função nomeada sem retorno: ex `handleClick()`
+            if stmt.ends_with(b")") && !stmt.contains(&b'=') {
+                if let Some(lp) = stmt.iter().position(|&b| b == b'(') {
+                    let fn_name = stmt[..lp].trim_ascii();
+                    if let Some(body_slice) = self.get_func(fn_name) {
+                        let mut body_buf = [0u8; 512];
+                        let b_len = body_slice.len().min(511);
+                        body_buf[..b_len].copy_from_slice(&body_slice[..b_len]);
+                        self.eval_script(&body_buf[..b_len], dom);
+                        continue;
+                    }
+                }
+            }
+
+            // 2. Limpeza de modificador de declaração de variável
             let clean_stmt = if stmt.starts_with(b"var ") {
                 stmt[4..].trim_ascii()
             } else if stmt.starts_with(b"let ") {
                 stmt[4..].trim_ascii()
+            } else if stmt.starts_with(b"const ") {
+                stmt[6..].trim_ascii()
             } else {
                 stmt
             };
 
-            if let Some(inner_pos) = find_subslice(clean_stmt, b".innerText") {
-                let lhs = clean_stmt[..inner_pos].trim_ascii();
-                let after = clean_stmt[inner_pos + 10..].trim_ascii();
-                if after.starts_with(b"=") {
-                    let rhs = after[1..].trim_ascii();
-                    let target_id_opt = extract_quoted_arg(lhs);
-                    let elem_idx_opt = if let Some(id_name) = target_id_opt {
-                        dom.find_by_id(id_name)
-                    } else {
-                        // Se for 'c.innerText' e houve getElementById prévio
-                        dom.find_by_id(b"counter-display")
-                    };
+            // 3. Atribuição de elemento DOM a variável: `let btn = document.getElementById('...')`
+            if let Some(eq_pos) = clean_stmt.iter().position(|&b| b == b'=') {
+                let lhs = clean_stmt[..eq_pos].trim_ascii();
+                let rhs = clean_stmt[eq_pos + 1..].trim_ascii();
 
-                    if let Some(elem_idx) = elem_idx_opt {
-                        let mut eval_buf = [0u8; 128];
-                        let eval_len = self.eval_expr_string(rhs, &mut eval_buf);
-                        dom.set_text_content(elem_idx, &eval_buf[..eval_len]);
+                if rhs.starts_with(b"document.getElementById(") || rhs.starts_with(b"document.querySelector(") {
+                    if let Some(target_idx) = self.resolve_elem_target(dom, rhs) {
+                        self.bind_elem(lhs, target_idx);
+                        continue;
                     }
                 }
-            } else if let Some(color_pos) = find_subslice(clean_stmt, b".style.color") {
-                let lhs = clean_stmt[..color_pos].trim_ascii();
-                let after = clean_stmt[color_pos + 12..].trim_ascii();
-                if after.starts_with(b"=") {
-                    let rhs = after[1..].trim_ascii();
-                    let target_id_opt = extract_quoted_arg(lhs);
-                    let elem_idx_opt = if let Some(id_name) = target_id_opt {
-                        dom.find_by_id(id_name)
-                    } else {
-                        dom.find_by_id(b"counter-display")
-                    };
-                    if let Some(elem_idx) = elem_idx_opt {
-                        if let Some(quote_val) = extract_string_lit(rhs) {
-                            if let Some(col) = parse_hex_color(quote_val) {
-                                dom.set_style_color(elem_idx, col);
-                            }
+            }
+
+            // 4. classList: `.classList.add('...')`, `.classList.remove('...')`, `.classList.toggle('...')`
+            if let Some(pos) = find_subslice(clean_stmt, b".classList.add(") {
+                let target_part = clean_stmt[..pos].trim_ascii();
+                if let Some(target_idx) = self.resolve_elem_target(dom, target_part) {
+                    let arg_part = &clean_stmt[pos + 15..];
+                    if let Some(rp) = arg_part.iter().position(|&b| b == b')') {
+                        if let Some(class_name) = extract_string_lit(&arg_part[..rp]) {
+                            dom.add_class(target_idx, class_name);
+                            self.dom_dirty = true;
+                            continue;
                         }
                     }
                 }
-            } else if let Some(eq_pos) = clean_stmt.iter().position(|&b| b == b'=') {
+            } else if let Some(pos) = find_subslice(clean_stmt, b".classList.remove(") {
+                let target_part = clean_stmt[..pos].trim_ascii();
+                if let Some(target_idx) = self.resolve_elem_target(dom, target_part) {
+                    let arg_part = &clean_stmt[pos + 18..];
+                    if let Some(rp) = arg_part.iter().position(|&b| b == b')') {
+                        if let Some(class_name) = extract_string_lit(&arg_part[..rp]) {
+                            dom.remove_class(target_idx, class_name);
+                            self.dom_dirty = true;
+                            continue;
+                        }
+                    }
+                }
+            } else if let Some(pos) = find_subslice(clean_stmt, b".classList.toggle(") {
+                let target_part = clean_stmt[..pos].trim_ascii();
+                if let Some(target_idx) = self.resolve_elem_target(dom, target_part) {
+                    let arg_part = &clean_stmt[pos + 18..];
+                    if let Some(rp) = arg_part.iter().position(|&b| b == b')') {
+                        if let Some(class_name) = extract_string_lit(&arg_part[..rp]) {
+                            dom.toggle_class(target_idx, class_name);
+                            self.dom_dirty = true;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // 5. addEventListener('click', ...): registra manipulador onclick
+            if let Some(pos) = find_subslice(clean_stmt, b".addEventListener(") {
+                let target_part = clean_stmt[..pos].trim_ascii();
+                if let Some(target_idx) = self.resolve_elem_target(dom, target_part) {
+                    let after = &clean_stmt[pos + 18..];
+                    if let Some(first_comma) = after.iter().position(|&b| b == b',') {
+                        let ev_name = after[..first_comma].trim_ascii();
+                        let is_click = extract_string_lit(ev_name).map_or(false, |ev| ev.eq_ignore_ascii_case(b"click"));
+                        if is_click {
+                            let handler_raw = after[first_comma + 1..].trim_ascii();
+                            let handler_clean = if handler_raw.ends_with(b")") {
+                                &handler_raw[..handler_raw.len() - 1].trim_ascii()
+                            } else {
+                                handler_raw
+                            };
+
+                            let cpy = handler_clean.len().min(255);
+                            dom.nodes[target_idx].onclick_attr[..cpy].copy_from_slice(&handler_clean[..cpy]);
+                            dom.nodes[target_idx].onclick_len = cpy;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // 6. Manipulação de Texto/Conteúdo: `.innerText = ...`, `.textContent = ...`, `.innerHTML = ...`, `.value = ...`
+            let text_prop_opt = if let Some(p) = find_subslice(clean_stmt, b".innerText") {
+                Some((p, 10))
+            } else if let Some(p) = find_subslice(clean_stmt, b".textContent") {
+                Some((p, 12))
+            } else if let Some(p) = find_subslice(clean_stmt, b".innerHTML") {
+                Some((p, 10))
+            } else if let Some(p) = find_subslice(clean_stmt, b".value") {
+                Some((p, 6))
+            } else {
+                None
+            };
+
+            if let Some((pos, len_prop)) = text_prop_opt {
+                let target_part = clean_stmt[..pos].trim_ascii();
+                let after = clean_stmt[pos + len_prop..].trim_ascii();
+                if after.starts_with(b"=") {
+                    let rhs = after[1..].trim_ascii();
+                    if let Some(elem_idx) = self.resolve_elem_target(dom, target_part) {
+                        let mut eval_buf = [0u8; 256];
+                        let eval_len = self.eval_expr_string(rhs, dom, &mut eval_buf);
+                        dom.set_text_content(elem_idx, &eval_buf[..eval_len]);
+                        self.dom_dirty = true;
+                        continue;
+                    }
+                }
+            }
+
+            // 7. Manipulação de Estilo: `.style.<prop> = ...`
+            if let Some(style_pos) = find_subslice(clean_stmt, b".style.") {
+                let target_part = clean_stmt[..style_pos].trim_ascii();
+                let after_style = clean_stmt[style_pos + 7..].trim_ascii();
+                if let Some(eq_pos) = after_style.iter().position(|&b| b == b'=') {
+                    let prop = after_style[..eq_pos].trim_ascii();
+                    let rhs = after_style[eq_pos + 1..].trim_ascii();
+                    if let Some(elem_idx) = self.resolve_elem_target(dom, target_part) {
+                        let quote_val = extract_string_lit(rhs).unwrap_or(rhs);
+
+                        if prop.eq_ignore_ascii_case(b"color") {
+                            if let Some(col) = parse_color(quote_val) {
+                                dom.set_style_color(elem_idx, col);
+                                self.dom_dirty = true;
+                            }
+                        } else if prop.eq_ignore_ascii_case(b"backgroundColor") || prop.eq_ignore_ascii_case(b"background_color") || prop.eq_ignore_ascii_case(b"background") {
+                            if let Some(col) = parse_color(quote_val) {
+                                dom.set_style_bg(elem_idx, col);
+                                self.dom_dirty = true;
+                            }
+                        } else if prop.eq_ignore_ascii_case(b"display") {
+                            if let Some(mode) = parse_display(quote_val) {
+                                dom.set_style_display(elem_idx, mode);
+                                self.dom_dirty = true;
+                            }
+                        } else if prop.eq_ignore_ascii_case(b"borderColor") || prop.eq_ignore_ascii_case(b"border_color") {
+                            if let Some(col) = parse_color(quote_val) {
+                                dom.nodes[elem_idx].computed_style.border_color = Some(col);
+                                self.dom_dirty = true;
+                            }
+                        } else if prop.eq_ignore_ascii_case(b"border") {
+                            let (bw, bc) = parse_border(quote_val);
+                            if let Some(w) = bw { dom.nodes[elem_idx].computed_style.border_width = w; }
+                            if let Some(c) = bc { dom.nodes[elem_idx].computed_style.border_color = Some(c); }
+                            self.dom_dirty = true;
+                        } else if prop.eq_ignore_ascii_case(b"width") {
+                            if let Some(w) = parse_px(quote_val) {
+                                dom.nodes[elem_idx].computed_style.width = Some(w);
+                                self.dom_dirty = true;
+                            }
+                        } else if prop.eq_ignore_ascii_case(b"height") {
+                            if let Some(h) = parse_px(quote_val) {
+                                dom.nodes[elem_idx].computed_style.height = Some(h);
+                                self.dom_dirty = true;
+                            }
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            // 8. Atribuição aritmética / variáveis numéricas: `clicks = clicks + 1` / `clicks += 1`
+            if let Some(eq_pos) = clean_stmt.iter().position(|&b| b == b'=') {
                 let var_name = clean_stmt[..eq_pos].trim_ascii();
                 let is_plus_eq = !var_name.is_empty() && var_name[var_name.len() - 1] == b'+';
                 let real_var = if is_plus_eq { &var_name[..var_name.len() - 1].trim_ascii() } else { &var_name };
@@ -705,6 +1502,8 @@ impl MiniJsRuntime {
                     let val1 = if op1 == *real_var { cur_val } else { parse_int(op1).unwrap_or(0) };
                     let val2 = if op2 == *real_var { cur_val } else { parse_int(op2).unwrap_or(0) };
                     self.set_num(real_var, val1 + val2);
+                } else if let Some(lit) = extract_string_lit(rhs) {
+                    self.set_str(real_var, lit);
                 } else {
                     let val = parse_int(rhs).unwrap_or(0);
                     self.set_num(real_var, val);
@@ -713,7 +1512,7 @@ impl MiniJsRuntime {
         }
     }
 
-    fn eval_expr_string(&self, expr: &[u8], out: &mut [u8]) -> usize {
+    pub fn eval_expr_string(&self, expr: &[u8], dom: &DomArena, out: &mut [u8]) -> usize {
         let mut out_len = 0usize;
         for part in expr.split(|&b| b == b'+') {
             let p = part.trim_ascii();
@@ -727,9 +1526,149 @@ impl MiniJsRuntime {
                 let cpy = n_len.min(out.len() - out_len);
                 out[out_len..out_len + cpy].copy_from_slice(&num_buf[..cpy]);
                 out_len += cpy;
+            } else if let Some(s) = self.get_str(p) {
+                let cpy = s.len().min(out.len() - out_len);
+                out[out_len..out_len + cpy].copy_from_slice(&s[..cpy]);
+                out_len += cpy;
+            } else if let Some(val_pos) = find_subslice(p, b".value") {
+                let elem_part = p[..val_pos].trim_ascii();
+                if let Some(idx) = self.resolve_elem_target(dom, elem_part) {
+                    let t = &dom.nodes[idx].text[..dom.nodes[idx].text_len];
+                    let cpy = t.len().min(out.len() - out_len);
+                    out[out_len..out_len + cpy].copy_from_slice(&t[..cpy]);
+                    out_len += cpy;
+                }
             }
         }
         out_len
+    }
+}
+
+// ── Funções Auxiliares de Parsing e Conversão ─────────────────────────────────
+
+pub fn parse_color(input: &[u8]) -> Option<u32> {
+    let s = input.trim_ascii();
+    if s.is_empty() { return None; }
+    if s.starts_with(b"#") {
+        return parse_hex_color(s);
+    }
+    if s.starts_with(b"rgb(") || s.starts_with(b"rgba(") {
+        return parse_rgb_color(s);
+    }
+    if s.eq_ignore_ascii_case(b"black") { return Some(0x0000_0000); }
+    if s.eq_ignore_ascii_case(b"white") { return Some(0x00FF_FFFF); }
+    if s.eq_ignore_ascii_case(b"red") { return Some(0x00F3_8BA8); }
+    if s.eq_ignore_ascii_case(b"green") { return Some(0x00A6_E3A1); }
+    if s.eq_ignore_ascii_case(b"blue") { return Some(0x0089_B4FA); }
+    if s.eq_ignore_ascii_case(b"yellow") { return Some(0x00F9_E2AF); }
+    if s.eq_ignore_ascii_case(b"cyan") { return Some(0x0094_E2D5); }
+    if s.eq_ignore_ascii_case(b"magenta") || s.eq_ignore_ascii_case(b"pink") { return Some(0x00F5_C2E7); }
+    if s.eq_ignore_ascii_case(b"gray") || s.eq_ignore_ascii_case(b"grey") { return Some(0x006C_7086); }
+    if s.eq_ignore_ascii_case(b"transparent") { return None; }
+    parse_hex_color(s)
+}
+
+pub fn parse_rgb_color(s: &[u8]) -> Option<u32> {
+    let lparen = s.iter().position(|&b| b == b'(')?;
+    let rparen = s.iter().rposition(|&b| b == b')')?;
+    if rparen <= lparen { return None; }
+    let inside = &s[lparen + 1..rparen];
+    let mut parts = inside.split(|&b| b == b',');
+    let r_str = parts.next()?.trim_ascii();
+    let g_str = parts.next()?.trim_ascii();
+    let b_str = parts.next()?.trim_ascii();
+    let r = parse_int(r_str)? as u32;
+    let g = parse_int(g_str)? as u32;
+    let b = parse_int(b_str)? as u32;
+    Some(((r.min(255)) << 16) | ((g.min(255)) << 8) | (b.min(255)))
+}
+
+pub fn parse_border(val: &[u8]) -> (Option<usize>, Option<u32>) {
+    let s = val.trim_ascii();
+    let mut border_w = None;
+    let mut border_c = None;
+    for part in s.split(|&b| b == b' ' || b == b'\t') {
+        let p = part.trim_ascii();
+        if p.is_empty() || p.eq_ignore_ascii_case(b"solid") || p.eq_ignore_ascii_case(b"dashed") || p.eq_ignore_ascii_case(b"dotted") {
+            continue;
+        }
+        if border_w.is_none() && p.iter().any(|&b| b >= b'0' && b <= b'9') && !p.starts_with(b"#") {
+            border_w = parse_px(p);
+        } else if border_c.is_none() {
+            border_c = parse_color(p);
+        }
+    }
+    (border_w, border_c)
+}
+
+pub fn parse_display(val: &[u8]) -> Option<DisplayMode> {
+    let s = val.trim_ascii();
+    if s.eq_ignore_ascii_case(b"none") {
+        Some(DisplayMode::None)
+    } else if s.eq_ignore_ascii_case(b"block") {
+        Some(DisplayMode::Block)
+    } else if s.eq_ignore_ascii_case(b"inline") {
+        Some(DisplayMode::Inline)
+    } else if s.eq_ignore_ascii_case(b"inline-block") {
+        Some(DisplayMode::InlineBlock)
+    } else if s.eq_ignore_ascii_case(b"flex") {
+        Some(DisplayMode::Flex)
+    } else {
+        None
+    }
+}
+
+pub fn parse_flex_direction(val: &[u8]) -> Option<FlexDirection> {
+    let s = val.trim_ascii();
+    if s.eq_ignore_ascii_case(b"column") {
+        Some(FlexDirection::Column)
+    } else if s.eq_ignore_ascii_case(b"row") {
+        Some(FlexDirection::Row)
+    } else {
+        None
+    }
+}
+
+pub fn parse_justify_content(val: &[u8]) -> Option<JustifyContent> {
+    let s = val.trim_ascii();
+    if s.eq_ignore_ascii_case(b"center") {
+        Some(JustifyContent::Center)
+    } else if s.eq_ignore_ascii_case(b"flex-end") || s.eq_ignore_ascii_case(b"end") {
+        Some(JustifyContent::FlexEnd)
+    } else if s.eq_ignore_ascii_case(b"space-between") {
+        Some(JustifyContent::SpaceBetween)
+    } else if s.eq_ignore_ascii_case(b"flex-start") || s.eq_ignore_ascii_case(b"start") {
+        Some(JustifyContent::FlexStart)
+    } else {
+        None
+    }
+}
+
+pub fn parse_align_items(val: &[u8]) -> Option<AlignItems> {
+    let s = val.trim_ascii();
+    if s.eq_ignore_ascii_case(b"center") {
+        Some(AlignItems::Center)
+    } else if s.eq_ignore_ascii_case(b"flex-end") || s.eq_ignore_ascii_case(b"end") {
+        Some(AlignItems::FlexEnd)
+    } else if s.eq_ignore_ascii_case(b"stretch") {
+        Some(AlignItems::Stretch)
+    } else if s.eq_ignore_ascii_case(b"flex-start") || s.eq_ignore_ascii_case(b"start") {
+        Some(AlignItems::FlexStart)
+    } else {
+        None
+    }
+}
+
+pub fn parse_text_align(val: &[u8]) -> Option<TextAlign> {
+    let s = val.trim_ascii();
+    if s.eq_ignore_ascii_case(b"center") {
+        Some(TextAlign::Center)
+    } else if s.eq_ignore_ascii_case(b"right") {
+        Some(TextAlign::Right)
+    } else if s.eq_ignore_ascii_case(b"left") {
+        Some(TextAlign::Left)
+    } else {
+        None
     }
 }
 
@@ -954,6 +1893,30 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
     dom.title_len = 0;
     css.rule_count = 0;
 
+    #[derive(Clone, Copy)]
+    struct QueuedScript {
+        is_vfs: bool,
+        vfs_path: [u8; 64],
+        vfs_path_len: usize,
+        inline_start: usize,
+        inline_end: usize,
+    }
+
+    impl QueuedScript {
+        const fn empty() -> Self {
+            Self {
+                is_vfs: false,
+                vfs_path: [0; 64],
+                vfs_path_len: 0,
+                inline_start: 0,
+                inline_end: 0,
+            }
+        }
+    }
+
+    let mut queued_scripts = [QueuedScript::empty(); 8];
+    let mut script_count = 0usize;
+
     let mut i = 0usize;
     let len = html.len();
 
@@ -1050,16 +2013,40 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                 continue;
             }
 
-            // Trata <script>
+            // Trata <script> (inline e externo src="...")
             if tag_name == b"script" {
+                let script_tag_start = i;
                 while i < len && html[i] != b'>' { i += 1; }
+                let script_tag_content = &html[script_tag_start..i];
                 if i < len { i += 1; }
-                let script_start = i;
+
+                if let Some(src_val) = extract_attr_val(script_tag_content, b"src=") {
+                    if script_count < queued_scripts.len() {
+                        let mut qs = QueuedScript::empty();
+                        qs.is_vfs = true;
+                        let cpy = src_val.len().min(63);
+                        qs.vfs_path[..cpy].copy_from_slice(&src_val[..cpy]);
+                        qs.vfs_path_len = cpy;
+                        queued_scripts[script_count] = qs;
+                        script_count += 1;
+                    }
+                }
+
+                let script_body_start = i;
                 while i + 8 < len && !html[i..i + 9].eq_ignore_ascii_case(b"</script>") {
                     i += 1;
                 }
-                let script_bytes = &html[script_start..i];
-                js.eval_script(script_bytes, dom);
+                let script_body_end = i;
+
+                if script_body_end > script_body_start && script_count < queued_scripts.len() {
+                    let mut qs = QueuedScript::empty();
+                    qs.is_vfs = false;
+                    qs.inline_start = script_body_start;
+                    qs.inline_end = script_body_end;
+                    queued_scripts[script_count] = qs;
+                    script_count += 1;
+                }
+
                 while i < len && html[i] != b'>' { i += 1; }
                 if i < len { i += 1; }
                 continue;
@@ -1326,9 +2313,26 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
         }
     }
 
-    // Passada final de resolução de estilos: assegura cascata completa após carregar <style> e <link>
-    for n in 0..dom.node_count {
-        css.resolve(&mut dom.nodes[n]);
+    // 1. Resolução inicial de estilos CSS completos em cascata
+    css.resolve_all(dom);
+
+    // 2. DOMContentLoaded: Execução de scripts deferidos após construção da árvore DOM
+    for s in 0..script_count {
+        let qs = &queued_scripts[s];
+        if qs.is_vfs {
+            let mut script_buf = [0u8; 4096];
+            if let Some(n) = read_css_file_from_vfs(&qs.vfs_path[..qs.vfs_path_len], &mut script_buf) {
+                js.eval_script(&script_buf[..n], dom);
+            }
+        } else if qs.inline_end > qs.inline_start {
+            js.eval_script(&html[qs.inline_start..qs.inline_end], dom);
+        }
+    }
+
+    // 3. Se algum script realizou mutação reativa do DOM, recalcula a cascata CSS
+    if js.dom_dirty {
+        css.resolve_all(dom);
+        js.dom_dirty = false;
     }
 }
 
@@ -1425,6 +2429,8 @@ pub struct BoxRect {
     pub h: usize,
     pub bg_color: u32,
     pub border_color: Option<u32>,
+    pub border_width: usize,
+    pub border_radius: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -1675,6 +2681,8 @@ impl DocumentLayout {
                 h: 0,
                 bg_color: 0,
                 border_color: None,
+                border_width: 1,
+                border_radius: 0,
             }; MAX_RENDER_BOXES],
             box_count: 0,
             images: [RenderImage {
@@ -1730,6 +2738,14 @@ impl DocumentLayout {
         self.total_height = curr_y + 10;
     }
 
+    fn mark_subtree_laid_out(dom: &DomArena, node_idx: usize, laid_out: &mut [bool; MAX_DOM_NODES]) {
+        if node_idx >= dom.node_count || laid_out[node_idx] { return; }
+        laid_out[node_idx] = true;
+        for c in 0..dom.nodes[node_idx].child_count {
+            Self::mark_subtree_laid_out(dom, dom.nodes[node_idx].children[c], laid_out);
+        }
+    }
+
     fn layout_subtree(
         &mut self,
         dom: &DomArena,
@@ -1742,8 +2758,19 @@ impl DocumentLayout {
         if node_idx >= dom.node_count || laid_out[node_idx] {
             return;
         }
-        laid_out[node_idx] = true;
+
         let node = &dom.nodes[node_idx];
+
+        // Se display == none, ignora o elemento e toda sua sub-árvore
+        if node.computed_style.display == DisplayMode::None {
+            laid_out[node_idx] = true;
+            for c in 0..node.child_count {
+                Self::mark_subtree_laid_out(dom, node.children[c], laid_out);
+            }
+            return;
+        }
+
+        laid_out[node_idx] = true;
         let tag = &node.tag[..node.tag_len];
 
         if tag == b"hr" {
@@ -1834,6 +2861,88 @@ impl DocumentLayout {
             return;
         }
 
+        // Layout Flexbox Linha (display: flex && flex-direction: row)
+        if node.child_count > 0 && node.computed_style.display == DisplayMode::Flex && node.computed_style.flex_direction == FlexDirection::Row {
+            if node.computed_style.display_block {
+                *curr_y += node.computed_style.margin_top;
+            }
+            let box_start_y = *curr_y;
+            let pad_left = node.computed_style.padding_left;
+            let pad_right = node.computed_style.padding_right;
+            let pad_top = if node.computed_style.bg_color.is_some() || node.computed_style.border_color.is_some() {
+                node.computed_style.padding_top.max(4)
+            } else {
+                node.computed_style.padding_top
+            };
+            let pad_bottom = if node.computed_style.bg_color.is_some() || node.computed_style.border_color.is_some() {
+                node.computed_style.padding_bottom.max(4)
+            } else {
+                node.computed_style.padding_bottom
+            };
+            let mar_left = node.computed_style.margin_left;
+            let mar_right = node.computed_style.margin_right;
+
+            let has_box = node.computed_style.bg_color.is_some() || node.computed_style.border_color.is_some();
+            let box_slot = if has_box && self.box_count < self.boxes.len() {
+                let slot = self.box_count;
+                self.box_count += 1;
+                Some(slot)
+            } else {
+                None
+            };
+
+            *curr_y += pad_top;
+
+            let inner_w = avail_width.saturating_sub(mar_left + mar_right + pad_left + pad_right);
+            let mut visible_children = 0usize;
+            for c in 0..node.child_count {
+                let cid = node.children[c];
+                if cid < dom.node_count && dom.nodes[cid].computed_style.display != DisplayMode::None {
+                    visible_children += 1;
+                }
+            }
+
+            let child_w = if visible_children > 0 { inner_w / visible_children } else { inner_w };
+            let mut child_x = base_x + mar_left + pad_left;
+            let mut max_y = *curr_y;
+
+            for c in 0..node.child_count {
+                let cid = node.children[c];
+                if cid < dom.node_count && dom.nodes[cid].computed_style.display != DisplayMode::None {
+                    let mut child_y = *curr_y;
+                    let target_w = dom.nodes[cid].computed_style.width.unwrap_or(child_w).min(inner_w);
+                    self.layout_subtree(dom, cid, child_x, &mut child_y, target_w, laid_out);
+                    child_x += target_w;
+                    if child_y > max_y {
+                        max_y = child_y;
+                    }
+                }
+            }
+            *curr_y = max_y + pad_bottom;
+
+            if let Some(slot) = box_slot {
+                let box_h = node.computed_style.height.unwrap_or_else(|| {
+                    curr_y.saturating_sub(box_start_y).max(font::FONT_HEIGHT + pad_top + pad_bottom)
+                });
+                let box_w = node.computed_style.width.unwrap_or(avail_width.saturating_sub(mar_left + mar_right));
+                self.boxes[slot] = BoxRect {
+                    x: base_x + mar_left,
+                    y: box_start_y,
+                    w: box_w,
+                    h: box_h,
+                    bg_color: node.computed_style.bg_color.unwrap_or(0),
+                    border_color: node.computed_style.border_color,
+                    border_width: node.computed_style.border_width,
+                    border_radius: node.computed_style.border_radius,
+                };
+            }
+
+            if node.computed_style.display_block {
+                *curr_y += node.computed_style.margin_bottom;
+            }
+            return;
+        }
+
         // Container element with children
         if node.child_count > 0 {
             if node.computed_style.display_block {
@@ -1884,8 +2993,10 @@ impl DocumentLayout {
             *curr_y += pad_bottom;
 
             if let Some(slot) = box_slot {
-                let box_h = curr_y.saturating_sub(box_start_y).max(font::FONT_HEIGHT + pad_top + pad_bottom);
-                let box_w = avail_width.saturating_sub(mar_left + mar_right);
+                let box_h = node.computed_style.height.unwrap_or_else(|| {
+                    curr_y.saturating_sub(box_start_y).max(font::FONT_HEIGHT + pad_top + pad_bottom)
+                });
+                let box_w = node.computed_style.width.unwrap_or(avail_width.saturating_sub(mar_left + mar_right));
                 self.boxes[slot] = BoxRect {
                     x: base_x + mar_left,
                     y: box_start_y,
@@ -1893,6 +3004,8 @@ impl DocumentLayout {
                     h: box_h,
                     bg_color: node.computed_style.bg_color.unwrap_or(0),
                     border_color: node.computed_style.border_color,
+                    border_width: node.computed_style.border_width,
+                    border_radius: node.computed_style.border_radius,
                 };
             }
 
@@ -1943,8 +3056,12 @@ impl DocumentLayout {
 
         if has_box {
             if self.box_count < self.boxes.len() {
-                let box_h = curr_y.saturating_sub(box_start_y).max(font::FONT_HEIGHT + pad_top + pad_bottom + 2);
-                let box_w = if node.computed_style.display_block {
+                let box_h = node.computed_style.height.unwrap_or_else(|| {
+                    curr_y.saturating_sub(box_start_y).max(font::FONT_HEIGHT + pad_top + pad_bottom + 2)
+                });
+                let box_w = if let Some(w) = node.computed_style.width {
+                    w.min(avail_width)
+                } else if node.computed_style.display_block {
                     avail_width.saturating_sub(mar_left + mar_right)
                 } else {
                     (node.text_len * font::FONT_WIDTH + pad_left + pad_right + 12).min(avail_width)
@@ -1956,6 +3073,8 @@ impl DocumentLayout {
                     h: box_h,
                     bg_color: node.computed_style.bg_color.unwrap_or(0x0031_3244),
                     border_color: node.computed_style.border_color,
+                    border_width: node.computed_style.border_width,
+                    border_radius: node.computed_style.border_radius,
                 };
                 self.box_count += 1;
             }
@@ -2267,7 +3386,7 @@ pub struct BrowserSession {
 }
 
 impl BrowserSession {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             current_url: [0; 128],
             current_url_len: 0,
@@ -2299,6 +3418,29 @@ impl BrowserSession {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.current_url = [0; 128];
+        self.current_url_len = 0;
+        self.history_back_count = 0;
+        self.history_fwd_count = 0;
+        self.is_address_focused = false;
+        self.address_selected = false;
+        self.address_edit = [0; 128];
+        self.address_edit_len = 0;
+        self.scroll_y = 0;
+        self.max_scroll = 0;
+        self.viewport_w = WIN_W;
+        self.viewport_h = WIN_H;
+        self.saved_w = WIN_W;
+        self.saved_h = WIN_H;
+        self.fullscreen_state = FullscreenState::Windowed;
+        self.page = ParsedPage::new();
+        self.dom = DomArena::new();
+        self.css = MiniCss::new();
+        self.js_runtime = MiniJsRuntime::new();
+        self.layout = DocumentLayout::new();
+    }
+
     pub fn init_persistence(&mut self) {
         storage::ensure_storage_hierarchy();
         let _ = self.history_store.load();
@@ -2326,12 +3468,11 @@ impl BrowserSession {
         if node_idx < self.dom.node_count {
             let onclick_len = self.dom.nodes[node_idx].onclick_len;
             if onclick_len > 0 {
-                let mut script_buf = [0u8; 128];
-                script_buf[..onclick_len].copy_from_slice(&self.dom.nodes[node_idx].onclick_attr[..onclick_len]);
-                self.js_runtime.eval_script(&script_buf[..onclick_len], &mut self.dom);
-                for i in 0..self.dom.node_count {
-                    self.css.resolve(&mut self.dom.nodes[i]);
-                }
+                let mut script_buf = [0u8; 256];
+                let cpy = onclick_len.min(255);
+                script_buf[..cpy].copy_from_slice(&self.dom.nodes[node_idx].onclick_attr[..cpy]);
+                self.js_runtime.eval_script(&script_buf[..cpy], &mut self.dom);
+                self.css.resolve_all(&mut self.dom);
                 self.recompute_layout();
                 return true;
             }
@@ -2748,9 +3889,20 @@ impl BrowserSession {
                     let draw_y = box_top.max(clip_top);
                     let draw_h = box_bottom.min(clip_bottom).saturating_sub(draw_y);
                     if draw_h > 0 {
-                        fill_rect(buf, w, h, bx.x, draw_y, bx.w, draw_h, bx.bg_color);
-                        if let Some(bc) = bx.border_color {
-                            draw_rect_border(buf, w, h, bx.x, draw_y, bx.w, draw_h, bc);
+                        if bx.border_radius > 0 {
+                            if bx.bg_color != 0 {
+                                fill_rounded_rect(buf, w, h, bx.x, draw_y, bx.w, draw_h, bx.border_radius, bx.bg_color);
+                            }
+                            if let Some(bc) = bx.border_color {
+                                draw_rounded_border(buf, w, h, bx.x, draw_y, bx.w, draw_h, bx.border_radius, bx.border_width, bc);
+                            }
+                        } else {
+                            if bx.bg_color != 0 {
+                                fill_rect(buf, w, h, bx.x, draw_y, bx.w, draw_h, bx.bg_color);
+                            }
+                            if let Some(bc) = bx.border_color {
+                                draw_rect_border(buf, w, h, bx.x, draw_y, bx.w, draw_h, bc);
+                            }
                         }
                     }
                 }
@@ -2871,6 +4023,103 @@ fn draw_rect_border(buf: &mut [u32], stride_w: usize, max_h: usize, rx: usize, r
     for y in ry..=y_end.min(max_h.saturating_sub(1)) {
         if rx < stride_w && y * stride_w + rx < buf.len() { buf[y * stride_w + rx] = color; }
         if x_end < stride_w && y * stride_w + x_end < buf.len() { buf[y * stride_w + x_end] = color; }
+    }
+}
+
+fn fill_rounded_rect(
+    buf: &mut [u32],
+    stride_w: usize,
+    max_h: usize,
+    rx: usize,
+    ry: usize,
+    rw: usize,
+    rh: usize,
+    radius: usize,
+    color: u32,
+) {
+    if rw == 0 || rh == 0 { return; }
+    let r = radius.min(rw / 2).min(rh / 2);
+    let x_end = (rx + rw).min(stride_w);
+    let y_end = (ry + rh).min(max_h);
+
+    for y in ry..y_end {
+        let dy = if y < ry + r {
+            (ry + r) - y
+        } else if y >= ry + rh - r {
+            y - (ry + rh - r - 1)
+        } else {
+            0
+        };
+
+        for x in rx..x_end {
+            let dx = if x < rx + r {
+                (rx + r) - x
+            } else if x >= rx + rw - r {
+                x - (rx + rw - r - 1)
+            } else {
+                0
+            };
+
+            if dx > 0 && dy > 0 && dx * dx + dy * dy > r * r {
+                continue;
+            }
+
+            let idx = y * stride_w + x;
+            if idx < buf.len() {
+                buf[idx] = color;
+            }
+        }
+    }
+}
+
+fn draw_rounded_border(
+    buf: &mut [u32],
+    stride_w: usize,
+    max_h: usize,
+    rx: usize,
+    ry: usize,
+    rw: usize,
+    rh: usize,
+    radius: usize,
+    border_w: usize,
+    color: u32,
+) {
+    if rw == 0 || rh == 0 { return; }
+    let r = radius.min(rw / 2).min(rh / 2);
+    let bw = border_w.max(1);
+    let x_end = (rx + rw).min(stride_w);
+    let y_end = (ry + rh).min(max_h);
+
+    for y in ry..y_end {
+        let dy_top = if y < ry + r { (ry + r) - y } else { 0 };
+        let dy_bot = if y >= ry + rh - r { y - (ry + rh - r - 1) } else { 0 };
+        let dy = dy_top.max(dy_bot);
+        let is_edge_y = y < ry + bw || y >= ry + rh - bw;
+
+        for x in rx..x_end {
+            let dx_left = if x < rx + r { (rx + r) - x } else { 0 };
+            let dx_right = if x >= rx + rw - r { x - (rx + rw - r - 1) } else { 0 };
+            let dx = dx_left.max(dx_right);
+            let is_edge_x = x < rx + bw || x >= rx + rw - bw;
+
+            if dx > 0 && dy > 0 {
+                let dist_sq = dx * dx + dy * dy;
+                if dist_sq > r * r {
+                    continue;
+                }
+                let inner_r = r.saturating_sub(bw);
+                if dist_sq < inner_r * inner_r {
+                    continue;
+                }
+            } else if !is_edge_x && !is_edge_y {
+                continue;
+            }
+
+            let idx = y * stride_w + x;
+            if idx < buf.len() {
+                buf[idx] = color;
+            }
+        }
     }
 }
 

@@ -609,6 +609,7 @@ pub extern "C" fn syscall_dispatch(
         85 => sys_creat(arg0 as *const u8, arg1, arg2 as u32),
         86 => sys_net_set_dns(arg0 as *const u8, arg1 as *const u8),
         87 => sys_net_get_dns(arg0 as *mut u8, arg1 as *mut u8),
+        88 => sys_get_system_stats(arg0 as *mut SystemStatsUser),
         102 => sys_getuid(),
         104 => sys_getgid(),
         107 => sys_geteuid(),
@@ -3027,6 +3028,79 @@ fn sys_net_get_dns(primary_out: *mut u8, secondary_out: *mut u8) -> isize {
     0
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemStatsUser {
+    pub uptime_secs: u64,
+    pub task_count: u64,
+    pub sched_ticks: u64,
+    pub used_ram_mb: u64,
+    pub total_ram_mb: u64,
+    pub current_tick: u64,
+    pub net_ip: [u8; 4],
+    pub net_adapter: [u8; 32],
+    pub net_state_desc: [u8; 32],
+    pub jinnwall_active_conns: u64,
+    pub jinnwall_drops: u64,
+    pub jinnwall_inspected: u64,
+    pub jinnwall_accepted: u64,
+    pub jinnwall_profile: u32,
+    pub physical_frames_used: u64,
+    pub physical_frames_total: u64,
+    pub dynamic_pages_allocated: u64,
+    pub dynamic_pages_freed: u64,
+    pub vfs_open_fds: u64,
+    pub vfs_mounted_volumes: u64,
+}
+
+/// `sys_get_system_stats(out_ptr)` — Retorna telemetria e estatísticas do kernel para Ring 3 (Syscall 88).
+fn sys_get_system_stats(out_ptr: *mut SystemStatsUser) -> isize {
+    if out_ptr.is_null() {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(out_ptr as *const u8, core::mem::size_of::<SystemStatsUser>(), true) {
+            return e;
+        }
+    }
+    let stats = <crate::gui::JinnSystem as aladdin::contracts::system::SystemHost>::stats(&crate::gui::JinnSystem);
+    let mut u = SystemStatsUser::default();
+    u.uptime_secs = stats.uptime_secs as u64;
+    u.task_count = stats.task_count as u64;
+    u.sched_ticks = stats.sched_ticks;
+    u.used_ram_mb = stats.used_ram_mb as u64;
+    u.total_ram_mb = stats.total_ram_mb as u64;
+    u.current_tick = stats.current_tick;
+    u.net_ip = stats.net_ip;
+
+    let ad_bytes = stats.net_adapter.as_bytes();
+    let ad_len = ad_bytes.len().min(31);
+    u.net_adapter[..ad_len].copy_from_slice(&ad_bytes[..ad_len]);
+
+    let st_bytes = stats.net_state_desc.as_bytes();
+    let st_len = st_bytes.len().min(31);
+    u.net_state_desc[..st_len].copy_from_slice(&st_bytes[..st_len]);
+
+    u.jinnwall_active_conns = stats.jinnwall_active_conns as u64;
+    u.jinnwall_drops = stats.jinnwall_drops;
+    u.jinnwall_inspected = stats.jinnwall_inspected;
+    u.jinnwall_accepted = stats.jinnwall_accepted;
+    u.jinnwall_profile = match stats.jinnwall_profile {
+        aladdin::contracts::system::JinnWallProfile::PublicSecure => 0,
+        aladdin::contracts::system::JinnWallProfile::Development => 1,
+    };
+    u.physical_frames_used = stats.physical_frames_used as u64;
+    u.physical_frames_total = stats.physical_frames_total as u64;
+    u.dynamic_pages_allocated = stats.dynamic_pages_allocated as u64;
+    u.dynamic_pages_freed = stats.dynamic_pages_freed as u64;
+    u.vfs_open_fds = stats.vfs_open_fds as u64;
+    u.vfs_mounted_volumes = stats.vfs_mounted_volumes as u64;
+
+    unsafe {
+        core::ptr::copy_nonoverlapping(&u as *const SystemStatsUser, out_ptr, 1);
+    }
+    0
+}
 
 // ── Syscalls de Execução Segura de Processos (Syscalls 38 e 39) ───────────────
 

@@ -367,38 +367,83 @@ pub struct UserSystem {
 
 impl SystemHost for UserSystem {
     fn stats(&self) -> SystemStats {
-        let mut ts = Timespec::default();
-        let (uptime_secs, current_tick) = unsafe {
-            if sys_clock_gettime(1, &mut ts) == 0 {
-                let ticks = ts.tv_sec * 100 + ts.tv_nsec / 10_000_000;
-                (ts.tv_sec as usize, ticks)
+        let mut u = aladdin_sdk::syscall::SystemStatsUser::default();
+        let ret = unsafe { aladdin_sdk::syscall::syscall1(aladdin_sdk::syscall::SYS_GET_SYSTEM_STATS, &mut u as *mut _ as u64) };
+        if ret == 0 {
+            let ad_str = if u.net_adapter.starts_with(b"Intel") {
+                "Intel 82540EM"
+            } else if u.net_adapter.starts_with(b"AMD") {
+                "AMD PCnet-FAST III"
+            } else if u.net_adapter.starts_with(b"VirtIO") {
+                "VirtIO-Net"
             } else {
-                let c = self.start_tick.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                ((c / 100) as usize, c)
-            }
-        };
+                "virtio-net"
+            };
 
-        SystemStats {
-            uptime_secs,
-            task_count: 3,
-            sched_ticks: 100,
-            used_ram_mb: 19,
-            total_ram_mb: 256,
-            current_tick,
-            net_ip: [192, 168, 1, 100],
-            net_adapter: "virtio-net",
-            net_state_desc: "Connected (Ring 3)",
-            jinnwall_active_conns: 1,
-            jinnwall_drops: 0,
-            jinnwall_inspected: 10,
-            jinnwall_accepted: 10,
-            jinnwall_profile: JinnWallProfile::PublicSecure,
-            physical_frames_used: 19 * 256,
-            physical_frames_total: 256 * 256,
-            dynamic_pages_allocated: 250,
-            dynamic_pages_freed: 200,
-            vfs_open_fds: 4,
-            vfs_mounted_volumes: 2,
+            let st_str = if u.net_state_desc.starts_with(b"Rede: Ativa") {
+                "Connected (Ring 3)"
+            } else if u.net_state_desc.starts_with(b"Rede: Sem IP") {
+                "DHCP Pending"
+            } else {
+                "Connected (Ring 3)"
+            };
+
+            SystemStats {
+                uptime_secs: u.uptime_secs as usize,
+                task_count: u.task_count as usize,
+                sched_ticks: u.sched_ticks,
+                used_ram_mb: u.used_ram_mb as usize,
+                total_ram_mb: u.total_ram_mb as usize,
+                current_tick: u.current_tick,
+                net_ip: u.net_ip,
+                net_adapter: ad_str,
+                net_state_desc: st_str,
+                jinnwall_active_conns: u.jinnwall_active_conns as usize,
+                jinnwall_drops: u.jinnwall_drops,
+                jinnwall_inspected: u.jinnwall_inspected,
+                jinnwall_accepted: u.jinnwall_accepted,
+                jinnwall_profile: if u.jinnwall_profile == 0 { JinnWallProfile::PublicSecure } else { JinnWallProfile::Development },
+                physical_frames_used: u.physical_frames_used as usize,
+                physical_frames_total: u.physical_frames_total as usize,
+                dynamic_pages_allocated: u.dynamic_pages_allocated as usize,
+                dynamic_pages_freed: u.dynamic_pages_freed as usize,
+                vfs_open_fds: u.vfs_open_fds as usize,
+                vfs_mounted_volumes: u.vfs_mounted_volumes as usize,
+            }
+        } else {
+            let mut ts = Timespec::default();
+            let (uptime_secs, current_tick) = unsafe {
+                if sys_clock_gettime(1, &mut ts) == 0 {
+                    let ticks = ts.tv_sec * 100 + ts.tv_nsec / 10_000_000;
+                    (ts.tv_sec as usize, ticks)
+                } else {
+                    let c = self.start_tick.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    ((c / 100) as usize, c)
+                }
+            };
+
+            SystemStats {
+                uptime_secs,
+                task_count: 3,
+                sched_ticks: 100,
+                used_ram_mb: 19,
+                total_ram_mb: 256,
+                current_tick,
+                net_ip: [10, 0, 2, 15],
+                net_adapter: "virtio-net",
+                net_state_desc: "Connected (Ring 3)",
+                jinnwall_active_conns: 1,
+                jinnwall_drops: 0,
+                jinnwall_inspected: 10,
+                jinnwall_accepted: 10,
+                jinnwall_profile: JinnWallProfile::PublicSecure,
+                physical_frames_used: 19 * 256,
+                physical_frames_total: 256 * 256,
+                dynamic_pages_allocated: 250,
+                dynamic_pages_freed: 200,
+                vfs_open_fds: 4,
+                vfs_mounted_volumes: 2,
+            }
         }
     }
 
@@ -896,9 +941,9 @@ pub extern "C" fn _start() -> ! {
         // Extrai o próximo estado da fila de mouse ou retorna o estado atômico mais recente
         let res_mouse = dequeue_mouse().unwrap_or(unsafe { CURRENT_MOUSE });
 
-        // Sincroniza janelas de clientes Ring 3 ativas (amostragem a cada 15 ciclos para eliminar contencao de spinlock)
+        // Sincroniza janelas de clientes Ring 3 ativas imediatamente em arraste/clique ou a cada 3 ciclos
         win_sync_count = win_sync_count.wrapping_add(1);
-        if win_sync_count % 15 == 0 {
+        if (res_mouse.2 & 1) != 0 || win_sync_count % 3 == 0 {
             unsafe {
                 if let Some(sess) = GLOBAL_SESSION.as_mut() {
                     let count = sys_list_client_windows(client_info_list.as_mut_ptr(), 16);

@@ -259,6 +259,7 @@ pub const EVENT_KEY_UP: u32 = 5;
 pub const EVENT_SCROLL: u32 = 6;
 pub const EVENT_WINDOW_CLOSE: u32 = 7;
 pub const EVENT_WINDOW_RESIZE: u32 = 8;
+pub const EVENT_WINDOW_EXPOSE: u32 = 9;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -1716,6 +1717,7 @@ pub const HTTP_BUF_SIZE: usize = 65536;
 static mut HTML_FILE_BUF: [u8; HTTP_BUF_SIZE] = [0; HTTP_BUF_SIZE];
 static mut HTTP_RX_BUF: [u8; HTTP_BUF_SIZE] = [0; HTTP_BUF_SIZE];
 static mut HTTP_PLAIN_BUF: [u8; HTTP_BUF_SIZE] = [0; HTTP_BUF_SIZE];
+static mut BROWSER_SESSION: browser::BrowserSession = browser::BrowserSession::new();
 
 unsafe fn read_html_file(path: &[u8]) -> Option<usize> {
     let fd = sys_open(path, O_RDONLY);
@@ -2437,7 +2439,8 @@ unsafe fn run_gui_demo() {
     print_str(b"  JINN BROWSER 0.2.0 - INTEGRACAO NATIVA, EVENTOS E INTERATIVIDADE\n");
     print_str(b"==================================================================\n");
 
-    let mut session = browser::BrowserSession::new();
+    let mut session = unsafe { &mut *core::ptr::addr_of_mut!(BROWSER_SESSION) };
+    session.reset();
     let mut surface = DynamicSurfaceBuffer::new();
     unsafe { surface.init(); }
     let buf_slice = surface.slice_mut();
@@ -2864,7 +2867,8 @@ unsafe fn run_browser_interactive() -> ! {
     print_str(b"  JINN BROWSER 0.5.0 - SESSAO INTERATIVA NATIVA (RING 3)\n");
     print_str(b"==================================================================\n");
 
-    let mut session = browser::BrowserSession::new();
+    let mut session = unsafe { &mut *core::ptr::addr_of_mut!(BROWSER_SESSION) };
+    session.reset();
     print_str(b"[BROWSER-STORAGE] Inicializando infraestrutura de persistencia local...\n");
     session.init_persistence();
     print_str(b"[BROWSER-STORAGE] Persistencia pronta em /disk/browser/ (cache, cookies, history, bookmark)!\n");
@@ -2885,7 +2889,7 @@ unsafe fn run_browser_interactive() -> ! {
         }
         None => {
             print_str(b"[BROWSER] /disk/INDEX.HTM nao encontrado no VFS, usando fallback embutido...\n");
-            let fallback = b"<html><head><title>Jinn OS Portal</title><style>h1{color:#f9e2af;margin:8px;} .card{background-color:#1e1e2e;margin:6px;} .btn{background-color:#313244;color:#89dceb;} #counter-display{color:#00ffaa;font-weight:bold;}</style></head><body><h1>Jinn Browser 0.6.0</h1><p>Motor Nativo: HTML + Mini-CSS + JavaScript</p><div class=\"card\"><p id=\"counter-display\">Cliques: 0</p><button id=\"btn-count\" class=\"btn\" onclick=\"clicks=clicks+1;document.getElementById('counter-display').innerText='Cliques: '+clicks;\">[ Incrementar Contador ]</button></div><script>var clicks = 0;</script><hr/><p><a href=\"about.htm\">Sobre o Sistema</a></p></body></html>";
+            let fallback = b"<html><head><title>Jinn OS Portal</title><style>h1{color:#f9e2af;margin:8px;} .card{background-color:#1e1e2e;margin:6px;padding:6px;border:1px solid #45475a;border-radius:4px;} .btn{background-color:#313244;color:#89dceb;border:1px solid #45475a;border-radius:3px;padding:2px 6px;margin:2px;} #counter-display{color:#00ffaa;font-weight:bold;} .hidden{display:none;} .flex-row{display:flex;flex-direction:row;} .card p{margin:3px;}</style></head><body><h1>Jinn Browser 0.6.0</h1><p>Motor Nativo: HTML + Mini-CSS + JavaScript</p><div class=\"card\"><p id=\"counter-display\">Cliques: 0</p><div class=\"flex-row\"><button id=\"btn-count\" class=\"btn\" onclick=\"clicks=clicks+1;document.getElementById('counter-display').innerText='Cliques: '+clicks;\">[ +1 Clique ]</button><button id=\"btn-toggle\" class=\"btn\" onclick=\"document.getElementById('extra-info').classList.toggle('hidden');\">[ Toggle Info ]</button></div><p id=\"extra-info\" class=\"hidden\">Recurso CSS display:none e classList ativo!</p></div><script>var clicks = 0;</script><hr/><p><a href=\"about.htm\">Sobre o Sistema</a></p></body></html>";
             let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
             core::ptr::copy_nonoverlapping(fallback.as_ptr(), f_ptr, fallback.len());
             fallback.len()
@@ -2966,6 +2970,12 @@ unsafe fn run_browser_interactive() -> ! {
                         session.render(buf_cur);
                         let _ = sys_window_update(win_id, buf_cur);
                     }
+                }
+                EVENT_WINDOW_EXPOSE => {
+                    print_str(b"[BROWSER-INTERACTION] EVENT_WINDOW_EXPOSE received\n");
+                    let buf_cur = surface.slice_mut();
+                    session.render(buf_cur);
+                    let _ = sys_window_update(win_id, buf_cur);
                 }
                 EVENT_MOUSE_DOWN => {
                     let click_x = ev.x as usize;

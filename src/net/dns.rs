@@ -920,11 +920,10 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
         PENDING_DNS_TABLE.insert(query_entry);
     }
 
-    // 5. Transmite consulta pela rede (no VirtualBox NAT, prioriza o host proxy 10.0.2.3 com fallback rápido)
-    let is_vbox = crate::net::arp::is_hypervisor_virtualbox();
-    let primary = if is_vbox { [10, 0, 2, 3] } else { unsafe { DNS_CONFIG.primary } };
-    let secondary = if is_vbox { [1, 1, 1, 1] } else { unsafe { DNS_CONFIG.secondary } };
-    let fallback = if is_vbox { [8, 8, 8, 8] } else { unsafe { DNS_CONFIG.fallback } };
+    // 5. Transmite consulta pela rede com resolvedor cascata: 1.1.1.1 -> 8.8.8.8 -> 10.0.2.3
+    let primary = unsafe { DNS_CONFIG.primary };     // [1, 1, 1, 1]
+    let secondary = unsafe { DNS_CONFIG.secondary }; // [8, 8, 8, 8]
+    let fallback = unsafe { DNS_CONFIG.fallback };   // [10, 0, 2, 3]
     log_dns_resolving(name, primary);
 
     if send_query_to(name, tx_id, Some(primary)).is_err() {
@@ -998,17 +997,17 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
         let elapsed = crate::timer::ticks().saturating_sub(start_tick);
         let since_last = crate::timer::ticks().saturating_sub(last_tx);
 
-        if elapsed >= 100 && stage < 2 {
+        if elapsed >= 70 && stage < 2 {
             stage = 2;
             last_tx = crate::timer::ticks();
             log_dns_switch("fallback", fallback);
             let _ = send_query_to(name, tx_id, Some(fallback));
-        } else if elapsed >= 50 && stage < 1 {
+        } else if elapsed >= 35 && stage < 1 {
             stage = 1;
             last_tx = crate::timer::ticks();
             log_dns_switch("secundario", secondary);
             let _ = send_query_to(name, tx_id, Some(secondary));
-        } else if since_last >= 35 {
+        } else if since_last >= 25 {
             last_tx = crate::timer::ticks();
             let target_server = match stage {
                 0 => primary,
