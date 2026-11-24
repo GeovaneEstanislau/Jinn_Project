@@ -76,6 +76,7 @@ pub struct E1000TxDesc {
     pub special: u16,
 }
 
+#[repr(align(64))]
 pub struct E1000Device {
     pub mmio_base: u64,
     pub mac: [u8; 6],
@@ -127,6 +128,14 @@ impl E1000Device {
         let desc_idx = self.tx_cur;
         let buf_phys = self.tx_buffers_phys[desc_idx];
         let buf_virt = crate::memory::paging::phys_to_virt(buf_phys) as *mut u8;
+
+        // Pré-busca do próximo buffer de TX para aquecer a linha de cache
+        let next_desc_idx = (self.tx_cur + 1) % NUM_DESC;
+        let next_buf_phys = self.tx_buffers_phys[next_desc_idx];
+        let next_buf_virt = crate::memory::paging::phys_to_virt(next_buf_phys) as *const i8;
+        unsafe {
+            core::arch::x86_64::_mm_prefetch(next_buf_virt, core::arch::x86_64::_MM_HINT_T0);
+        }
 
         unsafe {
             core::ptr::copy_nonoverlapping(frame.as_ptr(), buf_virt, frame.len());
@@ -188,6 +197,11 @@ impl E1000Device {
             self.write_reg(REG_RDT, desc_idx as u32);
             self.rx_cur = (self.rx_cur + 1) % NUM_DESC;
             self.rx_packets = self.rx_packets.wrapping_add(1);
+
+            // Pré-aquece a linha de cache do próximo descritor/buffer RX
+            let next_rx_phys = self.rx_buffers_phys[self.rx_cur];
+            let next_rx_virt = crate::memory::paging::phys_to_virt(next_rx_phys) as *const i8;
+            core::arch::x86_64::_mm_prefetch(next_rx_virt, core::arch::x86_64::_MM_HINT_T0);
 
             Some(copy_len)
         }

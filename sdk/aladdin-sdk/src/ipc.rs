@@ -1,7 +1,7 @@
 //! Aladdin Desktop SDK — IPC & Shared Memory (JDA) Primitives
 
 use crate::syscall::{
-    syscall1, syscall2, syscall3,
+    syscall1, syscall3,
     SYS_IPC_SEND, SYS_IPC_RECV,
     SYS_JDA_SHM_ALLOC, SYS_JDA_SHM_RELEASE, SYS_JDA_SHM_SHARE, SYS_JDA_SHM_GET_VADDR,
 };
@@ -64,10 +64,32 @@ pub fn ipc_send(to_pid: u32, tag: u32, payload: &[u8; 64]) -> Result<(), i64> {
 /// Returns Ok(true) if a message was received, Ok(false) if none pending, or Err(errno).
 pub fn ipc_recv(msg: &mut Message) -> Result<bool, i64> {
     let ret = unsafe {
-        syscall2(
+        syscall3(
             SYS_IPC_RECV,
             msg as *mut Message as u64,
             core::mem::size_of::<Message>() as u64,
+            0,
+        )
+    };
+    if ret > 0 {
+        Ok(true)
+    } else if ret == 0 {
+        Ok(false)
+    } else {
+        Err(ret)
+    }
+}
+
+/// Receive a pending IPC message with cooperative blocking.
+/// Blocks the calling task (TaskState::Blocked) until an IPC message arrives,
+/// yielding 0% CPU consumption while waiting.
+pub fn ipc_recv_blocking(msg: &mut Message) -> Result<bool, i64> {
+    let ret = unsafe {
+        syscall3(
+            SYS_IPC_RECV,
+            msg as *mut Message as u64,
+            core::mem::size_of::<Message>() as u64,
+            1,
         )
     };
     if ret > 0 {

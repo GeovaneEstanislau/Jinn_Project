@@ -153,6 +153,20 @@
     </news:news>
   </url>
   <url>
+    <loc>https://jinn-os.dev.br/artigos/auditoria-zero-idle-cache-prefetch-syscalls-jaha-jhcs.html</loc>
+    <lastmod>2026-11-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn OS Devlog</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-24</news:publication_date>
+      <news:title>Auditoria Zero-Idle, Pré-Aquecimento de Cache e Refinamento de Syscalls no Jinn OS</news:title>
+    </news:news>
+  </url>
+  <url>
     <loc>https://jinn-os.dev.br/artigos/arquitetura-tls13-nostd-soberana.html</loc>
     <lastmod>2026-11-24</lastmod>
     <changefreq>weekly</changefreq>

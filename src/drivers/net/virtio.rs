@@ -112,6 +112,7 @@ unsafe fn outl(port: u16, val: u32) {
 }
 
 // ── Instância e Estado do Driver VirtIO-Net ────────────────────────────────────
+#[repr(align(64))]
 pub struct VirtioNetDevice {
     pub io_base: u16,
     pub mac: [u8; 6],
@@ -147,6 +148,14 @@ impl VirtioNetDevice {
         let desc_idx = (self.tx_avail_idx as usize) % NUM_BUFFERS;
         let buf_phys = self.tx_buffers_phys[desc_idx];
         let buf_virt = crate::memory::paging::phys_to_virt(buf_phys) as *mut u8;
+
+        // Pré-busca do próximo buffer de TX para aquecer a linha de cache
+        let next_tx_idx = (self.tx_avail_idx.wrapping_add(1) as usize) % NUM_BUFFERS;
+        let next_buf_phys = self.tx_buffers_phys[next_tx_idx];
+        let next_buf_virt = crate::memory::paging::phys_to_virt(next_buf_phys) as *const i8;
+        unsafe {
+            core::arch::x86_64::_mm_prefetch(next_buf_virt, core::arch::x86_64::_MM_HINT_T0);
+        }
 
         // 1. Zera cabeçalho VirtIO
         let hdr_size = core::mem::size_of::<VirtioNetHdr>();
@@ -229,6 +238,13 @@ impl VirtioNetDevice {
             outw(self.io_base + VIRTIO_PCI_QUEUE_NOTIFY, 0);
 
             self.rx_last_used_idx = self.rx_last_used_idx.wrapping_add(1);
+
+            // Pré-busca do próximo buffer RX
+            let next_rx_idx = (self.rx_last_used_idx as usize) % NUM_BUFFERS;
+            let next_buf_phys = self.rx_buffers_phys[next_rx_idx];
+            let next_buf_virt = crate::memory::paging::phys_to_virt(next_buf_phys) as *const i8;
+            core::arch::x86_64::_mm_prefetch(next_buf_virt, core::arch::x86_64::_MM_HINT_T0);
+
             Some(copied)
         }
     }

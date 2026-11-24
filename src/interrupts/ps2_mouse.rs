@@ -365,6 +365,12 @@ pub extern "C" fn mouse_irq_handler() {
                 }
             }
         }
+
+        // Despertar instantâneo do Aladdin Desktop (Ring 3) ao detectar movimento ou clique do mouse
+        let g_pid = crate::gui::GRAPHICS_SERVER_PID.load(Ordering::Relaxed);
+        if g_pid != 0 {
+            crate::scheduler::wake_task(g_pid);
+        }
     }
 }
 

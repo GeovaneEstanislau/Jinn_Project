@@ -411,6 +411,11 @@ impl SystemHost for UserSystem {
                 vfs_mounted_volumes: u.vfs_mounted_volumes as usize,
                 net_tx_packets: u.net_tx_packets,
                 net_rx_packets: u.net_rx_packets,
+                cpu_active_cycles: u.cpu_active_cycles,
+                cpu_idle_cycles: u.cpu_idle_cycles,
+                syscalls_total: u.syscalls_total,
+                memory_active_bytes: u.memory_active_bytes,
+                memory_idle_bytes: u.memory_idle_bytes,
             }
         } else {
             let mut ts = Timespec::default();
@@ -447,12 +452,17 @@ impl SystemHost for UserSystem {
                 vfs_mounted_volumes: 2,
                 net_tx_packets: 0,
                 net_rx_packets: 0,
+                cpu_active_cycles: 100_000,
+                cpu_idle_cycles: 99_900_000,
+                syscalls_total: 500,
+                memory_active_bytes: 64 * 1024 * 1024,
+                memory_idle_bytes: 448 * 1024 * 1024,
             }
         }
     }
 
     fn yield_cpu(&self) {
-        unsafe { aladdin_sdk::syscall::syscall0(aladdin_sdk::syscall::SYS_YIELD); }
+        aladdin_sdk::time::sleep(10);
     }
 
     fn storage_profile_name(&self) -> &'static str {

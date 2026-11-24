@@ -668,6 +668,10 @@ impl SystemHost for JinnSystem {
         let total_vols = crate::vfs::volume::VOLUME_MANAGER.lock().count;
 
         let (net_tx_packets, net_rx_packets) = crate::drivers::net::packet_stats();
+        let (cpu_active_cycles, cpu_idle_cycles) = crate::scheduler::cpu_cycle_stats();
+        let syscalls_total = crate::syscall::SYSCALL_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+        let memory_active_bytes = crate::memory::used_bytes() as u64;
+        let memory_idle_bytes = (crate::memory::total_bytes().saturating_sub(crate::memory::used_bytes())) as u64;
 
         SystemStats {
             uptime_secs: (ticks / 100) as usize,
@@ -692,6 +696,11 @@ impl SystemHost for JinnSystem {
             vfs_mounted_volumes: total_vols,
             net_tx_packets,
             net_rx_packets,
+            cpu_active_cycles,
+            cpu_idle_cycles,
+            syscalls_total,
+            memory_active_bytes,
+            memory_idle_bytes,
         }
     }
 

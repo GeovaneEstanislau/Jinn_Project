@@ -7,15 +7,6 @@
     <language>pt-br</language>
     <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
     <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
-        <item>
-      <title>docs(web): publish technical articles on e1000/DNS, SIMD glassmorphism, and FAT3</title>
-      <link>https://jinn-os.dev.br</link>
-      <guid isPermaLink="false">jinn-os-docs-web---publish-technical-articles-on-e1000-dns--simd-glassmorphism--and-fat3-202611242258</guid>
-      <pubDate>Tue, 24 Nov 2026 22:58:54 +0000</pubDate>
-      <description><![CDATA[
-        <p>Consolidamos o suporte a resolucao DNS cascateada (Cloudflare/Google), decodificacao de imagens bare-metal no Jinn Browser, aceleracao SIMD AVX2 no JHCS e persistencia estrita em disco FAT32 com zero-idle.</p>
-      ]]></description>
-    </item>
     <item>
       <title>Resolução ARP Dinâmica, DNS em Cascata e Hardening Intel e1000: Do QEMU ao VirtualBox Bare-Metal</title>
       <link>https://jinn-os.dev.br/artigos/resolucao-arp-dinamica-dns-cascata-virtualbox-qemu.html</link>
@@ -97,11 +88,27 @@
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
+      <title>Auditoria Zero-Idle, Pré-Aquecimento de Cache e Refinamento de Syscalls no Jinn OS</title>
+      <link>https://jinn-os.dev.br/artigos/auditoria-zero-idle-cache-prefetch-syscalls-jaha-jhcs.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-auditoria-zero-idle-cache-prefetch-syscalls-jaha-jhcs</guid>
+      <pubDate>Tue, 24 Nov 2026 23:30:00 +0000</pubDate>
+      <description>Auditoria profunda de consumo próximo a zero (Zero-Idle), alinhamento de cache de 64 bytes com prefetch SIMD, escalonamento cooperativo com wakeups instantâneos por interrupção e telemetria JAHA 1.2 no Jinn OS.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
       <title>Pilha Criptográfica Soberana: TLS 1.3 e ChaCha20-Poly1305 em Bare-Metal Rust</title>
       <link>https://jinn-os.dev.br/artigos/arquitetura-tls13-nostd-soberana.html</link>
       <guid isPermaLink="false">jinn-os-artigo-arquitetura-tls13-nostd-soberana</guid>
       <pubDate>Tue, 24 Nov 2026 11:31:54 -0300</pubDate>
       <description>Como implementamos TLS 1.3 (RFC 8446), Key Schedule HKDF e ChaCha20-Poly1305 em Rust puro sem biblioteca padrão (#![no_std]) para o microkernel Jinn OS.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
+      <title>docs(web): publish technical articles on e1000/DNS, SIMD glassmorphism, and FAT32 persistence [announce]</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/be413a0eca2ad5fa68c33285b301b208d4e83307</link>
+      <guid isPermaLink="false">be413a0eca2ad5fa68c33285b301b208d4e83307</guid>
+      <pubDate>Tue, 24 Nov 2026 19:58:40 -0300</pubDate>
+      <description>docs(web): publish technical articles on e1000/DNS, SIMD glassmorphism, and FAT32 persistence [announce]</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
@@ -173,14 +180,6 @@
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/6dfb2eb308f07c35baed4ce5a07db00a1f623e0e</link>
       <guid isPermaLink="false">6dfb2eb308f07c35baed4ce5a07db00a1f623e0e</guid>
       <pubDate>Mon, 23 Nov 2026 23:43:17 -0300</pubDate>
-      <description>feat(web): add robots.txt and sitemap.xml for search engines and Google News</description>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>feat(web): add Google News Reader Revenue Manager inline CTA ebff73fc-a104-4f02-ba1c-c82621940c9f</title>
-      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/c5b4fb99c2fdf6f9c79a7fa8cdf364842bb3bd6c</link>
-      <guid isPermaLink="false">c5b4fb99c2fdf6f9c79a7fa8cdf364842bb3bd6c</guid>
-      <pubDate>Mon, 23 Nov 2026 21:48:41 -0300</pubDate>
       <description>---END---</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>

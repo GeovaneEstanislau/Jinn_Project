@@ -500,6 +500,10 @@ pub extern "C" fn syscall_dispatch_framed(frame: *mut usize) -> usize {
     }
 }
 
+use core::sync::atomic::{AtomicU64, Ordering};
+
+pub static SYSCALL_COUNT: AtomicU64 = AtomicU64::new(0);
+
 /// Called from `irq_dispatch` when vector == 0x80.
 /// All arguments are passed through registers by the caller.
 ///
@@ -513,6 +517,7 @@ pub extern "C" fn syscall_dispatch(
     arg2: usize,  // RDX
     arg3: usize,  // R10 / RCX
 ) -> isize {
+    SYSCALL_COUNT.fetch_add(1, Ordering::Relaxed);
     match nr {
         0  => sys_exit(arg0 as i32),
         1  => sys_write(arg0, arg1 as *const u8, arg2),
@@ -520,7 +525,7 @@ pub extern "C" fn syscall_dispatch(
         3  => sys_yield(),
         4  => sys_getpid(),
         5  => sys_ipc_send(arg0 as u32, arg1 as u32, arg2 as *const u8),
-        6  => sys_ipc_recv(arg0 as *mut u8, arg1),
+        6  => sys_ipc_recv(arg0 as *mut u8, arg1, arg2 != 0),
         7  => sys_alloc_page(),
         8  => sys_free_page(arg0 as u64),
         9  => sys_spawn(arg0, arg1 as *const u8, arg2),
@@ -1166,23 +1171,38 @@ fn sys_ipc_send(to_pid: u32, tag: u32, payload: *const u8) -> isize {
     }
 }
 
-/// `ipc_recv(buf, len)` — Receive a pending IPC message. Returns bytes written.
-fn sys_ipc_recv(buf: *mut u8, len: usize) -> isize {
+/// `ipc_recv(buf, len, blocking)` — Receive a pending IPC message. Returns bytes written.
+fn sys_ipc_recv(buf: *mut u8, len: usize, blocking: bool) -> isize {
     if buf.is_null() || len == 0 {
         return EINVAL;
     }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(buf, len, true) {
+            return e;
+        }
+    }
     let pid = scheduler::current_pid();
-    match ipc::recv(pid) {
-        None => 0,
-        Some(msg) => {
-            let copy_len = len.min(core::mem::size_of::<Message>());
-            let msg_bytes = unsafe {
-                core::slice::from_raw_parts(&msg as *const Message as *const u8, copy_len)
-            };
-            if let Err(e) = copy_to_user(buf, msg_bytes, copy_len) {
-                return e;
+    loop {
+        match ipc::recv(pid) {
+            Some(msg) => {
+                let copy_len = len.min(core::mem::size_of::<Message>());
+                let msg_bytes = unsafe {
+                    core::slice::from_raw_parts(&msg as *const Message as *const u8, copy_len)
+                };
+                if let Err(e) = copy_to_user(buf, msg_bytes, copy_len) {
+                    return e;
+                }
+                return copy_len as isize;
             }
-            copy_len as isize
+            None => {
+                if !blocking {
+                    return 0;
+                }
+                // Modo bloqueante cooperativo: bloqueia a tarefa até receber mensagem de outro processo
+                let sched = scheduler::get();
+                sched.block_task(pid);
+                scheduler::yield_now();
+            }
         }
     }
 }
@@ -3054,6 +3074,11 @@ pub struct SystemStatsUser {
     pub vfs_mounted_volumes: u64,
     pub net_tx_packets: u64,
     pub net_rx_packets: u64,
+    pub cpu_active_cycles: u64,
+    pub cpu_idle_cycles: u64,
+    pub syscalls_total: u64,
+    pub memory_active_bytes: u64,
+    pub memory_idle_bytes: u64,
 }
 
 /// `sys_get_system_stats(out_ptr)` — Retorna telemetria e estatísticas do kernel para Ring 3 (Syscall 88).
@@ -3100,6 +3125,15 @@ fn sys_get_system_stats(out_ptr: *mut SystemStatsUser) -> isize {
     u.vfs_mounted_volumes = stats.vfs_mounted_volumes as u64;
     u.net_tx_packets = stats.net_tx_packets;
     u.net_rx_packets = stats.net_rx_packets;
+
+    let (cpu_active, cpu_idle) = crate::scheduler::cpu_cycle_stats();
+    u.cpu_active_cycles = cpu_active;
+    u.cpu_idle_cycles = cpu_idle;
+    u.syscalls_total = SYSCALL_COUNT.load(Ordering::Relaxed);
+    let mem_used = crate::memory::used_bytes() as u64;
+    let mem_total = crate::memory::total_bytes() as u64;
+    u.memory_active_bytes = mem_used;
+    u.memory_idle_bytes = mem_total.saturating_sub(mem_used);
 
     unsafe {
         core::ptr::copy_nonoverlapping(&u as *const SystemStatsUser, out_ptr, 1);

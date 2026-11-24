@@ -37,6 +37,9 @@ pub static MAX_SCHED_CYCLES: AtomicU64 = AtomicU64::new(0);
 pub static TOTAL_SCHED_CYCLES: AtomicU64 = AtomicU64::new(0);
 pub static SCHED_SAMPLE_COUNT: AtomicU64 = AtomicU64::new(0);
 
+/// Ciclos totais de CPU consumidos pela thread Idle em estado HLT (Zero-Idle).
+pub static IDLE_HLT_CYCLES: AtomicU64 = AtomicU64::new(0);
+
 #[inline(always)]
 pub fn read_tsc() -> u64 {
     #[cfg(target_arch = "x86_64")]
@@ -64,6 +67,14 @@ pub fn avg_sched_cycles() -> u64 {
     } else {
         0
     }
+}
+
+/// Retorna a tupla (ciclos_ativos, ciclos_em_hlt) para a telemetria do JAHA 1.2.
+pub fn cpu_cycle_stats() -> (u64, u64) {
+    let total = read_tsc();
+    let idle = IDLE_HLT_CYCLES.load(Ordering::Relaxed);
+    let active = total.saturating_sub(idle);
+    (active, idle)
 }
 
 // ── Constantes ────────────────────────────────────────────────────────────────
@@ -283,6 +294,7 @@ pub enum TaskPriority {
 }
 
 /// Representa uma tarefa (processo) no sistema.
+#[repr(align(64))]
 pub struct Task {
     /// Identificador único (igual ao índice no array do escalonador).
     pub id: usize,
@@ -304,6 +316,8 @@ pub struct Task {
     pub exit_code: i32,
     /// Estado arquitetural da FPU/SIMD salvo para esta tarefa (512 bytes alinhados a 16).
     pub fpu_state: crate::fpu::FpuState,
+    /// Rastreamento preguiçoso de FPU/SIMD (reduz latência de troca de contexto para tarefas de I/O puro).
+    pub fpu_used: bool,
 
     // ── Contabilização de CPU ─────────────────────────────────────────────
     /// Número de ticks de timer consumidos por esta tarefa.
@@ -586,6 +600,7 @@ impl Scheduler {
                 pml4_phys,
                 exit_code: 0,
                 fpu_state: crate::fpu::FpuState::new_user_default(),
+                fpu_used: true,
                 cpu_ticks: 0,
                 ctx_switches: 0,
                 irq_preemptions: 0,
@@ -715,6 +730,7 @@ impl Scheduler {
                 pml4_phys,
                 exit_code: 0,
                 fpu_state: crate::fpu::FpuState::new_user_default(),
+                fpu_used: true,
                 cpu_ticks: 0,
                 ctx_switches: 0,
                 irq_preemptions: 0,
@@ -898,6 +914,7 @@ impl Scheduler {
             kstack_top,
             pml4_phys,
             exit_code: 0,
+            fpu_used:  true,
             fpu_state: crate::fpu::FpuState::new_user_default(),
             cpu_ticks: 0,
             ctx_switches: 0,
@@ -1016,6 +1033,7 @@ impl Scheduler {
             pml4_phys,
             exit_code: 0,
             fpu_state: crate::fpu::FpuState::new_user_default(),
+            fpu_used: false,
             cpu_ticks: 0,
             ctx_switches: 0,
             irq_preemptions: 0,
@@ -1099,6 +1117,7 @@ impl Scheduler {
                 pml4_phys,
                 exit_code: 0,
                 fpu_state: crate::fpu::FpuState::new_user_default(),
+                fpu_used: true,
                 cpu_ticks: 0,
                 ctx_switches: 0,
                 irq_preemptions: 0,
@@ -1267,6 +1286,16 @@ impl Scheduler {
         let _guard = SCHED_LOCK.lock();
         if let Some(Some(task)) = self.tasks.get_mut(pid) {
             if task.state == TaskState::Blocked {
+                task.state = TaskState::Ready;
+                task.running_on_cpu = None;
+            }
+        }
+    }
+
+    /// Acorda uma tarefa se ela estiver em estado Blocked ou Sleeping.
+    pub fn wake_task_locked(&mut self, pid: usize) {
+        if let Some(Some(task)) = self.tasks.get_mut(pid) {
+            if matches!(task.state, TaskState::Blocked | TaskState::Sleeping(_)) {
                 task.state = TaskState::Ready;
                 task.running_on_cpu = None;
             }
@@ -1506,7 +1535,7 @@ impl Scheduler {
         if let Some(cur) = cur_id_opt {
             if let Some(task) = &mut self.tasks[cur] {
                 // Salva estado FPU se a tarefa de saída for Ring 3
-                if task.ring == Ring::User {
+                if task.ring == Ring::User && task.fpu_used {
                     unsafe { crate::fpu::fxsave64(&mut task.fpu_state); }
                 }
             }
@@ -1599,7 +1628,7 @@ impl Scheduler {
                         }
 
                         // 3. Se a tarefa for Ring 3, restaura seu estado FPU/SIMD isolado
-                        if task.ring == Ring::User {
+                        if task.ring == Ring::User && task.fpu_used {
                             unsafe { crate::fpu::fxrstor64(&task.fpu_state); }
                         }
 
@@ -1787,13 +1816,24 @@ impl Scheduler {
 /// tarefa está pronta. A instrução `hlt` suspende a CPU até a próxima
 /// interrupção (que será o APIC Timer), momento em que o escalonador
 /// poderá despachar outra tarefa que tenha se tornado Ready.
+/// Acorda uma tarefa externamente se ela estiver em estado Blocked ou Sleeping.
+pub fn wake_task(pid: usize) {
+    if pid >= MAX_TASKS { return; }
+    let _guard = SCHED_LOCK.lock();
+    let sched = unsafe { &mut *core::ptr::addr_of_mut!(SCHEDULER) };
+    sched.wake_task_locked(pid);
+}
+
 fn idle_task_entry() {
     loop {
         // Em segundo plano na thread Idle, verifica e descarrega caches dirty do storage (WriteBack / Simbad)
         crate::drivers::block::periodic_flush_check();
         // Processa recepção de pacotes de rede e firewall JinnWall
         crate::net::poll();
+        let t0 = read_tsc();
         unsafe { core::arch::asm!("sti; hlt"); }
+        let t1 = read_tsc();
+        IDLE_HLT_CYCLES.fetch_add(t1.saturating_sub(t0), Ordering::Relaxed);
     }
 }
 

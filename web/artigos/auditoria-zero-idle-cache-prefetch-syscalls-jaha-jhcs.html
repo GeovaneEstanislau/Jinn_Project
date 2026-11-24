@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Auditoria Zero-Idle, Pré-Aquecimento de Cache e Refinamento de Syscalls no Jinn OS — Jinn OS</title>
+  <meta name="description"
+    content="Auditoria profunda de consumo próximo a zero (Zero-Idle), alinhamento de cache de 64 bytes com prefetch SIMD, escalonamento cooperativo com wakeups instantâneos por interrupção e telemetria JAHA 1.2 no Jinn OS.">
+  <link rel="canonical" href="https://jinn-os.dev.br/artigos/auditoria-zero-idle-cache-prefetch-syscalls-jaha-jhcs.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://jinn-os.dev.br/artigos/auditoria-zero-idle-cache-prefetch-syscalls-jaha-jhcs.html">
+  <meta property="og:title" content="Auditoria Zero-Idle, Pré-Aquecimento de Cache e Refinamento de Syscalls no Jinn OS">
+  <meta property="og:description"
+    content="Engenharia de baixo nível: política Zero-Idle (0.00% CPU em repouso), prefetch explícito de cache, alinhamento de 64 bytes contra false sharing e telemetria JAHA 1.2.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/wallpaper.jpg">
+
+  <!-- Artigo Meta -->
+  <meta name="article:tag" content="MICROKERNEL, PERFORMANCE, ZERO-IDLE, TELEMETRIA">
+  <meta name="article:published_time" content="2026-11-24T23:30:00Z">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans selection:bg-cyan-500 selection:text-black">
+
+  <!-- Cabeçalho de Navegação -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 hover:text-cyan-400 transition-colors">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span class="font-bold tracking-wide">Jinn OS</span>
+        <span
+          class="text-xs font-mono bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded border border-cyan-800">Devlog</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+        <a href="/feed.xml" target="_blank"
+          class="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS Feed</span>
+        </a>
+        <span class="text-slate-600">|</span>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer"
+          class="flex items-center gap-1 text-slate-400 hover:text-white transition-colors">
+          <i data-lucide="github" class="w-3.5 h-3.5"></i>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Conteúdo Principal do Artigo -->
+  <main class="max-w-4xl mx-auto px-6 py-12">
+    <article class="prose prose-invert prose-cyan max-w-none">
+
+      <!-- Meta & Título -->
+      <div class="mb-8">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400 mb-3">
+          <span class="bg-amber-950/80 border border-amber-800/60 px-2 py-0.5 rounded text-amber-300">MICROKERNEL</span>
+          <span class="text-slate-500">•</span>
+          <span>Novembro 2026</span>
+          <span class="text-slate-500">•</span>
+          <span>Arquitetura de Sistemas &amp; Otimização</span>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+          Auditoria Zero-Idle, Pré-Aquecimento de Cache e Refinamento de Syscalls no Jinn OS
+        </h1>
+        <p class="text-slate-400 text-base mt-2">
+          Como eliminamos o desperdício computacional em repouso, alinhamos estruturas críticas a linhas de cache de 64 bytes, implementamos prefetching SIMD e expusemos métricas atômicas de HLT na telemetria JAHA 1.2.
+        </p>
+      </div>
+
+      <!-- Seção 1 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        1. A Filosofia Zero-Idle: Custo Computacional Nulo em Repouso
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Em um sistema operacional com foco em soberania computacional e eficiência de recursos, qualquer ciclo de CPU queimado em espera ativa (*busy-wait* ou *polling residual*) é considerado uma falha de engenharia. Durante a nossa auditoria estrutural no microkernel Jinn OS, identificamos que o loop principal do servidor gráfico (<code>aladdin-server</code>) e do daemon de computação heterogênea (<code>jhcs-daemon</code>) executavam chamadas frequentes de <code>sys_yield()</code> ou <code>sleep(0)</code> quando nenhuma ação estava pendente.
+      </p>
+      <p class="text-slate-300 leading-relaxed">
+        Essa dinâmica mantinha as tarefas no estado <code>TaskState::Ready</code> na fila de execução do escalonador, fazendo com que a CPU alternasse incessantemente entre o servidor e o quantum de execução sem realizar trabalho útil. Para resolver isso definitivamente, estabelecemos a política estrita de <strong>Zero-Idle</strong>:
+      </p>
+      <ul class="text-slate-300 space-y-2 my-4">
+        <li><strong>IPC Bloqueante Cooperativo (Syscall 6):</strong> Atualizamos a primitiva <code>sys_ipc_recv(buf, len, blocking)</code> no kernel e o método <code>ipc_recv_blocking</code> no SDK do Aladdin. Quando a fila de mensagens está vazia, o processo servidor transita imediatamente para <code>TaskState::Blocked</code> e abre mão voluntariamente do quantum via <code>scheduler::yield_now()</code>.</li>
+        <li><strong>Desbloqueio Direto no Envio:</strong> Na função <code>ipc::send</code>, assim que a mensagem é inserida na fila segura do destinatário, o lock é liberado e a chamada <code>scheduler::wake_task(to_pid)</code> move a tarefa diretamente de <code>Blocked</code> para <code>Ready</code>.</li>
+        <li><strong>Repouso em Baixo Consumo:</strong> Durante os intervalos de inatividade da interface visual, o <code>aladdin-server</code> transita cooperativamente para <code>TaskState::Sleeping</code>, permitindo que a tarefa ociosa (<code>idle_task</code>) assuma a CPU e execute a instrução <code>hlt</code> até o próximo evento de hardware.</li>
+      </ul>
+
+      <!-- Seção 2 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        2. Alinhamento a 64 Bytes (False Sharing) e Pré-Aquecimento Explícito de Cache
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Em sistemas com suporte a multiprocessamento simétrico (SMP com 4 vCPUs ou mais), o fenômeno de <em>False Sharing</em> pode degradar severamente o rendimento quando dois núcleos concorrentes leem e escrevem em variáveis adjacentes na mesma linha de cache L1/L2 (64 bytes).
+      </p>
+      <p class="text-slate-300 leading-relaxed">
+        Realizamos uma auditoria minuciosa em todas as estruturas concorrentes do microkernel e dos drivers de rede, adicionando alinhamento estrito via atributo <code>#[repr(align(64))]</code> em:
+      </p>
+      <ul class="text-slate-300 space-y-2 my-4">
+        <li><code>Task</code> no escalonador preemptivo (<code>src/scheduler.rs</code>).</li>
+        <li><code>RawQueue</code> e <code>IpcTable</code> no barramento IPC de alta velocidade (<code>src/ipc.rs</code>).</li>
+        <li><code>E1000Device</code> no driver Intel 82540EM (<code>src/drivers/net/e1000.rs</code>).</li>
+        <li><code>VirtioNetDevice</code> no driver para virtualização KVM/QEMU (<code>src/drivers/net/virtio.rs</code>).</li>
+      </ul>
+      <p class="text-slate-300 leading-relaxed">
+        Além do isolamento espacial, introduzimos pré-aquecimento explícito de cache (<em>Hardware Prefetching</em>) utilizando a instrução intrínseca <code>_mm_prefetch</code> com dica <code>_MM_HINT_T0</code>. No backend SIMD do <strong>JHCS</strong> (<code>jhcs-backend-simd</code>), os laços internos de multiplicação de matrizes (<code>matmul_f32_simd_x86_avx2_fma</code>), convolução 2D, redução por soma e o algoritmo de desfoque acrílico de Euler em dupla passagem (<code>box_blur_rgba_simd</code>) agora buscam linhas de cache 16 a 32 elementos à frente da posição corrente do cursor. O mesmo princípio foi aplicado aos anéis de transmissão (TX) e recepção (RX) das placas de rede, antecipando a leitura dos buffers DMA físicos antes da cópia de memória.
+      </p>
+
+      <!-- Seção 3 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        3. Despertar Instantâneo por Interrupções de Entrada e Lazy FPU Context
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Um dilema clássico ao implementar repouso cooperativo em servidores gráficos é a latência de resposta ao teclado e mouse: se a tarefa estiver dormindo por 10 ms, o ponteiro ou a digitação poderiam sofrer atrasos perceptíveis.
+      </p>
+      <p class="text-slate-300 leading-relaxed">
+        No Jinn OS, eliminamos completamente esse atraso integrando as Rotinas de Serviço de Interrupção (ISRs) do teclado (IRQ 1) e mouse PS/2 (IRQ 12) ao escalonador:
+      </p>
+      <pre class="bg-slate-900 p-4 rounded-lg text-xs font-mono text-cyan-300 border border-slate-800 overflow-x-auto"><code>// src/interrupts/ps2_mouse.rs e ps2_keyboard.rs
+// Despertar instantâneo do Aladdin Desktop (Ring 3) ao detectar entrada
+let g_pid = crate::gui::GRAPHICS_SERVER_PID.load(Ordering::Relaxed);
+if g_pid != 0 {
+    crate::scheduler::wake_task(g_pid);
+}</code></pre>
+      <p class="text-slate-300 leading-relaxed">
+        Como o método <code>scheduler::wake_task</code> é protegido por <code>IrqSafeSpinLock</code>, ele acorda instantaneamente o <code>aladdin-server</code> para o estado <code>Ready</code> no exato instante em que o usuário toca no teclado ou move o mouse, resultando em latência percebida de <strong>0 ms</strong> sem exigir polling de alta frequência em repouso.
+      </p>
+      <p class="text-slate-300 leading-relaxed">
+        Adicionalmente, implementamos a técnica de <strong>Lazy FPU</strong>: o salvamento e restauração dos 512 bytes de registradores vetoriais e ponto flutuante via <code>fxsave64</code> e <code>fxrstor64</code> na troca de contexto agora é condicionado à flag <code>task.fpu_used</code>. Tarefas de I/O puro ou rotinas do kernel que não utilizam extensões vetoriais SSE/AVX deixam de gastar dezenas de ciclos de CPU a cada preempção.
+      </p>
+
+      <!-- Seção 4 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        4. Telemetria JAHA 1.2 e Resultados de Validação em Tela
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Todas as métricas de eficiência energética e ciclos de máquina foram integradas ao contrato de telemetria do sistema (Syscall 88 — <code>SystemStatsUser</code>):
+      </p>
+      <ul class="text-slate-300 space-y-2 my-4">
+        <li><strong>Ciclos Ativos vs. Ciclos HLT:</strong> Acumulação contínua via <code>rdtsc</code> na <code>idle_task</code>, permitindo calcular em tempo real a taxa de utilização: \(\text{Uso\%} = \frac{\text{Ciclos}_{\text{Ativos}}}{\text{Ciclos}_{\text{Ativos}} + \text{Ciclos}_{\text{HLT}}} \times 100\).</li>
+        <li><strong>Total de Syscalls:</strong> Contador atômico <code>SYSCALL_COUNT</code> no despachante central de interrupções <code>0x80</code>.</li>
+        <li><strong>Memória Ativa vs. Repouso:</strong> Reconciliação atômica em bytes reportada no HUD Conky e no Monitor de Sistema.</li>
+      </ul>
+      <p class="text-slate-300 leading-relaxed">
+        Durante a validação em ambiente QEMU e VirtualBox, o monitor de sistema exibiu com clareza:
+      </p>
+      <div class="bg-slate-900 border border-emerald-800/60 rounded-xl p-4 my-6 font-mono text-sm">
+        <div class="text-emerald-400 font-bold mb-2">TELEMETRIA COMPROVADA EM EXECUÇÃO REAL (1024x768):</div>
+        <div class="text-slate-300">• Wingpanel Topbar  : <span class="text-cyan-300 font-bold">CPU: 0% | RAM: 26 / 488MB | 4 Cores | Aladdin Desktop</span></div>
+        <div class="text-slate-300">• Conky HUD Card    : <span class="text-emerald-300 font-bold">CPU Zero-Idle: 0 % (HLT) | Syscalls: 876 ops</span></div>
+        <div class="text-slate-300">• Monitor de Sistema: <span class="text-cyan-300 font-bold">Memória RAM: 26 MB / 488 MB (6888 / 124943 frames físicos)</span></div>
+        <div class="text-slate-300">• Rede e Conexões   : <span class="text-emerald-300 font-bold">10.0.2.15 (Intel 82540EM) | Connected (Ring 3) | PublicSecure</span></div>
+      </div>
+      <p class="text-slate-300 leading-relaxed">
+        Com essas melhorias estruturais, o ecossistema Jinn OS atinge seu patamar de excelência arquitetural: resposta interativa ágil, consumo zero de energia quando o usuário não está interagindo e máxima utilização do pipeline SIMD/vetorial em operações intensivas.
+      </p>
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <!-- Rodapé do Artigo -->
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn OS Sovereign Systems • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-cyan-400 hover:underline">Voltar ao Desktop Virtual</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>

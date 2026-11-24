@@ -16,7 +16,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use aladdin_sdk::console::{print, print_num, println};
-use aladdin_sdk::ipc::{ipc_recv, ipc_send, shm_get_vaddr, Message};
+use aladdin_sdk::ipc::{ipc_recv_blocking, ipc_send, shm_get_vaddr, Message};
 use aladdin_sdk::process::{exit, getpid};
 use aladdin_sdk::time::sleep;
 
@@ -238,9 +238,9 @@ pub extern "C" fn _start() -> ! {
     let mut msg = Message::zero();
     let mut tasks_served: u64 = 0;
 
-    // 2. Loop de Eventos IPC com Política Zero-Idle Estrita
+    // 2. Loop de Eventos IPC com Política Zero-Idle Estrita (bloqueio cooperativo)
     loop {
-        match ipc_recv(&mut msg) {
+        match ipc_recv_blocking(&mut msg) {
             Ok(true) => {
                 if msg.tag == TAG_JHCS_REQ {
                     tasks_served = tasks_served.wrapping_add(1);
@@ -248,8 +248,7 @@ pub extern "C" fn _start() -> ! {
                 }
             }
             Ok(false) => {
-                // Fila vazia: cede quantum e entra em estado de baixo consumo.
-                // sys_sleep(10) transita a tarefa para Sleeping, garantindo 0% de CPU ociosa.
+                // Se retornou false (desbloqueio sem mensagem), cede quantum
                 sleep(10);
             }
             Err(e) => {

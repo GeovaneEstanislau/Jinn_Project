@@ -66,6 +66,11 @@ pub struct SystemStatsUser {
     pub vfs_mounted_volumes: u64,
     pub net_tx_packets: u64,
     pub net_rx_packets: u64,
+    pub cpu_active_cycles: u64,
+    pub cpu_idle_cycles: u64,
+    pub syscalls_total: u64,
+    pub memory_active_bytes: u64,
+    pub memory_idle_bytes: u64,
 }
 
 /// Syscall sem argumentos

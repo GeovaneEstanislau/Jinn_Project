@@ -234,5 +234,11 @@ pub extern "C" fn kbd_irq_handler() {
                 }
             }
         }
+
+        // Despertar instantâneo do Aladdin Desktop (Ring 3) ao detectar entrada
+        let g_pid = crate::gui::GRAPHICS_SERVER_PID.load(core::sync::atomic::Ordering::Relaxed);
+        if g_pid != 0 {
+            crate::scheduler::wake_task(g_pid);
+        }
     }
 }

@@ -82,6 +82,7 @@ impl Message {
 }
 
 // ── Per-Process Message Queue ─────────────────────────────────────────────────
+#[repr(align(64))]
 struct RawQueue {
     buf:  [Message; QUEUE_DEPTH],
     head: AtomicUsize,   // consumer reads here
@@ -127,6 +128,7 @@ impl RawQueue {
 }
 
 // ── IPC Table ─────────────────────────────────────────────────────────────────
+#[repr(align(64))]
 struct IpcTable {
     queues: [RawQueue; MAX_PROCS],
     active: [bool; MAX_PROCS],
@@ -175,6 +177,9 @@ pub fn send(msg: Message) -> Result<(), &'static str> {
     let mut table = IPC.lock();
     if !table.active[pid] { return Err("ipc: recipient not registered"); }
     if !table.queues[pid].push(msg) { return Err("ipc: queue full"); }
+    drop(table);
+    // Acorda a tarefa destinatária se ela estiver bloqueada aguardando IPC (Zero-Idle)
+    crate::scheduler::wake_task(pid);
     Ok(())
 }
 
