@@ -1,0 +1,13 @@
+# Robots.txt — Jinn OS Official Web Portal (https://jinn-os.dev.br)
+# Diretrizes para indexadores e rastreadores (Googlebot, Bingbot, Slurp, etc.)
+
+User-agent: *
+Allow: /
+
+# Feeds de Engenharia e Sindicacao
+Allow: /feed.xml
+Allow: /rss.xml
+
+# Sitemaps
+Sitemap: https://jinn-os.dev.br/sitemap.xml
+Sitemap: https://jinn-os.dev.br/rss.xml
