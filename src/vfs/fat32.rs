@@ -759,6 +759,10 @@ impl Fat32Fs {
         self.set_next_cluster(last_cluster, new_cluster)?;
 
         let new_lba = self.cluster_to_lba(new_cluster);
+        let zero_buf = [0u8; 512];
+        for sec in 0..self.sectors_per_cluster {
+            let _ = self.write_sec(new_lba + sec as u32, &zero_buf);
+        }
         Ok((new_lba, 0))
     }
 
@@ -1265,7 +1269,7 @@ impl FileSystem for Fat32Fs {
             return Err(VfsError::InvalidPath);
         }
 
-        // Verifica se jÃ¡ existe
+        // Verifica se já existe
         if self.find_file(clean_path).is_ok() {
             return Err(VfsError::AlreadyExists);
         }
@@ -1277,9 +1281,9 @@ impl FileSystem for Fat32Fs {
         // Inicializa o primeiro setor do novo cluster com as entradas "." e ".."
         let mut cluster_buf = [0u8; 512];
 
-        // Entrada "." (aponta para o prÃ³prio cluster recÃ©m-criado)
+        // Entrada "." (aponta para o próprio cluster recém-criado)
         cluster_buf[0..11].copy_from_slice(b".          ");
-        cluster_buf[11] = 0x10; // Atributo: DiretÃ³rio
+        cluster_buf[11] = 0x10; // Atributo: Diretório
         let clus_hi = ((new_cluster >> 16) & 0xFFFF) as u16;
         cluster_buf[20] = (clus_hi & 0xFF) as u8;
         cluster_buf[21] = ((clus_hi >> 8) & 0xFF) as u8;
@@ -1287,7 +1291,7 @@ impl FileSystem for Fat32Fs {
         cluster_buf[26] = (clus_lo & 0xFF) as u8;
         cluster_buf[27] = ((clus_lo >> 8) & 0xFF) as u8;
 
-        // Entrada ".." (aponta para o cluster do diretÃ³rio pai; se pai for raiz, clus=0 por especificaÃ§Ã£o FAT32)
+        // Entrada ".." (aponta para o cluster do diretório pai; se pai for raiz, clus=0 por especificação FAT32)
         cluster_buf[32..43].copy_from_slice(b"..         ");
         cluster_buf[32 + 11] = 0x10;
         let p_target = if parent_cluster == self.root_cluster { 0 } else { parent_cluster };
@@ -1304,30 +1308,100 @@ impl FileSystem for Fat32Fs {
             return Err(VfsError::IoError);
         }
 
-        // Localiza slot livre no diretÃ³rio pai
-        let (sec_lba, offset) = self.find_free_dir_slot(parent_cluster)?;
+        // Zera todos os setores subsequentes do novo cluster para evitar entradas fantasma
+        let zero_buf = [0u8; 512];
+        for sec in 1..self.sectors_per_cluster {
+            let sec_lba = new_lba + sec as u32;
+            if self.write_sec(sec_lba, &zero_buf).is_err() {
+                let _ = self.free_cluster_chain(new_cluster);
+                return Err(VfsError::IoError);
+            }
+        }
+
+        // LFN e entrada de diretório no diretório pai
+        let leaf_bytes = leaf_name.as_bytes();
+        let needs_lfn = leaf_name.len() > 12
+            || leaf_bytes.iter().any(|&b| b.is_ascii_lowercase())
+            || match leaf_name.rsplit_once('.') {
+                Some((b, e)) => b.len() > 8 || e.len() > 3,
+                None => leaf_name.len() > 8,
+            };
+
+        let num_lfn = if needs_lfn {
+            (leaf_bytes.len() + 12) / 13
+        } else {
+            0
+        };
+        let total_slots = num_lfn + 1;
+
+        let (sec_lba, start_offset) = self.find_free_dir_slots(parent_cluster, total_slots)?;
         let mut dir_buf = [0u8; 512];
         if self.read_sec(sec_lba, &mut dir_buf).is_err() {
             let _ = self.free_cluster_chain(new_cluster);
             return Err(VfsError::IoError);
         }
 
-        dir_buf[offset..offset + 11].copy_from_slice(&name_83);
-        dir_buf[offset + 11] = 0x10; // Atributo: DiretÃ³rio
-        for k in 12..20 { dir_buf[offset + k] = 0; }
+        // Grava entradas LFN em ordem reversa (seq N..1) antes da entrada 8.3
+        if needs_lfn && num_lfn > 0 {
+            let chksum = lfn_checksum(&name_83);
+            for i in 0..num_lfn {
+                let seq_num = num_lfn - i;
+                let slot_offset = start_offset + (i * 32);
+                let is_last = i == 0;
 
-        dir_buf[offset + 20] = (clus_hi & 0xFF) as u8;
-        dir_buf[offset + 21] = ((clus_hi >> 8) & 0xFF) as u8;
+                dir_buf[slot_offset] = (seq_num as u8) | (if is_last { 0x40 } else { 0 });
 
-        for k in 22..26 { dir_buf[offset + k] = 0; }
+                let char_start = (seq_num - 1) * 13;
+                let mut c_idx = 0;
+                let char_offsets = [
+                    (1, 11),  // 5 chars
+                    (14, 26), // 6 chars
+                    (28, 32), // 2 chars
+                ];
 
-        dir_buf[offset + 26] = (clus_lo & 0xFF) as u8;
-        dir_buf[offset + 27] = ((clus_lo >> 8) & 0xFF) as u8;
+                for &(off_s, off_e) in &char_offsets {
+                    let mut p = off_s;
+                    while p + 1 < off_e {
+                        let cur_c = char_start + c_idx;
+                        let u16_val = if cur_c < leaf_bytes.len() {
+                            leaf_bytes[cur_c] as u16
+                        } else if cur_c == leaf_bytes.len() {
+                            0x0000 // terminador nulo
+                        } else {
+                            0xFFFF // preenchimento padrão FAT
+                        };
+                        dir_buf[slot_offset + p] = (u16_val & 0xFF) as u8;
+                        dir_buf[slot_offset + p + 1] = ((u16_val >> 8) & 0xFF) as u8;
+                        c_idx += 1;
+                        p += 2;
+                    }
+                }
 
-        dir_buf[offset + 28] = 0;
-        dir_buf[offset + 29] = 0;
-        dir_buf[offset + 30] = 0;
-        dir_buf[offset + 31] = 0;
+                dir_buf[slot_offset + 11] = 0x0F; // Atributo LFN
+                dir_buf[slot_offset + 12] = 0x00; // Tipo reservado
+                dir_buf[slot_offset + 13] = chksum;
+                dir_buf[slot_offset + 26] = 0x00;
+                dir_buf[slot_offset + 27] = 0x00;
+            }
+        }
+
+        let short_offset = start_offset + (num_lfn * 32);
+        dir_buf[short_offset..short_offset + 11].copy_from_slice(&name_83);
+        dir_buf[short_offset + 11] = 0x10; // Atributo: Diretório
+        for k in 12..20 { dir_buf[short_offset + k] = 0; }
+
+        dir_buf[short_offset + 20] = (clus_hi & 0xFF) as u8;
+        dir_buf[short_offset + 21] = ((clus_hi >> 8) & 0xFF) as u8;
+
+        for k in 22..26 { dir_buf[short_offset + k] = 0; }
+
+        dir_buf[short_offset + 26] = (clus_lo & 0xFF) as u8;
+        dir_buf[short_offset + 27] = ((clus_lo >> 8) & 0xFF) as u8;
+
+        dir_buf[short_offset + 28] = 0;
+        dir_buf[short_offset + 29] = 0;
+        dir_buf[short_offset + 30] = 0;
+        dir_buf[short_offset + 31] = 0;
 
         if self.write_sec(sec_lba, &dir_buf).is_err() {
             let _ = self.free_cluster_chain(new_cluster);

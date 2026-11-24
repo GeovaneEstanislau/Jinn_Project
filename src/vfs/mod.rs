@@ -787,3 +787,63 @@ pub fn run_posix_permission_selftests() -> (usize, usize) {
 
     (passed, total)
 }
+
+/// Suíte de testes de validação funcional e persistência de mkdir e escrita no FAT32 (/disk)
+pub fn run_fat32_mkdir_persistence_selftests() -> (usize, usize) {
+    let mut passed = 0;
+    let mut total = 0;
+
+    // Teste 1: Criação de diretório /disk/documentos
+    total += 1;
+    let mkdir_res = mkdir("/disk/documentos");
+    if mkdir_res.is_ok() || mkdir_res == Err(VfsError::AlreadyExists) {
+        passed += 1;
+    }
+
+    // Teste 2: Criação e escrita de arquivo /disk/documentos/notas.txt
+    total += 1;
+    let _ = create("/disk/documentos/notas.txt");
+    if let Ok(handle) = open("/disk/documentos/notas.txt", O_WRONLY) {
+        let msg = b"Jinn OS - Sistema Operacional Soberano";
+        if write("/disk/documentos/notas.txt", handle, 0, msg).is_ok() {
+            let _ = close("/disk/documentos/notas.txt", handle);
+            passed += 1;
+        } else {
+            let _ = close("/disk/documentos/notas.txt", handle);
+        }
+    }
+
+    // Teste 3: Leitura e verificação de integridade do conteúdo gravado
+    total += 1;
+    if let Ok(handle) = open("/disk/documentos/notas.txt", O_RDONLY) {
+        let mut buf = [0u8; 64];
+        if let Ok(n) = read("/disk/documentos/notas.txt", handle, 0, &mut buf) {
+            let _ = close("/disk/documentos/notas.txt", handle);
+            if n >= 38 && &buf[..38] == b"Jinn OS - Sistema Operacional Soberano" {
+                passed += 1;
+            }
+        } else {
+            let _ = close("/disk/documentos/notas.txt", handle);
+        }
+    }
+
+    // Teste 4: Rejeição de duplicação (EEXIST) ao recriar /disk/documentos
+    total += 1;
+    if mkdir("/disk/documentos") == Err(VfsError::AlreadyExists) {
+        passed += 1;
+    }
+
+    // Teste 5: Enumeração via readdir em /disk contendo a pasta documentos
+    total += 1;
+    let mut found_docs = false;
+    let _ = readdir("/disk", |name, node_type| {
+        if name == "documentos" && node_type == NodeType::Directory {
+            found_docs = true;
+        }
+    });
+    if found_docs {
+        passed += 1;
+    }
+
+    (passed, total)
+}

@@ -322,6 +322,26 @@ pub extern "C" fn _start() -> ! {
     }
     w.set_color(Color::LightGray, Color::Black);
 
+    // Executa bateria de testes de validação funcional e persistência FAT32 mkdir / write
+    w.write_string("[+] FAT32 mkdir & Gravacao Persistente...");
+    let (fat_p, fat_t) = vfs::run_fat32_mkdir_persistence_selftests();
+    if fat_p == fat_t {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string(" OK (");
+        w.write_decimal(fat_p);
+        w.write_string("/");
+        w.write_decimal(fat_t);
+        w.write_line(" aprovados)");
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string(" FALHA (");
+        w.write_decimal(fat_p);
+        w.write_string("/");
+        w.write_decimal(fat_t);
+        w.write_line(" aprovados)");
+    }
+    w.set_color(Color::LightGray, Color::Black);
+
     w.write_string("[+] IPC...");
     ipc::register(0);
     w.set_color(Color::LightGreen, Color::Black);

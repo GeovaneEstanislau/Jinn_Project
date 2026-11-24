@@ -667,18 +667,55 @@ notes:v1.0.1:Produtividade / Texto:installed:11\n";
 
 // ── Adaptador de VFS em Ring 3 ────────────────────────────────────────────────
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct DirEntryUser {
+    pub name: [u8; 64],
+    pub name_len: u32,
+    pub is_dir: u32,
+    pub is_elf: u32,
+    pub is_txt: u32,
+    pub size: u64,
+}
+
 pub struct UserVfs;
 
 impl VfsHost for UserVfs {
-    fn readdir(&self, _path: &str, cb: &mut dyn FnMut(&str, bool, bool, bool)) {
-        cb("ola.elf", false, true, false);
-        cb("ola_graf.elf", false, true, false);
-        cb("contador.elf", false, true, false);
-        cb("browser.elf", false, true, false);
-        cb("README.TXT", false, false, true);
-        cb("nebula.ppm", false, false, false);
-        cb("landscp.ppm", false, false, false);
-        cb("cosmos.ppm", false, false, false);
+    fn readdir(&self, path: &str, cb: &mut dyn FnMut(&str, bool, bool, bool)) {
+        let mut entries = [DirEntryUser {
+            name: [0u8; 64],
+            name_len: 0,
+            is_dir: 0,
+            is_elf: 0,
+            is_txt: 0,
+            size: 0,
+        }; 64];
+
+        unsafe {
+            let count = aladdin_sdk::syscall::syscall4(
+                aladdin_sdk::syscall::SYS_READDIR,
+                path.as_ptr() as u64,
+                path.len() as u64,
+                entries.as_mut_ptr() as u64,
+                64,
+            );
+            if count > 0 {
+                let n = (count as usize).min(64);
+                for i in 0..n {
+                    let len = entries[i].name_len as usize;
+                    if len > 0 && len <= 64 {
+                        if let Ok(name_str) = core::str::from_utf8(&entries[i].name[..len]) {
+                            cb(
+                                name_str,
+                                entries[i].is_dir != 0,
+                                entries[i].is_elf != 0,
+                                entries[i].is_txt != 0,
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn read_file(&self, path: &str, buf: &mut [u8]) -> Result<usize, ()> {

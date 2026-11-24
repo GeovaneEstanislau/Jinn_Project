@@ -39,6 +39,7 @@ pub const SYS_NET_HTTP_GET:                  u64 = 84;
 pub const SYS_NET_SET_DNS:                   u64 = 86;
 pub const SYS_NET_GET_DNS:                   u64 = 87;
 pub const SYS_GET_SYSTEM_STATS:              u64 = 88;
+pub const SYS_READDIR:                       u64 = 89;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]

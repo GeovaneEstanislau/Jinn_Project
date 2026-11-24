@@ -610,6 +610,7 @@ pub extern "C" fn syscall_dispatch(
         86 => sys_net_set_dns(arg0 as *const u8, arg1 as *const u8),
         87 => sys_net_get_dns(arg0 as *mut u8, arg1 as *mut u8),
         88 => sys_get_system_stats(arg0 as *mut SystemStatsUser),
+        89 => sys_readdir(arg0 as *const u8, arg1, arg2 as *mut DirEntryUser, arg3),
         102 => sys_getuid(),
         104 => sys_getgid(),
         107 => sys_geteuid(),
@@ -3821,6 +3822,105 @@ fn sys_rename(args_ptr: *const RenameArgs) -> isize {
         Ok(()) => 0,
         Err(e) => vfs_error_to_errno(e),
     }
+}
+
+/// Representação de uma entrada de diretório retornada para Ring 3 (Syscall 89).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct DirEntryUser {
+    pub name: [u8; 64],
+    pub name_len: u32,
+    pub is_dir: u32,
+    pub is_elf: u32,
+    pub is_txt: u32,
+    pub size: u64,
+}
+
+/// `sys_readdir` — Lista as entradas de um diretório no VFS (Syscall 89).
+fn sys_readdir(
+    path_ptr: *const u8,
+    path_len: usize,
+    out_ptr: *mut DirEntryUser,
+    max_entries: usize,
+) -> isize {
+    if out_ptr.is_null() || max_entries == 0 {
+        return EINVAL;
+    }
+
+    let mut path_buf = [0u8; crate::vfs::MAX_PATH_LEN];
+    let path = match get_user_path(path_ptr, path_len, &mut path_buf) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+
+    let mut count = 0usize;
+    let mut entries_buf = [DirEntryUser {
+        name: [0u8; 64],
+        name_len: 0,
+        is_dir: 0,
+        is_elf: 0,
+        is_txt: 0,
+        size: 0,
+    }; 64];
+
+    let limit = max_entries.min(64);
+    let clean_path = path.trim();
+
+    if clean_path == "/" || clean_path.is_empty() {
+        crate::vfs::list_mounts(|prefix, _fs_name| {
+            if count < limit {
+                let pfx_clean = prefix.trim_start_matches('/');
+                if !pfx_clean.is_empty() {
+                    let len = pfx_clean.len().min(63);
+                    entries_buf[count].name[..len].copy_from_slice(&pfx_clean.as_bytes()[..len]);
+                    entries_buf[count].name_len = len as u32;
+                    entries_buf[count].is_dir = 1;
+                    count += 1;
+                }
+            }
+        });
+    } else {
+        let res = crate::vfs::readdir(clean_path, |name, node_type| {
+            if count < limit && name != "." && name != ".." {
+                let n_bytes = name.as_bytes();
+                let len = n_bytes.len().min(63);
+                entries_buf[count].name[..len].copy_from_slice(&n_bytes[..len]);
+                entries_buf[count].name_len = len as u32;
+                entries_buf[count].is_dir = if node_type == crate::vfs::NodeType::Directory { 1 } else { 0 };
+
+                let lower_name = name.to_ascii_lowercase();
+                let is_elf = lower_name.ends_with(".elf");
+                let is_txt = lower_name.ends_with(".txt")
+                    || lower_name.ends_with(".cfg")
+                    || lower_name.ends_with(".htm")
+                    || lower_name.ends_with(".html")
+                    || lower_name.ends_with(".log")
+                    || lower_name.ends_with(".json")
+                    || lower_name.ends_with(".jpk")
+                    || lower_name.ends_with(".db");
+
+                entries_buf[count].is_elf = if is_elf { 1 } else { 0 };
+                entries_buf[count].is_txt = if is_txt { 1 } else { 0 };
+
+                count += 1;
+            }
+        });
+
+        if let Err(e) = res {
+            return vfs_error_to_errno(e);
+        }
+    }
+
+    if count > 0 {
+        let bytes_to_copy = count * core::mem::size_of::<DirEntryUser>();
+        if let Err(e) = copy_to_user(out_ptr as *mut u8, unsafe {
+            core::slice::from_raw_parts(entries_buf.as_ptr() as *const u8, bytes_to_copy)
+        }, bytes_to_copy) {
+            return e;
+        }
+    }
+
+    count as isize
 }
 
 // ── Kernel-internal invoke ────────────────────────────────────────────────────
