@@ -5,6 +5,7 @@ mod font;
 mod browser;
 pub mod wallet;
 pub mod tls;
+pub mod gzip;
 
 use core::{arch::asm, panic::PanicInfo};
 
@@ -2241,7 +2242,28 @@ unsafe fn fetch_http_document(
                 Ok(decoded_len) => {
                     print_str(b"[BROWSER-NET] Chunked decodificado: ");
                     print_u64(decoded_len as u64);
-                    print_str(b" bytes entregues ao renderizador\n");
+                    print_str(b" bytes\n");
+
+                    // Verifica se o payload deschunkado possui compressão GZIP ou DEFLATE
+                    let unchunked_slice = &out_buf[..decoded_len];
+                    if hdr.is_gzip || gzip::is_gzip(unchunked_slice) {
+                        print_str(b"[BROWSER-NET] Descomprimindo GZIP apos deschunk...\n");
+                        let rx_tmp = core::slice::from_raw_parts_mut(rx_ptr, HTTP_BUF_SIZE);
+                        match gzip::decompress_gzip(unchunked_slice, rx_tmp) {
+                            Ok(gz_len) => {
+                                print_str(b"[BROWSER-NET] GZIP descomprimido: ");
+                                print_u64(gz_len as u64);
+                                print_str(b" bytes entregues ao renderizador\n");
+                                let copy_n = gz_len.min(out_buf.len());
+                                out_buf[..copy_n].copy_from_slice(&rx_tmp[..copy_n]);
+                                return Ok(copy_n);
+                            }
+                            Err(_) => {
+                                print_str(b"[BROWSER-NET] Falha ao descomprimir GZIP; mantendo dados deschunkados\n");
+                                return Ok(decoded_len);
+                            }
+                        }
+                    }
                     return Ok(decoded_len);
                 }
                 Err(_) => {
@@ -2254,6 +2276,35 @@ unsafe fn fetch_http_document(
                 }
             }
         } else {
+            // Nao e chunked: verifica se é GZIP ou DEFLATE
+            if hdr.is_gzip || gzip::is_gzip(body_bytes) {
+                print_str(b"[BROWSER-NET] Descomprimindo resposta GZIP (raw ");
+                print_u64(body_bytes.len() as u64);
+                print_str(b" bytes)...\n");
+                match gzip::decompress_gzip(body_bytes, out_buf) {
+                    Ok(gz_len) => {
+                        print_str(b"[BROWSER-NET] GZIP descomprimido com sucesso: ");
+                        print_u64(gz_len as u64);
+                        print_str(b" bytes entregues ao renderizador\n");
+                        return Ok(gz_len);
+                    }
+                    Err(_) => {
+                        print_str(b"[BROWSER-NET] Falha na descompressao GZIP; repassando bruto\n");
+                    }
+                }
+            } else if hdr.is_deflate || gzip::is_zlib(body_bytes) {
+                print_str(b"[BROWSER-NET] Descomprimindo resposta DEFLATE/ZLIB...\n");
+                match gzip::decompress_deflate(body_bytes, out_buf) {
+                    Ok(def_len) => {
+                        print_str(b"[BROWSER-NET] DEFLATE descomprimido: ");
+                        print_u64(def_len as u64);
+                        print_str(b" bytes entregues ao renderizador\n");
+                        return Ok(def_len);
+                    }
+                    Err(_) => {}
+                }
+            }
+
             let copy_len = body_bytes.len().min(out_buf.len());
             print_str(b"[BROWSER-NET] Corpo HTTP entregue ao renderizador: ");
             print_u64(copy_len as u64);
@@ -2864,9 +2915,34 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
         return &buf[..blk.len()];
     }
 
-    // 8. Dominio sem esquema (ex: "google.com", "example.com", "neverssl.com", "10.0.2.2:8080")
-    // ESTRITAMENTE interpretado como endereco web e prefixado com http://!
-    // NUNCA e enviado diretamente ao VFS local (/disk/)!
+    // 8. Dominio sem esquema (ex: "google.com", "jinn-os.dev.br", "10.0.2.2:8080")
+    // Normalização inteligente de domínios conhecidos e correção de digitação:
+    if clean.eq_ignore_ascii_case(b"jinn.os.dev.br") || clean.eq_ignore_ascii_case(b"jinn-os.dev.br") {
+        let p = b"https://jinn-os.dev.br";
+        buf[..p.len()].copy_from_slice(p);
+        buf[p.len()] = 0;
+        return &buf[..p.len()];
+    }
+    if clean.starts_with(b"jinn.os.dev.br/") {
+        let prefix = b"https://jinn-os.dev.br";
+        let rest = &clean[14..];
+        buf[..prefix.len()].copy_from_slice(prefix);
+        let rlen = rest.len().min(127 - prefix.len());
+        buf[prefix.len()..prefix.len() + rlen].copy_from_slice(&rest[..rlen]);
+        let total = prefix.len() + rlen;
+        buf[total] = 0;
+        return &buf[..total];
+    }
+    if clean.starts_with(b"jinn-os.dev.br/") {
+        let prefix = b"https://";
+        buf[..prefix.len()].copy_from_slice(prefix);
+        let rlen = clean.len().min(127 - prefix.len());
+        buf[prefix.len()..prefix.len() + rlen].copy_from_slice(&clean[..rlen]);
+        let total = prefix.len() + rlen;
+        buf[total] = 0;
+        return &buf[..total];
+    }
+
     let prefix = b"http://";
     let p_len = prefix.len();
     buf[..p_len].copy_from_slice(prefix);
@@ -2897,7 +2973,7 @@ unsafe fn apply_wallpaper_action(target: &[u8]) {
     print_str(b"\n");
 
     let mut full_path = [0u8; 128];
-    let mut full_len = 0;
+    let mut full_len;
     if target.starts_with(b"/") {
         let l = target.len().min(127);
         full_path[..l].copy_from_slice(&target[..l]);
@@ -3099,7 +3175,10 @@ unsafe fn run_browser_interactive() -> ! {
                     session.render(buf_cur);
                     let _ = sys_window_update(win_id, buf_cur);
                 }
-                EVENT_MOUSE_DOWN => {
+                EVENT_MOUSE_DOWN | EVENT_MOUSE_UP => {
+                    if ev.x < 0 || ev.y < 0 {
+                        continue;
+                    }
                     let click_x = ev.x as usize;
                     let click_y = ev.y as usize;
                     print_str(b"[BROWSER-INTERACTION] MOUSE_DOWN x=");

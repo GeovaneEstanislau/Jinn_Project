@@ -34,7 +34,7 @@ pub const COLOR_SCROLL_THUMB_BORDER: u32 = 0x0089_DCEB;
 
 // ── Pipeline Completo: Flat Vector DOM, Mini-CSS e Mini-JS (no_std) ──────────
 
-pub const MAX_DOM_NODES: usize = 64;
+pub const MAX_DOM_NODES: usize = 256;
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -155,7 +155,7 @@ pub struct DomNode {
     pub class_len: usize,
     pub style_attr: [u8; 128],
     pub style_len: usize,
-    pub href_attr: [u8; 64],
+    pub href_attr: [u8; 128],
     pub href_len: usize,
     pub src_attr: [u8; 64],
     pub src_len: usize,
@@ -186,7 +186,7 @@ impl DomNode {
             class_len: 0,
             style_attr: [0; 128],
             style_len: 0,
-            href_attr: [0; 64],
+            href_attr: [0; 128],
             href_len: 0,
             src_attr: [0; 64],
             src_len: 0,
@@ -221,6 +221,12 @@ impl DomArena {
             title: [0; 64],
             title_len: 0,
         }
+    }
+
+    #[inline(always)]
+    pub fn reset(&mut self) {
+        self.node_count = 0;
+        self.title_len = 0;
     }
 
     pub fn alloc_node(&mut self, node_type: DomNodeType) -> Option<usize> {
@@ -461,6 +467,11 @@ impl MiniCss {
             rules: [CssRule::empty(); MAX_CSS_RULES],
             rule_count: 0,
         }
+    }
+
+    #[inline(always)]
+    pub fn reset(&mut self) {
+        self.rule_count = 0;
     }
 
     pub fn parse_stylesheet(&mut self, css: &[u8]) {
@@ -1110,6 +1121,14 @@ impl MiniJsRuntime {
             func_count: 0,
             dom_dirty: false,
         }
+    }
+
+    #[inline(always)]
+    pub fn reset(&mut self) {
+        self.var_count = 0;
+        self.elem_count = 0;
+        self.func_count = 0;
+        self.dom_dirty = false;
     }
 
     pub fn get_num(&self, name: &[u8]) -> Option<i64> {
@@ -1886,6 +1905,103 @@ pub fn read_css_file_from_vfs(href: &[u8], out: &mut [u8]) -> Option<usize> {
     }
 }
 
+/// Normalização de texto HTML: decodificação de entidades e conversão de UTF-8 acentuado para ASCII bitmap
+pub fn normalize_html_text(raw: &[u8], out: &mut [u8]) -> usize {
+    let mut i = 0usize;
+    let mut o = 0usize;
+    let len = raw.len();
+    let max = out.len().saturating_sub(1);
+
+    while i < len && o < max {
+        // 1. Entidades HTML
+        if raw[i] == b'&' {
+            if i + 3 < len && &raw[i..i + 4] == b"&lt;" {
+                out[o] = b'<'; o += 1; i += 4; continue;
+            } else if i + 3 < len && &raw[i..i + 4] == b"&gt;" {
+                out[o] = b'>'; o += 1; i += 4; continue;
+            } else if i + 4 < len && &raw[i..i + 5] == b"&amp;" {
+                out[o] = b'&'; o += 1; i += 5; continue;
+            } else if i + 5 < len && &raw[i..i + 6] == b"&quot;" {
+                out[o] = b'"'; o += 1; i += 6; continue;
+            } else if i + 4 < len && &raw[i..i + 5] == b"&#39;" {
+                out[o] = b'\''; o += 1; i += 5; continue;
+            } else if i + 5 < len && &raw[i..i + 6] == b"&apos;" {
+                out[o] = b'\''; o += 1; i += 6; continue;
+            } else if i + 5 < len && &raw[i..i + 6] == b"&nbsp;" {
+                out[o] = b' '; o += 1; i += 6; continue;
+            } else if i + 6 < len && &raw[i..i + 7] == b"&mdash;" {
+                out[o] = b'-'; o += 1; i += 7; continue;
+            } else if i + 6 < len && &raw[i..i + 7] == b"&ndash;" {
+                out[o] = b'-'; o += 1; i += 7; continue;
+            } else if i + 5 < len && &raw[i..i + 6] == b"&rarr;" {
+                out[o] = b'-'; if o < max { out[o] = b'>'; o += 1; } i += 6; continue;
+            } else if i + 5 < len && &raw[i..i + 6] == b"&copy;" {
+                out[o] = b'c'; o += 1; i += 6; continue;
+            }
+        }
+
+        // 2. Acentuação UTF-8 Português (0xC3 ...)
+        if raw[i] == 0xC3 && i + 1 < len {
+            let b2 = raw[i + 1];
+            let ch = match b2 {
+                0xA0..=0xA5 => b'a', // à, á, â, ã, ä, å
+                0x80..=0x85 => b'A', // À, Á, Â, Ã, Ä, Å
+                0xA8..=0xAB => b'e', // è, é, ê, ë
+                0x88..=0x8B => b'E', // È, É, Ê, Ë
+                0xAC..=0xAF => b'i', // ì, í, î, ï
+                0x8C..=0x8F => b'I', // Ì, Í, Î, Ï
+                0xB2..=0xB6 => b'o', // ò, ó, ô, õ, ö
+                0x92..=0x96 => b'O', // Ò, Ó, Ô,Õ, Ö
+                0xB9..=0xBC => b'u', // ù, ú, û, ü
+                0x99..=0x9C => b'U', // Ù, Ú, Û, Ü
+                0xA7 => b'c',        // ç
+                0x87 => b'C',        // Ç
+                _ => b'?',
+            };
+            out[o] = ch;
+            o += 1;
+            i += 2;
+            continue;
+        }
+
+        // 3. Aspas e traços tipográficos UTF-8 (0xE2 0x80 ...)
+        if raw[i] == 0xE2 && i + 2 < len && raw[i + 1] == 0x80 {
+            let b3 = raw[i + 2];
+            let ch = match b3 {
+                0x98 | 0x99 => b'\'', // ‘ ’
+                0x9C | 0x9D => b'"',  // “ ”
+                0x93 | 0x94 => b'-',  // – —
+                0xA6 => b'.',         // …
+                _ => b' ',
+            };
+            out[o] = ch;
+            o += 1;
+            i += 3;
+            continue;
+        }
+
+        // Caractere ASCII comum
+        let b = raw[i];
+        if b == b'\r' || b == b'\n' || b == b'\t' {
+            if o > 0 && out[o - 1] != b' ' {
+                out[o] = b' ';
+                o += 1;
+            }
+        } else if b >= 32 && b <= 126 {
+            out[o] = b;
+            o += 1;
+        }
+        i += 1;
+    }
+
+    // Trim trailing spaces
+    while o > 0 && out[o - 1] == b' ' {
+        o -= 1;
+    }
+    out[o] = 0;
+    o
+}
+
 // ── Parser HTML Zero-Copy para Flat Vector DOM ────────────────────────────────
 
 pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, js: &mut MiniJsRuntime) {
@@ -2092,8 +2208,32 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                 continue;
             }
 
-            // Ignora tags estruturais não-visuais
-            if tag_name == b"html" || tag_name == b"head" || tag_name == b"body" || tag_name == b"meta" {
+            // Ignora tags estruturais e metadados sem consumir slots
+            if tag_name == b"html" || tag_name == b"head" || tag_name == b"body" || tag_name == b"meta"
+                || tag_name == b"link" || tag_name == b"base" || tag_name == b"param"
+            {
+                while i < len && html[i] != b'>' { i += 1; }
+                if i < len { i += 1; }
+                continue;
+            }
+
+            // Ignora completamente sub-árvores complexas de gráficos/scripts (svg, noscript)
+            if tag_name == b"svg" {
+                while i < len && html[i] != b'>' { i += 1; }
+                if i < len { i += 1; }
+                while i + 5 < len && !html[i..i + 6].eq_ignore_ascii_case(b"</svg>") {
+                    i += 1;
+                }
+                while i < len && html[i] != b'>' { i += 1; }
+                if i < len { i += 1; }
+                continue;
+            }
+            if tag_name == b"noscript" {
+                while i < len && html[i] != b'>' { i += 1; }
+                if i < len { i += 1; }
+                while i + 10 < len && !html[i..i + 11].eq_ignore_ascii_case(b"</noscript>") {
+                    i += 1;
+                }
                 while i < len && html[i] != b'>' { i += 1; }
                 if i < len { i += 1; }
                 continue;
@@ -2102,7 +2242,10 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
             // Elemento normal do DOM
             let node_id_opt = dom.alloc_node(DomNodeType::Element);
             if node_id_opt.is_none() {
-                break;
+                // Ao invés de abortar o documento, pula este elemento e continua o parsing
+                while i < len && html[i] != b'>' { i += 1; }
+                if i < len { i += 1; }
+                continue;
             }
             let node_id = node_id_opt.unwrap();
             dom.nodes[node_id].tag = tag_buf;
@@ -2165,7 +2308,7 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                         i += 1;
                     }
                     let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
-                    let cpy = a_val.len().min(63);
+                    let cpy = a_val.len().min(127);
                     dom.nodes[node_id].href_attr[..cpy].copy_from_slice(&a_val[..cpy]);
                     dom.nodes[node_id].href_len = cpy;
                 } else if i + 4 < len && html[i..i + 4].eq_ignore_ascii_case(b"src=") {
@@ -2263,48 +2406,20 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
             let mut text_buf = [0u8; 256];
             let mut t_idx = 0usize;
             while i < len && html[i] != b'<' {
-                let b = html[i];
-                if b == b' ' || b == b'\n' || b == b'\r' || b == b'\t' {
-                    if t_idx > 0 && text_buf[t_idx - 1] != b' ' && t_idx < 255 {
-                        text_buf[t_idx] = b' ';
-                        t_idx += 1;
-                    }
-                } else if b == b'&' {
-                    if i + 3 < len && &html[i..i + 4] == b"&lt;" {
-                        if t_idx < 255 { text_buf[t_idx] = b'<'; t_idx += 1; }
-                        i += 3;
-                    } else if i + 3 < len && &html[i..i + 4] == b"&gt;" {
-                        if t_idx < 255 { text_buf[t_idx] = b'>'; t_idx += 1; }
-                        i += 3;
-                    } else if i + 4 < len && &html[i..i + 5] == b"&amp;" {
-                        if t_idx < 255 { text_buf[t_idx] = b'&'; t_idx += 1; }
-                        i += 4;
-                    } else if i + 5 < len && &html[i..i + 6] == b"&nbsp;" {
-                        if t_idx < 255 { text_buf[t_idx] = b' '; t_idx += 1; }
-                        i += 5;
-                    } else {
-                        if t_idx < 255 { text_buf[t_idx] = b; t_idx += 1; }
-                    }
-                } else {
-                    if t_idx < 255 {
-                        text_buf[t_idx] = b;
-                        t_idx += 1;
-                    }
+                if t_idx < 255 {
+                    text_buf[t_idx] = html[i];
+                    t_idx += 1;
                 }
                 i += 1;
             }
 
-            while t_idx > 0 && text_buf[t_idx - 1] == b' ' {
-                t_idx -= 1;
-            }
-            let mut t_start = 0usize;
-            while t_start < t_idx && text_buf[t_start] == b' ' {
-                t_start += 1;
-            }
-            let actual_t_len = t_idx - t_start;
-            if actual_t_len > 0 {
-                dom.nodes[node_id].text[..actual_t_len].copy_from_slice(&text_buf[t_start..t_idx]);
-                dom.nodes[node_id].text_len = actual_t_len;
+            if t_idx > 0 {
+                let mut norm_buf = [0u8; 256];
+                let norm_len = normalize_html_text(&text_buf[..t_idx], &mut norm_buf);
+                if norm_len > 0 {
+                    dom.nodes[node_id].text[..norm_len].copy_from_slice(&norm_buf[..norm_len]);
+                    dom.nodes[node_id].text_len = norm_len;
+                }
             }
 
             css.resolve(&mut dom.nodes[node_id]);
@@ -2389,6 +2504,12 @@ impl ParsedPage {
             blocks: [BlockItem::empty(); 32],
             block_count: 0,
         }
+    }
+
+    #[inline(always)]
+    pub fn reset(&mut self) {
+        self.title_len = 0;
+        self.block_count = 0;
     }
 }
 
@@ -2630,10 +2751,10 @@ pub fn parse_html(html: &[u8], page: &mut ParsedPage) {
 
 // ── Motor de Layout e Quebra de Linhas ────────────────────────────────────────
 
-pub const MAX_RENDER_LINES: usize = 128;
-pub const MAX_RENDER_BOXES: usize = 32;
-pub const MAX_RENDER_IMAGES: usize = 16;
-pub const MAX_CLICK_REGIONS: usize = 32;
+pub const MAX_RENDER_LINES: usize = 256;
+pub const MAX_RENDER_BOXES: usize = 64;
+pub const MAX_RENDER_IMAGES: usize = 32;
+pub const MAX_CLICK_REGIONS: usize = 256;
 
 #[derive(Clone, Copy)]
 pub struct RenderImage {
@@ -2712,6 +2833,15 @@ impl DocumentLayout {
         }
     }
 
+    #[inline(always)]
+    pub fn reset(&mut self) {
+        self.line_count = 0;
+        self.box_count = 0;
+        self.image_count = 0;
+        self.click_count = 0;
+        self.total_height = 0;
+    }
+
     pub fn compute_from_dom(&mut self, dom: &DomArena, content_width: usize) {
         self.line_count = 0;
         self.click_count = 0;
@@ -2744,6 +2874,25 @@ impl DocumentLayout {
         for c in 0..dom.nodes[node_idx].child_count {
             Self::mark_subtree_laid_out(dom, dom.nodes[node_idx].children[c], laid_out);
         }
+    }
+
+    fn find_enclosing_link<'a>(dom: &'a DomArena, mut curr_idx: usize) -> Option<&'a [u8]> {
+        loop {
+            let n = &dom.nodes[curr_idx];
+            if n.tag_len == 1 && n.tag[0] == b'a' && n.href_len > 0 {
+                return Some(&n.href_attr[..n.href_len]);
+            }
+            if let Some(pid) = n.parent {
+                if pid < dom.node_count && pid != curr_idx {
+                    curr_idx = pid;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        None
     }
 
     fn layout_subtree(
@@ -2979,7 +3128,10 @@ impl DocumentLayout {
             if node.text_len > 0 {
                 let max_chars = (avail_width.saturating_sub(mar_left + mar_right + pad_left + pad_right) / font::FONT_WIDTH).max(1);
                 let text_x = base_x + mar_left + pad_left + 4;
-                self.add_wrapped_text(&node.text[..node.text_len], text_x, curr_y, max_chars, node.computed_style.color, false, None);
+                let enclosing_link = Self::find_enclosing_link(dom, node_idx);
+                let is_link = enclosing_link.is_some();
+                let color = if is_link { COLOR_LINK } else { node.computed_style.color };
+                self.add_wrapped_text(&node.text[..node.text_len], text_x, curr_y, max_chars, color, is_link, enclosing_link);
             }
 
             // Lay out all children
@@ -3025,7 +3177,10 @@ impl DocumentLayout {
         }
 
         let is_interactive = tag == b"button" || node.onclick_len > 0;
-        let is_link = tag == b"a" && node.href_len > 0;
+        let enclosing_link = Self::find_enclosing_link(dom, node_idx);
+        let is_link = enclosing_link.is_some();
+        let target_href = enclosing_link;
+        let color = if is_link { COLOR_LINK } else { node.computed_style.color };
         let has_box = node.computed_style.bg_color.is_some() || node.computed_style.border_color.is_some();
 
         let pad_left = node.computed_style.padding_left;
@@ -3044,12 +3199,11 @@ impl DocumentLayout {
 
         let text = &node.text[..node.text_len];
         if is_interactive {
-            self.add_wrapped_text_interactive(text, elem_x, curr_y, max_chars, node.computed_style.color, true, node.id);
+            self.add_wrapped_text_interactive(text, elem_x, curr_y, max_chars, color, true, node.id);
         } else if is_link {
-            let href = &node.href_attr[..node.href_len];
-            self.add_wrapped_text(text, elem_x, curr_y, max_chars, node.computed_style.color, true, Some(href));
+            self.add_wrapped_text(text, elem_x, curr_y, max_chars, color, true, target_href);
         } else if node.text_len > 0 {
-            self.add_wrapped_text(text, elem_x, curr_y, max_chars, node.computed_style.color, false, None);
+            self.add_wrapped_text(text, elem_x, curr_y, max_chars, color, false, None);
         }
 
         *curr_y += pad_bottom;
@@ -3155,7 +3309,7 @@ impl DocumentLayout {
         self.line_count = 0;
         self.click_count = 0;
 
-        let max_chars_per_line = (content_width / font::FONT_WIDTH).min(34);
+        let max_chars_per_line = (content_width / font::FONT_WIDTH).max(1);
         let mut curr_y = 6usize;
 
         for b_idx in 0..page.block_count {
@@ -3243,6 +3397,54 @@ impl DocumentLayout {
             }
         }
 
+        self.total_height = curr_y + 10;
+    }
+
+    pub fn compute_fallback_text(&mut self, html: &[u8], content_width: usize) {
+        let max_chars = (content_width / font::FONT_WIDTH).max(1);
+        let mut curr_y = 8usize;
+        let mut i = 0usize;
+        let len = html.len();
+
+        while i < len && self.line_count < self.lines.len() {
+            // Pula scripts, styles, svgs
+            if html[i] == b'<' {
+                i += 1;
+                if i + 6 < len && html[i..i + 6].eq_ignore_ascii_case(b"script") {
+                    while i + 8 < len && !html[i..i + 9].eq_ignore_ascii_case(b"</script>") { i += 1; }
+                } else if i + 5 < len && html[i..i + 5].eq_ignore_ascii_case(b"style") {
+                    while i + 7 < len && !html[i..i + 8].eq_ignore_ascii_case(b"</style>") { i += 1; }
+                } else if i + 3 < len && html[i..i + 3].eq_ignore_ascii_case(b"svg") {
+                    while i + 5 < len && !html[i..i + 6].eq_ignore_ascii_case(b"</svg>") { i += 1; }
+                }
+                while i < len && html[i] != b'>' { i += 1; }
+                if i < len { i += 1; }
+                continue;
+            }
+
+            // Coleta texto visível
+            let mut text_buf = [0u8; 128];
+            let mut t_len = 0;
+            while i < len && html[i] != b'<' && t_len < 127 {
+                let b = html[i];
+                if b == b'\r' || b == b'\n' || b == b'\t' {
+                    if t_len > 0 && text_buf[t_len - 1] != b' ' {
+                        text_buf[t_len] = b' ';
+                        t_len += 1;
+                    }
+                } else if b >= 32 && b <= 126 {
+                    text_buf[t_len] = b;
+                    t_len += 1;
+                }
+                i += 1;
+            }
+
+            let trimmed = text_buf[..t_len].trim_ascii();
+            if !trimmed.is_empty() {
+                self.add_wrapped_text(trimmed, 8, &mut curr_y, max_chars, COLOR_TEXT, false, None);
+                curr_y += 2;
+            }
+        }
         self.total_height = curr_y + 10;
     }
 
@@ -3434,11 +3636,11 @@ impl BrowserSession {
         self.saved_w = WIN_W;
         self.saved_h = WIN_H;
         self.fullscreen_state = FullscreenState::Windowed;
-        self.page = ParsedPage::new();
-        self.dom = DomArena::new();
-        self.css = MiniCss::new();
-        self.js_runtime = MiniJsRuntime::new();
-        self.layout = DocumentLayout::new();
+        self.page.reset();
+        self.dom.reset();
+        self.css.reset();
+        self.js_runtime.reset();
+        self.layout.reset();
     }
 
     pub fn init_persistence(&mut self) {
@@ -3696,6 +3898,42 @@ impl BrowserSession {
         parse_html(html, &mut self.page);
         parse_html_into_dom(html, &mut self.dom, &mut self.css, &mut self.js_runtime);
         self.recompute_layout();
+        if self.layout.line_count == 0 && !html.is_empty() {
+            let content_w = self.viewport_w.saturating_sub(24);
+            self.layout.compute_fallback_text(html, content_w);
+            let clip_top = CLIP_TOP;
+            let clip_bottom = self.viewport_h.saturating_sub(1);
+            let v_h = clip_bottom.saturating_sub(clip_top);
+            if self.layout.total_height > v_h {
+                self.max_scroll = self.layout.total_height - v_h;
+            } else {
+                self.max_scroll = 0;
+            }
+        }
+
+        unsafe {
+            crate::print_str(b"[BROWSER-LAYOUT] Documento carregado. Linhas=");
+            crate::print_u64(self.layout.line_count as u64);
+            crate::print_str(b" Regioes clicaveis=");
+            crate::print_u64(self.layout.click_count as u64);
+            crate::print_str(b"\n");
+            for i in 0..self.layout.click_count {
+                let r = &self.layout.click_regions[i];
+                crate::print_str(b"  -> [CLICK-REGION ");
+                crate::print_u64(i as u64);
+                crate::print_str(b"] x=");
+                crate::print_u64(r.x as u64);
+                crate::print_str(b" y=");
+                crate::print_u64(r.y as u64);
+                crate::print_str(b" w=");
+                crate::print_u64(r.w as u64);
+                crate::print_str(b" h=");
+                crate::print_u64(r.h as u64);
+                crate::print_str(b" target=");
+                crate::print_str(&r.target[..r.target_len]);
+                crate::print_str(b"\n");
+            }
+        }
     }
 
     pub fn scroll_by(&mut self, delta: i32) {
@@ -3778,11 +4016,16 @@ impl BrowserSession {
                 return BrowserAction::None;
             }
 
-            // Hit-test em links e botões interativos
+            // Hit-test em links e botões interativos (com margem de tolerância de 2px)
             let doc_y = (click_y - clip_top) + self.scroll_y;
             for i in 0..self.layout.click_count {
                 let r = &self.layout.click_regions[i];
-                if click_x >= r.x && click_x <= r.x + r.w && doc_y >= r.y && doc_y <= r.y + r.h {
+                let pad = 2usize;
+                let rx_start = r.x.saturating_sub(pad);
+                let rx_end = r.x + r.w + pad;
+                let ry_start = r.y.saturating_sub(pad);
+                let ry_end = r.y + r.h + pad;
+                if click_x >= rx_start && click_x <= rx_end && doc_y >= ry_start && doc_y <= ry_end {
                     if r.is_js {
                         return BrowserAction::JsAction(r.node_idx);
                     } else {
@@ -4532,7 +4775,7 @@ pub fn render_image_element(
     if img.src_len > 0 {
         let src_slice = &img.src[..img.src_len];
         let mut path_buf = [0u8; 128];
-        let mut path_len = 0;
+        let mut path_len;
 
         if src_slice.starts_with(b"/") {
             let l = src_slice.len().min(127);
@@ -4857,6 +5100,23 @@ pub fn resolve_relative_url(base: &[u8], target: &[u8], out: &mut [u8; 128]) -> 
         return len;
     }
 
+    // Normalização amigável de jinn.os.dev.br ou jinn-os.dev.br
+    if clean_target.starts_with(b"jinn.os.dev.br") || clean_target.starts_with(b"jinn-os.dev.br") {
+        let prefix = b"https://jinn-os.dev.br";
+        let rest = if clean_target.starts_with(b"jinn.os.dev.br") {
+            &clean_target[b"jinn.os.dev.br".len()..]
+        } else {
+            &clean_target[b"jinn-os.dev.br".len()..]
+        };
+        let p_len = prefix.len();
+        out[..p_len].copy_from_slice(prefix);
+        let r_len = rest.len().min(127 - p_len);
+        out[p_len..p_len + r_len].copy_from_slice(&rest[..r_len]);
+        let total = p_len + r_len;
+        out[total] = 0;
+        return total;
+    }
+
     // Se já for absoluta
     if clean_target.starts_with(b"http://") || clean_target.starts_with(b"https://")
         || clean_target.starts_with(b"about:") || clean_target.starts_with(b"file://")
@@ -4870,7 +5130,7 @@ pub fn resolve_relative_url(base: &[u8], target: &[u8], out: &mut [u8; 128]) -> 
 
     // Se começar com // (protocol-relative)
     if clean_target.starts_with(b"//") {
-        let prefix = b"http:";
+        let prefix: &[u8] = if base.starts_with(b"https://") { b"https:" } else { b"http:" };
         let p_len = prefix.len();
         out[..p_len].copy_from_slice(prefix);
         let c_len = clean_target.len().min(127 - p_len);
@@ -4893,11 +5153,14 @@ pub fn resolve_relative_url(base: &[u8], target: &[u8], out: &mut [u8; 128]) -> 
         return total;
     }
 
-    // Se base começar com http://
-    if base.starts_with(b"http://") {
-        let after_scheme = &base[7..];
+    // Se base for HTTP ou HTTPS (RFC 3986)
+    let is_https = base.starts_with(b"https://");
+    let is_http = base.starts_with(b"http://");
+    if is_https || is_http {
+        let scheme_len = if is_https { 8 } else { 7 };
+        let after_scheme = &base[scheme_len..];
         let host_port_end = after_scheme.iter().position(|&b| b == b'/').unwrap_or(after_scheme.len());
-        let host_prefix_len = 7 + host_port_end;
+        let host_prefix_len = scheme_len + host_port_end;
 
         if clean_target.starts_with(b"/") {
             // Relativo à raiz do host (ex: /about.html)
@@ -4910,8 +5173,8 @@ pub fn resolve_relative_url(base: &[u8], target: &[u8], out: &mut [u8; 128]) -> 
             return total;
         } else {
             // Relativo ao diretório atual da URL base
-            let last_slash = base.iter().rposition(|&b| b == b'/').unwrap_or(6);
-            let pos = if last_slash >= 7 {
+            let last_slash = base.iter().rposition(|&b| b == b'/').unwrap_or(scheme_len.saturating_sub(1));
+            let pos = if last_slash >= scheme_len {
                 let dir_len = last_slash + 1;
                 let p = dir_len.min(127);
                 out[..p].copy_from_slice(&base[..p]);
@@ -4990,6 +5253,7 @@ pub fn build_http_get_request(parsed: &ParsedHttpUrl, out: &mut [u8]) -> usize {
     }
     append(out, &mut pos, b"\r\nUser-Agent: JinnBrowser/0.4.0 (Jinn OS x86_64; Aladdin Desktop)\r\n");
     append(out, &mut pos, b"Accept: text/html, text/plain, */*\r\n");
+    append(out, &mut pos, b"Accept-Encoding: identity\r\n");
     append(out, &mut pos, b"Connection: close\r\n\r\n");
     pos
 }
@@ -5000,6 +5264,8 @@ pub struct HttpResponseHeader {
     pub header_len: usize,
     pub content_length: Option<usize>,
     pub is_chunked: bool,
+    pub is_gzip: bool,
+    pub is_deflate: bool,
     pub location: [u8; 128],
     pub location_len: usize,
 }
@@ -5034,6 +5300,8 @@ pub fn parse_http_response_header(raw: &[u8]) -> Option<HttpResponseHeader> {
 
     let mut content_length = None;
     let mut is_chunked = false;
+    let mut is_gzip = false;
+    let mut is_deflate = false;
     let mut location = [0u8; 128];
     let mut location_len = 0usize;
 
@@ -5059,6 +5327,12 @@ pub fn parse_http_response_header(raw: &[u8]) -> Option<HttpResponseHeader> {
                 }
             }
             content_length = Some(cl);
+        } else if clean_line.len() > 17 && clean_line[..17].eq_ignore_ascii_case(b"content-encoding:") {
+            if clean_line[17..].contains_ignore_ascii_case(b"gzip") {
+                is_gzip = true;
+            } else if clean_line[17..].contains_ignore_ascii_case(b"deflate") {
+                is_deflate = true;
+            }
         } else if clean_line.len() > 18 && clean_line[..18].eq_ignore_ascii_case(b"transfer-encoding:") {
             if clean_line[18..].contains_ignore_ascii_case(b"chunked") {
                 is_chunked = true;
@@ -5077,6 +5351,8 @@ pub fn parse_http_response_header(raw: &[u8]) -> Option<HttpResponseHeader> {
         header_len,
         content_length,
         is_chunked,
+        is_gzip,
+        is_deflate,
         location,
         location_len,
     })
