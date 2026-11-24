@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Persistência FAT32 LFN, Driver Dual ATA/VirtIO e Auto-Recuperação no Microkernel — Jinn OS</title>
+  <meta name="description"
+    content="Como implementamos escrita persistente e criação de diretórios FAT32 com Long File Names (LFN/VFAT), driver dual virtio-blk e IDE ATA, além da arquitetura self-healing contra deadlocks de fila de entrada no Jinn OS.">
+  <meta name="article:published_time" content="2026-11-24T18:10:00-03:00">
+  <meta name="article:author" content="Geovane Estanislau">
+  <meta name="article:tag" content="Sistemas de Arquivos, FAT32, LFN, VirtIO, IDE ATA, Microkernel, Self-Healing, Rust, Ring 3">
+  <link rel="canonical" href="https://jinn-os.dev.br/artigos/persistencia-fat32-lfn-auto-recuperacao-microkernel.html">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://jinn-os.dev.br/artigos/persistencia-fat32-lfn-auto-recuperacao-microkernel.html">
+  <meta property="og:title" content="Persistência FAT32 LFN, Driver Dual ATA/VirtIO e Auto-Recuperação no Jinn OS">
+  <meta property="og:description"
+    content="Engenharia de armazenamento e resiliência: criação de pastas FAT32 com Long File Names, zeramento de clusters, Syscall 89 readdir e tolerância a saturação de entrada.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/wallpaper.jpg">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans selection:bg-cyan-500 selection:text-black">
+
+  <!-- Cabeçalho de Navegação -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 hover:text-cyan-400 transition-colors">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span class="font-bold tracking-wide">Jinn OS</span>
+        <span
+          class="text-xs font-mono bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded border border-cyan-800">Devlog</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+        <a href="/feed.xml" target="_blank"
+          class="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS Feed</span>
+        </a>
+        <span class="text-slate-600">|</span>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer"
+          class="flex items-center gap-1 text-slate-400 hover:text-white transition-colors">
+          <i data-lucide="github" class="w-3.5 h-3.5"></i>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Conteúdo Principal do Artigo -->
+  <main class="max-w-4xl mx-auto px-6 py-12">
+    <article class="prose prose-invert prose-cyan max-w-none">
+
+      <!-- Meta & Título -->
+      <div class="mb-8">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400 mb-3">
+          <span class="bg-cyan-950/80 border border-cyan-800/60 px-2 py-0.5 rounded">ARMAZENAMENTO &amp; KERNEL</span>
+          <span class="text-slate-500">•</span>
+          <span>Novembro 2026</span>
+          <span class="text-slate-500">•</span>
+          <span>Tempo de Leitura: 11 min</span>
+          <span class="text-slate-500">•</span>
+          <span class="text-emerald-400">Crash-Proof Persistence</span>
+        </div>
+        <h1 class="text-3xl md:text-4xl font-extrabold text-white tracking-tight leading-tight mb-4">
+          Persistência FAT32 LFN, Driver Dual ATA/VirtIO e Auto-Recuperação no Jinn Microkernel
+        </h1>
+        <p class="text-lg text-slate-300 leading-relaxed">
+          A engenharia de persistência real em disco: suporte completo a Long File Names (VFAT) com zeramento seguro de clusters, a introdução da Syscall 89 (readdir), driver dual de bloco para QEMU e máquinas físicas, e as defesas contra saturação da fila de entrada do usuário.
+        </p>
+      </div>
+
+      <!-- Resumo Executivo / Alerta -->
+      <div class="bg-slate-900/80 border-l-4 border-blue-500 p-5 rounded-r-lg my-8 text-sm">
+        <div class="font-bold text-blue-300 mb-1 flex items-center gap-2">
+          <i data-lucide="hard-drive" class="w-4 h-4"></i>
+          O Desafio da Escrita Transacional em Bare-Metal
+        </div>
+        <p class="text-slate-300 m-0">
+          Leitura em sistemas de arquivos FAT32 é simples; escrita robusta com nomes longos (LFN) em sistemas operacionais <code>#![no_std]</code> é um desafio complexo. Sem zerar os setores de um cluster recém-alocado, resíduos de dados antigos na mídia são interpretados pelo parser de diretórios como entradas fantasmas corrompidas. Ao mesmo tempo, processos gráficos em Ring 3 que manipulam o VFS não podem estourar a pilha de execução (<code>USTACK_SIZE</code>) nem travar o microkernel quando o usuário gera eventos massivos de entrada.
+        </p>
+      </div>
+
+      <!-- Seção 1 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        1. Criação de Pastas e Escrita FAT32 com Long File Names (LFN)
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        No driver <code>src/vfs/fat32.rs</code>, a implementação do método <code>Fat32Fs::create_dir(&amp;mut self, path: &amp;str)</code> seguiu um rigoroso protocolo de integridade transacional:
+      </p>
+      <ol class="text-slate-300 space-y-2 my-4 list-decimal list-inside">
+        <li><strong>Validação de Pré-Existência:</strong> Resolução do diretório pai com retorno limpo de <code>EEXIST</code> se o nó de destino já estiver presente.</li>
+        <li><strong>Alocação e Zeramento de Cluster:</strong> A alocação via <code>allocate_cluster</code> grava a marca de fim de cadeia (<code>0x0FFFFFFF</code>) na FAT e <strong>zera incondicionalmente todos os setores físicos</strong> do novo cluster no disco (<code>disk.img</code>). Isso elimina artefatos que poderiam ser falsamente identificados como entradas de diretório válidas por parsers posteriores.</li>
+        <li><strong>Entradas Especiais Obrigatórias:</strong> Gravação estrita no início do novo cluster das duas entradas canônicas FAT: <code>.</code> (apontando para o cluster recém-criado) e <code>..</code> (apontando para o cluster do diretório pai, ou <code>0</code> se o pai for a raiz).</li>
+        <li><strong>Emissão de Entradas LFN em Ordem Reversa:</strong> Nomes que excedem o padrão 8.3 (ou possuem caracteres mistos) são particionados em pedaços de 13 caracteres UTF-16LE em slots de 32 bytes com o atributo <code>ATTR_LONG_NAME</code> (<code>0x0F</code>), marcando o último fragmento com a flag <code>0x40</code> e vinculando o checksum do nome curto associado.</li>
+      </ol>
+
+      <div class="bg-slate-900 p-4 rounded-lg border border-slate-800 font-mono text-xs overflow-x-auto my-6 text-slate-300">
+        <div class="text-cyan-400 font-bold mb-2">// Anatomia de um Slot LFN Gravado no VFS:</div>
+        <div>Byte 0x00: Sequência (0x41 = 1º e último slot LFN)</div>
+        <div>Bytes 0x01..0x0B: Caracteres 1 a 5 em UTF-16LE</div>
+        <div>Byte 0x0B: Atributo 0x0F (READ_ONLY | HIDDEN | SYSTEM | VOLUME_ID)</div>
+        <div>Byte 0x0D: Checksum do Alias 8.3 de Diretório</div>
+        <div>Bytes 0x0E..0x1B: Caracteres 6 a 11 em UTF-16LE | Bytes 0x1C..0x1F: Caracteres 12 e 13</div>
+      </div>
+
+      <!-- Seção 2 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        2. Syscall 89 (sys_readdir) e Listagem Dinâmica em Ring 3
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Antes dessa modernização, utilitários gráficos de espaço de usuário precisavam confiar em listas estáticas ou chamadas de arquivo único. Com a <strong>Syscall 89 (<code>sys_readdir</code>)</strong>, as aplicações Ring 3 contam com uma API canônica para navegação de diretórios:
+      </p>
+      <ul class="text-slate-300 space-y-2 my-4">
+        <li><strong>Assinatura em Ring 3:</strong> <code>sys_readdir(path: &amp;str, index: usize, out_buf: &amp;mut [u8]) -&gt; isize</code>. Retorna o número de bytes gravados no buffer do chamador ou código negativo de erro.</li>
+        <li><strong>Isolamento de Memória:</strong> O kernel valida rigorosamente que o ponteiro de saída reside no espaço de endereçamento de usuário do processo solicitante, prevenindo vazamentos de estruturas internas do Ring 0.</li>
+        <li><strong>Consumo pelo FilesApp:</strong> O Gerenciador de Arquivos do Aladdin Desktop consome a Syscall 89 sob demanda via <code>UserVfs</code>, renderizando pastas, arquivos executáveis <code>.elf</code>, pacotes <code>.jpkg</code> e documentos com ícones dinâmicos e botões ergonômicos de 32px de altura.</li>
+      </ul>
+
+      <!-- Seção 3 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        3. Driver Dual de Bloco: VirtIO-Blk e IDE ATA Legado
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Para suportar tanto emuladores de alto desempenho quanto placas-mãe reais com portas SATA/PATA, o Jinn OS incorpora uma camada unificada de abstração de bloco:
+      </p>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 my-6">
+        <div class="bg-slate-900 p-4 rounded-lg border border-slate-800">
+          <div class="font-bold text-cyan-400 text-sm mb-2">Driver VirtIO-Blk PCI</div>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            Utilizado no QEMU para transferências ultrarrápidas de I/O assíncrono via anéis de descritores circulares (Virtqueues) mapeados em portas MMIO/IOPort.
+          </p>
+        </div>
+        <div class="bg-slate-900 p-4 rounded-lg border border-slate-800">
+          <div class="font-bold text-emerald-400 text-sm mb-2">Driver IDE ATA (PIO / DMA)</div>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            Opera no VirtualBox e em bare-metal legado nas portas de canal primário <code>0x1F0-0x1F7</code>, utilizando polling de status BSY/DRQ com timeouts seguros para leitura e gravação de setores LBA28/LBA48.
+          </p>
+        </div>
+      </div>
+
+      <!-- Seção 4 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        4. Arquitetura Self-Healing contra Saturação de Entrada e Isolamento de Pilha
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Durante sessões prolongadas com mais de 50.000 eventos de teclado e mouse, identificamos o risco de saturação da fila de entrada do compositor gráfico. Para blindar o microkernel, implementamos uma estratégia tripla de auto-recuperação:
+      </p>
+      <ul class="text-slate-300 space-y-2 my-4">
+        <li><strong>Fila Circular com Descarte Gracioso:</strong> A fila de eventos de entrada é protegida por um <code>IrqSafeSpinLock</code>. Quando a fila atinge capacidade máxima (512 eventos pendentes), eventos de movimento de mouse intermediários são descartados graciosamente, preservando cliques e teclas sem bloquear as ISRs de hardware do PIC 8259A.</li>
+        <li><strong>Isolamento de Pilha (USTACK_SIZE):</strong> Cada thread de usuário Ring 3 recebe uma pilha isolada de 32 KiB guardada por páginas Sentinela (*Guard Pages*) não mapeadas na MMU. Tentativas de transbordamento geram Page Fault limpo em vez de corrupção silenciosa da memória do kernel.</li>
+        <li><strong>Alocação em .bss Estático:</strong> Buffers volumosos de decodificação de imagens, layout HTML e strings de diretório são alocados em seções <code>.bss</code> estáticas, eliminando qualquer risco de estouro de stack durante operações profundas no VFS.</li>
+      </ul>
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <!-- Rodapé do Artigo -->
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn OS Sovereign Systems • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-cyan-400 hover:underline">Voltar ao Desktop Virtual</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>

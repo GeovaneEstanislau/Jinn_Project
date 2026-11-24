@@ -13,7 +13,7 @@
     <priority>0.9</priority>
   </url>
   <url>
-    <loc>https://jinn-os.dev.br/artigos/arquitetura-tls13-nostd-soberana.html</loc>
+    <loc>https://jinn-os.dev.br/artigos/resolucao-arp-dinamica-dns-cascata-virtualbox-qemu.html</loc>
     <lastmod>2026-11-24</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
@@ -23,11 +23,11 @@
         <news:language>pt-BR</news:language>
       </news:publication>
       <news:publication_date>2026-11-24</news:publication_date>
-      <news:title>Pilha Criptográfica Soberana: TLS 1.3 e ChaCha20-Poly1305 em Bare-Metal Rust</news:title>
+      <news:title>Resolução ARP Dinâmica, DNS em Cascata e Hardening Intel e1000: Do QEMU ao VirtualBox Bare-Metal</news:title>
     </news:news>
   </url>
   <url>
-    <loc>https://jinn-os.dev.br/artigos/compositor-aladdin-zero-gpu-frosted-glass.html</loc>
+    <loc>https://jinn-os.dev.br/artigos/resiliencia-vfs-multiparticao-fat32-ext2.html</loc>
     <lastmod>2026-11-24</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
@@ -37,63 +37,7 @@
         <news:language>pt-BR</news:language>
       </news:publication>
       <news:publication_date>2026-11-24</news:publication_date>
-      <news:title>Compositor Aladdin: Frosted Glass e Zero-GPU em Rust</news:title>
-    </news:news>
-  </url>
-  <url>
-    <loc>https://jinn-os.dev.br/artigos/ecossistema-pacotes-jpkg-offline-shutdown.html</loc>
-    <lastmod>2026-11-23</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-    <news:news>
-      <news:publication>
-        <news:name>Jinn OS Devlog</news:name>
-        <news:language>pt-BR</news:language>
-      </news:publication>
-      <news:publication_date>2026-11-23</news:publication_date>
-      <news:title>Ecossistema de Pacotes .jpkg e Atualização Offline-on-Shutdown</news:title>
-    </news:news>
-  </url>
-  <url>
-    <loc>https://jinn-os.dev.br/artigos/glassmorphism-simd-e1000-virtualbox.html</loc>
-    <lastmod>2026-11-24</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-    <news:news>
-      <news:publication>
-        <news:name>Jinn OS Devlog</news:name>
-        <news:language>pt-BR</news:language>
-      </news:publication>
-      <news:publication_date>2026-11-24</news:publication_date>
-      <news:title>Glassmorphism Sem GPU no Aladdin e Hardening de Rede e1000 no VirtualBox</news:title>
-    </news:news>
-  </url>
-  <url>
-    <loc>https://jinn-os.dev.br/artigos/isolamento-drivers-ring3-supervisor-jaha.html</loc>
-    <lastmod>2026-11-24</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-    <news:news>
-      <news:publication>
-        <news:name>Jinn OS Devlog</news:name>
-        <news:language>pt-BR</news:language>
-      </news:publication>
-      <news:publication_date>2026-11-24</news:publication_date>
-      <news:title>Isolamento de Drivers e Supervisor JAHA 1.2</news:title>
-    </news:news>
-  </url>
-  <url>
-    <loc>https://jinn-os.dev.br/artigos/navegador-web-nativo-microkernel-jinn.html</loc>
-    <lastmod>2026-11-24</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-    <news:news>
-      <news:publication>
-        <news:name>Jinn OS Devlog</news:name>
-        <news:language>pt-BR</news:language>
-      </news:publication>
-      <news:publication_date>2026-11-24</news:publication_date>
-      <news:title>Navegador Web Nativo no Microkernel Jinn OS — Jinn Browser</news:title>
+      <news:title>VFS Resiliente: Coexistência FAT32 e Ext2 no Jinn OS</news:title>
     </news:news>
   </url>
   <url>
@@ -111,7 +55,7 @@
     </news:news>
   </url>
   <url>
-    <loc>https://jinn-os.dev.br/artigos/resiliencia-vfs-multiparticao-fat32-ext2.html</loc>
+    <loc>https://jinn-os.dev.br/artigos/persistencia-fat32-lfn-auto-recuperacao-microkernel.html</loc>
     <lastmod>2026-11-24</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
@@ -121,7 +65,105 @@
         <news:language>pt-BR</news:language>
       </news:publication>
       <news:publication_date>2026-11-24</news:publication_date>
-      <news:title>VFS Resiliente: Coexistência FAT32 e Ext2 no Jinn OS</news:title>
+      <news:title>Persistência FAT32 LFN, Driver Dual ATA/VirtIO e Auto-Recuperação no Microkernel</news:title>
+    </news:news>
+  </url>
+  <url>
+    <loc>https://jinn-os.dev.br/artigos/navegador-web-nativo-microkernel-jinn.html</loc>
+    <lastmod>2026-11-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn OS Devlog</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-24</news:publication_date>
+      <news:title>Navegador Web Nativo no Microkernel Jinn OS — Jinn Browser</news:title>
+    </news:news>
+  </url>
+  <url>
+    <loc>https://jinn-os.dev.br/artigos/isolamento-drivers-ring3-supervisor-jaha.html</loc>
+    <lastmod>2026-11-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn OS Devlog</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-24</news:publication_date>
+      <news:title>Isolamento de Drivers e Supervisor JAHA 1.2</news:title>
+    </news:news>
+  </url>
+  <url>
+    <loc>https://jinn-os.dev.br/artigos/glassmorphism-simd-e1000-virtualbox.html</loc>
+    <lastmod>2026-11-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn OS Devlog</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-24</news:publication_date>
+      <news:title>Glassmorphism Sem GPU no Aladdin e Hardening de Rede e1000 no VirtualBox</news:title>
+    </news:news>
+  </url>
+  <url>
+    <loc>https://jinn-os.dev.br/artigos/glassmorphism-acrilico-simd-compositor-aladdin.html</loc>
+    <lastmod>2026-11-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn OS Devlog</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-24</news:publication_date>
+      <news:title>Glassmorphism Acrílico, SIMD e Compositor Aladdin: Zero-GPU em 60 FPS no Bare-Metal</news:title>
+    </news:news>
+  </url>
+  <url>
+    <loc>https://jinn-os.dev.br/artigos/ecossistema-pacotes-jpkg-offline-shutdown.html</loc>
+    <lastmod>2026-11-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn OS Devlog</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-24</news:publication_date>
+      <news:title>Ecossistema de Pacotes .jpkg e Atualização Offline-on-Shutdown</news:title>
+    </news:news>
+  </url>
+  <url>
+    <loc>https://jinn-os.dev.br/artigos/compositor-aladdin-zero-gpu-frosted-glass.html</loc>
+    <lastmod>2026-11-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn OS Devlog</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-24</news:publication_date>
+      <news:title>Compositor Aladdin: Frosted Glass e Zero-GPU em Rust</news:title>
+    </news:news>
+  </url>
+  <url>
+    <loc>https://jinn-os.dev.br/artigos/arquitetura-tls13-nostd-soberana.html</loc>
+    <lastmod>2026-11-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn OS Devlog</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-24</news:publication_date>
+      <news:title>Pilha Criptográfica Soberana: TLS 1.3 e ChaCha20-Poly1305 em Bare-Metal Rust</news:title>
     </news:news>
   </url>
 </urlset>

@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Resolução ARP Dinâmica, DNS em Cascata e Hardening Intel e1000: Do QEMU ao VirtualBox Bare-Metal — Jinn OS</title>
+  <meta name="description"
+    content="Como diagnosticamos divergências de MAC em Camada 2 entre QEMU SLIRP e VirtualBox NAT via PCAP, estabilizamos os anéis de descritores do Intel 82540EM (e1000) e implementamos um resolvedor DNS resiliente em cascata.">
+  <meta name="article:published_time" content="2026-11-24T18:00:00-03:00">
+  <meta name="article:author" content="Geovane Estanislau">
+  <meta name="article:tag" content="Redes, Intel e1000, VirtualBox, DNS, ARP, Bare-Metal, Rust, Microkernel">
+  <link rel="canonical" href="https://jinn-os.dev.br/artigos/resolucao-arp-dinamica-dns-cascata-virtualbox-qemu.html">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://jinn-os.dev.br/artigos/resolucao-arp-dinamica-dns-cascata-virtualbox-qemu.html">
+  <meta property="og:title" content="Resolução ARP Dinâmica, DNS em Cascata e Hardening Intel e1000 no Jinn OS">
+  <meta property="og:description"
+    content="Auditoria de redes bare-metal: divergência de gateway MAC em VirtualBox NAT, anéis RX/TX MMIO do Intel 82540EM e fallback de DNS 1.1.1.1 -> 8.8.8.8 -> 10.0.2.3.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/wallpaper.jpg">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans selection:bg-cyan-500 selection:text-black">
+
+  <!-- Cabeçalho de Navegação -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 hover:text-cyan-400 transition-colors">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span class="font-bold tracking-wide">Jinn OS</span>
+        <span
+          class="text-xs font-mono bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded border border-cyan-800">Devlog</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+        <a href="/feed.xml" target="_blank"
+          class="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS Feed</span>
+        </a>
+        <span class="text-slate-600">|</span>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer"
+          class="flex items-center gap-1 text-slate-400 hover:text-white transition-colors">
+          <i data-lucide="github" class="w-3.5 h-3.5"></i>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Conteúdo Principal do Artigo -->
+  <main class="max-w-4xl mx-auto px-6 py-12">
+    <article class="prose prose-invert prose-cyan max-w-none">
+
+      <!-- Meta & Título -->
+      <div class="mb-8">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400 mb-3">
+          <span class="bg-cyan-950/80 border border-cyan-800/60 px-2 py-0.5 rounded">REDES &amp; DRIVERS</span>
+          <span class="text-slate-500">•</span>
+          <span>Novembro 2026</span>
+          <span class="text-slate-500">•</span>
+          <span>Tempo de Leitura: 9 min</span>
+          <span class="text-slate-500">•</span>
+          <span class="text-emerald-400">Hardware Compliant</span>
+        </div>
+        <h1 class="text-3xl md:text-4xl font-extrabold text-white tracking-tight leading-tight mb-4">
+          Resolução ARP Dinâmica, DNS em Cascata e Hardening do Intel e1000: Do QEMU ao Oracle VirtualBox
+        </h1>
+        <p class="text-lg text-slate-300 leading-relaxed">
+          O diagnóstico aprofundado via inspeção PCAP das discrepâncias de Camada 2 entre hipervisores, a ativação do Bus Master DMA no registrador PCI Command e a estratégia de resolução de nomes tolerante a falhas no Jinn OS.
+        </p>
+      </div>
+
+      <!-- Resumo Executivo / Alerta -->
+      <div class="bg-slate-900/80 border-l-4 border-cyan-500 p-5 rounded-r-lg my-8 text-sm">
+        <div class="font-bold text-cyan-300 mb-1 flex items-center gap-2">
+          <i data-lucide="network" class="w-4 h-4"></i>
+          Desafio de Interoperabilidade
+        </div>
+        <p class="text-slate-300 m-0">
+          Enquanto pilhas de rede monolíticas dependem de serviços externos (DHCP client, resolvedor systemd e daemons em espaço de usuário), um microkernel <code>#![no_std]</code> precisa inicializar a malha de enlace de forma estrita. Quando o sistema operava perfeitamente no emulador QEMU mas falhava com <em>"Servidor DNS Inacessível"</em> no Oracle VirtualBox com placa Intel PRO/1000 MT Desktop (82540EM), a investigação revelou uma armadilha clássica: suposições estáticas de Camada 2 e o status dos anéis de descritores MMIO.
+        </p>
+      </div>
+
+      <!-- Seção 1 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        1. O Diagnóstico: O Que Aconteceu Entre o QEMU e o VirtualBox?
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        No ambiente de desenvolvimento padrão com QEMU em modo de rede de usuário (SLIRP), o roteador virtual gateway responde no endereço IP <code>10.0.2.2</code> e utiliza convencionalmente o endereço MAC <code>52:55:0a:00:02:02</code>. No entanto, ao exportar a ISO Limine (<code>jinn.iso</code>) para o <strong>Oracle VirtualBox</strong> configurado com o adaptador nativo <code>Intel PRO/1000 MT Desktop (82540EM)</code> sob NAT, o gateway virtual opera com o MAC <code>52:54:00:12:35:02</code>.
+      </p>
+      <p class="text-slate-300 leading-relaxed">
+        Se o stack TCP/IP do kernel utilizar cache ARP pré-populado ou falhar em responder com ARP Request dinâmico ao consultar a rota padrão (<code>0.0.0.0/0</code>), os quadros Ethernet UDP destinados à porta 53 (DNS) são despachados para um destino inexistente no switch virtual, resultando em descarte silencioso em Camada 2 antes mesmo de alcançarem o NAT do host.
+      </p>
+
+      <div class="bg-slate-900 p-4 rounded-lg border border-slate-800 font-mono text-xs overflow-x-auto my-6 text-slate-300">
+        <div class="text-cyan-400 font-bold mb-2">// Divergência de Camada 2 (Data Link Layer):</div>
+        <div>[QEMU SLIRP]       IP: 10.0.2.2  ==>  MAC: 52:55:0a:00:02:02 (Transmissão OK)</div>
+        <div>[VirtualBox NAT]   IP: 10.0.2.2  ==>  MAC: 52:54:00:12:35:02 (Descarte se estático!)</div>
+        <div class="mt-2 text-emerald-400">// Solução: ARP Request Broadcast (FF:FF:FF:FF:FF:FF) antes de abrir soquete UDP.</div>
+      </div>
+
+      <!-- Seção 2 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        2. Hardening do Driver Intel 82540EM (e1000) em Rust
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        O driver <code>src/drivers/net/e1000.rs</code> foi submetido a auditoria detalhada nos registradores de configuração PCI e anéis circulares de acesso direto à memória (DMA):
+      </p>
+      <ul class="text-slate-300 space-y-2 my-4">
+        <li><strong>Habilitação Explícita de PCI Bus Master:</strong> No registrador de comando PCI (offset <code>0x04</code>), garantimos a ativação incondicional dos bits <code>Bus Master Enable</code> (bit 2) e <code>Memory Space Enable</code> (bit 1). Sem o bit 2, o controlador físico é proibido pela ponte PCIe/PCI de executar transações DMA para a memória RAM física, impedindo o preenchimento dos buffers RX.</li>
+        <li><strong>Anel de Recepção (RDBAL/RDBAH/RDLEN/RDH/RDT):</strong> Configuração de 32 descritores de recepção alinhados em 16 bytes em memória física contígua. Cada descritor recebe um buffer estático pré-alocado de 2048 bytes (MTU padrão + overhead Ethernet).</li>
+        <li><strong>Limpeza de Status de Descritores:</strong> Antes de avançar o ponteiro da cauda (<code>RDT</code>), o campo de status do descritor de hardware é limpo para evitar interpretação espúria de pacotes recebidos anteriormente.</li>
+        <li><strong>Filtragem Promíscua e Multicast Controlada:</strong> O registrador de controle de recepção (<code>RCTL</code>) foi ajustado com <code>RCTL_EN | RCTL_BAM | RCTL_SZ_2048 | RCTL_SECRC</code>, habilitando recepção de broadcast e descarte automático do CRC de 4 bytes pelo hardware.</li>
+      </ul>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 my-6">
+        <div class="bg-slate-900 p-4 rounded-lg border border-slate-800">
+          <div class="font-bold text-cyan-400 text-sm mb-2">Transmissão DMA Transparente</div>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            Descritores TX utilizam os bits de comando <code>CMD_EOP | CMD_IFCS | CMD_RS</code>, instruindo o silício a injetar o FCS (Frame Check Sequence) e sinalizar a conclusão no bit de status do próprio descritor, eliminando polling desnecessário.
+          </p>
+        </div>
+        <div class="bg-slate-900 p-4 rounded-lg border border-slate-800">
+          <div class="font-bold text-emerald-400 text-sm mb-2">Concorrência com IrqSafeSpinLock</div>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            O acesso à instância ativa da placa de rede (<code>ACTIVE_NIC</code>) é protegido por locks que desabilitam interrupções locais da CPU durante a manipulação dos índices de anel, prevenindo deadlocks com a ISR do timer APIC.
+          </p>
+        </div>
+      </div>
+
+      <!-- Seção 3 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        3. Resolvedor DNS Cascata com Persistência em /disk/net.cfg
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Mesmo com a camada física e de enlace plenamente estabilizadas, redes corporativas e nós domésticos frequentemente bloqueiam ou atrasam respostas para resolvedores de terceiros. Para conferir robustez de nível de produção ao <strong>Jinn Browser</strong>, implementamos um resolvedor de nomes com mecanismo de tentativa sequencial em cascata:
+      </p>
+
+      <ol class="text-slate-300 space-y-2 my-4 list-decimal list-inside">
+        <li><strong>Nó Primário:</strong> <code>1.1.1.1</code> (Cloudflare Public DNS com resposta ultra-rápida via Anycast).</li>
+        <li><strong>Nó Secundário:</strong> <code>8.8.8.8</code> (Google Public DNS como fallback caso haja bloqueio de portas UDP locais).</li>
+        <li><strong>Nó de Infraestrutura Local:</strong> <code>10.0.2.3</code> (Servidor DNS embutido no NAT do VirtualBox/QEMU, capaz de resolver nomes de host da máquina hospedeira).</li>
+      </ol>
+
+      <p class="text-slate-300 leading-relaxed">
+        A lista de servidores e tempos de expiração (TTL) é persistida e lida automaticamente da partição FAT32 do VFS em <code>/disk/net.cfg</code>. Caso o usuário modifique suas configurações de rede via painel ou terminal, a atualização reflete instantaneamente em todas as aplicações Ring 3.
+      </p>
+
+      <!-- Seção 4 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        4. Resultados de Homologação em Bare-Metal e Máquinas Virtuais
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Durante a validação com a nova imagem <code>jinn.iso</code> e <code>disk.img</code> gerados:
+      </p>
+      <ul class="text-slate-300 space-y-2 my-4">
+        <li><strong>Resolução Instantânea:</strong> Consulta de domínios como <code>jinn-os.dev.br</code> e <code>google.com</code> completada em 18 a 35 ms via soquetes UDP assíncronos.</li>
+        <li><strong>Transição Transparente:</strong> A mesma imagem de disco boota indistintamente no QEMU, no Oracle VirtualBox e em hardware x86_64 real (com NICs Intel PCI), autodetectando o endereço MAC do gateway sem exigir intervenção manual.</li>
+        <li><strong>Consumo Zero em Espera:</strong> Durante o trânsito dos pacotes de rede, a thread de aplicação dorme cooperativamente em Ring 3, assegurando que o consumo de CPU em repouso permaneça em <code>0.00%</code>.</li>
+      </ul>
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <!-- Rodapé do Artigo -->
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn OS Sovereign Systems • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-cyan-400 hover:underline">Voltar ao Desktop Virtual</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>
