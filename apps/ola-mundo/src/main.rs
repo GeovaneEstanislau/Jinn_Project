@@ -366,6 +366,38 @@ unsafe fn sys_dns_resolve(name: *const u8, len: usize, out_ip: *mut u8) -> i64 {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
+pub struct SystemStatsUser {
+    pub uptime_secs: u64,
+    pub task_count: u64,
+    pub sched_ticks: u64,
+    pub used_ram_mb: u64,
+    pub total_ram_mb: u64,
+    pub current_tick: u64,
+    pub net_ip: [u8; 4],
+    pub net_adapter: [u8; 32],
+    pub net_state_desc: [u8; 32],
+    pub jinnwall_active_conns: u64,
+    pub jinnwall_drops: u64,
+    pub jinnwall_inspected: u64,
+    pub jinnwall_accepted: u64,
+    pub jinnwall_profile: u32,
+    pub physical_frames_used: u64,
+    pub physical_frames_total: u64,
+    pub dynamic_pages_allocated: u64,
+    pub dynamic_pages_freed: u64,
+    pub vfs_open_fds: u64,
+    pub vfs_mounted_volumes: u64,
+    pub net_tx_packets: u64,
+    pub net_rx_packets: u64,
+}
+
+#[inline(always)]
+unsafe fn sys_get_system_stats(stats: *mut SystemStatsUser) -> i64 {
+    syscall3(88, stats as u64, 0, 0)
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct JinnWallStats {
     pub inspected: u64,
     pub accepted: u64,
@@ -2281,41 +2313,48 @@ unsafe fn browser_load_and_display(
                 true
             }
             Err(err) => {
-                let (err_title, err_msg, err_detail): (&[u8], &[u8], &[u8]) = match err {
+                let (err_title, err_msg, err_detail, stage): (&[u8], &[u8], &[u8], &[u8]) = match err {
                     FetchError::DnsNxDomain => (
                         b"Dominio Inexistente",
                         b"Nao foi possivel encontrar o servidor. Verifique o dominio digitado.",
                         b"NXDOMAIN: O servidor DNS confirmou que o dominio informado nao existe (RFC 1035 RCODE 3)",
+                        b"DNS_UDP",
                     ),
                     FetchError::DnsTimeout => (
                         b"Servidor DNS Inacessivel",
                         b"O servidor DNS upstream nao respondeu dentro do limite de tempo.",
                         b"ETIMEDOUT: Nenhuma resposta do servidor DNS (10.0.2.3 / 8.8.8.8)",
+                        b"DNS_UDP",
                     ),
                     FetchError::DnsArpFailed => (
                         b"Falha de Resolucao ARP",
                         b"Nao foi possivel localizar o endereco fisico (MAC) do gateway na rede local.",
                         b"EHOSTUNREACH: O gateway ou servidor DNS nao respondeu a requisicoes ARP L2",
+                        b"ARP",
                     ),
                     FetchError::DnsNetDown => (
                         b"Interface de Rede Inoperante",
                         b"Nenhum adaptador de rede ativo foi detectado no sistema operacional.",
                         b"ENETDOWN: Placa de rede (VirtIO, Intel e1000 ou AMD PCnet) indisponivel ou cabo desconectado",
+                        b"LINK_DOWN",
                     ),
                     FetchError::DnsServerFailure => (
                         b"Falha no Servidor DNS",
                         b"O servidor DNS upstream reportou uma falha ao processar a consulta.",
                         b"SERVFAIL / Refused: O servidor encontrou um erro interno (RFC 1035 RCODE 2 / 5)",
+                        b"DNS_UDP",
                     ),
                     FetchError::DnsFailed => (
                         b"Erro de Resolucao DNS",
                         b"Falha desconhecida durante a resolucao do nome de dominio.",
                         b"sys_dns_resolve falhou com codigo generico",
+                        b"DNS_UDP",
                     ),
                     FetchError::SocketFailed => (
                         b"Erro de Rede Interno",
                         b"Nao foi possivel alocar socket de rede no sistema.",
                         b"sys_socket retornou EMFILE ou memoria esgotada",
+                        b"TCP_SOCKET",
                     ),
                     FetchError::ConnectFailed(code) => (
                         b"Falha de Conexao TCP",
@@ -2323,26 +2362,31 @@ unsafe fn browser_load_and_display(
                         if code == -111 { b"ECONNREFUSED (Conexao recusada pelo host remoto)" }
                         else if code == -110 { b"ETIMEDOUT (Tempo limite de conexao excedido)" }
                         else { b"Erro durante o 3-way handshake SYN/ACK" },
+                        b"TCP_SYN",
                     ),
                     FetchError::SendFailed => (
                         b"Erro de Transmissao",
                         b"Falha ao transmitir os dados da requisicao HTTP.",
                         b"sys_send falhou",
+                        b"TCP_TX",
                     ),
                     FetchError::RecvTimeout => (
                         b"Tempo Esgotado",
                         b"O servidor remoto nao enviou resposta a tempo.",
                         b"Timeout de leitura excedido (3.0s)",
+                        b"HTTP_RECV",
                     ),
                     FetchError::InvalidHttp => (
                         b"Resposta Invalida",
                         b"O servidor retornou uma resposta que nao segue o padrao HTTP/1.1.",
                         b"Cabecalhos HTTP ausentes ou corrompidos",
+                        b"HTTP_PARSER",
                     ),
                     FetchError::TooManyRedirects => (
                         b"Redirecionamento em Loop",
                         b"Muitos redirecionamentos seguidos (limite maximo de 5 excedido).",
                         b"HTTP 301/302 loop",
+                        b"HTTP_REDIRECT",
                     ),
                     FetchError::HttpStatus(code) => (
                         b"Erro HTTP do Servidor",
@@ -2350,30 +2394,53 @@ unsafe fn browser_load_and_display(
                         if code == 404 { b"HTTP 404 Not Found" }
                         else if code == 500 { b"HTTP 500 Internal Server Error" }
                         else { b"Status HTTP de erro retornado pelo host" },
+                        b"HTTP_STATUS",
                     ),
                     FetchError::HttpsRedirect => (
                         b"Redirecionamento para HTTPS",
                         b"O servidor remoto redirecionou a conexao para uma conexao segura (HTTPS).",
                         b"Redirecionamento HTTPS nao pode ser concluido.",
+                        b"HTTP_TO_HTTPS",
                     ),
                     FetchError::TlsEntropyFailed => (
                         b"Falha no Subsistema de Entropia",
                         b"Nao foi possivel obter numeros pseudoaleatorios seguros do microkernel.",
                         b"Syscall 69 (sys_getrandom) falhou ou retornou entropia insuficiente",
+                        b"TLS_ENTROPY",
                     ),
                     FetchError::TlsHandshakeFailed => (
                         b"Falha de Negociacao TLS 1.3",
                         b"O servidor remoto nao aceitou os parametros criptograficos ou rejeitou a conexao TLS 1.3.",
                         b"Handshake RFC 8446 falhou (Curve25519 ou ChaCha20-Poly1305)",
+                        b"TLS_HANDSHAKE",
                     ),
                     FetchError::TlsDecryptFailed => (
                         b"Erro de Criptografia TLS",
                         b"Falha na autenticacao de integridade (Poly1305 MAC) dos dados recebidos.",
                         b"Registro cifrado corrompido ou chave incorreta",
+                        b"TLS_DECRYPT",
                     ),
                 };
 
-                let err_len = browser::format_net_error_html(path, err_title, err_msg, err_detail, out_buf);
+                let mut stats = SystemStatsUser::default();
+                let _ = sys_get_system_stats(&mut stats as *mut SystemStatsUser);
+                let target_ip: &[u8] = if stage == b"ARP" || stage == b"DNS_UDP" {
+                    b"10.0.2.3 (DNS Gateway)"
+                } else {
+                    b"10.0.2.2 (NAT Gateway)"
+                };
+
+                let err_len = browser::format_net_error_html_diag(
+                    path,
+                    err_title,
+                    err_msg,
+                    err_detail,
+                    stage,
+                    target_ip,
+                    stats.net_tx_packets,
+                    stats.net_rx_packets,
+                    out_buf,
+                );
                 session.load_document_bytes(&out_buf[..err_len], path);
                 session.render(buf_slice);
                 let _ = sys_window_update(win_id, buf_slice);

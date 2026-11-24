@@ -63,6 +63,8 @@ pub struct SystemStatsUser {
     pub dynamic_pages_freed: u64,
     pub vfs_open_fds: u64,
     pub vfs_mounted_volumes: u64,
+    pub net_tx_packets: u64,
+    pub net_rx_packets: u64,
 }
 
 /// Syscall sem argumentos

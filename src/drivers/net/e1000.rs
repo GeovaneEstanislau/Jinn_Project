@@ -82,6 +82,8 @@ pub struct E1000Device {
     pub is_available: bool,
     pub rx_cur: usize,
     pub tx_cur: usize,
+    pub tx_packets: u64,
+    pub rx_packets: u64,
 
     rx_ring_phys: u64,
     tx_ring_phys: u64,
@@ -102,6 +104,10 @@ impl E1000Device {
     unsafe fn read_reg(&self, reg: usize) -> u32 {
         let ptr = (self.mmio_base + reg as u64) as *const u32;
         core::ptr::read_volatile(ptr)
+    }
+
+    pub fn packet_stats(&self) -> (u64, u64) {
+        (self.tx_packets, self.rx_packets)
     }
 
     pub fn mac_address(&self) -> [u8; 6] {
@@ -140,6 +146,7 @@ impl E1000Device {
             desc.special = 0;
 
             self.tx_cur = (self.tx_cur + 1) % NUM_DESC;
+            self.tx_packets = self.tx_packets.wrapping_add(1);
             core::arch::asm!("sfence", options(nostack, preserves_flags));
 
             // Atualiza registrador TDT para notificar hardware
@@ -173,13 +180,14 @@ impl E1000Device {
             let buf_virt = crate::memory::paging::phys_to_virt(self.rx_buffers_phys[desc_idx]) as *const u8;
             core::ptr::copy_nonoverlapping(buf_virt, dest.as_mut_ptr(), copy_len);
 
-            // Recicla descritor limpando o status
+            // Recicla descritor limpando o status antes de notificar o anel
             desc.status = 0;
             core::arch::asm!("sfence", options(nostack, preserves_flags));
 
-            // Avança anel RX
+            // Avança anel RX devolvendo o descritor reciclado ao hardware
             self.write_reg(REG_RDT, desc_idx as u32);
             self.rx_cur = (self.rx_cur + 1) % NUM_DESC;
+            self.rx_packets = self.rx_packets.wrapping_add(1);
 
             Some(copy_len)
         }
@@ -204,8 +212,13 @@ pub fn init() -> bool {
         None => return false,
     };
 
-    // Habilita PCI Bus Master (DMA), Memory Space e I/O Space
-    pci::enable_bus_mastering(pci_dev.bus, pci_dev.slot, pci_dev.func);
+    // Habilita explicitamente PCI Bus Master (bit 2) e Memory Space (bit 1) no PCI Command Register
+    let cmd = pci::pci_read_u16(pci_dev.bus, pci_dev.slot, pci_dev.func, 0x04);
+    pci::pci_write_u16(pci_dev.bus, pci_dev.slot, pci_dev.func, 0x04, cmd | 0x0007);
+    let cmd_check = pci::pci_read_u16(pci_dev.bus, pci_dev.slot, pci_dev.func, 0x04);
+    if (cmd_check & 0x0006) != 0x0006 {
+        crate::serial_write(b"[e1000] AVISO: PCI Command nao confirmou Bus Master + Memory Space!\n");
+    }
 
     // BAR0 é endereço físico de memória MMIO (alinhamento de 16 bytes)
     let bar0_phys = (pci_dev.bar0 & !0xF) as u64;
@@ -251,6 +264,8 @@ pub fn init() -> bool {
             is_available: true,
             rx_cur: 0,
             tx_cur: 0,
+            tx_packets: 0,
+            rx_packets: 0,
             rx_ring_phys,
             tx_ring_phys,
             rx_buffers_phys,
@@ -260,7 +275,28 @@ pub fn init() -> bool {
         // 1. Desabilita interrupções durante a configuração inicial
         dev.write_reg(REG_IMC, 0xFFFF_FFFF);
 
-        // 2. Configura anel de recepção (RX)
+        // 2. Configura CTRL: Set Link Up (SLU, bit 6), reseta/limpa LRST (bit 3) e PHY_RST (bit 31)
+        let mut ctrl = dev.read_reg(REG_CTRL);
+        ctrl |= 1 << 6;        // SLU (Set Link Up)
+        ctrl &= !(1 << 3);     // clear LRST (Link Reset)
+        ctrl &= !(1 << 31);    // clear PHY_RST
+        dev.write_reg(REG_CTRL, ctrl);
+
+        // Aguarda STATUS.LU (Link Up, bit 1) estabilizar para o VirtualBox
+        let mut link_up = false;
+        for _ in 0..10_000 {
+            let status = dev.read_reg(REG_STATUS);
+            if (status & (1 << 1)) != 0 {
+                link_up = true;
+                break;
+            }
+            core::hint::spin_loop();
+        }
+        if !link_up {
+            crate::serial_write(b"[e1000] Link STATUS.LU em negociacao...\n");
+        }
+
+        // 3. Configura anel de recepção (RX)
         let rx_desc = rx_ring_virt as *mut E1000RxDesc;
         for i in 0..NUM_DESC {
             let d = &mut *rx_desc.add(i);
@@ -272,12 +308,13 @@ pub fn init() -> bool {
         dev.write_reg(REG_RDBAH, (rx_ring_phys >> 32) as u32);
         dev.write_reg(REG_RDLEN, (NUM_DESC * core::mem::size_of::<E1000RxDesc>()) as u32);
         dev.write_reg(REG_RDH, 0);
+        // RDT inicializado como NUM_DESC - 1 para garantir que todos os descritores estejam disponíveis ao hardware
         dev.write_reg(REG_RDT, (NUM_DESC - 1) as u32);
 
         // Habilita recepção com Broadcast e remoção de CRC
         dev.write_reg(REG_RCTL, RCTL_EN | RCTL_SBP | RCTL_UPE | RCTL_MPE | RCTL_BAM | RCTL_SECRC | RCTL_BSIZE_2048);
 
-        // 3. Configura anel de transmissão (TX)
+        // 4. Configura anel de transmissão (TX)
         dev.write_reg(REG_TDBAL, tx_ring_phys as u32);
         dev.write_reg(REG_TDBAH, (tx_ring_phys >> 32) as u32);
         dev.write_reg(REG_TDLEN, (NUM_DESC * core::mem::size_of::<E1000TxDesc>()) as u32);

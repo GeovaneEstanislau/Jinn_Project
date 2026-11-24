@@ -32,10 +32,18 @@ pub fn is_hypervisor_virtualbox() -> bool {
         }
     }
 
-    // 3. Placa de rede AMD PCnet (usada predominantemente no VirtualBox)
+    // 3. Placa de rede AMD PCnet ou Intel e1000 sob VirtualBox
     unsafe {
         if crate::drivers::net::DETECTED_NIC_TYPE == crate::drivers::net::NicType::Pcnet {
             return true;
+        }
+        if crate::drivers::net::DETECTED_NIC_TYPE == crate::drivers::net::NicType::E1000 {
+            if let Some(dev) = crate::drivers::net::get_device() {
+                let mac = dev.mac_address();
+                if mac[0] == 0x08 && mac[1] == 0x00 && mac[2] == 0x27 {
+                    return true;
+                }
+            }
         }
     }
 
@@ -313,8 +321,40 @@ pub fn resolve_mac_for_ip_blocking(dst_ip: [u8; 4], timeout_ticks: u64) -> Optio
                 return Some(mac);
             }
         }
-        // Retransmite a cada 15 ticks (150ms)
-        if crate::timer::ticks().saturating_sub(last_send) >= 15 {
+
+        // Se após 30 ticks o VirtualBox NAT não responder ao ARP Request,
+        // usar o MAC padrão conhecido do VirtualBox NAT (52:54:00:12:35:02) como fallback ativo!
+        let elapsed = crate::timer::ticks().saturating_sub(start);
+        if elapsed >= 30 {
+            let gateway = unsafe { crate::net::dhcp::DHCP_CLIENT.gateway };
+            let dns = unsafe { crate::net::dhcp::DHCP_CLIENT.dns };
+            let gw_ip = if gateway != [0, 0, 0, 0] { gateway } else { [10, 0, 2, 2] };
+            let dns_ip = if dns != [0, 0, 0, 0] { dns } else { [10, 0, 2, 3] };
+
+            if next_hop == gw_ip || next_hop == [10, 0, 2, 2] {
+                let mac = if is_hypervisor_virtualbox() {
+                    DEFAULT_GATEWAY_MAC_VBOX
+                } else {
+                    DEFAULT_GATEWAY_MAC_QEMU
+                };
+                unsafe { ARP_CACHE.insert(next_hop, mac, crate::timer::ticks().max(1)); }
+                log_gateway_mac(next_hop, mac);
+                crate::serial_write(b"[NET-ARP] VirtualBox NAT fallback ativo para Gateway 10.0.2.2!\n");
+                return Some(mac);
+            } else if next_hop == dns_ip || next_hop == [10, 0, 2, 3] {
+                let mac = if is_hypervisor_virtualbox() {
+                    DEFAULT_DNS_MAC_VBOX
+                } else {
+                    DEFAULT_DNS_MAC_QEMU
+                };
+                unsafe { ARP_CACHE.insert(next_hop, mac, crate::timer::ticks().max(1)); }
+                crate::serial_write(b"[NET-ARP] VirtualBox NAT fallback ativo para DNS 10.0.2.3!\n");
+                return Some(mac);
+            }
+        }
+
+        // Retransmite a cada 10 ticks (100ms)
+        if crate::timer::ticks().saturating_sub(last_send) >= 10 {
             last_send = crate::timer::ticks();
             send_arp_request(next_hop);
         }

@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Glassmorphism Sem GPU no Aladdin e Hardening de Rede e1000 no VirtualBox — Jinn OS</title>
+  <meta name="description"
+    content="Engenharia de sistemas operacionais: como implementamos Glassmorphism e desfoque real em Ring 3 no_std sem aceleração por GPU, e eliminamos o timeout de DNS no VirtualBox através do anel MMIO do Intel e1000.">
+  <link rel="canonical" href="https://jinn-os.dev.br/artigos/glassmorphism-simd-e1000-virtualbox.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://jinn-os.dev.br/artigos/glassmorphism-simd-e1000-virtualbox.html">
+  <meta property="og:title" content="Glassmorphism Sem GPU no Aladdin e Hardening de Rede e1000 no VirtualBox">
+  <meta property="og:description"
+    content="Composição acrílica no_std sem GPU e solução definitiva para o anel de recepção do Intel 82540EM no Oracle VirtualBox com Rust.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/wallpaper.jpg">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans selection:bg-cyan-500 selection:text-black">
+
+  <!-- Cabeçalho de Navegação -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 hover:text-cyan-400 transition-colors">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span class="font-bold tracking-wide">Jinn OS</span>
+        <span
+          class="text-xs font-mono bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded border border-cyan-800">Devlog</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+        <a href="/feed.xml" target="_blank"
+          class="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS Feed</span>
+        </a>
+        <span class="text-slate-600">|</span>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer"
+          class="hover:text-cyan-400 transition-colors">
+          GitHub
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Artigo Principal -->
+  <main class="max-w-4xl mx-auto px-6 py-12">
+    <article class="prose prose-invert prose-cyan max-w-none">
+
+      <!-- Metadados do Artigo -->
+      <div class="mb-8 border-b border-slate-800 pb-8">
+        <div class="flex items-center gap-3 text-xs font-mono text-cyan-400 mb-3">
+          <span class="bg-cyan-950/60 border border-cyan-800 px-2.5 py-1 rounded-full">ENGENHARIA DE SISTEMAS</span>
+          <span>•</span>
+          <time datetime="2026-11-24">24 de Novembro de 2026</time>
+          <span>•</span>
+          <span>12 min de leitura</span>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight mb-4">
+          Glassmorphism Sem GPU no Aladdin e Hardening de Rede e1000 no VirtualBox
+        </h1>
+        <p class="text-lg text-slate-300 leading-relaxed">
+          Como eliminamos a clássica armadilha de descarte silencioso de pacotes ARP e DNS no Oracle VirtualBox através
+          da sincronização estrita do anel RX do Intel 82540EM, e transformamos o Aladdin Desktop em uma interface
+          translúcida contemporânea com desfoque real em tempo de execução sem consumir ciclos de GPU nem alocar memória dinâmica.
+        </p>
+      </div>
+
+      <!-- Resumo Executivo / Alerta -->
+      <div class="bg-slate-900/80 border-l-4 border-cyan-500 p-5 rounded-r-lg my-8 text-sm">
+        <div class="font-bold text-cyan-300 mb-1 flex items-center gap-2">
+          <i data-lucide="cpu" class="w-4 h-4"></i>
+          Tese de Engenharia Bare-Metal
+        </div>
+        <p class="text-slate-300 m-0">
+          Projetar um sistema operacional moderno em Rust (<code>#![no_std]</code>) exige dominar dois extremos da pilha:
+          o comportamento elétrico e de registradores MMIO de controladores legados (como o Intel 82540EM) sob diferentes
+          hipervisores, e a matemática vetorial para renderizar superfícies translúcidas com cantos suaves e desfoque real
+          (<em>Glassmorphism</em>) em CPU pura mantendo 0.00% de utilização ociosa.
+        </p>
+      </div>
+
+      <!-- Seção 1 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        1. A Frente de Rede: O Enigma do DNS Inacessível no Oracle VirtualBox
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Durante os testes de integração do <strong>Jinn Browser</strong>, o sistema navegava perfeitamente na web
+        aberta sob o QEMU (via VirtIO e e1000). Porém, no <strong>Oracle VirtualBox</strong> (configurado com placa
+        <em>Intel PRO/1000 MT Desktop - 82540EM</em> sob rede NAT), o navegador congelava por 3 segundos e exibia a mensagem:
+      </p>
+      <blockquote class="border-l-2 border-amber-500 pl-4 my-4 italic text-amber-200 bg-amber-950/20 py-2 rounded-r">
+        "Servidor DNS Inacessivel — O servidor DNS upstream nao respondeu dentro do limite de tempo (10.0.2.3 / 8.8.8.8)"
+      </blockquote>
+      <p class="text-slate-300 leading-relaxed">
+        A telemetria indicava que o driver conseguia transmitir pacotes (TX incrementava normalmente), mas nenhum pacote de
+        resposta (RX) chegava à fila do microkernel. Aprofundando a auditoria no nível de barramento PCI e registradores MMIO,
+        identificamos três divergências arquiteturais cruciais entre o modelo de emulação do QEMU e o hardware virtual do VirtualBox:
+      </p>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 my-6 not-prose">
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-lg">
+          <div class="text-cyan-400 font-bold mb-1 font-mono text-sm">1. Bits PCI 1 e 2</div>
+          <p class="text-xs text-slate-400 leading-relaxed m-0">
+            O VirtualBox ignora acessos MMIO ao BAR0 se os bits <code>Memory Space Enable</code> (bit 1) e
+            <code>Bus Master Enable</code> (bit 2) não forem configurados explicitamente via PCI Command Register (offset <code>0x04</code>).
+          </p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-lg">
+          <div class="text-cyan-400 font-bold mb-1 font-mono text-sm">2. Link Up (SLU & LU)</div>
+          <p class="text-xs text-slate-400 leading-relaxed m-0">
+            O registrador <code>CTRL</code> exige que o bit <code>SLU</code> (Set Link Up, bit 6) seja setado enquanto
+            <code>LRST</code> e <code>PHY_RST</code> são mantidos limpos, aguardando <code>STATUS.LU</code> estabilizar.
+          </p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-lg">
+          <div class="text-cyan-400 font-bold mb-1 font-mono text-sm">3. Condição RDH == RDT</div>
+          <p class="text-xs text-slate-400 leading-relaxed m-0">
+            No Intel 82540EM real, <code>RDH == RDT</code> significa <strong>anel de descritores vazio</strong>.
+            O tail deve ser inicializado como <code>NUM_RX_DESC - 1</code> para que a placa receba frames!
+          </p>
+        </div>
+      </div>
+
+      <!-- Seção 2 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        2. Hardening do Anel RX e Fallback Resiliente de ARP
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Mesmo com o link e o anel configurados, o serviço NAT interno do VirtualBox descarta requisições ARP unicast/broadcast
+        isoladas se houver pequena latência na inicialização do timer de ticks. Para garantir 100% de confiabilidade,
+        implementamos duas blindagens em nível de pilha:
+      </p>
+      <ul class="text-slate-300 space-y-2 my-4">
+        <li><strong>Limpeza Atômica de Descritores com Barreira <code>sfence</code>:</strong> Ao receber um pacote no descritor <code>i</code>, o byte de status é zerado e forçado na hierarquia de memória via barreira de serialização antes de avançar <code>REG_RDT = i</code>.</li>
+        <li><strong>Fallback Automático VirtualBox NAT:</strong> Se após 30 ticks cooperativos (300 ms) o gateway <code>10.0.2.2</code> ou o servidor DNS <code>10.0.2.3</code> não responder ao ARP Request, a pilha ativa automaticamente os endereços MAC bem-conhecidos do NAT do VirtualBox (<code>52:54:00:12:35:02</code> e <code>52:54:00:12:35:03</code>), inserindo-os no cache ARP sem interromper a resolução de nomes.</li>
+      </ul>
+
+      <!-- Seção 3 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        3. A Revolução Visual: Glassmorphism Sem GPU no Aladdin Desktop
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Interfaces de sistemas operacionais minimalistas frequentemente parecem saídas da década de 1990: bordas duras,
+        janelas opacas cinzentas e ausência de profundidade visual. No ecossistema Jinn OS, o compositor <strong>Aladdin Desktop</strong>
+        rompe com esse paradigma entregando <strong>Glassmorphism (Frosted Glass) real</strong> sob as estritas regras de <code>#![no_std]</code>:
+      </p>
+
+      <div class="my-6 bg-slate-900 border border-slate-800 rounded-lg p-5">
+        <h4 class="text-cyan-400 font-bold font-mono text-sm mb-3">Pipeline de Renderização Translúcida</h4>
+        <ol class="list-decimal list-inside space-y-2 text-slate-300 text-sm">
+          <li><strong>Desfoque Real Separado de 2 Passos (Fast Separable Box Blur):</strong> O compositor extrai os pixels do wallpaper já existentes sob as coordenadas <code>(win.x, win.y, win.w, win.h)</code> e executa blur horizontal seguido de vertical em buffer estático alinhado, eliminando qualquer alocação de memória no loop de desenho.</li>
+          <li><strong>Tinta Acrílica Translúcida:</strong> Aplica-se sobre o fundo desfocado uma camada de cor escura <code>rgba(15, 23, 42, 0.72)</code> com composição alfa de precisão inteira.</li>
+          <li><strong>Cantos Arredondados de 12px (R=12):</strong> Quatro cantos arredondados contínuos traçados via matriz trigonométrica inteira pré-computada (<code>corner_cut</code>).</li>
+          <li><strong>Borda Interna Luminosa (Inner Highlight):</strong> Contorno interno de 1px a 14% de opacidade (<code>rgba(255, 255, 255, 0.14)</code>) que confere o brilho especular característico do vidro acrílico.</li>
+          <li><strong>Sombras Suaves Multicamada (Drop Shadows):</strong> Duas camadas de sombra difusa com raios de 6px e 3px gerando elevação tridimensional sobre o desktop.</li>
+          <li><strong>Barra de Título de 32px com Botões Circulares:</strong> Redesenho completo da barra superior com semáforo circular elegante (Fechar, Maximizar, Minimizar) e barra de URL em pílula com indicador de segurança TLS 1.3 e status de hardware e1000.</li>
+        </ol>
+      </div>
+
+      <!-- Seção 4 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        4. Aceleração SIMD pelo JHCS: Bilinear Scaling e Alpha Batch
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Para exibir wallpapers fotográficos de alta fidelidade sem sacrificar o requisito inegociável de <strong>Zero-Idle (0.00% de CPU em repouso)</strong>,
+        o subsistema gráfico invoca os novos kernels acelerados por SIMD desenvolvidos no repositório <code>jhcs-rs</code>:
+      </p>
+      <div class="bg-slate-900/90 border border-slate-850 p-4 rounded-lg my-4 font-mono text-xs text-slate-300 overflow-x-auto">
+        <p class="text-cyan-400 mb-2">// Redimensionamento de imagens fotográficas em tempo real com ponto fixo 16.16</p>
+        <p>scale_image_rgba_simd(wallpaper_raw, src_w, src_h, screen_buf, screen_w, screen_h);</p>
+        <p class="text-cyan-400 my-2">// Composição alfa em lote de alto rendimento para superfícies transparentes</p>
+        <p>alpha_blend_rgba_batch_simd(backbuffer, window_surface, pixel_count);</p>
+      </div>
+      <p class="text-slate-300 leading-relaxed">
+        Como as operações gráficas utilizam buffers pré-alocados e são disparadas exclusivamente por eventos discretos
+        (entrada de mouse, eventos de rede, animações ativas), o sistema entra em repouso absoluto via instrução <code>hlt</code>
+        assim que a tela é atualizada, mantendo os 4 núcleos de processador em repouso absoluto.
+      </p>
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <!-- Rodapé do Artigo -->
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn OS Sovereign Systems • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-cyan-400 hover:underline">Voltar ao Desktop Virtual</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>

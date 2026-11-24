@@ -11,7 +11,7 @@
       <title>Pilha Criptográfica Soberana: TLS 1.3 e ChaCha20-Poly1305 em Bare-Metal Rust</title>
       <link>https://jinn-os.dev.br/artigos/arquitetura-tls13-nostd-soberana.html</link>
       <guid isPermaLink="false">jinn-os-artigo-arquitetura-tls13-nostd-soberana</guid>
-      <pubDate>Mon, 23 Nov 2026 12:00:00 -0300</pubDate>
+      <pubDate>Tue, 24 Nov 2026 11:31:54 -0300</pubDate>
       <description>Como implementamos TLS 1.3 (RFC 8446), Key Schedule HKDF e ChaCha20-Poly1305 em Rust puro sem biblioteca padrão (#![no_std]) para o microkernel Jinn OS.</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
@@ -19,15 +19,23 @@
       <title>Compositor Aladdin: Frosted Glass e Zero-GPU em Rust</title>
       <link>https://jinn-os.dev.br/artigos/compositor-aladdin-zero-gpu-frosted-glass.html</link>
       <guid isPermaLink="false">jinn-os-artigo-compositor-aladdin-zero-gpu-frosted-glass</guid>
-      <pubDate>Mon, 23 Nov 2026 12:00:00 -0300</pubDate>
+      <pubDate>Tue, 24 Nov 2026 11:31:54 -0300</pubDate>
       <description>Como construímos o compositor gráfico Aladdin Desktop com efeitos visuais contemporâneos, sombras e frosted glass sem acelerador 3D e com zero alocações de heap por quadro.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
+      <title>Glassmorphism Sem GPU no Aladdin e Hardening de Rede e1000 no VirtualBox</title>
+      <link>https://jinn-os.dev.br/artigos/glassmorphism-simd-e1000-virtualbox.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-glassmorphism-simd-e1000-virtualbox</guid>
+      <pubDate>Mon, 23 Nov 2026 12:00:00 -0300</pubDate>
+      <description>Engenharia de sistemas operacionais: como implementamos Glassmorphism e desfoque real em Ring 3 no_std sem aceleração por GPU, e eliminamos o timeout de DNS no VirtualBox através do anel MMIO do Intel e1000.</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
       <title>Isolamento de Drivers e Supervisor JAHA 1.2</title>
       <link>https://jinn-os.dev.br/artigos/isolamento-drivers-ring3-supervisor-jaha.html</link>
       <guid isPermaLink="false">jinn-os-artigo-isolamento-drivers-ring3-supervisor-jaha</guid>
-      <pubDate>Mon, 23 Nov 2026 12:00:00 -0300</pubDate>
+      <pubDate>Tue, 24 Nov 2026 11:31:54 -0300</pubDate>
       <description>Como o microkernel Jinn OS isola drivers de dispositivos em Ring 3 e utiliza a máquina de estados JAHA 1.2 com circuit-breaker para tolerância extrema a falhas.</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
@@ -35,7 +43,7 @@
       <title>Navegador Web Nativo no Microkernel Jinn OS — Jinn Browser</title>
       <link>https://jinn-os.dev.br/artigos/navegador-web-nativo-microkernel-jinn.html</link>
       <guid isPermaLink="false">jinn-os-artigo-navegador-web-nativo-microkernel-jinn</guid>
-      <pubDate>Mon, 23 Nov 2026 12:00:00 -0300</pubDate>
+      <pubDate>Tue, 24 Nov 2026 11:31:54 -0300</pubDate>
       <description>Como construímos o Jinn Browser: um navegador web completo em Rust no_std executando em Ring 3 com suporte a HTTP/1.1, motor CSS em cascata, layout flexbox e runtime JS reativo.</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
@@ -43,7 +51,7 @@
       <title>Post-Mortem: EOI Incondicional no PIC 8259A e Zero-GPU SIMD</title>
       <link>https://jinn-os.dev.br/artigos/post-mortem-pic-eoi-zero-gpu.html</link>
       <guid isPermaLink="false">jinn-os-artigo-post-mortem-pic-eoi-zero-gpu</guid>
-      <pubDate>Mon, 23 Nov 2026 12:00:00 -0300</pubDate>
+      <pubDate>Tue, 24 Nov 2026 11:31:54 -0300</pubDate>
       <description>Como resolvemos travamentos de interrupção e atingimos 0.00% de CPU em repouso no microkernel Rust Jinn OS através de EOI incondicional no PIC 8259A e kernels AVX2 no JHCS.</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
@@ -51,8 +59,16 @@
       <title>VFS Resiliente: Coexistência FAT32 e Ext2 no Jinn OS</title>
       <link>https://jinn-os.dev.br/artigos/resiliencia-vfs-multiparticao-fat32-ext2.html</link>
       <guid isPermaLink="false">jinn-os-artigo-resiliencia-vfs-multiparticao-fat32-ext2</guid>
-      <pubDate>Mon, 23 Nov 2026 12:00:00 -0300</pubDate>
+      <pubDate>Tue, 24 Nov 2026 11:31:54 -0300</pubDate>
       <description>Como o microkernel Jinn OS implementa um sistema de arquivos virtual (VFS) com suporte simultâneo a partições FAT32 e Ext2 com cache de blocos LRU.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
+      <title>feat(web): organize articles in dedicated web/artigos directory, add technical articles from project history, disable RRM autoPrompt, and automate feeds/sitemap</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/2e76b6e55e30ab1dd5d2a99688f1a8b85caf9198</link>
+      <guid isPermaLink="false">2e76b6e55e30ab1dd5d2a99688f1a8b85caf9198</guid>
+      <pubDate>Tue, 24 Nov 2026 11:31:54 -0300</pubDate>
+      <description>feat(web): organize articles in dedicated web/artigos directory, add technical articles from project history, disable RRM autoPrompt, and automate feeds/sitemap</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
@@ -124,14 +140,6 @@
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/885f06894904fa48c22b207fe9090ff5c8985e19</link>
       <guid isPermaLink="false">885f06894904fa48c22b207fe9090ff5c8985e19</guid>
       <pubDate>Mon, 23 Nov 2026 00:09:58 -0300</pubDate>
-      <description>feat(tools): add publish_release.py turnkey release and broadcast tool</description>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>feat(web/devlog): add static build_feed.py generator and published post-mortem on PIC 8259A EOI and Zero-GPU SIMD</title>
-      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/251fd56b9994bbf13e13f7a850d131ea31c27425</link>
-      <guid isPermaLink="false">251fd56b9994bbf13e13f7a850d131ea31c27425</guid>
-      <pubDate>Mon, 23 Nov 2026 00:03:09 -0300</pubDate>
       <description>---END---</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>

@@ -667,6 +667,8 @@ impl SystemHost for JinnSystem {
         }
         let total_vols = crate::vfs::volume::VOLUME_MANAGER.lock().count;
 
+        let (net_tx_packets, net_rx_packets) = crate::drivers::net::packet_stats();
+
         SystemStats {
             uptime_secs: (ticks / 100) as usize,
             task_count: sched.task_count(),
@@ -688,6 +690,8 @@ impl SystemHost for JinnSystem {
             dynamic_pages_freed: crate::memory::freed_dynamic_pages() as usize,
             vfs_open_fds: total_open_fds,
             vfs_mounted_volumes: total_vols,
+            net_tx_packets,
+            net_rx_packets,
         }
     }
 

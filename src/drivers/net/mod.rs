@@ -161,6 +161,18 @@ impl ActiveNicWrapper {
         }
     }
 
+    pub fn packet_stats(&self) -> (u64, u64) {
+        unsafe {
+            match DETECTED_NIC_TYPE {
+                NicType::E1000 => e1000::get_device().map(|d| d.packet_stats()).unwrap_or((0, 0)),
+                _ => (
+                    crate::net::NET_DIAGNOSTICS.tx_packets.load(core::sync::atomic::Ordering::Relaxed),
+                    crate::net::NET_DIAGNOSTICS.rx_packets.load(core::sync::atomic::Ordering::Relaxed),
+                ),
+            }
+        }
+    }
+
     pub fn transmit(&mut self, frame: &[u8]) -> Result<(), ()> {
         unsafe {
             match DETECTED_NIC_TYPE {
@@ -190,4 +202,8 @@ pub fn get_device() -> Option<&'static mut ActiveNicWrapper> {
     unsafe {
         Some(&mut ACTIVE_NIC)
     }
+}
+
+pub fn packet_stats() -> (u64, u64) {
+    unsafe { ACTIVE_NIC.packet_stats() }
 }

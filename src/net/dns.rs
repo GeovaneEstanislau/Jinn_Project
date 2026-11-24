@@ -997,17 +997,17 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
         let elapsed = crate::timer::ticks().saturating_sub(start_tick);
         let since_last = crate::timer::ticks().saturating_sub(last_tx);
 
-        if elapsed >= 70 && stage < 2 {
+        if elapsed >= 40 && stage < 2 {
             stage = 2;
             last_tx = crate::timer::ticks();
             log_dns_switch("fallback", fallback);
             let _ = send_query_to(name, tx_id, Some(fallback));
-        } else if elapsed >= 35 && stage < 1 {
+        } else if elapsed >= 20 && stage < 1 {
             stage = 1;
             last_tx = crate::timer::ticks();
             log_dns_switch("secundario", secondary);
             let _ = send_query_to(name, tx_id, Some(secondary));
-        } else if since_last >= 25 {
+        } else if since_last >= 15 {
             last_tx = crate::timer::ticks();
             let target_server = match stage {
                 0 => primary,

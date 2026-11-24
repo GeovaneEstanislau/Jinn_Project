@@ -3051,6 +3051,8 @@ pub struct SystemStatsUser {
     pub dynamic_pages_freed: u64,
     pub vfs_open_fds: u64,
     pub vfs_mounted_volumes: u64,
+    pub net_tx_packets: u64,
+    pub net_rx_packets: u64,
 }
 
 /// `sys_get_system_stats(out_ptr)` — Retorna telemetria e estatísticas do kernel para Ring 3 (Syscall 88).
@@ -3095,6 +3097,8 @@ fn sys_get_system_stats(out_ptr: *mut SystemStatsUser) -> isize {
     u.dynamic_pages_freed = stats.dynamic_pages_freed as u64;
     u.vfs_open_fds = stats.vfs_open_fds as u64;
     u.vfs_mounted_volumes = stats.vfs_mounted_volumes as u64;
+    u.net_tx_packets = stats.net_tx_packets;
+    u.net_rx_packets = stats.net_rx_packets;
 
     unsafe {
         core::ptr::copy_nonoverlapping(&u as *const SystemStatsUser, out_ptr, 1);

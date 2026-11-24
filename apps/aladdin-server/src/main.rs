@@ -409,6 +409,8 @@ impl SystemHost for UserSystem {
                 dynamic_pages_freed: u.dynamic_pages_freed as usize,
                 vfs_open_fds: u.vfs_open_fds as usize,
                 vfs_mounted_volumes: u.vfs_mounted_volumes as usize,
+                net_tx_packets: u.net_tx_packets,
+                net_rx_packets: u.net_rx_packets,
             }
         } else {
             let mut ts = Timespec::default();
@@ -443,6 +445,8 @@ impl SystemHost for UserSystem {
                 dynamic_pages_freed: 200,
                 vfs_open_fds: 4,
                 vfs_mounted_volumes: 2,
+                net_tx_packets: 0,
+                net_rx_packets: 0,
             }
         }
     }

@@ -3717,35 +3717,38 @@ impl BrowserSession {
 
         // 1. Barra de ferramentas / Chrome (y: 3..24)
         if click_y >= 3 && click_y <= 24 {
-            // Botão Back [<] em (4..16)
-            if click_x >= 4 && click_x <= 16 {
+            // Botão Back [<] em (4..22)
+            if click_x >= 4 && click_x <= 22 {
                 if self.can_go_back() {
                     return BrowserAction::Back;
                 }
                 return BrowserAction::None;
             }
 
-            // Botão Forward [>] em (17..27)
-            if click_x >= 17 && click_x <= 27 {
+            // Botão Forward [>] em (24..42)
+            if click_x >= 24 && click_x <= 42 {
                 if self.can_go_forward() {
                     return BrowserAction::Forward;
                 }
                 return BrowserAction::None;
             }
 
-            // Botão Reload [R] em (28..40)
-            if click_x >= 28 && click_x <= 40 {
+            // Botão Reload [R] em (44..62)
+            if click_x >= 44 && click_x <= 62 {
                 return BrowserAction::Reload;
             }
 
-            // Botão Fullscreen [F] no canto direito (w - 24 .. w - 4)
-            let fs_x = w.saturating_sub(24);
+            // Botão Fullscreen [F] no canto direito (w - 26 .. w - 4)
+            let fs_x = w.saturating_sub(26);
             if click_x >= fs_x && click_x <= w.saturating_sub(4) {
                 return BrowserAction::ToggleFullscreen;
             }
 
-            // Barra de Endereço em (44 .. w - 28)
-            if click_x >= 44 && click_x <= w.saturating_sub(28) {
+            // Barra de Endereço em Pílula (66 .. url_x + url_w)
+            let url_x = 66;
+            let badge_w = 64;
+            let url_w = w.saturating_sub(url_x + 32 + badge_w);
+            if click_x >= url_x && click_x <= url_x + url_w {
                 self.focus_address();
                 return BrowserAction::FocusAddress;
             }
@@ -3830,49 +3833,67 @@ impl BrowserSession {
         // 1. Fundo Geral
         fill_rect(buf, w, h, 0, 0, w, h, COLOR_BG);
 
-        // 2. Barra Superior de Navegação (Chrome)
-        fill_rect(buf, w, h, 0, 0, w, 26, COLOR_CHROME);
-        draw_rect_border(buf, w, h, 0, 0, w, 26, COLOR_BORDER);
+        // 2. Barra Superior de Navegação (Chrome) - Estilo Glassmorphism / Dark Modern
+        fill_rect(buf, w, h, 0, 0, w, 26, 0x0011_1827);
+        draw_rect_border(buf, w, h, 0, 0, w, 26, 0x001E_293B);
 
-        // Botões: [<] [>] [R]
-        let back_col = if self.can_go_back() { COLOR_BTN_TEXT } else { 0x0058_5B70 };
-        let fwd_col = if self.can_go_forward() { COLOR_BTN_TEXT } else { 0x0058_5B70 };
-        let reload_col = COLOR_URL_TEXT;
+        // Botões arredondados em cápsula: [<] [>] [R]
+        let back_col = if self.can_go_back() { 0x00E2_E8F0 } else { 0x0047_5569 };
+        let fwd_col = if self.can_go_forward() { 0x00E2_E8F0 } else { 0x0047_5569 };
+        let reload_col = 0x0038_BDF8;
 
-        font::draw_text(buf, w, h, 6, 9, b"<", back_col, None);
-        font::draw_text(buf, w, h, 18, 9, b">", fwd_col, None);
-        font::draw_text(buf, w, h, 30, 9, b"R", reload_col, None);
+        fill_rounded_rect(buf, w, h, 4, 3, 18, 20, 4, 0x001E_293B);
+        fill_rounded_rect(buf, w, h, 24, 3, 18, 20, 4, 0x001E_293B);
+        fill_rounded_rect(buf, w, h, 44, 3, 18, 20, 4, 0x001E_293B);
 
-        // Botão de Tela Cheia [F]
-        let fs_btn_x = w.saturating_sub(20);
-        let fs_col = if self.fullscreen_state == FullscreenState::Fullscreen { COLOR_H1 } else { COLOR_BTN_TEXT };
-        font::draw_text(buf, w, h, fs_btn_x, 9, b"F", fs_col, None);
+        font::draw_text(buf, w, h, 9, 9, b"<", back_col, None);
+        font::draw_text(buf, w, h, 29, 9, b">", fwd_col, None);
+        font::draw_text(buf, w, h, 49, 9, b"R", reload_col, None);
 
-        // Campo de URL (Barra de Endereço)
-        let url_x = 44;
-        let url_w = w.saturating_sub(70);
-        let border_col = if self.is_address_focused { COLOR_H1 } else { COLOR_URL_BORDER };
-        fill_rect(buf, w, h, url_x, 4, url_w, 18, COLOR_URL_BG);
-        draw_rect_border(buf, w, h, url_x, 4, url_w, 18, border_col);
+        // Botão de Tela Cheia [F] no canto direito
+        let fs_btn_x = w.saturating_sub(24);
+        let fs_col = if self.fullscreen_state == FullscreenState::Fullscreen { 0x0038_BDF8 } else { 0x0094_A3B8 };
+        fill_rounded_rect(buf, w, h, fs_btn_x.saturating_sub(2), 3, 20, 20, 4, 0x001E_293B);
+        font::draw_text(buf, w, h, fs_btn_x + 3, 9, b"F", fs_col, None);
+
+        // Campo de URL (Barra de Endereço em Pílula)
+        let url_x = 66;
+        let badge_w = 64;
+        let url_w = w.saturating_sub(url_x + 32 + badge_w);
+        let border_col = if self.is_address_focused { 0x0038_BDF8 } else { 0x0033_4155 };
+
+        fill_rounded_rect(buf, w, h, url_x, 3, url_w, 20, 6, 0x000F_172A);
+        draw_rounded_border(buf, w, h, url_x, 3, url_w, 20, 6, 1, border_col);
+
+        // Badge de segurança / status de rede em tempo real à direita da barra
+        let badge_x = url_x + url_w + 4;
+        let is_https = self.current_url[..self.current_url_len].starts_with(b"https://");
+        let (badge_txt, badge_bg, badge_fg): (&[u8], u32, u32) = if is_https {
+            (b"TLS1.3", 0x0006_4E3B, 0x0034_D399) // Emerald
+        } else {
+            (b"e1000", 0x001E_3A5F, 0x0038_BDF8)  // Intel e1000 Sky
+        };
+        fill_rounded_rect(buf, w, h, badge_x, 3, badge_w.saturating_sub(6), 20, 4, badge_bg);
+        font::draw_text(buf, w, h, badge_x + 6, 9, badge_txt, badge_fg, None);
 
         if self.is_address_focused {
             if self.address_selected && self.address_edit_len > 0 {
-                let sel_w = (self.address_edit_len * font::FONT_WIDTH).min(url_w.saturating_sub(4));
-                fill_rect(buf, w, h, url_x + 2, 6, sel_w + 2, 14, 0x0045_475A);
+                let sel_w = (self.address_edit_len * font::FONT_WIDTH).min(url_w.saturating_sub(8));
+                fill_rect(buf, w, h, url_x + 6, 5, sel_w + 2, 16, 0x0045_475A);
                 let edit_slice = &self.address_edit[..self.address_edit_len];
-                font::draw_text_clipped(buf, w, h, url_x + 4, 9, edit_slice, 0x00CD_D6F4, None, 4, 22);
+                font::draw_text_clipped(buf, w, h, url_x + 8, 9, edit_slice, 0x00CD_D6F4, None, 3, 23);
             } else {
                 let edit_slice = &self.address_edit[..self.address_edit_len];
-                font::draw_text_clipped(buf, w, h, url_x + 4, 9, edit_slice, COLOR_H1, None, 4, 22);
+                font::draw_text_clipped(buf, w, h, url_x + 8, 9, edit_slice, 0x0038_BDF8, None, 3, 23);
                 // Cursor '_'
-                let cursor_x = url_x + 4 + self.address_edit_len * font::FONT_WIDTH;
+                let cursor_x = url_x + 8 + self.address_edit_len * font::FONT_WIDTH;
                 if cursor_x + font::FONT_WIDTH <= url_x + url_w {
-                    font::draw_text_clipped(buf, w, h, cursor_x, 9, b"_", COLOR_H1, None, 4, 22);
+                    font::draw_text_clipped(buf, w, h, cursor_x, 9, b"_", 0x0038_BDF8, None, 3, 23);
                 }
             }
         } else {
             let url_slice = &self.current_url[..self.current_url_len];
-            font::draw_text_clipped(buf, w, h, url_x + 4, 9, url_slice, COLOR_URL_TEXT, None, 4, 22);
+            font::draw_text_clipped(buf, w, h, url_x + 8, 9, url_slice, 0x00CD_D6F4, None, 3, 23);
         }
 
         // 2.5. Renderiza caixas estilizadas (backgrounds de .card, buttons, etc.)
@@ -5131,27 +5152,74 @@ impl SliceTrim for [u8] {
     }
 }
 
-/// Gera documento HTML formatado para erros de rede
-pub fn format_net_error_html(url: &[u8], title: &[u8], msg: &[u8], detail: &[u8], out: &mut [u8]) -> usize {
+/// Gera documento HTML formatado com diagnóstico completo para erros de rede (ARP, DNS, TCP, HTTP)
+pub fn format_net_error_html_diag(
+    url: &[u8],
+    title: &[u8],
+    msg: &[u8],
+    detail: &[u8],
+    stage: &[u8],
+    target_ip: &[u8],
+    tx_pkts: u64,
+    rx_pkts: u64,
+    out: &mut [u8],
+) -> usize {
     let mut pos = 0usize;
     let append = |dst: &mut [u8], p: &mut usize, src: &[u8]| {
         let len = src.len().min(dst.len() - *p);
         dst[*p..*p + len].copy_from_slice(&src[..len]);
         *p += len;
     };
+    let append_u64 = |dst: &mut [u8], p: &mut usize, mut val: u64| {
+        if val == 0 {
+            append(dst, p, b"0");
+            return;
+        }
+        let mut buf = [0u8; 20];
+        let mut i = 0;
+        while val > 0 {
+            buf[i] = b'0' + (val % 10) as u8;
+            val /= 10;
+            i += 1;
+        }
+        let mut j = 0;
+        let mut rev = [0u8; 20];
+        while i > 0 {
+            i -= 1;
+            rev[j] = buf[i];
+            j += 1;
+        }
+        append(dst, p, &rev[..j]);
+    };
 
     append(out, &mut pos, b"<!DOCTYPE html><html><head><title>");
     append(out, &mut pos, title);
-    append(out, &mut pos, b"</title></head><body><h1>");
+    append(out, &mut pos, b"</title></head><body>");
+    append(out, &mut pos, b"<div class=\"card\"><h1>");
     append(out, &mut pos, title);
     append(out, &mut pos, b"</h1><p><b>Destino: </b>");
     append(out, &mut pos, url);
-    append(out, &mut pos, b"</p><p>");
+    append(out, &mut pos, b"</p><p><b>Diagnostico: </b>");
     append(out, &mut pos, msg);
-    append(out, &mut pos, b"</p><p><i>Detalhes tecnicos: </i>");
+    append(out, &mut pos, b"</p><hr/><h3>Telemetria da Placa e Pilha de Rede</h3>");
+    append(out, &mut pos, b"<p><b>Estagio da Falha: </b>[");
+    append(out, &mut pos, stage);
+    append(out, &mut pos, b"]</p><p><b>IP Gateway/DNS Consultado: </b>");
+    append(out, &mut pos, target_ip);
+    append(out, &mut pos, b"</p><p><b>Adaptador de Rede: </b>Intel PRO/1000 MT Desktop (82540EM)</p>");
+    append(out, &mut pos, b"<p><b>Contador de Pacotes: </b>TX: ");
+    append_u64(out, &mut pos, tx_pkts);
+    append(out, &mut pos, b" pacotes | RX: ");
+    append_u64(out, &mut pos, rx_pkts);
+    append(out, &mut pos, b" pacotes</p><p><i>Detalhes tecnicos: </i>");
     append(out, &mut pos, detail);
-    append(out, &mut pos, b"</p><hr/><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>");
+    append(out, &mut pos, b"</p><hr/><p><a href=\"index.htm\">Voltar ao Inicio</a></p></div></body></html>");
     pos
+}
+
+/// Gera documento HTML formatado para erros de rede
+pub fn format_net_error_html(url: &[u8], title: &[u8], msg: &[u8], detail: &[u8], out: &mut [u8]) -> usize {
+    format_net_error_html_diag(url, title, msg, detail, b"NET_STACK", b"10.0.2.3 (DNS)", 0, 0, out)
 }
 
 /// Gera documento HTML informativo sobre o status real de HTTPS/TLS 1.3

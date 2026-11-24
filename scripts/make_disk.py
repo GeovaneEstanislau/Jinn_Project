@@ -58,6 +58,15 @@ def main():
         browser_bytes = b"\x00" * 512
         print("Aviso: browser.elf nao encontrado. Usando payload dummy.")
 
+    wallpaper_path = os.path.join(project_root, "web", "assets", "wallpaper.jpg")
+    wallpaper_bytes = b""
+    if os.path.exists(wallpaper_path):
+        with open(wallpaper_path, "rb") as f:
+            wallpaper_bytes = f.read()
+        print(f"Wallpaper encontrado: {wallpaper_path} ({len(wallpaper_bytes)} bytes)")
+    else:
+        print("Aviso: wallpaper.jpg nao encontrado em web/assets.")
+
     readme_text = (
         "=====================================================\n"
         "  Jinn OS - Sistema de Arquivos FAT32 (Modo PIO IDE)\n"
@@ -210,13 +219,15 @@ def main():
         # Cálculo de clusters distintos sem sobreposição
         ola_clusters_needed = max(1, (len(ola_bytes) + cluster_size - 1) // cluster_size)
         browser_clusters_needed = max(1, (len(browser_bytes) + cluster_size - 1) // cluster_size)
+        wallpaper_clusters_needed = max(1, (len(wallpaper_bytes) + cluster_size - 1) // cluster_size) if len(wallpaper_bytes) > 0 else 0
 
         ola_start_clus = 4
         browser_start_clus = ola_start_clus + ola_clusters_needed
         index_clus = browser_start_clus + browser_clusters_needed
         about_clus = index_clus + 1
         style_clus = about_clus + 1
-        next_free_clus = style_clus + 1
+        wallpaper_start_clus = style_clus + 1 if wallpaper_clusters_needed > 0 else 0
+        next_free_clus = (wallpaper_start_clus + wallpaper_clusters_needed) if wallpaper_clusters_needed > 0 else (style_clus + 1)
 
         # FSInfo Sector (Setor 1 da partição FAT32)
         fsinfo = bytearray(512)
@@ -255,6 +266,12 @@ def main():
         set_fat(about_clus, 0x0FFFFFFF)
         set_fat(style_clus, 0x0FFFFFFF)
 
+        if wallpaper_clusters_needed > 0:
+            for i in range(wallpaper_clusters_needed):
+                curr_c = wallpaper_start_clus + i
+                val = 0x0FFFFFFF if i == wallpaper_clusters_needed - 1 else curr_c + 1
+                set_fat(curr_c, val)
+
         fat1_offset = part1_offset + 32 * sector_size
         fat2_offset = part1_offset + (32 + sectors_per_fat) * sector_size
         f.seek(fat1_offset)
@@ -283,6 +300,8 @@ def main():
         add_dir_entry(4, "ABOUT   HTM", 0x20, about_clus, len(about_html))
         add_dir_entry(5, "BROWSER ELF", 0x20, browser_start_clus, len(browser_bytes))
         add_dir_entry(6, "STYLE   CSS", 0x20, style_clus, len(style_css))
+        if wallpaper_clusters_needed > 0:
+            add_dir_entry(7, "WALLPAPRJPG", 0x20, wallpaper_start_clus, len(wallpaper_bytes))
 
         f.seek(data_start_offset1)
         f.write(root_dir)
@@ -310,6 +329,11 @@ def main():
         # Cluster style_clus: STYLE.CSS
         f.seek(data_start_offset1 + (style_clus - 2) * cluster_size)
         f.write(style_css)
+
+        # Cluster wallpaper_clus: WALLPAPER.JPG
+        if wallpaper_clusters_needed > 0:
+            f.seek(data_start_offset1 + (wallpaper_start_clus - 2) * cluster_size)
+            f.write(wallpaper_bytes)
 
         # ------------------------------------------------------------------
         # 3. FORMATAÇÃO DA PARTIÇÃO 2: Ext2 (/ext2)
