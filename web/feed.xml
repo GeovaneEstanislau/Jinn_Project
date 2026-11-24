@@ -24,6 +24,14 @@
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
+      <title>Ecossistema de Pacotes .jpkg e Atualização Offline-on-Shutdown</title>
+      <link>https://jinn-os.dev.br/artigos/ecossistema-pacotes-jpkg-offline-shutdown.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-ecossistema-pacotes-jpkg-offline-shutdown</guid>
+      <pubDate>Mon, 23 Nov 2026 12:00:00 -0300</pubDate>
+      <description>Como implementamos contêineres de pacotes .jpkg com hash SHA-256, ciclo de atualização Offline-on-Shutdown com tela apagada e desfoque SIMD Zero-Copy no microkernel Jinn OS.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
       <title>Glassmorphism Sem GPU no Aladdin e Hardening de Rede e1000 no VirtualBox</title>
       <link>https://jinn-os.dev.br/artigos/glassmorphism-simd-e1000-virtualbox.html</link>
       <guid isPermaLink="false">jinn-os-artigo-glassmorphism-simd-e1000-virtualbox</guid>
@@ -61,6 +69,14 @@
       <guid isPermaLink="false">jinn-os-artigo-resiliencia-vfs-multiparticao-fat32-ext2</guid>
       <pubDate>Tue, 24 Nov 2026 11:31:54 -0300</pubDate>
       <description>Como o microkernel Jinn OS implementa um sistema de arquivos virtual (VFS) com suporte simultâneo a partições FAT32 e Ext2 com cache de blocos LRU.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
+      <title>feat(tls,browser,net,web): implement full RFC 8446 TLS 1.3 handshake, SNI, signature algorithms, translucent browser toolbar, and update feeds</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/9fcb7bdeceff63e16d61032d8b2a1b5c650c0fae</link>
+      <guid isPermaLink="false">9fcb7bdeceff63e16d61032d8b2a1b5c650c0fae</guid>
+      <pubDate>Tue, 24 Nov 2026 12:59:07 -0300</pubDate>
+      <description>feat(tls,browser,net,web): implement full RFC 8446 TLS 1.3 handshake, SNI, signature algorithms, translucent browser toolbar, and update feeds</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
@@ -132,14 +148,6 @@
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/8fad178b055255581288d5f1d508f9f55a22ceea</link>
       <guid isPermaLink="false">8fad178b055255581288d5f1d508f9f55a22ceea</guid>
       <pubDate>Mon, 23 Nov 2026 00:36:21 -0300</pubDate>
-      <description>feat(web/feed): add WebSub hub and W3C media enclosure tags for tech aggregators</description>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>fix(net): resolucao dinamica ARP de gateway e hardening DNS cascateado para e1000 e virtio [announce]</title>
-      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/0c7b48d82f86380244b33131efecd1207ac017ee</link>
-      <guid isPermaLink="false">0c7b48d82f86380244b33131efecd1207ac017ee</guid>
-      <pubDate>Mon, 23 Nov 2026 00:33:35 -0300</pubDate>
       <description>---END---</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>

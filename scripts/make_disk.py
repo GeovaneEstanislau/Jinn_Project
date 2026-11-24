@@ -67,6 +67,31 @@ def main():
     else:
         print("Aviso: wallpaper.jpg nao encontrado em web/assets.")
 
+    packages_dir = os.path.join(project_root, "packages")
+    calc_jpkg_path = os.path.join(packages_dir, "calc.jpkg")
+    sysmon_jpkg_path = os.path.join(packages_dir, "sysmon.jpkg")
+    notes_jpkg_path = os.path.join(packages_dir, "notes.jpkg")
+
+    def load_pkg(p):
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                return f.read()
+        return b""
+
+    calc_pkg_bytes = load_pkg(calc_jpkg_path)
+    sysmon_pkg_bytes = load_pkg(sysmon_jpkg_path)
+    notes_pkg_bytes = load_pkg(notes_jpkg_path)
+
+    packages_db_text = (
+        "# Jinn OS Package Catalog Database\n"
+        "jhcs-daemon:v0.2.1:Computacao Vetorial / AVX2:installed:65\n"
+        "aladdin-server:v7.1.0:Interface Grafica Ring 3:installed:338\n"
+        "jinn-browser:v1.2.0:Navegador Web / TLS 1.3:installed:384\n"
+        "calc:v1.0.0:Utilitarios / Aritmetica:available:9\n"
+        "sysmon:v1.2.0:Sistema / Telemetria:staged:57\n"
+        "notes:v1.0.1:Produtividade / Texto:available:11\n"
+    ).encode("ascii")
+
     readme_text = (
         "=====================================================\n"
         "  Jinn OS - Sistema de Arquivos FAT32 (Modo PIO IDE)\n"
@@ -227,7 +252,26 @@ def main():
         about_clus = index_clus + 1
         style_clus = about_clus + 1
         wallpaper_start_clus = style_clus + 1 if wallpaper_clusters_needed > 0 else 0
-        next_free_clus = (wallpaper_start_clus + wallpaper_clusters_needed) if wallpaper_clusters_needed > 0 else (style_clus + 1)
+        cur_c = (wallpaper_start_clus + wallpaper_clusters_needed) if wallpaper_clusters_needed > 0 else (style_clus + 1)
+
+        calc_clusters_needed = max(1, (len(calc_pkg_bytes) + cluster_size - 1) // cluster_size) if len(calc_pkg_bytes) > 0 else 0
+        sysmon_clusters_needed = max(1, (len(sysmon_pkg_bytes) + cluster_size - 1) // cluster_size) if len(sysmon_pkg_bytes) > 0 else 0
+        notes_clusters_needed = max(1, (len(notes_pkg_bytes) + cluster_size - 1) // cluster_size) if len(notes_pkg_bytes) > 0 else 0
+        packages_db_clusters_needed = max(1, (len(packages_db_text) + cluster_size - 1) // cluster_size)
+
+        calc_start_clus = cur_c if calc_clusters_needed > 0 else 0
+        cur_c += calc_clusters_needed
+
+        sysmon_start_clus = cur_c if sysmon_clusters_needed > 0 else 0
+        cur_c += sysmon_clusters_needed
+
+        notes_start_clus = cur_c if notes_clusters_needed > 0 else 0
+        cur_c += notes_clusters_needed
+
+        packages_db_clus = cur_c
+        cur_c += packages_db_clusters_needed
+
+        next_free_clus = cur_c
 
         # FSInfo Sector (Setor 1 da partição FAT32)
         fsinfo = bytearray(512)
@@ -272,6 +316,29 @@ def main():
                 val = 0x0FFFFFFF if i == wallpaper_clusters_needed - 1 else curr_c + 1
                 set_fat(curr_c, val)
 
+        if calc_clusters_needed > 0:
+            for i in range(calc_clusters_needed):
+                curr_c = calc_start_clus + i
+                val = 0x0FFFFFFF if i == calc_clusters_needed - 1 else curr_c + 1
+                set_fat(curr_c, val)
+
+        if sysmon_clusters_needed > 0:
+            for i in range(sysmon_clusters_needed):
+                curr_c = sysmon_start_clus + i
+                val = 0x0FFFFFFF if i == sysmon_clusters_needed - 1 else curr_c + 1
+                set_fat(curr_c, val)
+
+        if notes_clusters_needed > 0:
+            for i in range(notes_clusters_needed):
+                curr_c = notes_start_clus + i
+                val = 0x0FFFFFFF if i == notes_clusters_needed - 1 else curr_c + 1
+                set_fat(curr_c, val)
+
+        for i in range(packages_db_clusters_needed):
+            curr_c = packages_db_clus + i
+            val = 0x0FFFFFFF if i == packages_db_clusters_needed - 1 else curr_c + 1
+            set_fat(curr_c, val)
+
         fat1_offset = part1_offset + 32 * sector_size
         fat2_offset = part1_offset + (32 + sectors_per_fat) * sector_size
         f.seek(fat1_offset)
@@ -293,15 +360,23 @@ def main():
             struct.pack_into("<H", root_dir, off + 26, clus_lo)
             struct.pack_into("<I", root_dir, off + 28, size)
 
-        add_dir_entry(0, "JINN DISK  ", 0x08, 0, 0)
-        add_dir_entry(1, "README  TXT", 0x20, 3, len(readme_text))
-        add_dir_entry(2, "OLA     ELF", 0x20, ola_start_clus, len(ola_bytes))
-        add_dir_entry(3, "INDEX   HTM", 0x20, index_clus, len(index_html))
-        add_dir_entry(4, "ABOUT   HTM", 0x20, about_clus, len(about_html))
-        add_dir_entry(5, "BROWSER ELF", 0x20, browser_start_clus, len(browser_bytes))
-        add_dir_entry(6, "STYLE   CSS", 0x20, style_clus, len(style_css))
+        dir_idx = 0
+        add_dir_entry(dir_idx, "JINN DISK  ", 0x08, 0, 0); dir_idx += 1
+        add_dir_entry(dir_idx, "README  TXT", 0x20, 3, len(readme_text)); dir_idx += 1
+        add_dir_entry(dir_idx, "OLA     ELF", 0x20, ola_start_clus, len(ola_bytes)); dir_idx += 1
+        add_dir_entry(dir_idx, "INDEX   HTM", 0x20, index_clus, len(index_html)); dir_idx += 1
+        add_dir_entry(dir_idx, "ABOUT   HTM", 0x20, about_clus, len(about_html)); dir_idx += 1
+        add_dir_entry(dir_idx, "BROWSER ELF", 0x20, browser_start_clus, len(browser_bytes)); dir_idx += 1
+        add_dir_entry(dir_idx, "STYLE   CSS", 0x20, style_clus, len(style_css)); dir_idx += 1
         if wallpaper_clusters_needed > 0:
-            add_dir_entry(7, "WALLPAPRJPG", 0x20, wallpaper_start_clus, len(wallpaper_bytes))
+            add_dir_entry(dir_idx, "WALLPAPRJPG", 0x20, wallpaper_start_clus, len(wallpaper_bytes)); dir_idx += 1
+        if calc_clusters_needed > 0:
+            add_dir_entry(dir_idx, "CALC    JPK", 0x20, calc_start_clus, len(calc_pkg_bytes)); dir_idx += 1
+        if sysmon_clusters_needed > 0:
+            add_dir_entry(dir_idx, "SYSMON  JPK", 0x20, sysmon_start_clus, len(sysmon_pkg_bytes)); dir_idx += 1
+        if notes_clusters_needed > 0:
+            add_dir_entry(dir_idx, "NOTES   JPK", 0x20, notes_start_clus, len(notes_pkg_bytes)); dir_idx += 1
+        add_dir_entry(dir_idx, "PACKAGESDB ", 0x20, packages_db_clus, len(packages_db_text)); dir_idx += 1
 
         f.seek(data_start_offset1)
         f.write(root_dir)
@@ -334,6 +409,19 @@ def main():
         if wallpaper_clusters_needed > 0:
             f.seek(data_start_offset1 + (wallpaper_start_clus - 2) * cluster_size)
             f.write(wallpaper_bytes)
+
+        # Clusters dos pacotes JPKG e do catalogo packages.db
+        if calc_clusters_needed > 0:
+            f.seek(data_start_offset1 + (calc_start_clus - 2) * cluster_size)
+            f.write(calc_pkg_bytes)
+        if sysmon_clusters_needed > 0:
+            f.seek(data_start_offset1 + (sysmon_start_clus - 2) * cluster_size)
+            f.write(sysmon_pkg_bytes)
+        if notes_clusters_needed > 0:
+            f.seek(data_start_offset1 + (notes_start_clus - 2) * cluster_size)
+            f.write(notes_pkg_bytes)
+        f.seek(data_start_offset1 + (packages_db_clus - 2) * cluster_size)
+        f.write(packages_db_text)
 
         # ------------------------------------------------------------------
         # 3. FORMATAÇÃO DA PARTIÇÃO 2: Ext2 (/ext2)

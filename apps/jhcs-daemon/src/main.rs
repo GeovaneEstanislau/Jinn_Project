@@ -26,6 +26,7 @@ use jhcs_core::buffer::BufferSet;
 use jhcs_core::capabilities::{BackendKind, ComputeRequirements, ParallelismClass};
 use jhcs_core::task::{ComputeTask, TaskId, OP_MATMUL, OP_REDUCE_SUM, OP_VECTOR_ADD};
 use jhcs_platform_jinn::JinnPlatformAdapter;
+use jhcs_backend_simd::ops::{alpha_blend_rgba_batch_simd, box_blur_rgba_simd};
 
 // ── Allocator de Heap em Espaço de Usuário (.bss) ─────────────────────────────
 // 4 MiB alocados na seção .bss da tarefa (0 bytes na imagem ELF em disco).
@@ -182,6 +183,8 @@ pub const REQ_OP_MATMUL: u32 = 1;
 pub const REQ_OP_VECTOR_ADD: u32 = 2;
 pub const REQ_OP_REDUCE_SUM: u32 = 3;
 pub const REQ_OP_PING_TELEMETRY: u32 = 4;
+pub const REQ_OP_BLUR_ACRYLIC: u32 = 5;
+pub const REQ_OP_BLEND_BATCH: u32 = 6;
 pub const REQ_OP_SHUTDOWN: u32 = 0xFF;
 
 #[repr(C)]
@@ -444,6 +447,66 @@ fn handle_ipc_request(broker: &mut ComputeBroker, msg: &Message, req_idx: u64) {
             print("[jhcs-daemon] [REDUCE_SUM] Soma=");
             print_num(sum as u64);
             println("");
+        }
+
+        REQ_OP_BLUR_ACRYLIC => {
+            let w = req.m as usize;
+            let h = req.k as usize;
+            let radius = (req.n as usize).max(1).min(32);
+            let total_px = w * h;
+
+            if req.shm_handle != 0 && total_px > 0 {
+                if let Ok(vaddr) = shm_get_vaddr(req.shm_handle as usize) {
+                    let ptr_src = vaddr as *const u32;
+                    let ptr_dst = unsafe { (vaddr as *mut u32).add(total_px) };
+                    let ptr_scratch = unsafe { (vaddr as *mut u32).add(total_px * 2) };
+
+                    let src = unsafe { core::slice::from_raw_parts(ptr_src, total_px) };
+                    let dst = unsafe { core::slice::from_raw_parts_mut(ptr_dst, total_px) };
+                    let scratch = unsafe { core::slice::from_raw_parts_mut(ptr_scratch, total_px) };
+
+                    box_blur_rgba_simd(src, dst, scratch, w, h, radius);
+
+                    resp.backend = 2; // Simd
+                    resp.processed_elements = total_px as u32;
+                    resp.result_val = if !dst.is_empty() { dst[0] as f32 } else { 0.0 };
+
+                    print("[jhcs-daemon] [BLUR_ACRYLIC] Zero-Copy Shmem ");
+                    print_num(w as u64);
+                    print("x");
+                    print_num(h as u64);
+                    print(" r=");
+                    print_num(radius as u64);
+                    println("");
+                } else {
+                    resp.status = -1; // EFAULT
+                }
+            } else {
+                resp.status = -22; // EINVAL
+            }
+        }
+
+        REQ_OP_BLEND_BATCH => {
+            let len = req.m as usize;
+            if req.shm_handle != 0 && len > 0 {
+                if let Ok(vaddr) = shm_get_vaddr(req.shm_handle as usize) {
+                    let ptr_dst = vaddr as *mut u32;
+                    let ptr_src = unsafe { (vaddr as *const u32).add(len) };
+
+                    let dst = unsafe { core::slice::from_raw_parts_mut(ptr_dst, len) };
+                    let src = unsafe { core::slice::from_raw_parts(ptr_src, len) };
+
+                    alpha_blend_rgba_batch_simd(dst, src, len);
+
+                    resp.backend = 2; // Simd
+                    resp.processed_elements = len as u32;
+                    resp.result_val = if !dst.is_empty() { dst[0] as f32 } else { 0.0 };
+                } else {
+                    resp.status = -1; // EFAULT
+                }
+            } else {
+                resp.status = -22; // EINVAL
+            }
         }
 
         REQ_OP_SHUTDOWN => {

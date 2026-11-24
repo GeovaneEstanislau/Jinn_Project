@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ecossistema de Pacotes .jpkg e Atualização Offline-on-Shutdown — Jinn OS</title>
+  <meta name="description"
+    content="Como implementamos contêineres de pacotes .jpkg com hash SHA-256, ciclo de atualização Offline-on-Shutdown com tela apagada e desfoque SIMD Zero-Copy no microkernel Jinn OS.">
+  <link rel="canonical" href="https://jinn-os.dev.br/artigos/ecossistema-pacotes-jpkg-offline-shutdown.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://jinn-os.dev.br/artigos/ecossistema-pacotes-jpkg-offline-shutdown.html">
+  <meta property="og:title" content="Ecossistema de Pacotes .jpkg e Atualização Offline-on-Shutdown no Jinn OS">
+  <meta property="og:description"
+    content="Engenharia de sistemas: contêineres verificáveis .jpkg, instalação offline com tela desligada e aceleração SIMD no JHCS.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/wallpaper.jpg">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans selection:bg-cyan-500 selection:text-black">
+
+  <!-- Cabeçalho de Navegação -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 hover:text-cyan-400 transition-colors">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span class="font-bold tracking-wide">Jinn OS</span>
+        <span
+          class="text-xs font-mono bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded border border-cyan-800">Devlog</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+        <a href="/feed.xml" target="_blank"
+          class="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS Feed</span>
+        </a>
+        <span class="text-slate-600">|</span>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer"
+          class="flex items-center gap-1 text-slate-400 hover:text-white transition-colors">
+          <i data-lucide="github" class="w-3.5 h-3.5"></i>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Conteúdo Principal do Artigo -->
+  <main class="max-w-4xl mx-auto px-6 py-12">
+    <article class="prose prose-invert prose-cyan max-w-none">
+
+      <!-- Meta & Título -->
+      <div class="mb-8">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400 mb-3">
+          <span class="bg-cyan-950/80 border border-cyan-800/60 px-2 py-0.5 rounded">ECOSSISTEMA DE PACOTES</span>
+          <span class="text-slate-500">•</span>
+          <span>Novembro 2026</span>
+          <span class="text-slate-500">•</span>
+          <span>Tempo de Leitura: 9 min</span>
+          <span class="text-slate-500">•</span>
+          <span class="text-emerald-400">Offline-on-Shutdown</span>
+        </div>
+        <h1 class="text-3xl md:text-4xl font-extrabold text-white tracking-tight leading-tight mb-4">
+          Ecossistema de Pacotes .jpkg, Atualização Offline-on-Shutdown e Aceleração Zero-Copy no Jinn OS
+        </h1>
+        <p class="text-lg text-slate-300 leading-relaxed font-light">
+          Apresentamos a arquitetura do formato nativo <code>.jpkg</code>: pacotes autoverificáveis com cabeçalho de 128
+          bytes e hash de integridade, orquestrados pelo Gerenciador de Softwares com execução de atualizações a frio
+          (tela desligada) e filtros acrílicos acelerados por SIMD no <code>jhcs-daemon</code>.
+        </p>
+      </div>
+
+      <!-- Resumo Executivo / Alerta -->
+      <div class="bg-slate-900/80 border-l-4 border-cyan-500 p-5 rounded-r-lg my-8 text-sm">
+        <div class="font-bold text-cyan-300 mb-1 flex items-center gap-2">
+          <i data-lucide="package-check" class="w-4 h-4"></i>
+          Premissa de Engenharia
+        </div>
+        <p class="text-slate-300 m-0">
+          Atualizações de software durante o uso ativo do sistema concorrem por ciclos de CPU, I/O de disco e memória,
+          degradando a fluidez da interface gráfica e abrindo vetores para corrupção de bibliotecas em execução. No
+          Jinn OS, downloads e checagens ocorrem em baixa prioridade cooperativa (<code>sys_yield()</code>), enquanto a
+          instalação e descompactação física só ocorrem com a tela desligada durante o desligamento, garantindo
+          estabilidade atômica e 0% de impacto na experiência do usuário.
+        </p>
+      </div>
+
+      <!-- Seção 1 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        1. O Formato de Contêiner .jpkg: Compacto, Verificável e #![no_std]
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Diferente de formatos monolíticos legados (.deb ou .rpm) que exigem runtimes de script pesados em Perl ou
+        Python, o contêiner <strong>.jpkg</strong> do Jinn OS foi projetado para ser analisado e verificado de forma
+        atômica por qualquer processo em Ring 3, sem alocações dinâmicas na stack:
+      </p>
+
+      <ul class="text-slate-300 space-y-2 my-4">
+        <li><strong>Magic Bytes (4 bytes):</strong> <code>b"JPKG"</code> (<code>0x4A 0x50 0x4B 0x47</code>).</li>
+        <li><strong>Cabeçalho Fixo (128 bytes):</strong> Nome do pacote (32 bytes), versão semântica (major, minor,
+          patch), categoria (32 bytes), tamanho do manifesto, tamanho do ELF, offset do payload e hash de 32 bytes.</li>
+        <li><strong>Payload ELF &amp; Recursos:</strong> Executável Ring 3 alinhado a páginas de 4096 bytes para mapeamento
+          direto pelo carregador VFS.</li>
+      </ul>
+
+      <!-- Seção 2 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        2. O Ciclo Offline-on-Shutdown com Tela Desligada
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Quando um pacote é enfileirado para atualização pelo usuário no Aladdin Desktop, o arquivo <code>.jpkg</code> é
+        armazenado na área de staging isolada (<code>/disk/updates/staged/</code>). No momento em que o usuário confirma
+        o desligamento:
+      </p>
+
+      <ol class="text-slate-300 space-y-3 my-4 list-decimal list-inside">
+        <li>O compositor aciona a Syscall 81 (<code>sys_graphics_set_power(0)</code>), apagando imediatamente o monitor e
+          colocando o controlador de vídeo em baixo consumo.</li>
+        <li>Os pacotes em staging são lidos sequencialmente, validados com integridade de checksum e extraídos para
+          <code>/disk/apps/&lt;nome&gt;.elf</code>.</li>
+        <li>O catálogo persistente <code>/disk/packages.db</code> é atualizado de forma síncrona.</li>
+        <li>O sistema de arquivos virtual dispara a Syscall 23 (<code>sys_sync</code>) para descarregar o cache LRU no
+          disco físico FAT32.</li>
+        <li>O hardware é desligado com segurança via Syscall 80 (<code>sys_poweroff</code>).</li>
+      </ol>
+
+      <!-- Seção 3 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        3. Aceleração SIMD Zero-Copy no JHCS (jhcs-daemon)
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Para que o Aladdin Desktop mantenha seus efeitos contemporâneos de <em>frosted glass</em> e translucidez sem
+        depender de shaders de GPU, a biblioteca vetorial <strong>jhcs-backend-simd</strong> agora conta com o kernel
+        <code>box_blur_rgba_simd</code>.
+      </p>
+      <p class="text-slate-300 leading-relaxed">
+        Utilizando passagens horizontal e vertical separáveis com médias móveis (<em>moving average</em> em ponto fixo de
+        24 bits), o desfoque roda com complexidade \(O(W \times H)\) estrita, independentemente do raio. O despacho
+        entre o <code>aladdin-server</code> e o <code>jhcs-daemon</code> utiliza memória compartilhada <strong>JDA Shmem</strong>,
+        garantindo transferência <em>Zero-Copy</em> sem clonar buffers de tela.
+      </p>
+
+      <!-- Seção 4 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        4. O Gerenciador de Softwares no Aladdin Desktop
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        O aplicativo <strong>SoftwareManagerApp</strong> (janela 6 do Aladdin Desktop) oferece navegação intuitiva por
+        mouse e teclado:
+      </p>
+      <ul class="text-slate-300 space-y-2 my-4">
+        <li><strong>[I] Instalar:</strong> Extração atômica imediata de pacotes <code>.jpkg</code> locais para <code>/disk/apps/</code>.</li>
+        <li><strong>[U] Atualizar (Staged):</strong> Enfileiramento cooperativo em segundo plano para o desligamento seguro.</li>
+        <li><strong>[R] Remover:</strong> Exclusão limpa de executáveis e sincronização do catálogo.</li>
+        <li><strong>[D] Desligar &amp; Aplicar:</strong> Disparo instantâneo do ciclo Offline-on-Shutdown com tela apagada.</li>
+      </ul>
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <!-- Rodapé do Artigo -->
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn OS Sovereign Systems • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-cyan-400 hover:underline">Voltar ao Desktop Virtual</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>

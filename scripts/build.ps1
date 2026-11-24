@@ -154,10 +154,10 @@ Copy-Item -Path $jhcsTestElfPath -Destination (Join-Path $isoAppsDir "jhcs-test.
 $env:RUSTFLAGS = $origRustflags
 
 # --- Gera imagem de disco virtual FAT32 com MBR ---
-$makeDiskScript = Join-Path -Path (Get-Location) "scripts\make_disk.ps1"
+$makeDiskScript = Join-Path -Path (Get-Location) "scripts\make_disk.py"
 if (Test-Path $makeDiskScript) {
     Write-Host "Gerando imagem de disco virtual FAT32 (disk.img)..."
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $makeDiskScript
+    & python $makeDiskScript
 }
 
 Write-Host "Build completed. Kernel, Apps e Disco FAT32 prontos!"
