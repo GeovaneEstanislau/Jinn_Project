@@ -41,6 +41,7 @@
         type: "NewsArticle",
         isPartOfType: ["Product"],
         isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
         clientOptions: { theme: "light", lang: "pt-BR" },
       });
     });
@@ -86,6 +87,13 @@
             class="hover:text-cyan-300 transition-colors flex items-center gap-1">
             <i data-lucide="github" class="w-3.5 h-3.5"></i>
             <span>GitHub</span>
+          </a>
+          <span class="text-slate-600">|</span>
+          <a href="/artigos/"
+            class="hover:text-cyan-300 transition-colors flex items-center gap-1 text-cyan-400 font-medium"
+            title="Artigos Técnicos e Auditorias de Engenharia">
+            <i data-lucide="book-open" class="w-3.5 h-3.5"></i>
+            <span>Artigos</span>
           </a>
           <span class="text-slate-600">|</span>
           <a href="/feed.xml" target="_blank" rel="alternate" type="application/rss+xml"
@@ -307,6 +315,18 @@
           </a>
 
           <!-- Docs -->
+          <a href="/artigos/" class="whisker-item-card" data-cat="docs">
+            <div class="flex items-center gap-3">
+              <span class="p-2 rounded bg-cyan-950 text-cyan-400 border border-cyan-500/20"><i data-lucide="newspaper"
+                  class="w-4 h-4"></i></span>
+              <div>
+                <div class="text-sm font-medium text-white">Artigos Técnicos (/artigos/)</div>
+                <div class="text-xs text-cyan-300">Auditorias, Post-Mortems e Arquitetura</div>
+              </div>
+            </div>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-slate-500"></i>
+          </a>
+
           <a href="https://github.com/GeovaneEstanislau/Jinn_Project/tree/main/docs" target="_blank"
             rel="noopener noreferrer" class="whisker-item-card" data-cat="docs">
             <div class="flex items-center gap-3">

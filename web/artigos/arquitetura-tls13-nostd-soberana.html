@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pilha Criptográfica Soberana: TLS 1.3 e ChaCha20-Poly1305 em Bare-Metal Rust — Jinn OS</title>
+  <meta name="description" content="Como implementamos TLS 1.3 (RFC 8446), Key Schedule HKDF e ChaCha20-Poly1305 em Rust puro sem biblioteca padrão (#![no_std]) para o microkernel Jinn OS.">
+  <link rel="canonical" href="https://jinn-os.dev.br/artigos/arquitetura-tls13-nostd-soberana.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases" href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://jinn-os.dev.br/artigos/arquitetura-tls13-nostd-soberana.html">
+  <meta property="og:title" content="Pilha Criptográfica Soberana: TLS 1.3 e ChaCha20-Poly1305 em Bare-Metal Rust">
+  <meta property="og:description" content="Auditoria profunda: criptografia moderna em Ring 0 e Ring 3 sem C, OpenSSL ou dependências externas.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/wallpaper.jpg">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript"
+          src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push( basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans selection:bg-cyan-500 selection:text-black">
+
+  <!-- Cabeçalho de Navegação -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 hover:text-cyan-400 transition-colors">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span class="font-bold tracking-wide">Jinn OS</span>
+        <span class="text-xs font-mono bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded border border-cyan-800">Devlog</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+        <a href="/feed.xml" target="_blank" class="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS Feed</span>
+        </a>
+        <span class="text-slate-600">|</span>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="flex items-center gap-1 text-slate-400 hover:text-white transition-colors">
+          <i data-lucide="github" class="w-3.5 h-3.5"></i>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Conteúdo Principal do Artigo -->
+  <main class="max-w-4xl mx-auto px-6 py-12">
+    <article class="prose prose-invert prose-cyan max-w-none">
+      
+      <!-- Meta & Título -->
+      <div class="mb-8">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400 mb-3">
+          <span class="bg-cyan-950/80 border border-cyan-800/60 px-2 py-0.5 rounded">ENGENHARIA CRIPTOGRÁFICA</span>
+          <span class="text-slate-500">•</span>
+          <span>Novembro 2026</span>
+          <span class="text-slate-500">•</span>
+          <span>8 min de leitura</span>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight">
+          Pilha Criptográfica Soberana: Implementando TLS 1.3 (RFC 8446) e ChaCha20-Poly1305 em Bare-Metal Rust #![no_std]
+        </h1>
+        <p class="text-lg text-slate-300 mt-4 leading-relaxed">
+          Como eliminamos bibliotecas legadas em C e construímos uma máquina de estados TLS 1.3 completa, imune a ataques de temporização e com alocação zero no anel interno de decifração.
+        </p>
+      </div>
+
+      <!-- Resumo Executivo -->
+      <div class="bg-slate-900/80 border-l-4 border-cyan-500 p-4 rounded-r-lg my-8">
+        <h3 class="text-cyan-400 font-bold text-sm uppercase tracking-wider mb-1">Destaques da Implementação</h3>
+        <ul class="text-sm text-slate-300 space-y-1 list-disc list-inside">
+          <li><strong>Zero Dependências Externas:</strong> Nem OpenSSL, nem BoringSSL, nem Rustls com std. Todo o Key Schedule e a primitiva matemática residem no código-fonte do Jinn OS.</li>
+          <li><strong>Conformidade RFC 8446 e RFC 5869:</strong> Derivação determinística HKDF com prefixo mandatório <code>tls13 </code> em 100% dos rótulos.</li>
+          <li><strong>Cifra Moderna AEAD:</strong> Cifra autenticada ChaCha20 com autenticador Poly1305 (RFC 8439), imune a timing attacks em CPUs x86_64.</li>
+          <li><strong>Isolamento de Segredos:</strong> Limpeza segura de memória pós-handshake para evitar vazamento em memória volátil.</li>
+        </ul>
+      </div>
+
+      <!-- Seção 1 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        1. A Recusa do Legado C e a Necessidade de Criptografia Bare-Metal
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Na maioria dos sistemas operacionais convencionais, a segurança de rede é terceirizada para bibliotecas monstruosas de centenas de milhares de linhas em C, cheias de ponteiros crus, buffers mutáveis globais e vulnerabilidades históricas de canal lateral (<em>Heartbleed</em>, <em>POODLE</em>, <em>Logjam</em>).
+      </p>
+      <p class="text-slate-300 leading-relaxed">
+        No <strong>Jinn OS</strong>, adotamos a regra da <strong>Soberania de Código</strong>: todo o fluxo criptográfico que protege a navegação web e as comunicações de rede precisa ser implementado em Rust estrito <code>#![no_std]</code>, provando matematicamente que estouros de buffer e condições de corrida são impossíveis em tempo de compilação.
+      </p>
+
+      <!-- Seção 2 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        2. A Árvore de Derivação de Chaves HKDF (RFC 5869 / RFC 8446)
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Diferente do TLS 1.2, o TLS 1.3 não permite mais troca de chaves RSA pura nem cifras inseguras (CBC, RC4, 3DES). O coração do protocolo é o <strong>Key Schedule HKDF</strong>, onde cada fase do handshake gera chaves descartáveis até a transição para as chaves de aplicação:
+      </p>
+
+      <div class="my-6 p-4 bg-slate-900 rounded-lg border border-slate-800 font-mono text-xs text-slate-300 overflow-x-auto">
+<pre>             0
+             |
+             v
+   PSK -> HKDF-Extract = Early Secret
+             |
+             +-----> Derive-Secret(..., "c e traffic", ClientHello)
+             |
+             v
+     Derive-Secret(..., "derived", "")
+             |
+             v
+(ECDHE) -> HKDF-Extract = Handshake Secret
+             |
+             +-----> Derive-Secret(..., "c hs traffic", TranscriptHash)
+             |
+             +-----> Derive-Secret(..., "s hs traffic", TranscriptHash)
+             |
+             v
+     Derive-Secret(..., "derived", "")
+             |
+             v
+     0 -> HKDF-Extract = Master Secret
+             |
+             +-----> Derive-Secret(..., "c ap traffic", TranscriptHash)
+             |
+             +-----> Derive-Secret(..., "s ap traffic", TranscriptHash)</pre>
+      </div>
+
+      <p class="text-slate-300 leading-relaxed">
+        Em <code>src/net/tls13.rs</code>, a função <code>hkdf_expand_label</code> formata a estrutura binária em memória estática sem realizar nenhuma alocação de heap:
+      </p>
+
+      <div class="my-6 p-4 bg-slate-900 rounded-lg border border-slate-800 font-mono text-xs text-cyan-300 overflow-x-auto">
+<pre>pub fn hkdf_expand_label(
+    prk: &[u8; 32],
+    label: &[u8],
+    context: &[u8],
+    out: &mut [u8],
+) -> Result&lt;(), TlsError&gt; {
+    let mut hkdf_label = [0u8; 512];
+    let len = out.len() as u16;
+    hkdf_label[0..2].copy_from_slice(&amp;len.to_be_bytes());
+    
+    // Inserção mandatória do prefixo literal "tls13 " (RFC 8446 § 7.1)
+    let full_label_len = 6 + label.len();
+    hkdf_label[2] = full_label_len as u8;
+    hkdf_label[3..9].copy_from_slice(b"tls13 ");
+    hkdf_label[9..(9 + label.len())].copy_from_slice(label);
+    
+    let ctx_offset = 9 + label.len();
+    hkdf_label[ctx_offset] = context.len() as u8;
+    hkdf_label[(ctx_offset + 1)..(ctx_offset + 1 + context.len())].copy_from_slice(context);
+    
+    hkdf_expand(prk, &amp;hkdf_label[..(ctx_offset + 1 + context.len())], out)
+}</pre>
+      </div>
+
+      <!-- Seção 3 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        3. ChaCha20-Poly1305: Cifra AEAD com Tempo Constante
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Instruções AES-NI nem sempre estão disponíveis em processadores x86_64 industriais ou emuladores legados. Para garantir segurança universal e imunidade contra ataques de canal lateral baseados em cache de tabelas S-Box, o Jinn OS prioriza a suíte <code>TLS_CHACHA20_POLY1305_SHA256</code> (0x1303).
+      </p>
+      <p class="text-slate-300 leading-relaxed">
+        O algoritmo ChaCha20 opera exclusivamente com adições de 32 bits, rotações e XOR (ARX). Cada registro de pacote recebe uma máscara de nonce derivada de um vetor XOR com a sequência do registro (Sequence Number de 64 bits), impedindo ataques de repetição.
+      </p>
+
+      <!-- Seção 4 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        4. Validação X.509 em Ring 3 pelo Jinn Browser
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Durante o handshake TLS, o servidor remoto envia a cadeia de certificados X.509 em formato DER. Em <code>src/net/pki.rs</code>, o parser DER percorre as sequências ASN.1, extrai a chave pública RSA ou ECDSA e valida a assinatura digital contra o Trust Store embutido no VFS (<code>/disk/ca-certificates.crt</code>).
+      </p>
+      <p class="text-slate-300 leading-relaxed">
+        Essa arquitetura garante que quando você acessa <code>https://</code> no <strong>Jinn Browser</strong>, o tráfego é autenticado e cifrado ponta a ponta sem qualquer intermediação externa.
+      </p>
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <!-- Rodapé do Artigo -->
+    <div class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn OS Sovereign Systems • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-cyan-400 hover:underline">Voltar ao Desktop Virtual</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+</html>

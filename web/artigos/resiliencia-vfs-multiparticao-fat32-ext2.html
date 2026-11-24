@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VFS Resiliente: Coexistência FAT32 e Ext2 no Jinn OS</title>
+  <meta name="description" content="Como o microkernel Jinn OS implementa um sistema de arquivos virtual (VFS) com suporte simultâneo a partições FAT32 e Ext2 com cache de blocos LRU.">
+  <link rel="canonical" href="https://jinn-os.dev.br/artigos/resiliencia-vfs-multiparticao-fat32-ext2.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases" href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://jinn-os.dev.br/artigos/resiliencia-vfs-multiparticao-fat32-ext2.html">
+  <meta property="og:title" content="VFS Resiliente: Coexistência FAT32 e Ext2 no Jinn OS">
+  <meta property="og:description" content="Engenharia de armazenamento em sistemas bare-metal: abstração de volumes e resiliência a falhas de I/O.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/wallpaper.jpg">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript"
+          src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push( basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans selection:bg-cyan-500 selection:text-black">
+
+  <!-- Cabeçalho de Navegação -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 hover:text-cyan-400 transition-colors">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span class="font-bold tracking-wide">Jinn OS</span>
+        <span class="text-xs font-mono bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded border border-cyan-800">Devlog</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+        <a href="/feed.xml" target="_blank" class="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS Feed</span>
+        </a>
+        <span class="text-slate-600">|</span>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="flex items-center gap-1 text-slate-400 hover:text-white transition-colors">
+          <i data-lucide="github" class="w-3.5 h-3.5"></i>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Conteúdo Principal do Artigo -->
+  <main class="max-w-4xl mx-auto px-6 py-12">
+    <article class="prose prose-invert prose-cyan max-w-none">
+      
+      <!-- Meta & Título -->
+      <div class="mb-8">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400 mb-3">
+          <span class="bg-cyan-950/80 border border-cyan-800/60 px-2 py-0.5 rounded">ARMAZENAMENTO &amp; VFS</span>
+          <span class="text-slate-500">•</span>
+          <span>Novembro 2026</span>
+          <span class="text-slate-500">•</span>
+          <span>7 min de leitura</span>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight">
+          Arquitetura de VFS Resiliente: Coexistência FAT32 e Ext2 com Cache LRU de Blocos em Microkernel x86_64
+        </h1>
+        <p class="text-lg text-slate-300 mt-4 leading-relaxed">
+          Como abstraímos dispositivos de bloco heterogêneos (IDE PIO, VirtIO-Blk, AHCI) sob uma camada unificada de sistema de arquivos virtual com cache de blocos de alta velocidade.
+        </p>
+      </div>
+
+      <!-- Resumo Executivo -->
+      <div class="bg-slate-900/80 border-l-4 border-cyan-500 p-4 rounded-r-lg my-8">
+        <h3 class="text-cyan-400 font-bold text-sm uppercase tracking-wider mb-1">Destaques da Arquitetura VFS</h3>
+        <ul class="text-sm text-slate-300 space-y-1 list-disc list-inside">
+          <li><strong>Roteamento por Ponto de Montagem:</strong> Prefixos como <code>/disk</code> (FAT32) e <code>/ext2</code> (Linux Ext2) são mapeados em tempo constante O(1).</li>
+          <li><strong>Cache LRU em Memória Fixa:</strong> Buffer pool estático prevenindo desgaste excessivo de disco e acelerando leituras repetidas em mais de 10x.</li>
+          <li><strong>Isolamento por Descritor de Arquivo:</strong> Cada processo Ring 3 possui sua tabela local de descritores com limites estritos de quota (<code>-EMFILE</code>).</li>
+          <li><strong>Integridade na Escrita:</strong> Barreira atômica de flush antes de desmontagem de volumes.</li>
+        </ul>
+      </div>
+
+      <!-- Seção 1 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        1. A Visão Multi-partição do Jinn OS
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Sistemas operacionais clássicos costumam atrelar sua estrutura de arquivos a um único driver dominante. No <strong>Jinn OS</strong>, o disco virtual (<code>disk.img</code>) foi concebido com particionamento duplo:
+      </p>
+
+      <ul class="text-slate-300 space-y-2 list-disc list-inside my-4">
+        <li><strong>Partição 1 (LBA 2048, 31 MiB):</strong> Formatada em <strong>FAT32</strong>, montada em <code>/disk</code> para armazenar binários executáveis de usuário (<code>OLA.ELF</code>, <code>BROWSER.ELF</code>, <code>ALADDIN.ELF</code>) e páginas estáticas HTML/CSS.</li>
+        <li><strong>Partição 2 (LBA 65536, 31 MiB):</strong> Formatada em <strong>Ext2</strong>, montada em <code>/ext2</code> para dados imutáveis do sistema operacional e logs protegidos.</li>
+      </ul>
+
+      <!-- Seção 2 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        2. Gerenciador de Volumes e Trait de Sistema de Arquivos
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        A camada <code>crate::vfs::volume::VolumeManager</code> desacopla totalmente a chamada POSIX (<code>sys_open</code>, <code>sys_read</code>, <code>sys_write</code>) da implementação do driver subjacente:
+      </p>
+
+      <div class="my-6 p-4 bg-slate-900 rounded-lg border border-slate-800 font-mono text-xs text-cyan-300 overflow-x-auto">
+<pre>pub trait FileSystem: Send + Sync {
+    fn open(&amp;mut self, path: &amp;str, flags: u32) -&gt; Result&lt;usize, VfsError&gt;;
+    fn read(&amp;mut self, handle: usize, offset: u64, buf: &amp;mut [u8]) -&gt; Result&lt;usize, VfsError&gt;;
+    fn write(&amp;mut self, handle: usize, offset: u64, buf: &amp;[u8]) -&gt; Result&lt;usize, VfsError&gt;;
+    fn close(&amp;mut self, handle: usize) -&gt; Result&lt;(), VfsError&gt;;
+    fn size(&amp;self, handle: usize) -&gt; Result&lt;u64, VfsError&gt;;
+}</pre>
+      </div>
+
+      <p class="text-slate-300 leading-relaxed">
+        O despachante inspeciona o prefixo do caminho em tempo de execução e encaminha transparentemente para o driver correspondente, sem bloqueios globais e garantindo sincronização segura com <code>IrqSafeSpinLock</code>.
+      </p>
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <!-- Rodapé do Artigo -->
+    <div class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn OS Sovereign Systems • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-cyan-400 hover:underline">Voltar ao Desktop Virtual</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+</html>

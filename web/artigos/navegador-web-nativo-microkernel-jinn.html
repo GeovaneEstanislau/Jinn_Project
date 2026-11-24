@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Navegador Web Nativo no Microkernel Jinn OS — Jinn Browser</title>
+  <meta name="description" content="Como construímos o Jinn Browser: um navegador web completo em Rust no_std executando em Ring 3 com suporte a HTTP/1.1, motor CSS em cascata, layout flexbox e runtime JS reativo.">
+  <link rel="canonical" href="https://jinn-os.dev.br/artigos/navegador-web-nativo-microkernel-jinn.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases" href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://jinn-os.dev.br/artigos/navegador-web-nativo-microkernel-jinn.html">
+  <meta property="og:title" content="Construindo um Navegador Web Nativo sobre Microkernel — Jinn Browser">
+  <meta property="og:description" content="Do socket TCP ao renderizador DOM: um browser moderno em Rust #![no_std] sobre o microkernel Jinn OS.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/wallpaper.jpg">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript"
+          src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push( basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans selection:bg-cyan-500 selection:text-black">
+
+  <!-- Cabeçalho de Navegação -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 hover:text-cyan-400 transition-colors">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span class="font-bold tracking-wide">Jinn OS</span>
+        <span class="text-xs font-mono bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded border border-cyan-800">Devlog</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+        <a href="/feed.xml" target="_blank" class="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS Feed</span>
+        </a>
+        <span class="text-slate-600">|</span>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="flex items-center gap-1 text-slate-400 hover:text-white transition-colors">
+          <i data-lucide="github" class="w-3.5 h-3.5"></i>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Conteúdo Principal do Artigo -->
+  <main class="max-w-4xl mx-auto px-6 py-12">
+    <article class="prose prose-invert prose-cyan max-w-none">
+      
+      <!-- Meta & Título -->
+      <div class="mb-8">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400 mb-3">
+          <span class="bg-cyan-950/80 border border-cyan-800/60 px-2 py-0.5 rounded">ENGENHARIA DE SOFTWARE &amp; BROWSERS</span>
+          <span class="text-slate-500">•</span>
+          <span>Novembro 2026</span>
+          <span class="text-slate-500">•</span>
+          <span>8 min de leitura</span>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight">
+          Construindo um Navegador Web Nativo sobre Microkernel: Do Socket TCP ao Motor CSS Cascata e DOM Reativo em Rust Puro
+        </h1>
+        <p class="text-lg text-slate-300 mt-4 leading-relaxed">
+          Os bastidores da criação do Jinn Browser: como um executável de 370 KiB em Ring 3 implementa HTTP/1.1 com redirecionamentos, resolução DNS cascata, parser CSS com especificidade e execução reativa de scripts.
+        </p>
+      </div>
+
+      <!-- Resumo Executivo -->
+      <div class="bg-slate-900/80 border-l-4 border-cyan-500 p-4 rounded-r-lg my-8">
+        <h3 class="text-cyan-400 font-bold text-sm uppercase tracking-wider mb-1">Capacidades do Jinn Browser</h3>
+        <ul class="text-sm text-slate-300 space-y-1 list-disc list-inside">
+          <li><strong>Binário Único sem Dependências:</strong> <code>browser.elf</code> executa inteiramente em Ring 3 usando as syscalls canônicas do Jinn OS.</li>
+          <li><strong>Pilha HTTP/1.1 Completa:</strong> Resolução de DNS em cascata (Cloudflare, Google, SLiRP), 3-way handshake TCP, keep-alive e suporte a até 5 redirecionamentos (HTTP 301/302).</li>
+          <li><strong>Motor CSS com Cascata e Especificidade:</strong> Seletores por tag, classe, ID e descendência com cálculo de Box Model, Flexbox (linha) e bordas arredondadas.</li>
+          <li><strong>Runtime JavaScript Reativo:</strong> Suporte a eventos de clique (<code>onclick</code>, <code>addEventListener</code>), manipulação do DOM e re-renderização imediata de layout.</li>
+        </ul>
+      </div>
+
+      <!-- Seção 1 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        1. O Pipeline do Navegador: Da URL aos Pixels na Tela
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Criar um navegador a partir do zero em um ambiente bare-metal sem libc é um dos maiores desafios da engenharia de computação. No Jinn OS, o pipeline do navegador foi estruturado em 5 fases determinísticas:
+      </p>
+
+      <ol class="text-slate-300 space-y-2 list-decimal list-inside my-4">
+        <li><strong>Resolução de Rede:</strong> <code>sys_dns_resolve</code> traduz o domínio para IPv4 e <code>sys_socket</code> + <code>sys_connect</code> estabelecem a sessão TCP.</li>
+        <li><strong>Dreno de Payload HTTP:</strong> O cliente consome chunks de dados até encontrar <code>\r\n\r\n</code> e valida <code>Content-Length</code> ou encerramento de conexão.</li>
+        <li><strong>Construção da Árvore DOM:</strong> O parser HTML converte a sequência de bytes em nós indexados em arena estática (<code>DomArena</code>).</li>
+        <li><strong>Resolução CSS em Cascata:</strong> Folhas de estilo <code>&lt;style&gt;</code> e atributos <code>style="..."</code> são ordenados por especificidade (Inline &gt; ID &gt; Classe &gt; Tag).</li>
+        <li><strong>Composição e Apresentação:</strong> Os nós visíveis geram caixas de layout (<code>BoxRect</code>) desenhadas diretamente no backbuffer e transferidas ao compositor Aladdin com <code>sys_window_update</code>.</li>
+      </ol>
+
+      <!-- Seção 2 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        2. Cascata CSS e Suporte a Layout Flexbox
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        Em <code>apps/ola-mundo/src/browser.rs</code>, o motor CSS implementa a resolução completa de estilos em tempo determinístico:
+      </p>
+
+      <div class="my-6 p-4 bg-slate-900 rounded-lg border border-slate-800 font-mono text-xs text-cyan-300 overflow-x-auto">
+<pre>// Especificidade estrita: Tag (1) &lt; Descendente (2) &lt; Classe (10) &lt; ID (100) &lt; Inline (1000)
+pub fn resolve_node(&amp;self, dom: &amp;DomArena, node_idx: usize, style: &amp;mut ComputedStyle) {
+    self.apply_tag_defaults(dom, node_idx, style);
+    self.apply_tag_rules(dom, node_idx, style);
+    self.apply_descendant_rules(dom, node_idx, style);
+    self.apply_class_rules(dom, node_idx, style);
+    self.apply_id_rules(dom, node_idx, style);
+    self.apply_inline_styles(dom, node_idx, style);
+}</pre>
+      </div>
+
+      <p class="text-slate-300 leading-relaxed">
+        Elementos com <code>display: flex</code> distribuem automaticamente suas caixas filhas horizontalmente, permitindo layouts contemporâneos de cartões, botões em linha e barras de navegação responsivas.
+      </p>
+
+      <!-- Seção 3 -->
+      <h2 class="text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-12 mb-4">
+        3. Execução Reativa de Scripts sem Dependências Pesadas
+      </h2>
+      <p class="text-slate-300 leading-relaxed">
+        O runtime <code>MiniJsRuntime</code> avalia scripts embutidos e associados a eventos de clique. Quando um botão dispara <code>classList.toggle('hidden')</code> ou modifica <code>textContent</code>, o flag <code>dom_dirty</code> é acionado, forçando um novo ciclo de cascata e re-layout visual sem qualquer engasgo.
+      </p>
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <!-- Rodapé do Artigo -->
+    <div class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn OS Sovereign Systems • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-cyan-400 hover:underline">Voltar ao Desktop Virtual</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+</html>
