@@ -39,7 +39,9 @@ pub const SYS_NET_HTTP_GET:                  u64 = 84;
 pub const SYS_NET_SET_DNS:                   u64 = 86;
 pub const SYS_NET_GET_DNS:                   u64 = 87;
 pub const SYS_GET_SYSTEM_STATS:              u64 = 88;
-pub const SYS_READDIR:                       u64 = 89;
+pub const SYS_REGISTER_SHARED_RINGS:         u64 = 89;
+pub const SYS_RING_DOORBELL:                 u64 = 90;
+pub const SYS_READDIR:                       u64 = 91;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -71,6 +73,8 @@ pub struct SystemStatsUser {
     pub syscalls_total: u64,
     pub memory_active_bytes: u64,
     pub memory_idle_bytes: u64,
+    pub ring_events_processed: u64,
+    pub ring_cmds_flushed: u64,
 }
 
 /// Syscall sem argumentos
@@ -205,5 +209,17 @@ pub unsafe fn sys_net_set_dns(primary: &[u8; 4], secondary: &[u8; 4]) -> i64 {
 #[inline(always)]
 pub unsafe fn sys_net_get_dns(primary_out: &mut [u8; 4], secondary_out: &mut [u8; 4]) -> i64 {
     syscall2(SYS_NET_GET_DNS, primary_out.as_mut_ptr() as u64, secondary_out.as_mut_ptr() as u64)
+}
+
+/// Registra o anel de buffers compartilhado SPSC Ring 3 / Ring 0 (Syscall 89)
+#[inline(always)]
+pub unsafe fn register_shared_rings(rings_vaddr: usize, backbuffer_vaddr: usize) -> i64 {
+    syscall2(SYS_REGISTER_SHARED_RINGS, rings_vaddr as u64, backbuffer_vaddr as u64)
+}
+
+/// Aciona a campainha (doorbell) dos anéis compartilhados (Syscall 90)
+#[inline(always)]
+pub unsafe fn ring_doorbell(flags: u32) -> i64 {
+    syscall1(SYS_RING_DOORBELL, flags as u64)
 }
 

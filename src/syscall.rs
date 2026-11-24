@@ -615,7 +615,9 @@ pub extern "C" fn syscall_dispatch(
         86 => sys_net_set_dns(arg0 as *const u8, arg1 as *const u8),
         87 => sys_net_get_dns(arg0 as *mut u8, arg1 as *mut u8),
         88 => sys_get_system_stats(arg0 as *mut SystemStatsUser),
-        89 => sys_readdir(arg0 as *const u8, arg1, arg2 as *mut DirEntryUser, arg3),
+        89 => sys_register_shared_rings(arg0, arg1),
+        90 => sys_ring_doorbell(arg0 as u32),
+        91 => sys_readdir(arg0 as *const u8, arg1, arg2 as *mut DirEntryUser, arg3),
         102 => sys_getuid(),
         104 => sys_getgid(),
         107 => sys_geteuid(),
@@ -3079,6 +3081,8 @@ pub struct SystemStatsUser {
     pub syscalls_total: u64,
     pub memory_active_bytes: u64,
     pub memory_idle_bytes: u64,
+    pub ring_events_processed: u64,
+    pub ring_cmds_flushed: u64,
 }
 
 /// `sys_get_system_stats(out_ptr)` — Retorna telemetria e estatísticas do kernel para Ring 3 (Syscall 88).
@@ -3134,11 +3138,36 @@ fn sys_get_system_stats(out_ptr: *mut SystemStatsUser) -> isize {
     let mem_total = crate::memory::total_bytes() as u64;
     u.memory_active_bytes = mem_used;
     u.memory_idle_bytes = mem_total.saturating_sub(mem_used);
+    u.ring_events_processed = stats.ring_events_processed;
+    u.ring_cmds_flushed = stats.ring_cmds_flushed;
 
     unsafe {
         core::ptr::copy_nonoverlapping(&u as *const SystemStatsUser, out_ptr, 1);
     }
     0
+}
+
+/// `sys_register_shared_rings` — Registra os anéis de comunicação compartilhada SPSC (Syscall 89).
+fn sys_register_shared_rings(rings_vaddr: usize, backbuffer_vaddr: usize) -> isize {
+    let pid = scheduler::current_pid();
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(rings_vaddr as *const u8, 4096, true) {
+            return e;
+        }
+    }
+    match crate::gui::register_shared_rings(pid, rings_vaddr, backbuffer_vaddr) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
+}
+
+/// `sys_ring_doorbell` — Aciona a campainha dos anéis compartilhados (Doorbell - Syscall 90).
+fn sys_ring_doorbell(flags: u32) -> isize {
+    let pid = scheduler::current_pid();
+    match crate::gui::ring_doorbell(pid, flags) {
+        Ok(flushed) => flushed,
+        Err(e) => e,
+    }
 }
 
 // ── Syscalls de Execução Segura de Processos (Syscalls 38 e 39) ───────────────
@@ -3858,7 +3887,7 @@ fn sys_rename(args_ptr: *const RenameArgs) -> isize {
     }
 }
 
-/// Representação de uma entrada de diretório retornada para Ring 3 (Syscall 89).
+/// Representação de uma entrada de diretório retornada para Ring 3 (Syscall 91).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct DirEntryUser {
@@ -3870,7 +3899,7 @@ pub struct DirEntryUser {
     pub size: u64,
 }
 
-/// `sys_readdir` — Lista as entradas de um diretório no VFS (Syscall 89).
+/// `sys_readdir` — Lista as entradas de um diretório no VFS (Syscall 91).
 fn sys_readdir(
     path_ptr: *const u8,
     path_len: usize,

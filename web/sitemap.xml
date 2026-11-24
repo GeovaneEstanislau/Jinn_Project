@@ -180,4 +180,18 @@
       <news:title>Pilha Criptográfica Soberana: TLS 1.3 e ChaCha20-Poly1305 em Bare-Metal Rust</news:title>
     </news:news>
   </url>
+  <url>
+    <loc>https://jinn-os.dev.br/artigos/aladdin-shared-rings-spsc-lock-free-zero-copy-io-uring.html</loc>
+    <lastmod>2026-11-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn OS Devlog</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-24</news:publication_date>
+      <news:title>AladdinSharedRings: Buffers Circulares SPSC Lock-Free Ring 3 / Ring 0 no Jinn OS</news:title>
+    </news:news>
+  </url>
 </urlset>

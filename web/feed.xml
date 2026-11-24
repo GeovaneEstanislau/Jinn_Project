@@ -104,6 +104,22 @@
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
+      <title>AladdinSharedRings: Buffers Circulares SPSC Lock-Free Ring 3 / Ring 0 no Jinn OS</title>
+      <link>https://jinn-os.dev.br/artigos/aladdin-shared-rings-spsc-lock-free-zero-copy-io-uring.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-aladdin-shared-rings-spsc-lock-free-zero-copy-io-uring</guid>
+      <pubDate>Tue, 24 Nov 2026 23:55:00 +0000</pubDate>
+      <description>Implementação de memória compartilhada baseada em ring buffers SPSC (estilo io_uring) para loteamento de eventos de entrada e comandos gráficos entre o Aladdin Desktop (Ring 3) e o microkernel Jinn OS (Ring 0) com garantia Zero-Idle.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
+      <title>feat(zero-idle): blocking IPC, cache line alignment, input interrupt wakeups, JAHA 1.2 telemetry and technical devlog</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/b062194aa109b0f6db0a656b064d95f1707bed7f</link>
+      <guid isPermaLink="false">b062194aa109b0f6db0a656b064d95f1707bed7f</guid>
+      <pubDate>Tue, 24 Nov 2026 20:30:53 -0300</pubDate>
+      <description>feat(zero-idle): blocking IPC, cache line alignment, input interrupt wakeups, JAHA 1.2 telemetry and technical devlog</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
       <title>docs(web): publish technical articles on e1000/DNS, SIMD glassmorphism, and FAT32 persistence [announce]</title>
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/be413a0eca2ad5fa68c33285b301b208d4e83307</link>
       <guid isPermaLink="false">be413a0eca2ad5fa68c33285b301b208d4e83307</guid>
@@ -172,14 +188,6 @@
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/54ad7d8619104cc3dd5b5b8a8d2d2afcf76d8307</link>
       <guid isPermaLink="false">54ad7d8619104cc3dd5b5b8a8d2d2afcf76d8307</guid>
       <pubDate>Tue, 24 Nov 2026 11:01:45 -0300</pubDate>
-      <description>fix(dns,browser): resolve VirtualBox DNS/ARP, add CSS/JS engine, and fix stack overflow</description>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>feat(web): add robots.txt and sitemap.xml for search engines and Google News</title>
-      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/6dfb2eb308f07c35baed4ce5a07db00a1f623e0e</link>
-      <guid isPermaLink="false">6dfb2eb308f07c35baed4ce5a07db00a1f623e0e</guid>
-      <pubDate>Mon, 23 Nov 2026 23:43:17 -0300</pubDate>
       <description>---END---</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>

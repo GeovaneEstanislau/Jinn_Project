@@ -199,9 +199,24 @@ pub fn process_byte(b: u8) {
 
             // Botões: bit 0 = Left, bit 1 = Right, bit 2 = Middle
             let buttons = flags & 0x07;
-            MOUSE_BUTTONS.store(buttons, Ordering::Release);
+            let old_buttons = MOUSE_BUTTONS.swap(buttons, Ordering::Release);
 
             MOUSE_PACKETS_COMPLETED.fetch_add(1, Ordering::Relaxed);
+
+            // Notifica o anel compartilhado AladdinSharedRings (Lock-Free)
+            let kind = if buttons != old_buttons {
+                aladdin::contracts::shared_rings::INPUT_KIND_MOUSE_BTN
+            } else {
+                aladdin::contracts::shared_rings::INPUT_KIND_MOUSE_MOVE
+            };
+            let ev = aladdin::contracts::shared_rings::SharedInputEvent {
+                kind,
+                modifiers: 0,
+                x: new_x as i32,
+                y: new_y as i32,
+                code: buttons as u32,
+            };
+            crate::gui::try_push_shared_input_event(ev);
         }
         _ => {
             MOUSE_CYCLE.store(0, Ordering::Relaxed);
@@ -245,6 +260,19 @@ pub fn update_from_driver(kind: u16, code: u16, x: usize, y: usize) {
         }
         _ => {}
     }
+
+    let ev = aladdin::contracts::shared_rings::SharedInputEvent {
+        kind: if kind == crate::drivers::device_manager::INPUT_KIND_MOUSE_MOVE {
+            aladdin::contracts::shared_rings::INPUT_KIND_MOUSE_MOVE
+        } else {
+            aladdin::contracts::shared_rings::INPUT_KIND_MOUSE_BTN
+        },
+        modifiers: 0,
+        x: x as i32,
+        y: y as i32,
+        code: MOUSE_BUTTONS.load(Ordering::Relaxed) as u32,
+    };
+    crate::gui::try_push_shared_input_event(ev);
 }
 
 /// Verifica estado temporal do mouse e recupera máquina de estados se estagnada.

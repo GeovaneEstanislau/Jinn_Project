@@ -163,15 +163,26 @@ pub fn process_scancode(sc: u8) {
 
         if is_extended {
             if !is_release {
-                match make_code {
-                    0x48 => keyboard_buffer::push(0x48), // Seta Cima
-                    0x50 => keyboard_buffer::push(0x50), // Seta Baixo
-                    0x49 => keyboard_buffer::push(0x49), // Page Up
-                    0x51 => keyboard_buffer::push(0x51), // Page Down
-                    0x4B => keyboard_buffer::push(0x4B), // Seta Esquerda
-                    0x4D => keyboard_buffer::push(0x4D), // Seta Direita
-                    0x1C => keyboard_buffer::push(b'\n'), // Keypad Enter
-                    _ => {}
+                let arrow_code = match make_code {
+                    0x48 => Some(0x48), // Seta Cima
+                    0x50 => Some(0x50), // Seta Baixo
+                    0x49 => Some(0x49), // Page Up
+                    0x51 => Some(0x51), // Page Down
+                    0x4B => Some(0x4B), // Seta Esquerda
+                    0x4D => Some(0x4D), // Seta Direita
+                    0x1C => Some(b'\n'), // Keypad Enter
+                    _ => None,
+                };
+                if let Some(code) = arrow_code {
+                    keyboard_buffer::push(code);
+                    let ev = aladdin::contracts::shared_rings::SharedInputEvent {
+                        kind: aladdin::contracts::shared_rings::INPUT_KIND_KEY_DOWN,
+                        modifiers: (if SHIFT_DOWN { 1 } else { 0 }) | (if CAPS_LOCK { 2 } else { 0 }),
+                        x: 0,
+                        y: 0,
+                        code: code as u32,
+                    };
+                    crate::gui::try_push_shared_input_event(ev);
                 }
             }
             return;
@@ -189,7 +200,25 @@ pub fn process_scancode(sc: u8) {
                 };
                 if ch != 0 {
                     keyboard_buffer::push(ch);
+                    let ev = aladdin::contracts::shared_rings::SharedInputEvent {
+                        kind: aladdin::contracts::shared_rings::INPUT_KIND_KEY_DOWN,
+                        modifiers: (if SHIFT_DOWN { 1 } else { 0 }) | (if CAPS_LOCK { 2 } else { 0 }),
+                        x: 0,
+                        y: 0,
+                        code: ch as u32,
+                    };
+                    crate::gui::try_push_shared_input_event(ev);
                 }
+            }
+            code if is_release => {
+                let ev = aladdin::contracts::shared_rings::SharedInputEvent {
+                    kind: aladdin::contracts::shared_rings::INPUT_KIND_KEY_UP,
+                    modifiers: (if SHIFT_DOWN { 1 } else { 0 }) | (if CAPS_LOCK { 2 } else { 0 }),
+                    x: 0,
+                    y: 0,
+                    code: code as u32,
+                };
+                crate::gui::try_push_shared_input_event(ev);
             }
             _ => {}
         }

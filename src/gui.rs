@@ -12,13 +12,25 @@ use aladdin::contracts::framebuffer::{DirtyRect, FramebufferDevice};
 use aladdin::contracts::system::{SystemHost, SystemStats};
 use aladdin::contracts::vfs::VfsHost;
 use aladdin::contracts::process::ProcessHost;
+use aladdin::contracts::shared_rings::{
+    AladdinSharedRings, SharedInputEvent,
+    INPUT_RING_CAP, CMD_RING_CAP, CONSUMER_SLEEPING,
+    GFX_OP_PRESENT_DIRTY_RECT, GFX_OP_SET_DISPLAY_POWER,
+    DOORBELL_FLUSH_GFX, DOORBELL_WAIT_INPUT, GFX_FLAG_SUB_BUF,
+};
 use aladdin::desktop::session::AladdinSession;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
 use crate::memory::IrqSafeSpinLock;
 use alloc::vec::Vec;
 
 pub static GRAPHICS_SERVER_PID: AtomicUsize = AtomicUsize::new(0);
 pub static DISPLAY_POWER_STATE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+
+pub static SHARED_RINGS_HHDM: AtomicUsize = AtomicUsize::new(0);
+pub static SHARED_BACKBUFFER_VADDR: AtomicUsize = AtomicUsize::new(0);
+pub static RING_EVENTS_DELIVERED: AtomicU64 = AtomicU64::new(0);
+pub static RING_CMDS_FLUSHED: AtomicU64 = AtomicU64::new(0);
+pub static RING_DOORBELL_CALLS: AtomicU64 = AtomicU64::new(0);
 
 pub fn set_display_power(on: bool) {
     DISPLAY_POWER_STATE.store(on, Ordering::Release);
@@ -219,6 +231,190 @@ pub fn present_rect(caller_pid: usize, rect: &PresentRect, buffer: &[u32]) -> Re
     }
 
     Ok(())
+}
+
+/// Registra o anel de buffers compartilhado SPSC (AladdinSharedRings) entre Ring 3 e Ring 0 (Syscall 89).
+pub fn register_shared_rings(caller_pid: usize, user_rings_vaddr: usize, backbuffer_vaddr: usize) -> Result<(), isize> {
+    let current_server = GRAPHICS_SERVER_PID.load(Ordering::SeqCst);
+    if current_server != 0 && current_server != caller_pid {
+        return Err(crate::syscall::EBUSY);
+    }
+    if user_rings_vaddr == 0 || (user_rings_vaddr & 0xFFF) != 0 || backbuffer_vaddr == 0 {
+        return Err(crate::syscall::EINVAL);
+    }
+
+    // Traduz endereço virtual do processo chamador para endereço físico
+    let cr3 = crate::memory::paging::current_cr3();
+    let pml4 = crate::memory::paging::phys_to_virt(cr3) as *mut crate::memory::paging::PageTable;
+    let (phys_addr, _flags) = match unsafe { crate::memory::paging::lookup_page(pml4, user_rings_vaddr as u64) } {
+        Some(res) => res,
+        None => return Err(crate::syscall::EFAULT),
+    };
+
+    // Converte endereço físico para o Higher-Half Direct Map (HHDM) do kernel
+    let hhdm_virt = crate::memory::paging::phys_to_virt(phys_addr) as usize;
+
+    // Inicializa cabeçalhos do anel compartilhado
+    let rings = unsafe { &mut *(hhdm_virt as *mut AladdinSharedRings) };
+    rings.rx_header.head.store(0, Ordering::Release);
+    rings.rx_header.tail.store(0, Ordering::Release);
+    rings.rx_header.flags.store(0, Ordering::Release);
+    rings.tx_header.head.store(0, Ordering::Release);
+    rings.tx_header.tail.store(0, Ordering::Release);
+    rings.tx_header.flags.store(0, Ordering::Release);
+
+    SHARED_RINGS_HHDM.store(hhdm_virt, Ordering::Release);
+    SHARED_BACKBUFFER_VADDR.store(backbuffer_vaddr, Ordering::Release);
+
+    crate::serial_write(b"[GUI] AladdinSharedRings registrado com sucesso (SPSC Zero-Copy Ativo)!\n");
+    Ok(())
+}
+
+/// Descarrega comandos gráficos em lote a partir do anel TX (SharedGfxCmd) diretamente para o framebuffer Limine.
+pub fn flush_shared_gfx_cmds(caller_pid: usize) -> usize {
+    let rings_addr = SHARED_RINGS_HHDM.load(Ordering::Acquire);
+    let backbuffer_vaddr = SHARED_BACKBUFFER_VADDR.load(Ordering::Acquire);
+    if rings_addr == 0 || backbuffer_vaddr == 0 {
+        return 0;
+    }
+    let s_pid = GRAPHICS_SERVER_PID.load(Ordering::SeqCst);
+    if s_pid != 0 && caller_pid != s_pid {
+        return 0;
+    }
+
+    let fb = match limine::framebuffer() {
+        Some(fb) => fb,
+        None => return 0,
+    };
+
+    let rings = unsafe { &*(rings_addr as *const AladdinSharedRings) };
+    let mut head = rings.tx_header.head.load(Ordering::Relaxed);
+    let tail = rings.tx_header.tail.load(Ordering::Acquire);
+    let mut flushed_count = 0;
+
+    let display_on = DISPLAY_POWER_STATE.load(Ordering::Relaxed);
+    let fb_width = fb.width as usize;
+    let fb_height = fb.height as usize;
+    let fb_pitch = fb.pitch as usize;
+    let fb_addr = fb.address;
+
+    while head != tail {
+        let slot = (head as usize) % CMD_RING_CAP;
+        let cmd = unsafe { core::ptr::read_volatile(&rings.tx_cmds[slot]) };
+
+        if display_on {
+            match cmd.opcode {
+                GFX_OP_PRESENT_DIRTY_RECT => {
+                    let rx = cmd.x as usize;
+                    let ry = cmd.y as usize;
+                    let rw = (cmd.width as usize).min(fb_width.saturating_sub(rx));
+                    let rh = (cmd.height as usize).min(fb_height.saturating_sub(ry));
+
+                    if rw > 0 && rh > 0 && rx < fb_width && ry < fb_height {
+                        let bytes_per_row = rw * 4;
+                        let is_sub_buf = (cmd.flags & GFX_FLAG_SUB_BUF) != 0;
+
+                        for r in 0..rh {
+                            let src_ptr = if is_sub_buf {
+                                (backbuffer_vaddr + cmd.src_offset as usize + r * bytes_per_row) as *const u8
+                            } else {
+                                (backbuffer_vaddr + ((ry + r) * fb_width + rx) * 4) as *const u8
+                            };
+                            let dst_ptr = unsafe { fb_addr.add((ry + r) * fb_pitch + rx * 4) };
+
+                            unsafe {
+                                core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, bytes_per_row);
+                            }
+                        }
+                    }
+                }
+                GFX_OP_SET_DISPLAY_POWER => {
+                    set_display_power(cmd.flags != 0);
+                }
+                _ => {}
+            }
+        }
+
+        head = head.wrapping_add(1);
+        flushed_count += 1;
+    }
+
+    rings.tx_header.head.store(head, Ordering::Release);
+    RING_CMDS_FLUSHED.fetch_add(flushed_count as u64, Ordering::Relaxed);
+    flushed_count
+}
+
+/// Aciona a campainha do anel (Doorbell - Syscall 90) para flush de comandos gráficos e repouso anti-lost-wakeup.
+pub fn ring_doorbell(caller_pid: usize, flags: u32) -> Result<isize, isize> {
+    RING_DOORBELL_CALLS.fetch_add(1, Ordering::Relaxed);
+    let mut total_flushed = 0isize;
+
+    if (flags & DOORBELL_FLUSH_GFX) != 0 {
+        total_flushed = flush_shared_gfx_cmds(caller_pid) as isize;
+    }
+
+    if (flags & DOORBELL_WAIT_INPUT) != 0 {
+        let rings_addr = SHARED_RINGS_HHDM.load(Ordering::Acquire);
+        if rings_addr != 0 {
+            let rings = unsafe { &*(rings_addr as *const AladdinSharedRings) };
+
+            // Double barrier anti-lost-wakeup
+            rings.rx_header.flags.fetch_or(CONSUMER_SLEEPING, Ordering::SeqCst);
+            core::sync::atomic::fence(Ordering::SeqCst);
+
+            let head = rings.rx_header.head.load(Ordering::Acquire);
+            let tail = rings.rx_header.tail.load(Ordering::Acquire);
+
+            if head != tail {
+                // Eventos já disponíveis! Limpa flag e retorna imediatamente sem bloquear
+                rings.rx_header.flags.fetch_and(!CONSUMER_SLEEPING, Ordering::SeqCst);
+                return Ok(total_flushed);
+            }
+
+            // Coloca a tarefa em repouso até o próximo evento de hardware ou timeout (50 ticks = 500ms)
+            let wake_tick = crate::timer::ticks().wrapping_add(50);
+            crate::scheduler::get().sleep_task(caller_pid, wake_tick);
+            crate::scheduler::yield_now();
+
+            // Ao acordar (por interrupção de mouse/teclado ou timeout), limpa a flag de sleeping
+            rings.rx_header.flags.fetch_and(!CONSUMER_SLEEPING, Ordering::SeqCst);
+        }
+    }
+
+    Ok(total_flushed)
+}
+
+/// Empurra um evento de entrada de hardware para o anel compartilhado (usado por ISRs IRQ1/IRQ12).
+pub fn try_push_shared_input_event(ev: SharedInputEvent) -> bool {
+    let rings_addr = SHARED_RINGS_HHDM.load(Ordering::Acquire);
+    if rings_addr == 0 {
+        return false;
+    }
+    let rings = unsafe { &*(rings_addr as *const AladdinSharedRings) };
+    let head = rings.rx_header.head.load(Ordering::Acquire);
+    let tail = rings.rx_header.tail.load(Ordering::Relaxed);
+
+    if tail.wrapping_sub(head) as usize >= INPUT_RING_CAP {
+        return false;
+    }
+
+    let slot = (tail as usize) % INPUT_RING_CAP;
+    unsafe {
+        let ev_ptr = rings.rx_events.as_ptr().add(slot) as *mut SharedInputEvent;
+        core::ptr::write(ev_ptr, ev);
+    }
+    rings.rx_header.tail.store(tail.wrapping_add(1), Ordering::Release);
+    RING_EVENTS_DELIVERED.fetch_add(1, Ordering::Relaxed);
+
+    let flags = rings.rx_header.flags.load(Ordering::SeqCst);
+    if (flags & CONSUMER_SLEEPING) != 0 {
+        rings.rx_header.flags.fetch_and(!CONSUMER_SLEEPING, Ordering::SeqCst);
+        let g_pid = GRAPHICS_SERVER_PID.load(Ordering::Relaxed);
+        if g_pid != 0 {
+            crate::scheduler::wake_task(g_pid);
+        }
+    }
+    true
 }
 
 pub fn poll_hardware_input(caller_pid: usize) -> Result<Option<InputHardwareEvent>, isize> {
@@ -701,6 +897,8 @@ impl SystemHost for JinnSystem {
             syscalls_total,
             memory_active_bytes,
             memory_idle_bytes,
+            ring_events_processed: RING_EVENTS_DELIVERED.load(core::sync::atomic::Ordering::Relaxed),
+            ring_cmds_flushed: RING_CMDS_FLUSHED.load(core::sync::atomic::Ordering::Relaxed),
         }
     }
 

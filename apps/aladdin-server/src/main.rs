@@ -17,6 +17,12 @@ use aladdin::contracts::system::{JinnWallProfile, SystemHost, SystemStats};
 use aladdin::contracts::vfs::VfsHost;
 use aladdin::contracts::process::ProcessHost;
 use aladdin::contracts::input::ClientWindowEvent;
+use aladdin::contracts::shared_rings::{
+    AladdinSharedRings, SharedGfxCmd,
+    GFX_OP_PRESENT_DIRTY_RECT,
+    DOORBELL_FLUSH_GFX, DOORBELL_WAIT_INPUT,
+    INPUT_KIND_KEY_DOWN, INPUT_KIND_MOUSE_MOVE, INPUT_KIND_MOUSE_BTN,
+};
 use aladdin::desktop::session::AladdinSession;
 
 // ── Allocator de Heap em Espaço de Usuário (.bss) ─────────────────────────────
@@ -289,6 +295,10 @@ unsafe fn sys_list_client_windows(out_ptr: *mut ClientWindowInfoUser, max_count:
     aladdin_sdk::syscall::syscall3(79, out_ptr as u64, max_count as u64, 0)
 }
 
+// ── Anéis Compartilhados AladdinSharedRings (.bss alinhado a 4096) ─────────────
+static mut SHARED_RINGS: AladdinSharedRings = AladdinSharedRings::new();
+static mut SHARED_RINGS_ACTIVE: bool = false;
+
 // ── Adaptador de Framebuffer em Ring 3 ────────────────────────────────────────
 
 pub struct UserFramebuffer {
@@ -307,6 +317,30 @@ impl FramebufferDevice for UserFramebuffer {
         let rw = rect.width.min(self.width.saturating_sub(rect.x));
         let rh = rect.height.min(self.height.saturating_sub(rect.y));
         if rw == 0 || rh == 0 { return; }
+
+        if unsafe { SHARED_RINGS_ACTIVE } {
+            let rings = unsafe { &mut *core::ptr::addr_of_mut!(SHARED_RINGS) };
+            let cmd = SharedGfxCmd {
+                opcode: GFX_OP_PRESENT_DIRTY_RECT,
+                flags: 0,
+                x: rect.x as u32,
+                y: rect.y as u32,
+                width: rw as u32,
+                height: rh as u32,
+                src_offset: 0,
+                reserved: 0,
+            };
+            if !rings.push_tx_cmd(cmd) {
+                unsafe {
+                    aladdin_sdk::syscall::ring_doorbell(DOORBELL_FLUSH_GFX);
+                }
+                let _ = rings.push_tx_cmd(cmd);
+            }
+            unsafe {
+                aladdin_sdk::syscall::ring_doorbell(DOORBELL_FLUSH_GFX);
+            }
+            return;
+        }
 
         let present_rect = PresentRect {
             x: rect.x as u32,
@@ -335,6 +369,30 @@ impl FramebufferDevice for UserFramebuffer {
     }
 
     fn swap_full(&mut self, buffer: &[u32]) {
+        if unsafe { SHARED_RINGS_ACTIVE } {
+            let rings = unsafe { &mut *core::ptr::addr_of_mut!(SHARED_RINGS) };
+            let cmd = SharedGfxCmd {
+                opcode: GFX_OP_PRESENT_DIRTY_RECT,
+                flags: 0,
+                x: 0,
+                y: 0,
+                width: self.width as u32,
+                height: self.height as u32,
+                src_offset: 0,
+                reserved: 0,
+            };
+            if !rings.push_tx_cmd(cmd) {
+                unsafe {
+                    aladdin_sdk::syscall::ring_doorbell(DOORBELL_FLUSH_GFX);
+                }
+                let _ = rings.push_tx_cmd(cmd);
+            }
+            unsafe {
+                aladdin_sdk::syscall::ring_doorbell(DOORBELL_FLUSH_GFX);
+            }
+            return;
+        }
+
         let present_rect = PresentRect {
             x: 0,
             y: 0,
@@ -416,6 +474,8 @@ impl SystemHost for UserSystem {
                 syscalls_total: u.syscalls_total,
                 memory_active_bytes: u.memory_active_bytes,
                 memory_idle_bytes: u.memory_idle_bytes,
+                ring_events_processed: u.ring_events_processed,
+                ring_cmds_flushed: u.ring_cmds_flushed,
             }
         } else {
             let mut ts = Timespec::default();
@@ -457,12 +517,20 @@ impl SystemHost for UserSystem {
                 syscalls_total: 500,
                 memory_active_bytes: 64 * 1024 * 1024,
                 memory_idle_bytes: 448 * 1024 * 1024,
+                ring_events_processed: 0,
+                ring_cmds_flushed: 0,
             }
         }
     }
 
     fn yield_cpu(&self) {
-        aladdin_sdk::time::sleep(10);
+        if unsafe { SHARED_RINGS_ACTIVE } {
+            unsafe {
+                aladdin_sdk::syscall::ring_doorbell(DOORBELL_FLUSH_GFX | DOORBELL_WAIT_INPUT);
+            }
+        } else {
+            aladdin_sdk::time::sleep(10);
+        }
     }
 
     fn storage_profile_name(&self) -> &'static str {
@@ -956,6 +1024,20 @@ pub extern "C" fn _start() -> ! {
     }
     backbuffer.resize(total_pixels, 0u32);
 
+    // Registra AladdinSharedRings com o microkernel Jinn para comunicação lock-free zero-copy (Syscall 89)
+    let rings_res = unsafe {
+        aladdin_sdk::syscall::register_shared_rings(
+            core::ptr::addr_of_mut!(SHARED_RINGS) as usize,
+            backbuffer.as_ptr() as usize,
+        )
+    };
+    if rings_res == 0 {
+        unsafe { SHARED_RINGS_ACTIVE = true; }
+        aladdin_sdk::console::println("[aladdin-server] [RINGS] AladdinSharedRings registrado com sucesso!");
+    } else {
+        aladdin_sdk::console::println("[aladdin-server] [WARN] Falha ao registrar AladdinSharedRings, usando fallback");
+    }
+
     // Diagnóstico: heap usado após alocação do backbuffer
     {
         let heap_used = ALLOCATOR.offset.load(core::sync::atomic::Ordering::Relaxed);
@@ -1063,6 +1145,24 @@ pub extern "C" fn _start() -> ! {
     let fb_h = user_fb.height;
 
     let drain_hardware_events = || {
+        if unsafe { SHARED_RINGS_ACTIVE } {
+            let rings = unsafe { &*core::ptr::addr_of_mut!(SHARED_RINGS) };
+            while let Some(ev) = rings.pop_rx_event() {
+                if ev.kind == INPUT_KIND_KEY_DOWN {
+                    let ch = ev.code as u8;
+                    enqueue_key(ch);
+                } else if ev.kind == INPUT_KIND_MOUSE_MOVE || ev.kind == INPUT_KIND_MOUSE_BTN {
+                    let mx = (ev.x.max(0) as usize).min(fb_w.saturating_sub(1));
+                    let my = (ev.y.max(0) as usize).min(fb_h.saturating_sub(1));
+                    let btn = ev.code as u8;
+                    unsafe {
+                        CURRENT_MOUSE = (mx, my, btn);
+                    }
+                    enqueue_mouse(mx, my, btn);
+                }
+            }
+        }
+
         let mut ev = InputHardwareEvent { kind: 0, code: 0, x: 0, y: 0, modifiers: 0 };
         for _ in 0..16 {
             let ret = unsafe { sys_poll_input(&mut ev) };
