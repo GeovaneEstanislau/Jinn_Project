@@ -4679,6 +4679,143 @@ unsafe fn test_tls13_cryptography_and_syscalls() {
     print_str(b"  [PASS] test_tls13_cryptography_and_syscalls: Triade Criptografica e TLS 1.3 Homologados em Ring 3!\n");
 }
 
+// ── Suíte QA de Segurança (Ponteiros Ring 3), FAT32 LFN e Integridade ────────
+unsafe fn test_adv_qa_security_and_fat32_lfn() {
+    print_str(b"\n--- Suite QA Zero-Trust (Ponteiros Syscall) & FAT32 LFN Benchmark ---\n");
+
+    const NULL_PTR: u64 = 0x0;
+    const NON_CANON_PTR: u64 = 0xBAD0_0000_0000_0000;
+    const KERNEL_PTR: u64 = 0xFFFF_8000_0000_0000;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct DirEntryQa {
+        name: [u8; 64],
+        name_len: u32,
+        is_dir: u32,
+        is_elf: u32,
+        is_txt: u32,
+        size: u64,
+    }
+
+    let valid_path = b"/disk";
+    let mut dummy_dir = [DirEntryQa { name: [0u8; 64], name_len: 0, is_dir: 0, is_elf: 0, is_txt: 0, size: 0 }; 4];
+
+    // 1. SYS_READDIR (91): out_ptr NULL, non-canonical, kernel, and path_ptr kernel
+    let r_rd_null = syscall4(91, valid_path.as_ptr() as u64, valid_path.len() as u64, NULL_PTR, 4);
+    let r_rd_nc   = syscall4(91, valid_path.as_ptr() as u64, valid_path.len() as u64, NON_CANON_PTR, 4);
+    let r_rd_kern = syscall4(91, valid_path.as_ptr() as u64, valid_path.len() as u64, KERNEL_PTR, 4);
+    let r_rd_pk   = syscall4(91, KERNEL_PTR, 8, dummy_dir.as_mut_ptr() as u64, 4);
+    if r_rd_null == EINVAL && r_rd_nc == EFAULT && r_rd_kern == EFAULT && r_rd_pk == EFAULT {
+        print_str(b"  [PASS] QA-SEC-1: SYS_READDIR (91) rejeitou NULL (-22), nao-canonico e kernel (-14 EFAULT)\n");
+    } else {
+        print_str(b"  [FAIL] QA-SEC-1: SYS_READDIR codigos inesperados!\n");
+    }
+
+    // 2. SYS_OPEN (15): NULL, non-canonical, kernel
+    let r_op_null = syscall3(15, NULL_PTR, 8, O_RDONLY as u64);
+    let r_op_nc   = syscall3(15, NON_CANON_PTR, 8, O_RDONLY as u64);
+    let r_op_kern = syscall3(15, KERNEL_PTR, 8, O_RDONLY as u64);
+    if r_op_null == EINVAL && r_op_nc == EFAULT && r_op_kern == EFAULT {
+        print_str(b"  [PASS] QA-SEC-2: SYS_OPEN (15) rejeitou NULL (-22), nao-canonico e kernel (-14 EFAULT)\n");
+    } else {
+        print_str(b"  [FAIL] QA-SEC-2: SYS_OPEN codigos inesperados!\n");
+    }
+
+    // 3. SYS_WRITE (1): fd gravavel com ponteiros invalidos
+    let fd_w = sys_open(b"/disk/QA_SEC.TXT", O_WRONLY | O_CREAT | O_TRUNC);
+    let r_wr_null = if fd_w >= 3 { syscall3(1, fd_w as u64, NULL_PTR, 16) } else { -99 };
+    let r_wr_nc   = if fd_w >= 3 { syscall3(1, fd_w as u64, NON_CANON_PTR, 16) } else { -99 };
+    let r_wr_kern = if fd_w >= 3 { syscall3(1, fd_w as u64, KERNEL_PTR, 16) } else { -99 };
+    if fd_w >= 3 { let _ = sys_close(fd_w as u64); }
+    if r_wr_null == EINVAL && r_wr_nc == EFAULT && r_wr_kern == EFAULT {
+        print_str(b"  [PASS] QA-SEC-3: SYS_WRITE (1) rejeitou NULL (-22), nao-canonico e kernel (-14 EFAULT)\n");
+    } else {
+        print_str(b"  [FAIL] QA-SEC-3: SYS_WRITE codigos inesperados!\n");
+    }
+
+    // 4. SYS_NET_SET_DNS (86): NULL/NULL, non-canonical, kernel
+    let r_dns_null = syscall3(86, NULL_PTR, NULL_PTR, 0);
+    let r_dns_nc   = syscall3(86, NON_CANON_PTR, 0, 0);
+    let r_dns_kern = syscall3(86, KERNEL_PTR, 0, 0);
+    if r_dns_null == EINVAL && r_dns_nc == EFAULT && r_dns_kern == EFAULT {
+        print_str(b"  [PASS] QA-SEC-4: SYS_NET_SET_DNS (86) rejeitou NULL (-22), nao-canonico e kernel (-14 EFAULT)\n");
+    } else {
+        print_str(b"  [FAIL] QA-SEC-4: SYS_NET_SET_DNS codigos inesperados!\n");
+    }
+
+    // 5. SYS_GET_SYSTEM_STATS (88): NULL, non-canonical, kernel
+    let r_st_null = syscall3(88, NULL_PTR, 0, 0);
+    let r_st_nc   = syscall3(88, NON_CANON_PTR, 0, 0);
+    let r_st_kern = syscall3(88, KERNEL_PTR, 0, 0);
+    if r_st_null == EINVAL && r_st_nc == EFAULT && r_st_kern == EFAULT {
+        print_str(b"  [PASS] QA-SEC-5: SYS_GET_SYSTEM_STATS (88) rejeitou NULL (-22), nao-canonico e kernel (-14 EFAULT)\n");
+    } else {
+        print_str(b"  [FAIL] QA-SEC-5: SYS_GET_SYSTEM_STATS codigos inesperados!\n");
+    }
+
+    // 6. FAT32 Nested mkdir (8.3 + LFN) + Escrita/Leitura + ReadDir + RDTSC timing
+    let d1 = b"/disk/QA83";
+    let d2 = b"/disk/QA83/SUB";
+    let d3 = b"/disk/QA_Dir_Longo_2026";
+    let d4 = b"/disk/QA_Dir_Longo_2026/Sub_LFN_Homolog";
+    let _ = syscall3(51, d1.as_ptr() as u64, d1.len() as u64, 0);
+    let _ = syscall3(51, d2.as_ptr() as u64, d2.len() as u64, 0);
+    let _ = syscall3(51, d3.as_ptr() as u64, d3.len() as u64, 0);
+    let mk4 = syscall3(51, d4.as_ptr() as u64, d4.len() as u64, 0);
+
+    let note_path = b"/disk/QA_Dir_Longo_2026/Sub_LFN_Homolog/nota_qa_homolog.txt";
+    static mut QA_IO_BUF: [u8; 4096] = [0x4Au8; 4096];
+    let io_buf = &mut *core::ptr::addr_of_mut!(QA_IO_BUF);
+    io_buf[..28].copy_from_slice(b"JINN_FAT32_LFN_QA_VERIFIED\n!");
+
+    let wt0 = core::arch::x86_64::_rdtsc();
+    let f_out = sys_open(note_path, O_WRONLY | O_CREAT | O_TRUNC);
+    let wrote = if f_out >= 3 {
+        let w = sys_write(f_out as u64, io_buf.as_ptr(), 4096);
+        let _ = sys_close(f_out as u64);
+        w
+    } else { -1 };
+    let _ = sys_sync();
+    let wt1 = core::arch::x86_64::_rdtsc();
+
+    let mut rd_check = [0u8; 64];
+    let rt0 = core::arch::x86_64::_rdtsc();
+    let f_in = sys_open(note_path, O_RDONLY);
+    let read_n = if f_in >= 3 {
+        let r = sys_read(f_in as u64, rd_check.as_mut_ptr(), 64);
+        let _ = sys_close(f_in as u64);
+        r
+    } else { -1 };
+    let rt1 = core::arch::x86_64::_rdtsc();
+
+    let cnt = syscall4(91, d4.as_ptr() as u64, d4.len() as u64, dummy_dir.as_mut_ptr() as u64, 4);
+    let mut found_lfn = false;
+    if cnt > 0 {
+        for i in 0..(cnt as usize).min(4) {
+            let nlen = (dummy_dir[i].name_len as usize).min(64);
+            if nlen >= 19 && &dummy_dir[i].name[..19] == b"nota_qa_homolog.txt" {
+                found_lfn = true;
+            }
+        }
+    }
+    if wrote == 4096 && read_n == 64 && &rd_check[..28] == b"JINN_FAT32_LFN_QA_VERIFIED\n!" && found_lfn {
+        print_str(b"  [PASS] QA-FAT32-LFN: mkdir(8.3+LFN mk=");
+        print_i64(mk4);
+        print_str(b") 4KB write_cycles=");
+        print_u64(wt1.saturating_sub(wt0));
+        print_str(b" read_cycles=");
+        print_u64(rt1.saturating_sub(rt0));
+        print_str(b" readdir=OK\n");
+    } else {
+        print_str(b"  [FAIL] QA-FAT32-LFN falhou! wrote=");
+        print_i64(wrote);
+        print_str(b" cnt=");
+        print_i64(cnt);
+        print_str(b"\n");
+    }
+}
+
 // ── Entry Point ──────────────────────────────────────────────────────────────
 
 #[no_mangle]
@@ -4696,6 +4833,9 @@ pub extern "C" fn _start(argc: usize, argv: *const *const u8, _envp: *const *con
             let arg1 = *argv.add(1);
             if str_contains(arg1, b"browser") {
                 run_browser_interactive();
+            } else if streq(arg1, b"qa") {
+                test_adv_qa_security_and_fat32_lfn();
+                sys_exit(0);
             } else if streq(arg1, b"child_test") {
                 run_child_task(argc, argv);
             } else if streq(arg1, b"exec_done") {
@@ -4713,6 +4853,7 @@ pub extern "C" fn _start(argc: usize, argv: *const *const u8, _envp: *const *con
         print_str(b"==================================================================\n");
 
         test_tls13_cryptography_and_syscalls();
+        test_adv_qa_security_and_fat32_lfn();
         test_adv_memory_protection();
         test_adv_jda_stale_handles();
         test_adv_unified_descriptors();

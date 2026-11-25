@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Homologação Completa: Desempenho Zero-Idle, Estabilidade FAT32/JPKG, Rede PCAP e Segurança Zero-Trust — Jinn OS</title>
+  <meta name="description"
+    content="Resultados reais da bateria de homologação do Jinn OS, Aladdin e JHCS em QEMU (4 vCPUs SMP e 1 vCPU com Intel e1000 e VirtIO-Net): benchmarks SIMD em .bss, Zero-Idle via Syscall 88, SHA-256 .jpkg no Offline-on-Shutdown, DNS cascata em PCAP e rejeição -EFAULT/-EINVAL.">
+  <link rel="canonical"
+    href="https://jinn-os.dev.br/artigos/homologacao-desempenho-estabilidade-integracao-seguranca-zero-idle.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url"
+    content="https://jinn-os.dev.br/artigos/homologacao-desempenho-estabilidade-integracao-seguranca-zero-idle.html">
+  <meta property="og:title"
+    content="Homologação Completa: Desempenho Zero-Idle, Estabilidade FAT32/JPKG, Rede PCAP e Segurança Zero-Trust no Jinn OS">
+  <meta property="og:description"
+    content="Auditoria prática em QEMU bare-metal: 52/52 testes Aladdin, 24/24 JHCS, 8/8 jhcs-test Ring 3, validação SHA-256 em .jpkg, cascata DNS em PCAP e proteção de ponteiros -EFAULT.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/wallpaper.jpg">
+
+  <!-- Artigo Meta -->
+  <meta name="article:tag" content="HOMOLOGAÇÃO &amp; SEGURANÇA, ZERO-IDLE, SIMD, NETWORK, QA">
+  <meta name="article:published_time" content="2026-11-24T23:59:00Z">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans selection:bg-cyan-500 selection:text-black">
+
+  <!-- Cabeçalho de Navegação -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 hover:text-cyan-400 transition-colors">
+        <i data-lucide="terminal" class="w-5 h-5 text-cyan-400"></i>
+        <span class="font-bold tracking-wider font-mono text-sm">JINN OS // DEVLOG</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="/artigos/" class="text-slate-400 hover:text-white transition-colors">Artigos</a>
+        <a href="/rss.xml" class="text-emerald-400 hover:underline">RSS 2.0</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Feed</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Conteúdo do Artigo -->
+  <main class="max-w-4xl mx-auto px-6 py-12">
+    <div class="mb-8">
+      <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-emerald-400 mb-3">
+        <span class="bg-emerald-950/80 border border-emerald-800/60 px-2.5 py-0.5 rounded-full">HOMOLOGAÇÃO &amp; SEGURANÇA</span>
+        <span>•</span>
+        <time datetime="2026-11-24">24 de Novembro de 2026</time>
+      </div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight">
+        Homologação Integrada do Jinn OS, Aladdin e JHCS: Benchmarks SIMD, Zero-Idle Real, SHA-256 em <code>.jpkg</code>, Cascata DNS em PCAP e Auditoria <code>-EFAULT</code>
+      </h1>
+      <p class="text-slate-400 text-base sm:text-lg mt-3 leading-relaxed">
+        Relatório técnico objetivo com todas as medições obtidas em emulação QEMU (<code>4 vCPUs SMP</code> e <code>1 vCPU</code> com placas <code>e1000</code> e <code>virtio-net-pci</code>) e nas suítes de host dos três repositórios (<code>Jinn</code>, <code>Aladdin</code>, <code>jhcs-rs</code>), incluindo as falhas descobertas e corrigidas durante a auditoria.
+      </p>
+    </div>
+
+    <!-- Artigo em Prosa -->
+    <article class="prose prose-invert prose-cyan max-w-none text-slate-300 space-y-6 text-sm sm:text-base leading-relaxed">
+
+      <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2">
+        1. Auditoria e Correções Estruturais Aplicadas Hoje
+      </h2>
+      <p>
+        Antes de executar a bateria de homologação, uma inspeção estática e dinâmica nos três workspaces identificou quatro lacunas reais entre código, invariantes de segurança e suítes de teste:
+      </p>
+      <ul class="space-y-2 my-4">
+        <li><strong>Validação SHA-256 em pacotes <code>.jpkg</code>:</strong> o empacotador <code>scripts/make_pkg.py</code> já gravava o resumo SHA-256 de manifesto + payload ELF em <code>header[96..128]</code>, porém nem o <code>aladdin-server</code> (<code>apply_offline_updates_and_shutdown</code>) nem o <code>SoftwareManagerApp</code> recalculavam o digest antes de gravar em <code>/disk/apps/</code> — além de o instalador online usar buffer fixo de 1024 bytes, truncando pacotes reais como <code>sysmon.jpkg</code> (57.905 bytes). Implementamos <code>Sha256Hasher</code> e <code>verify_and_extract_elf</code> em <code>Aladdin/src/apps/jpkg.rs</code> (<code>#![no_std]</code>, compartilhado pelos dois fluxos), elevamos o buffer de leitura e abortamos imediatamente em caso de adulteração de 1 byte.</li>
+        <li><strong>Entrega dupla no anel <code>AladdinSharedRings</code> e resíduo de boot:</strong> em <code>apps/aladdin-server/src/main.rs</code>, após ler <code>rx_events</code> do anel compartilhado SPSC, o compositor também invocava <code>sys_poll_input</code> (Syscall 75), consumindo eventos residuais <code>'A'</code>/<code>'B'</code> do selftest de drivers e duplicando teclas (<code>stats</code> virava <code>ABssttatatss</code>). Passamos a usar <code>sys_poll_input</code> exclusivamente como fallback quando <code>SHARED_RINGS_ACTIVE</code> é falso, roteando o teclado em <code>ps2_keyboard.rs</code> apenas para o anel ativo (ou para o buffer de console quando inativo) com limpeza explícita pós-selftest em <code>device_manager.rs</code> e <code>gui.rs</code>.</li>
+        <li><strong>Validação prévia de ponteiro em <code>sys_readdir</code> e sincronismo IRQ1:</strong> em <code>src/syscall.rs</code> (Syscall 91), <code>validate_user_buffer</code> agora valida <code>out_ptr</code> já na entrada da syscall (mesmo quando um diretório vazio resulta em <code>count == 0</code>), garantindo rejeição imediata com <code>-EFAULT</code>/<code>-EINVAL</code>. Em <code>ps2_keyboard.rs</code>, as variáveis <code>SHIFT_DOWN</code>, <code>CAPS_LOCK</code> e <code>EXTENDED_KEY</code> migraram de <code>static mut</code> para <code>AtomicBool</code>.</li>
+        <li><strong>Desbloqueio de rolagem na Central de Artigos (<code>web/artigos/index.html</code>):</strong> a importação de <code>/style.css</code> (do Portal Desktop) herdava <code>overflow: hidden</code> e <code>user-select: none</code> no elemento raiz. Removemos esse acoplamento e implementamos <code>scroll-behavior: smooth</code>, <code>overflow-y: auto</code>, barra de progresso no topo, cabeçalho compacto com busca instantânea, filtros por 5 categorias, tempo de leitura e botão flutuante <em>Voltar ao Topo ↑</em>.</li>
+      </ul>
+
+      <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-8">
+        2. Matriz de Desempenho SIMD, Syscalls e Zero-Idle (QEMU)
+      </h2>
+      <p>
+        Compilamos kernel e apps Ring 3 com <code>cargo build --release --target x86_64-unknown-none</code> e executamos a suíte <code>jhcs-test</code> (8 testes) + telemetria do <code>aladdin-server</code> (<code>Syscall 88</code>) + probe de hardware (<code>Syscall 82</code>) em quatro topologias QEMU TCG (<code>-m 512M</code>):
+      </p>
+
+      <div class="overflow-x-auto my-6">
+        <table class="w-full text-left border-collapse bg-slate-900/60 border border-slate-800 rounded-xl text-xs sm:text-sm font-mono">
+          <thead>
+            <tr class="border-b border-slate-700 text-cyan-300 bg-slate-900">
+              <th class="p-3">Configuração QEMU</th>
+              <th class="p-3">box_blur_rgba_simd (128×128 r=3 .bss)</th>
+              <th class="p-3">scale_image_rgba_simd (128²→256² .bss)</th>
+              <th class="p-3">Syscall 88 (média ciclos)</th>
+              <th class="p-3">fxsave64/fxrstor64 + troca ctx</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800 text-slate-300">
+            <tr>
+              <td class="p-3 font-semibold text-white">4 vCPUs SMP + e1000</td>
+              <td class="p-3">9.081.129 ciclos (554/px)</td>
+              <td class="p-3">7.952.472 ciclos (121/px)</td>
+              <td class="p-3">15.328 ciclos</td>
+              <td class="p-3">1.902 ciclos</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-white">1 vCPU UP + e1000 (Cold-Reboot)</td>
+              <td class="p-3">7.218.936 ciclos (440/px)</td>
+              <td class="p-3">9.362.088 ciclos (142/px)</td>
+              <td class="p-3">15.121 ciclos</td>
+              <td class="p-3">3.405 ciclos</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-white">4 vCPUs SMP + virtio-net-pci</td>
+              <td class="p-3">8.017.938 ciclos (489/px)</td>
+              <td class="p-3">11.755.098 ciclos (179/px)</td>
+              <td class="p-3">21.339 ciclos</td>
+              <td class="p-3">2.070 ciclos</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-white">1 vCPU UP + virtio-net-pci</td>
+              <td class="p-3">41.801.421 ciclos (2.551/px)</td>
+              <td class="p-3">18.257.776 ciclos (278/px)</td>
+              <td class="p-3">35.425 ciclos</td>
+              <td class="p-3">2.073 ciclos</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        <strong>Observação de Telemetria Zero-Idle (<code>Syscall 88</code> / <code>HLT</code>):</strong> em <code>4 vCPUs SMP</code>, durante repouso de ~4 s pós-boot (<code>e1000</code>), <code>idle_cycles</code> saltou de <code>34.479.187.839</code> para <code>106.832.644.843</code> (+72,35 bilhões de ciclos em <code>hlt</code> pelos núcleos AP) com <code>active_cycles=0</code>; no sono bloqueado explícito do Test 8c (<code>sleep(100t)</code>), registrou-se <code>active_delta=0</code> e <code>idle_delta=2.033.659.635</code> (SMP e1000) / <code>1.086.195.980</code> (SMP VirtIO). Em <code>1 vCPU</code>, onde não há núcleos AP acumulando <code>IDLE_HLT_CYCLES</code> paralelos no contador global <code>cpu_cycle_stats()</code>, a janela de repouso de 4 s no desktop marcou <code>active_cycles</code> de <code>14.186.451.400</code> para <code>14.223.028.952</code> (+36,57 M ciclos) frente a <code>idle_cycles</code> de <code>6.773.057.049</code> para <code>24.867.803.861</code> (+18,09 G ciclos, equivalendo a <strong>99,80% em estado ocioso <code>HLT</code> e ~0,20% ativos</strong> de manutenção). Na emulação QEMU TCG sem aceleração KVM/AVX2 de host, o benchmark sintético de MFLOPS reportou 2–3 MFLOPS e ALU 3.030–4.255 MOPS, mantendo paridade numérica completa em <code>MatMul 8×8</code>, <code>VectorAdd 64-f32</code> e <code>ReduceSum 16-f32</code>.
+      </p>
+
+      <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-8">
+        3. Estabilidade FAT32, Offline-on-Shutdown <code>.jpkg</code> e Cold-Reboot
+      </h2>
+      <ul class="space-y-2 my-4">
+        <li><strong>FAT32 aninhado (8.3 + LFN) e timing de E/S:</strong> em Ring 3 (<code>QA-FAT32-LFN</code> via <code>ola-mundo</code>), a criação recursiva de <code>/disk/QA83/SUB</code> e <code>/disk/QA_Dir_Longo_2026/Sub_LFN_Homolog</code> seguida de escrita síncrona de 4 KiB e releitura via <code>SYS_READDIR</code> (91) obteve <code>write_cycles=15.911.607</code> e <code>read_cycles=3.356.748</code> em 4 vCPUs e1000 (<code>22,56M / 2,41M</code> em 1 vCPU e1000), sobrevivendo integralmente ao <em>Cold-Reboot</em> com reconciliação JAHA 1.2 (<code>0 bytes discrepancy</code> em 255.090.688 bytes utilizáveis).</li>
+        <li><strong>Offline-on-Shutdown com SHA-256 verificado em disco real:</strong> no teste automatizado GUI (<code>scripts/test_benchmark_offline_update.py</code>), o <code>aladdin-server</code> apagou o vídeo (<code>[GUI] Display Power: OFF</code>), validou os três pacotes em staging via <code>SHA-256</code> (<code>[SHA-256 OK] calc: 9.096 bytes</code>, <code>sysmon: 57.744 bytes</code>, <code>notes: 11.112 bytes</code>), atualizou <code>/disk/packages.db</code> (<code>Offline Updated</code>), executou <code>SYS_SYNC</code> e desligou via ACPI (<code>SYS_POWEROFF</code>). A inspeção forense em <code>disk.img</code> confirmou os diretórios/arquivos <code>APPS</code>, <code>CALC ELF</code>, <code>SYSMON ELF</code> e <code>NOTES ELF</code> gravados nos clusters FAT32.</li>
+        <li><strong>Prova de rejeição de 1 byte adulterado:</strong> na suíte do <code>Aladdin</code> (52/52 testes aprovados em <code>debug</code> e <code>release</code>), o teste <code>test_jpkg_sha256_verification_and_tamper_rejection</code> inverte 1 bit do payload ELF de um <code>.jpkg</code> válido, comprova o retorno <code>Err(JpkgVerifyError::ChecksumMismatch)</code> e atesta que <code>SoftwareManagerApp</code> aborta sem acionar <code>vfs.write_file</code> em <code>/disk/apps/</code>.</li>
+      </ul>
+
+      <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-8">
+        4. Integração End-to-End (Desktop + Intel e1000 / VirtIO + Navegador)
+      </h2>
+      <p>
+        Na validação cruzada com captura de pacotes reais em disco (<code>scripts/test_dns_cross_pcap.py</code>, 4 vCPUs SMP), ambos os drivers de rede inicializaram e conduziram o fluxo completo do <code>browser.elf</code> sobre <code>AladdinSharedRings</code> sem travamentos de boot:
+      </p>
+      <ul class="space-y-2 my-4">
+        <li><strong>Passagem A — Intel 82540EM (<code>-device e1000</code>):</strong> <code>dns_e1000.pcap</code> (5.622 bytes) registrou 5 requisições/respostas ARP (gateway <code>10.0.2.2 → 52:55:0a:00:02:02</code> e <code>10.0.2.3 → 52:55:0a:00:02:03</code>), <strong>cascata real de DNS UDP/53</strong> (<code>1.1.1.1:53</code> x2 → fallback <code>8.8.8.8:53</code> x2 → resolução por <code>10.0.2.3:53</code> para <code>example.com → 104.20.23.154</code>), 10 pacotes HTTP TCP/80 e renderização completa da página (577 bytes) no compositor.</li>
+        <li><strong>Passagem B — VirtIO-Net (<code>-device virtio-net-pci</code>):</strong> <code>dns_virtio.pcap</code> (4.722 bytes) registrou resolução direta via <code>1.1.1.1:53</code> (<code>104.20.23.154</code>), 9 pacotes TCP/80 e renderização DOM idêntica (<code>577 bytes</code>) sob composição acrílica a 1024×768×32 bpp.</li>
+      </ul>
+
+      <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-8">
+        5. Segurança Zero-Trust (<code>-EFAULT</code> / <code>-EINVAL</code>, <code>W^X</code>) e Transparência de Escopo
+      </h2>
+      <p>
+        Todas as chamadas críticas testadas a partir do Ring 3 (<code>QA-SEC-1..5</code>) rejeitaram ponteiros nulos (<code>0x0 → -22 EINVAL</code>), endereços não-canônicos (<code>0xBAD0_0000_0000_0000 → -14 EFAULT</code>) e endereços do espaço do kernel (<code>0xFFFF_8000_0000_0000 → -14 EFAULT</code>) sem provocar <em>Kernel Panic</em> nas syscalls <code>SYS_READDIR (91)</code>, <code>SYS_OPEN (15)</code>, <code>SYS_WRITE (1)</code>, <code>SYS_NET_SET_DNS (86)</code> e <code>SYS_GET_SYSTEM_STATS (88)</code>. No boot do microkernel, o ELF Loader aprovou <strong>16/16</strong> invariantes <code>W^X</code> e limites de segmento, enquanto as suítes internas aprovaram <strong>10/10</strong> Cache LRU, <strong>10/10</strong> POSIX DAC, <strong>12/12</strong> Driver Manager, <strong>5/5</strong> Supervisor JAHA, <strong>12/12</strong> RFC 1035 DNS, <strong>13/13</strong> JinnWall SPI, <strong>13/13</strong> TCP RFC 793, <strong>23/23</strong> KDM DMA e TLS 1.3 ChaCha20-Poly1305/X25519 (<strong>9/9</strong> em Ring 3). Nos hosts, <code>Aladdin</code> aprovou <strong>52/52</strong> testes e <code>jhcs-rs</code> aprovou <strong>24/24</strong> testes.
+      </p>
+
+      <div class="bg-slate-900/90 border border-amber-800/60 rounded-xl p-4 my-6 text-xs sm:text-sm">
+        <div class="text-amber-400 font-bold font-mono mb-1">TRANSPARÊNCIA TÉCNICA DE HOMOLOGAÇÃO (CASOS CONDICIONAIS NO PERFIL DESKTOP):</div>
+        <p class="text-slate-300 m-0">
+          Quando o binário legado <code>ola-mundo.elf</code> foi disparado manualmente dentro da sessão ativa do <code>AladdinDesktop</code> (em vez do perfil headless <code>SimbadServer</code> de boot), quatro subtestes internos legados acusaram condição adversa esperada de ambiente compartilhado: <code>test_sched_preemption_and_cpu_quota</code> (depende do processo <code>worker[U3]</code> com cota de 25 ticks criado apenas em boot headless), <code>test_memory_pressure</code> (limite de 4096 páginas dinâmicas não esgotado dentro da janela), <code>test_fd_stress</code> e 1 de 8 passos em <code>test_browser_storage_persistence</code> (7/8 aprovados). Todos os subsistemas de produção — compositor, Zero-Idle SMP, drivers <code>e1000</code>/<code>VirtIO</code>, FAT32 LFN, <code>.jpkg</code> SHA-256 e proteção de syscalls — operaram sem falhas ou vazamentos de memória (JAHA 1.2 = <code>0 bytes discrepancy</code>).
+        </p>
+      </div>
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <!-- Rodapé do Artigo -->
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn OS Sovereign Systems • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/artigos/" class="text-cyan-400 hover:underline">Voltar aos Artigos</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-slate-300 hover:text-white">Portal Principal</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>

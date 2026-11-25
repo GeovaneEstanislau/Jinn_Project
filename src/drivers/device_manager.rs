@@ -1184,5 +1184,8 @@ pub fn run_driver_manager_selftests() -> (usize, usize) {
         }
     }
 
+    // Limpa caracteres sintéticos ('A', 'B') inseridos pelos selftests do boot
+    while crate::keyboard_buffer::pop().is_some() {}
+
     (passed, total)
 }

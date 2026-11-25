@@ -6,6 +6,7 @@
 
 #[allow(dead_code)]
 
+use core::sync::atomic::{AtomicBool, Ordering};
 use crate::keyboard_buffer;
 
 const KBD_DATA: u16 = 0x60;  // PS/2 data port
@@ -76,9 +77,9 @@ static SCANCODE_MAP_SHIFT: [u8; 88] = [
     b'2',  b'3',  b'0',  b'.',  0,     0,     0,     0,
 ];
 
-static mut SHIFT_DOWN: bool = false;
-static mut CAPS_LOCK:  bool = false;
-static mut EXTENDED_KEY: bool = false;
+static SHIFT_DOWN:   AtomicBool = AtomicBool::new(false);
+static CAPS_LOCK:    AtomicBool = AtomicBool::new(false);
+static EXTENDED_KEY: AtomicBool = AtomicBool::new(false);
 
 /// Inicializa o controlador PS/2 i8042 e o teclado.
 ///
@@ -149,97 +150,96 @@ pub fn init_and_flush() {
 
 /// Converte scancode PS/2 Set 1 para ASCII e empurra para o buffer.
 pub fn process_scancode(sc: u8) {
-    unsafe {
-        if sc == 0xE0 {
-            EXTENDED_KEY = true;
-            return;
-        }
+    if sc == 0xE0 {
+        EXTENDED_KEY.store(true, Ordering::Relaxed);
+        return;
+    }
 
-        let is_extended = EXTENDED_KEY;
-        EXTENDED_KEY = false;
+    let is_extended = EXTENDED_KEY.swap(false, Ordering::Relaxed);
+    let is_release = (sc & 0x80) != 0;
+    let make_code  = sc & 0x7F;
+    let cur_shift = SHIFT_DOWN.load(Ordering::Relaxed);
+    let cur_caps = CAPS_LOCK.load(Ordering::Relaxed);
+    let mod_bits = (if cur_shift { 1 } else { 0 }) | (if cur_caps { 2 } else { 0 });
 
-        let is_release = (sc & 0x80) != 0;
-        let make_code  = sc & 0x7F;
-
-        if is_extended {
-            if !is_release {
-                let arrow_code = match make_code {
-                    0x48 => Some(0x48), // Seta Cima
-                    0x50 => Some(0x50), // Seta Baixo
-                    0x49 => Some(0x49), // Page Up
-                    0x51 => Some(0x51), // Page Down
-                    0x4B => Some(0x4B), // Seta Esquerda
-                    0x4D => Some(0x4D), // Seta Direita
-                    0x1C => Some(b'\n'), // Keypad Enter
-                    _ => None,
-                };
-                if let Some(code) = arrow_code {
-                    keyboard_buffer::push(code);
-                    let ev = aladdin::contracts::shared_rings::SharedInputEvent {
-                        kind: aladdin::contracts::shared_rings::INPUT_KIND_KEY_DOWN,
-                        modifiers: (if SHIFT_DOWN { 1 } else { 0 }) | (if CAPS_LOCK { 2 } else { 0 }),
-                        x: 0,
-                        y: 0,
-                        code: code as u32,
-                    };
-                    crate::gui::try_push_shared_input_event(ev);
-                }
-            }
-            return;
-        }
-
-        match make_code {
-            0x2A | 0x36 => { SHIFT_DOWN = !is_release; } // Shift L/R
-            0x3A if !is_release => { CAPS_LOCK = !CAPS_LOCK; }
-            code if !is_release && (code as usize) < SCANCODE_MAP_NORMAL.len() => {
-                let shifted = SHIFT_DOWN ^ (CAPS_LOCK && code >= 0x10 && code <= 0x32);
-                let ch = if shifted {
-                    SCANCODE_MAP_SHIFT[code as usize]
-                } else {
-                    SCANCODE_MAP_NORMAL[code as usize]
-                };
-                if ch != 0 {
-                    keyboard_buffer::push(ch);
-                    let ev = aladdin::contracts::shared_rings::SharedInputEvent {
-                        kind: aladdin::contracts::shared_rings::INPUT_KIND_KEY_DOWN,
-                        modifiers: (if SHIFT_DOWN { 1 } else { 0 }) | (if CAPS_LOCK { 2 } else { 0 }),
-                        x: 0,
-                        y: 0,
-                        code: ch as u32,
-                    };
-                    crate::gui::try_push_shared_input_event(ev);
-                }
-            }
-            code if is_release => {
+    if is_extended {
+        if !is_release {
+            let arrow_code = match make_code {
+                0x48 => Some(0x48), // Seta Cima
+                0x50 => Some(0x50), // Seta Baixo
+                0x49 => Some(0x49), // Page Up
+                0x51 => Some(0x51), // Page Down
+                0x4B => Some(0x4B), // Seta Esquerda
+                0x4D => Some(0x4D), // Seta Direita
+                0x1C => Some(b'\n'), // Keypad Enter
+                _ => None,
+            };
+            if let Some(code) = arrow_code {
                 let ev = aladdin::contracts::shared_rings::SharedInputEvent {
-                    kind: aladdin::contracts::shared_rings::INPUT_KIND_KEY_UP,
-                    modifiers: (if SHIFT_DOWN { 1 } else { 0 }) | (if CAPS_LOCK { 2 } else { 0 }),
+                    kind: aladdin::contracts::shared_rings::INPUT_KIND_KEY_DOWN,
+                    modifiers: mod_bits,
                     x: 0,
                     y: 0,
                     code: code as u32,
                 };
-                crate::gui::try_push_shared_input_event(ev);
+                if !crate::gui::try_push_shared_input_event(ev) {
+                    keyboard_buffer::push(code);
+                }
             }
-            _ => {}
         }
+        return;
+    }
+
+    match make_code {
+        0x2A | 0x36 => { SHIFT_DOWN.store(!is_release, Ordering::Relaxed); } // Shift L/R
+        0x3A if !is_release => { CAPS_LOCK.fetch_xor(true, Ordering::Relaxed); }
+        code if !is_release && (code as usize) < SCANCODE_MAP_NORMAL.len() => {
+            let shifted = cur_shift ^ (cur_caps && code >= 0x10 && code <= 0x32);
+            let ch = if shifted {
+                SCANCODE_MAP_SHIFT[code as usize]
+            } else {
+                SCANCODE_MAP_NORMAL[code as usize]
+            };
+            if ch != 0 {
+                let ev = aladdin::contracts::shared_rings::SharedInputEvent {
+                    kind: aladdin::contracts::shared_rings::INPUT_KIND_KEY_DOWN,
+                    modifiers: mod_bits,
+                    x: 0,
+                    y: 0,
+                    code: ch as u32,
+                };
+                if !crate::gui::try_push_shared_input_event(ev) {
+                    keyboard_buffer::push(ch);
+                }
+            }
+        }
+        code if is_release => {
+            let ev = aladdin::contracts::shared_rings::SharedInputEvent {
+                kind: aladdin::contracts::shared_rings::INPUT_KIND_KEY_UP,
+                modifiers: mod_bits,
+                x: 0,
+                y: 0,
+                code: code as u32,
+            };
+            crate::gui::try_push_shared_input_event(ev);
+        }
+        _ => {}
     }
 }
 
 /// Reseta o estado de sincronização e modificadores do teclado
 pub fn reset_sync() {
-    unsafe {
-        SHIFT_DOWN = false;
-        CAPS_LOCK = false;
-        EXTENDED_KEY = false;
-    }
+    SHIFT_DOWN.store(false, Ordering::SeqCst);
+    CAPS_LOCK.store(false, Ordering::SeqCst);
+    EXTENDED_KEY.store(false, Ordering::SeqCst);
 }
 
 pub fn is_shift_down() -> bool {
-    unsafe { SHIFT_DOWN }
+    SHIFT_DOWN.load(Ordering::Relaxed)
 }
 
 pub fn set_shift_down(val: bool) {
-    unsafe { SHIFT_DOWN = val; }
+    SHIFT_DOWN.store(val, Ordering::SeqCst);
 }
 
 /// IRQ1 handler (vetor 33) — tratamento assíncrono de teclado PS/2.

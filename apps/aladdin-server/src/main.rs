@@ -635,25 +635,29 @@ impl SystemHost for UserSystem {
                 };
                 unsafe { let _ = aladdin_sdk::syscall::syscall1(16, fd as u64); };
 
-                if bytes_read >= 128 && buf[0..4] == [0x4A, 0x50, 0x4B, 0x47] {
-                    let elf_size = u32::from_le_bytes([buf[84], buf[85], buf[86], buf[87]]) as usize;
-                    let elf_offset = u32::from_le_bytes([buf[92], buf[93], buf[94], buf[95]]) as usize;
-
-                    if elf_offset < bytes_read as usize && elf_size > 0 {
-                        let end = (elf_offset + elf_size).min(bytes_read as usize);
-                        let payload = &buf[elf_offset..end];
-
-                        let out_fd = unsafe {
-                            aladdin_sdk::syscall::syscall3(71, pkg.dest_elf.as_ptr() as u64, pkg.dest_elf.len() as u64, 0o755)
-                        };
-                        if out_fd >= 0 {
-                            unsafe {
-                                let _ = aladdin_sdk::syscall::syscall3(aladdin_sdk::syscall::SYS_WRITE, out_fd as u64, payload.as_ptr() as u64, payload.len() as u64);
-                                let _ = aladdin_sdk::syscall::syscall1(16, out_fd as u64);
+                if bytes_read > 0 {
+                    match aladdin::apps::jpkg::verify_and_extract_elf(&buf[..bytes_read as usize]) {
+                        Ok((_hdr, payload)) => {
+                            let out_fd = unsafe {
+                                aladdin_sdk::syscall::syscall3(71, pkg.dest_elf.as_ptr() as u64, pkg.dest_elf.len() as u64, 0o755)
                             };
-                            print("[aladdin-server] [OFFLINE-UPDATE] [OK] Extraido com sucesso: ");
-                            print_num(payload.len() as u64);
-                            println(" bytes");
+                            if out_fd >= 0 {
+                                unsafe {
+                                    let _ = aladdin_sdk::syscall::syscall3(aladdin_sdk::syscall::SYS_WRITE, out_fd as u64, payload.as_ptr() as u64, payload.len() as u64);
+                                    let _ = aladdin_sdk::syscall::syscall1(16, out_fd as u64);
+                                };
+                                print("[aladdin-server] [OFFLINE-UPDATE] [SHA-256 OK] Extraido com sucesso: ");
+                                print_num(payload.len() as u64);
+                                println(" bytes");
+                            }
+                        }
+                        Err(aladdin::apps::jpkg::JpkgVerifyError::ChecksumMismatch) => {
+                            print("[aladdin-server] [OFFLINE-UPDATE] [SECURITY-ABORT] SHA-256 adulterado para: ");
+                            println(pkg.name);
+                        }
+                        Err(_) => {
+                            print("[aladdin-server] [OFFLINE-UPDATE] [ABORT] Conteinador .jpkg invalido: ");
+                            println(pkg.name);
                         }
                     }
                 }
@@ -900,8 +904,30 @@ impl ProcessHost for UserProcess {
                 Ok(_) => output("Processo iniciado com sucesso!", 0x0010_B981),
                 Err(()) => output("Erro ao iniciar processo.", 0x00EF_4444),
             }
+        } else if trimmed.eq_ignore_ascii_case("stats") || trimmed.eq_ignore_ascii_case("jhcs") {
+            let mut st = aladdin_sdk::syscall::SystemStatsUser::default();
+            let _ = unsafe {
+                aladdin_sdk::syscall::syscall1(
+                    aladdin_sdk::syscall::SYS_GET_SYSTEM_STATS,
+                    &mut st as *mut _ as u64,
+                )
+            };
+            aladdin_sdk::console::print("[aladdin-server] [STATS] active_cycles=");
+            aladdin_sdk::console::print_num(st.cpu_active_cycles);
+            aladdin_sdk::console::print(" idle_cycles=");
+            aladdin_sdk::console::print_num(st.cpu_idle_cycles);
+            aladdin_sdk::console::print(" syscalls=");
+            aladdin_sdk::console::print_num(st.syscalls_total);
+            aladdin_sdk::console::print(" used_ram_mb=");
+            aladdin_sdk::console::print_num(st.used_ram_mb);
+            aladdin_sdk::console::print(" ring_rx=");
+            aladdin_sdk::console::print_num(st.ring_events_processed);
+            aladdin_sdk::console::print(" ring_tx=");
+            aladdin_sdk::console::print_num(st.ring_cmds_flushed);
+            aladdin_sdk::console::println("");
+            output("Telemetria Zero-Idle & Syscall 88 registrada na serial.", 0x0022_C55E);
         } else if trimmed.eq_ignore_ascii_case("help") {
-            output("Comandos: browser, spawn <path>, uptime, reboot, clear", 0x0093_C5FD);
+            output("Comandos: browser, spawn <path>, stats, uptime, reboot, clear", 0x0093_C5FD);
         } else if trimmed.eq_ignore_ascii_case("reboot") {
             output("Reiniciando o sistema...", 0x00EF_4444);
             unsafe { aladdin_sdk::syscall::syscall0(aladdin_sdk::syscall::SYS_REBOOT); }
@@ -923,10 +949,17 @@ impl ProcessHost for UserProcess {
 
     fn spawn_app(&mut self, path: &str) -> Result<usize, ()> {
         let is_browser = path.contains("browser") || path.contains("BROWSER");
+        let is_ola_qa = path.contains("ola-qa");
         let target_path = if is_browser {
             "/disk/browser.elf"
+        } else if is_ola_qa || path.contains("ola-mundo") || path.contains("ola.elf") {
+            "/disk/ola.elf"
+        } else if path.contains("jhcs-test") || path.contains("JHCS-TEST") {
+            "/disk/jhcs-test.elf"
         } else if path.contains("contador") {
             "/disk/contador.elf"
+        } else if path.starts_with('/') {
+            path
         } else {
             "/disk/ola_graf.elf"
         };
@@ -937,11 +970,19 @@ impl ProcessHost for UserProcess {
         path_buf[..len].copy_from_slice(&bytes[..len]);
         path_buf[len] = 0;
 
-        // Argumento 'browser' para que ola-mundo inicie no modo navegador gráfico
+        // Argumento 'browser' ou 'qa' quando aplicável
         let arg_browser = b"browser\0";
+        let arg_qa = b"qa\0";
+        let extra_arg = if is_browser {
+            arg_browser.as_ptr()
+        } else if is_ola_qa {
+            arg_qa.as_ptr()
+        } else {
+            core::ptr::null()
+        };
         let mut argv_ptrs: [*const u8; 3] = [
             path_buf.as_ptr(),
-            if is_browser { arg_browser.as_ptr() } else { core::ptr::null() },
+            extra_arg,
             core::ptr::null(),
         ];
 
@@ -1161,33 +1202,25 @@ pub extern "C" fn _start() -> ! {
                     enqueue_mouse(mx, my, btn);
                 }
             }
-        }
-
-        let mut ev = InputHardwareEvent { kind: 0, code: 0, x: 0, y: 0, modifiers: 0 };
-        for _ in 0..16 {
-            let ret = unsafe { sys_poll_input(&mut ev) };
-            if ret != 1 {
-                break;
-            }
-            if ev.kind == 1 {
-                let ch = ev.code as u8;
-                enqueue_key(ch);
-            } else if ev.kind == 3 {
-                let mx = (ev.x.max(0) as usize).min(fb_w.saturating_sub(1));
-                let my = (ev.y.max(0) as usize).min(fb_h.saturating_sub(1));
-                let btn = ev.code as u8;
-                unsafe {
-                    CURRENT_MOUSE = (mx, my, btn);
+        } else {
+            let mut ev = InputHardwareEvent { kind: 0, code: 0, x: 0, y: 0, modifiers: 0 };
+            for _ in 0..16 {
+                let ret = unsafe { sys_poll_input(&mut ev) };
+                if ret != 1 {
+                    break;
                 }
-                enqueue_mouse(mx, my, btn);
-            } else if ev.kind == 4 || ev.kind == 5 {
-                let mx = (ev.x.max(0) as usize).min(fb_w.saturating_sub(1));
-                let my = (ev.y.max(0) as usize).min(fb_h.saturating_sub(1));
-                let btn = ev.code as u8;
-                unsafe {
-                    CURRENT_MOUSE = (mx, my, btn);
+                if ev.kind == 1 {
+                    let ch = ev.code as u8;
+                    enqueue_key(ch);
+                } else if ev.kind == 3 || ev.kind == 4 || ev.kind == 5 {
+                    let mx = (ev.x.max(0) as usize).min(fb_w.saturating_sub(1));
+                    let my = (ev.y.max(0) as usize).min(fb_h.saturating_sub(1));
+                    let btn = ev.code as u8;
+                    unsafe {
+                        CURRENT_MOUSE = (mx, my, btn);
+                    }
+                    enqueue_mouse(mx, my, btn);
                 }
-                enqueue_mouse(mx, my, btn);
             }
         }
     };

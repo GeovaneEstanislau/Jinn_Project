@@ -265,6 +265,7 @@ pub fn register_shared_rings(caller_pid: usize, user_rings_vaddr: usize, backbuf
 
     SHARED_RINGS_HHDM.store(hhdm_virt, Ordering::Release);
     SHARED_BACKBUFFER_VADDR.store(backbuffer_vaddr, Ordering::Release);
+    while crate::keyboard_buffer::pop().is_some() {}
 
     crate::serial_write(b"[GUI] AladdinSharedRings registrado com sucesso (SPSC Zero-Copy Ativo)!\n");
     Ok(())

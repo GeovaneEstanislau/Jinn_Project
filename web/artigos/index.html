@@ -1,12 +1,11 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" class="scroll-smooth">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Artigos Técnicos &amp; Devlogs — Jinn OS</title>
   <meta name="description" content="Arquivo central de artigos técnicos, post-mortems, arquitetura de sistemas e auditorias de engenharia do microkernel Jinn OS e ecossistema Aladdin.">
   <link rel="canonical" href="https://jinn-os.dev.br/artigos/">
-  <link rel="stylesheet" href="/style.css">
   <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases" href="https://jinn-os.dev.br/feed.xml">
   <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
 
@@ -29,289 +28,486 @@
   <!-- Tailwind CSS & Lucide Icons -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    html {
+      scroll-behavior: smooth;
+      overflow-y: auto;
+      height: auto;
+    }
+    body {
+      overflow-x: hidden;
+      overflow-y: auto;
+      min-height: 100vh;
+      height: auto;
+      user-select: text;
+    }
+  </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen font-sans selection:bg-cyan-500 selection:text-black flex flex-col justify-between">
+<body id="topo" class="bg-slate-950 text-slate-100 min-h-screen font-sans selection:bg-cyan-500 selection:text-black flex flex-col">
 
-  <!-- Cabeçalho de Navegação -->
-  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur sticky top-0 z-50">
-    <div class="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
-      <a href="/" class="flex items-center gap-2 hover:text-cyan-400 transition-colors">
+  <!-- Barra de Progresso de Leitura/Rolagem no Topo -->
+  <div class="fixed top-0 left-0 right-0 h-1 bg-slate-900/90 z-[60]">
+    <div id="scroll-progress" class="h-full w-0 bg-gradient-to-r from-cyan-400 via-sky-400 to-emerald-400 transition-[width] duration-75"></div>
+  </div>
+
+  <!-- Cabeçalho Fixo Compacto (Sticky Header) com Busca e Filtros -->
+  <header class="border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+      <a href="/" class="flex items-center gap-2 hover:text-cyan-400 transition-colors shrink-0">
         <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
         <span class="font-bold tracking-wide">Jinn OS</span>
         <span class="text-xs font-mono bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded border border-cyan-800">Artigos</span>
       </a>
-      <div class="flex items-center gap-4 text-xs font-mono">
-        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
-        <a href="/feed.xml" target="_blank" class="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors">
+      <div class="flex items-center gap-3 sm:gap-4 text-xs font-mono overflow-x-auto">
+        <span id="articles-counter" class="hidden sm:inline-block text-slate-400">14 publicações</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml" class="hidden md:inline-block shrink-0"><img src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+        <a href="/feed.xml" target="_blank" class="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors shrink-0">
           <i data-lucide="rss" class="w-3.5 h-3.5"></i>
-          <span>RSS Feed</span>
+          <span>RSS</span>
         </a>
-        <span class="text-slate-600">|</span>
-        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="flex items-center gap-1 text-slate-400 hover:text-white transition-colors">
+        <span class="text-slate-700">|</span>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="flex items-center gap-1 text-slate-400 hover:text-white transition-colors shrink-0">
           <i data-lucide="github" class="w-3.5 h-3.5"></i>
           <span>GitHub</span>
         </a>
       </div>
     </div>
+
+    <!-- Barra de Busca Instantânea + Filtros por Categoria -->
+    <div class="border-t border-slate-800/60 bg-slate-900/75">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 py-2.5 flex flex-col lg:flex-row lg:items-center gap-2.5 justify-between">
+        <div class="relative flex-1 max-w-md">
+          <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+          <input id="article-search" type="search" placeholder="Buscar por título, syscall, subsistema ou tag..."
+            class="w-full pl-9 pr-3 py-1.5 text-xs sm:text-sm rounded-lg bg-slate-950/90 border border-slate-700/80 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400 transition-colors" />
+        </div>
+        <nav aria-label="Filtros por categoria" class="flex flex-wrap items-center gap-1.5 text-xs font-mono">
+          <button type="button" data-filter="all" class="filter-pill px-3 py-1 rounded-full border border-cyan-500/70 bg-cyan-950/90 text-cyan-300 font-semibold transition-colors">Todos</button>
+          <button type="button" data-filter="microkernel" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500 transition-colors">Microkernel &amp; IPC</button>
+          <button type="button" data-filter="redes" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500 transition-colors">Redes &amp; DNS</button>
+          <button type="button" data-filter="simd" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500 transition-colors">SIMD &amp; Zero-GPU</button>
+          <button type="button" data-filter="homologacao" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500 transition-colors">Homologação &amp; Segurança</button>
+        </nav>
+      </div>
+    </div>
   </header>
 
-  <!-- Conteúdo Principal -->
-  <main class="max-w-5xl mx-auto px-6 py-12 flex-1 w-full">
-    <div class="mb-10 text-center sm:text-left">
-      <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
-        Acervo Técnico de Engenharia &amp; Devlogs
-      </h1>
-      <p class="text-slate-400 mt-2 max-w-2xl leading-relaxed text-sm">
-        Relatórios de auditoria, post-mortems de depuração bare-metal e decisões de arquitetura do <strong>Jinn Microkernel</strong> e do ecossistema gráfico <strong>Aladdin</strong>.
-      </p>
+  <!-- Conteúdo Principal com Rolagem Fluida Nativa -->
+  <main class="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 flex-1 w-full">
+    <div class="mb-8 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+      <div>
+        <h1 class="text-2xl sm:text-4xl font-extrabold text-white tracking-tight">
+          Acervo Técnico de Engenharia &amp; Devlogs
+        </h1>
+        <p class="text-slate-400 mt-2 max-w-2xl leading-relaxed text-sm">
+          Relatórios de homologação, benchmarks bare-metal, post-mortems e arquitetura do <strong>Jinn Microkernel</strong>, <strong>JHCS</strong> e compositor <strong>Aladdin</strong>.
+        </p>
+      </div>
+      <div class="text-xs font-mono text-slate-400 shrink-0">
+        Mostrando <span id="visible-count" class="text-cyan-400 font-bold">14</span> de 14 artigos
+      </div>
     </div>
 
-    <!-- Grade de Artigos Dinâmica -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <!-- Card: resolucao-arp-dinamica-dns-cascata-virtualbox-qemu -->
-      <a href="/artigos/resolucao-arp-dinamica-dns-cascata-virtualbox-qemu.html" class="group block p-6 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all">
-        <div class="flex items-center gap-2 text-xs font-mono text-emerald-400 mb-2">
-          <span class="bg-emerald-950 border border-emerald-800 px-2 py-0.5 rounded">REDES</span>
-          <span>Novembro 2026</span>
+    <!-- Container Escalável de Artigos -->
+    <div id="articles-grid" class="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
+      <!-- Card: homologacao-desempenho-estabilidade-integracao-seguranca-zero-idle -->
+      <a href="/artigos/homologacao-desempenho-estabilidade-integracao-seguranca-zero-idle.html" data-article-card data-categories="microkernel redes simd homologacao" data-search="homologação completa: desempenho zero-idle, estabilidade fat32/jpkg, rede pcap e segurança zero-trust resultados reais da bateria de homologação do jinn os, aladdin e jhcs em qemu (4 vcpus smp e 1 vcpu com intel e1000 e virtio-net): benchmarks simd em .bss, zero-idle via syscall 88, sha-256 .jpkg no offline-on-shutdown, dns cascata em pcap e rejeição -efault/-einval. homologação &amp; segurança zero-idle simd network qa" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-emerald-400 mb-3">
+            <span class="bg-emerald-950 border border-emerald-800 px-2.5 py-0.5 rounded-full font-semibold">HOMOLOGAÇÃO &amp; SEGURANÇA</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-24">24 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>7 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-emerald-300 transition-colors leading-snug">
+            Homologação Completa: Desempenho Zero-Idle, Estabilidade FAT32/JPKG, Rede PCAP e Segurança Zero-Trust
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Resultados reais da bateria de homologação do Jinn OS, Aladdin e JHCS em QEMU (4 vCPUs SMP e 1 vCPU com Intel e1000 e VirtIO-Net): benchmarks SIMD em .bss, Zero-Idle via Syscall 88, SHA-256 .jpkg no Offline-on-Shutdown, DNS cascata em PCAP e rejeição -EFAULT/-EINVAL.
+          </p>
         </div>
-        <h2 class="text-xl font-bold text-white group-hover:text-emerald-300 transition-colors leading-snug">
-          Resolução ARP Dinâmica, DNS em Cascata e Hardening Intel e1000: Do QEMU ao VirtualBox Bare-Metal
-        </h2>
-        <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-          Como diagnosticamos divergências de MAC em Camada 2 entre QEMU SLIRP e VirtualBox NAT via PCAP, estabilizamos os anéis de descritores do Intel 82540EM (e1000) e implementamos um resolvedor DNS resiliente em cascata.
-        </p>
-        <div class="mt-4 flex items-center gap-1 text-xs font-semibold text-cyan-400">
-          <span>Ler artigo completo</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-        </div>
-      </a>
-
-      <!-- Card: resiliencia-vfs-multiparticao-fat32-ext2 -->
-      <a href="/artigos/resiliencia-vfs-multiparticao-fat32-ext2.html" class="group block p-6 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all">
-        <div class="flex items-center gap-2 text-xs font-mono text-blue-400 mb-2">
-          <span class="bg-blue-950 border border-blue-800 px-2 py-0.5 rounded">ARMAZENAMENTO & KERNEL</span>
-          <span>Novembro 2026</span>
-        </div>
-        <h2 class="text-xl font-bold text-white group-hover:text-blue-300 transition-colors leading-snug">
-          VFS Resiliente: Coexistência FAT32 e Ext2 no Jinn OS
-        </h2>
-        <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-          Como o microkernel Jinn OS implementa um sistema de arquivos virtual (VFS) com suporte simultâneo a partições FAT32 e Ext2 com cache de blocos LRU.
-        </p>
-        <div class="mt-4 flex items-center gap-1 text-xs font-semibold text-cyan-400">
-          <span>Ler artigo completo</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-        </div>
-      </a>
-
-      <!-- Card: post-mortem-pic-eoi-zero-gpu -->
-      <a href="/artigos/post-mortem-pic-eoi-zero-gpu.html" class="group block p-6 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all">
-        <div class="flex items-center gap-2 text-xs font-mono text-cyan-400 mb-2">
-          <span class="bg-cyan-950 border border-cyan-800 px-2 py-0.5 rounded">POST-MORTEM</span>
-          <span>Novembro 2026</span>
-        </div>
-        <h2 class="text-xl font-bold text-white group-hover:text-cyan-300 transition-colors leading-snug">
-          Post-Mortem: EOI Incondicional no PIC 8259A e Zero-GPU SIMD
-        </h2>
-        <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-          Como resolvemos travamentos de interrupção e atingimos 0.00% de CPU em repouso no microkernel Rust Jinn OS através de EOI incondicional no PIC 8259A e kernels AVX2 no JHCS.
-        </p>
-        <div class="mt-4 flex items-center gap-1 text-xs font-semibold text-cyan-400">
-          <span>Ler artigo completo</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-        </div>
-      </a>
-
-      <!-- Card: persistencia-fat32-lfn-auto-recuperacao-microkernel -->
-      <a href="/artigos/persistencia-fat32-lfn-auto-recuperacao-microkernel.html" class="group block p-6 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all">
-        <div class="flex items-center gap-2 text-xs font-mono text-blue-400 mb-2">
-          <span class="bg-blue-950 border border-blue-800 px-2 py-0.5 rounded">SISTEMAS DE ARQUIVOS</span>
-          <span>Novembro 2026</span>
-        </div>
-        <h2 class="text-xl font-bold text-white group-hover:text-blue-300 transition-colors leading-snug">
-          Persistência FAT32 LFN, Driver Dual ATA/VirtIO e Auto-Recuperação no Microkernel
-        </h2>
-        <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-          Como implementamos escrita persistente e criação de diretórios FAT32 com Long File Names (LFN/VFAT), driver dual virtio-blk e IDE ATA, além da arquitetura self-healing contra deadlocks de fila de entrada no Jinn OS.
-        </p>
-        <div class="mt-4 flex items-center gap-1 text-xs font-semibold text-cyan-400">
-          <span>Ler artigo completo</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-        </div>
-      </a>
-
-      <!-- Card: navegador-web-nativo-microkernel-jinn -->
-      <a href="/artigos/navegador-web-nativo-microkernel-jinn.html" class="group block p-6 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all">
-        <div class="flex items-center gap-2 text-xs font-mono text-rose-400 mb-2">
-          <span class="bg-rose-950 border border-rose-800 px-2 py-0.5 rounded">JINN BROWSER</span>
-          <span>Novembro 2026</span>
-        </div>
-        <h2 class="text-xl font-bold text-white group-hover:text-rose-300 transition-colors leading-snug">
-          Navegador Web Nativo no Microkernel Jinn OS — Jinn Browser
-        </h2>
-        <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-          Como construímos o Jinn Browser: um navegador web completo em Rust no_std executando em Ring 3 com suporte a HTTP/1.1, motor CSS em cascata, layout flexbox e runtime JS reativo.
-        </p>
-        <div class="mt-4 flex items-center gap-1 text-xs font-semibold text-cyan-400">
-          <span>Ler artigo completo</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-        </div>
-      </a>
-
-      <!-- Card: isolamento-drivers-ring3-supervisor-jaha -->
-      <a href="/artigos/isolamento-drivers-ring3-supervisor-jaha.html" class="group block p-6 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all">
-        <div class="flex items-center gap-2 text-xs font-mono text-amber-400 mb-2">
-          <span class="bg-amber-950 border border-amber-800 px-2 py-0.5 rounded">MICROKERNEL</span>
-          <span>Novembro 2026</span>
-        </div>
-        <h2 class="text-xl font-bold text-white group-hover:text-amber-300 transition-colors leading-snug">
-          Isolamento de Drivers e Supervisor JAHA 1.2
-        </h2>
-        <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-          Como o microkernel Jinn OS isola drivers de dispositivos em Ring 3 e utiliza a máquina de estados JAHA 1.2 com circuit-breaker para tolerância extrema a falhas.
-        </p>
-        <div class="mt-4 flex items-center gap-1 text-xs font-semibold text-cyan-400">
-          <span>Ler artigo completo</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-        </div>
-      </a>
-
-      <!-- Card: glassmorphism-simd-e1000-virtualbox -->
-      <a href="/artigos/glassmorphism-simd-e1000-virtualbox.html" class="group block p-6 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all">
-        <div class="flex items-center gap-2 text-xs font-mono text-purple-400 mb-2">
-          <span class="bg-purple-950 border border-purple-800 px-2 py-0.5 rounded">COMPUTAÇÃO GRÁFICA & UI</span>
-          <span>Novembro 2026</span>
-        </div>
-        <h2 class="text-xl font-bold text-white group-hover:text-purple-300 transition-colors leading-snug">
-          Glassmorphism Sem GPU no Aladdin e Hardening de Rede e1000 no VirtualBox
-        </h2>
-        <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-          Engenharia de sistemas operacionais: como implementamos Glassmorphism e desfoque real em Ring 3 no_std sem aceleração por GPU, e eliminamos o timeout de DNS no VirtualBox através do anel MMIO do Intel e1000.
-        </p>
-        <div class="mt-4 flex items-center gap-1 text-xs font-semibold text-cyan-400">
-          <span>Ler artigo completo</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-        </div>
-      </a>
-
-      <!-- Card: glassmorphism-acrilico-simd-compositor-aladdin -->
-      <a href="/artigos/glassmorphism-acrilico-simd-compositor-aladdin.html" class="group block p-6 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all">
-        <div class="flex items-center gap-2 text-xs font-mono text-purple-400 mb-2">
-          <span class="bg-purple-950 border border-purple-800 px-2 py-0.5 rounded">COMPUTAÇÃO GRÁFICA</span>
-          <span>Novembro 2026</span>
-        </div>
-        <h2 class="text-xl font-bold text-white group-hover:text-purple-300 transition-colors leading-snug">
-          Glassmorphism Acrílico, SIMD e Compositor Aladdin: Zero-GPU em 60 FPS no Bare-Metal
-        </h2>
-        <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-          Como o compositor gráfico Aladdin Desktop implementa transparências acrílicas com separable box blur em ponto fixo de 24 bits, cantos com antialiasing 4x supersampling e zero-copy via jhcs-daemon sem exigir placa gráfica dedicada.
-        </p>
-        <div class="mt-4 flex items-center gap-1 text-xs font-semibold text-cyan-400">
-          <span>Ler artigo completo</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-        </div>
-      </a>
-
-      <!-- Card: ecossistema-pacotes-jpkg-offline-shutdown -->
-      <a href="/artigos/ecossistema-pacotes-jpkg-offline-shutdown.html" class="group block p-6 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all">
-        <div class="flex items-center gap-2 text-xs font-mono text-indigo-400 mb-2">
-          <span class="bg-indigo-950 border border-indigo-800 px-2 py-0.5 rounded">PACOTES & ATUALIZAÇÃO</span>
-          <span>Novembro 2026</span>
-        </div>
-        <h2 class="text-xl font-bold text-white group-hover:text-indigo-300 transition-colors leading-snug">
-          Ecossistema de Pacotes .jpkg e Atualização Offline-on-Shutdown
-        </h2>
-        <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-          Como implementamos contêineres de pacotes .jpkg com hash SHA-256, ciclo de atualização Offline-on-Shutdown com tela apagada e desfoque SIMD Zero-Copy no microkernel Jinn OS.
-        </p>
-        <div class="mt-4 flex items-center gap-1 text-xs font-semibold text-cyan-400">
-          <span>Ler artigo completo</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-        </div>
-      </a>
-
-      <!-- Card: compositor-aladdin-zero-gpu-frosted-glass -->
-      <a href="/artigos/compositor-aladdin-zero-gpu-frosted-glass.html" class="group block p-6 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all">
-        <div class="flex items-center gap-2 text-xs font-mono text-purple-400 mb-2">
-          <span class="bg-purple-950 border border-purple-800 px-2 py-0.5 rounded">COMPUTAÇÃO GRÁFICA & UI</span>
-          <span>Novembro 2026</span>
-        </div>
-        <h2 class="text-xl font-bold text-white group-hover:text-purple-300 transition-colors leading-snug">
-          Compositor Aladdin: Frosted Glass e Zero-GPU em Rust
-        </h2>
-        <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-          Como construímos o compositor gráfico Aladdin Desktop com efeitos visuais contemporâneos, sombras e frosted glass sem acelerador 3D e com zero alocações de heap por quadro.
-        </p>
-        <div class="mt-4 flex items-center gap-1 text-xs font-semibold text-cyan-400">
-          <span>Ler artigo completo</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-        </div>
-      </a>
-
-      <!-- Card: auditoria-zero-idle-cache-prefetch-syscalls-jaha-jhcs -->
-      <a href="/artigos/auditoria-zero-idle-cache-prefetch-syscalls-jaha-jhcs.html" class="group block p-6 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all">
-        <div class="flex items-center gap-2 text-xs font-mono text-amber-400 mb-2">
-          <span class="bg-amber-950 border border-amber-800 px-2 py-0.5 rounded">MICROKERNEL</span>
-          <span>Novembro 2026</span>
-        </div>
-        <h2 class="text-xl font-bold text-white group-hover:text-amber-300 transition-colors leading-snug">
-          Auditoria Zero-Idle, Pré-Aquecimento de Cache e Refinamento de Syscalls no Jinn OS
-        </h2>
-        <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-          Auditoria profunda de consumo próximo a zero (Zero-Idle), alinhamento de cache de 64 bytes com prefetch SIMD, escalonamento cooperativo com wakeups instantâneos por interrupção e telemetria JAHA 1.2 no Jinn OS.
-        </p>
-        <div class="mt-4 flex items-center gap-1 text-xs font-semibold text-cyan-400">
-          <span>Ler artigo completo</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-        </div>
-      </a>
-
-      <!-- Card: arquitetura-tls13-nostd-soberana -->
-      <a href="/artigos/arquitetura-tls13-nostd-soberana.html" class="group block p-6 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all">
-        <div class="flex items-center gap-2 text-xs font-mono text-emerald-400 mb-2">
-          <span class="bg-emerald-950 border border-emerald-800 px-2 py-0.5 rounded">CRIPTOGRAFIA</span>
-          <span>Novembro 2026</span>
-        </div>
-        <h2 class="text-xl font-bold text-white group-hover:text-emerald-300 transition-colors leading-snug">
-          Pilha Criptográfica Soberana: TLS 1.3 e ChaCha20-Poly1305 em Bare-Metal Rust
-        </h2>
-        <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-          Como implementamos TLS 1.3 (RFC 8446), Key Schedule HKDF e ChaCha20-Poly1305 em Rust puro sem biblioteca padrão (#![no_std]) para o microkernel Jinn OS.
-        </p>
-        <div class="mt-4 flex items-center gap-1 text-xs font-semibold text-cyan-400">
-          <span>Ler artigo completo</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">ZERO-IDLE</span><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">SIMD</span><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">NETWORK</span></div>
+          <div class="flex items-center gap-1 text-xs font-semibold text-cyan-400 ml-auto">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </div>
         </div>
       </a>
 
       <!-- Card: aladdin-shared-rings-spsc-lock-free-zero-copy-io-uring -->
-      <a href="/artigos/aladdin-shared-rings-spsc-lock-free-zero-copy-io-uring.html" class="group block p-6 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all">
-        <div class="flex items-center gap-2 text-xs font-mono text-amber-400 mb-2">
-          <span class="bg-amber-950 border border-amber-800 px-2 py-0.5 rounded">MICROKERNEL</span>
-          <span>Novembro 2026</span>
+      <a href="/artigos/aladdin-shared-rings-spsc-lock-free-zero-copy-io-uring.html" data-article-card data-categories="microkernel simd homologacao" data-search="aladdinsharedrings: buffers circulares spsc lock-free ring 3 / ring 0 no jinn os implementação de memória compartilhada baseada em ring buffers spsc (estilo io_uring) para loteamento de eventos de entrada e comandos gráficos entre o aladdin desktop (ring 3) e o microkernel jinn os (ring 0) com garantia zero-idle. microkernel spsc zero-copy io_uring zero-idle" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-amber-400 mb-3">
+            <span class="bg-amber-950 border border-amber-800 px-2.5 py-0.5 rounded-full font-semibold">MICROKERNEL</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-24">24 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>5 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-amber-300 transition-colors leading-snug">
+            AladdinSharedRings: Buffers Circulares SPSC Lock-Free Ring 3 / Ring 0 no Jinn OS
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Implementação de memória compartilhada baseada em ring buffers SPSC (estilo io_uring) para loteamento de eventos de entrada e comandos gráficos entre o Aladdin Desktop (Ring 3) e o microkernel Jinn OS (Ring 0) com garantia Zero-Idle.
+          </p>
         </div>
-        <h2 class="text-xl font-bold text-white group-hover:text-amber-300 transition-colors leading-snug">
-          AladdinSharedRings: Buffers Circulares SPSC Lock-Free Ring 3 / Ring 0 no Jinn OS
-        </h2>
-        <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-          Implementação de memória compartilhada baseada em ring buffers SPSC (estilo io_uring) para loteamento de eventos de entrada e comandos gráficos entre o Aladdin Desktop (Ring 3) e o microkernel Jinn OS (Ring 0) com garantia Zero-Idle.
-        </p>
-        <div class="mt-4 flex items-center gap-1 text-xs font-semibold text-cyan-400">
-          <span>Ler artigo completo</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">SPSC</span><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">ZERO-COPY</span><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">IO_URING</span></div>
+          <div class="flex items-center gap-1 text-xs font-semibold text-cyan-400 ml-auto">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </div>
         </div>
       </a>
+
+      <!-- Card: auditoria-zero-idle-cache-prefetch-syscalls-jaha-jhcs -->
+      <a href="/artigos/auditoria-zero-idle-cache-prefetch-syscalls-jaha-jhcs.html" data-article-card data-categories="microkernel simd homologacao" data-search="auditoria zero-idle, pré-aquecimento de cache e refinamento de syscalls no jinn os auditoria profunda de consumo próximo a zero (zero-idle), alinhamento de cache de 64 bytes com prefetch simd, escalonamento cooperativo com wakeups instantâneos por interrupção e telemetria jaha 1.2 no jinn os. microkernel performance zero-idle telemetria" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-amber-400 mb-3">
+            <span class="bg-amber-950 border border-amber-800 px-2.5 py-0.5 rounded-full font-semibold">MICROKERNEL</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-24">24 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>5 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-amber-300 transition-colors leading-snug">
+            Auditoria Zero-Idle, Pré-Aquecimento de Cache e Refinamento de Syscalls no Jinn OS
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Auditoria profunda de consumo próximo a zero (Zero-Idle), alinhamento de cache de 64 bytes com prefetch SIMD, escalonamento cooperativo com wakeups instantâneos por interrupção e telemetria JAHA 1.2 no Jinn OS.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">PERFORMANCE</span><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">ZERO-IDLE</span><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">TELEMETRIA</span></div>
+          <div class="flex items-center gap-1 text-xs font-semibold text-cyan-400 ml-auto">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </div>
+        </div>
+      </a>
+
+      <!-- Card: persistencia-fat32-lfn-auto-recuperacao-microkernel -->
+      <a href="/artigos/persistencia-fat32-lfn-auto-recuperacao-microkernel.html" data-article-card data-categories="microkernel redes" data-search="persistência fat32 lfn, driver dual ata/virtio e auto-recuperação no microkernel como implementamos escrita persistente e criação de diretórios fat32 com long file names (lfn/vfat), driver dual virtio-blk e ide ata, além da arquitetura self-healing contra deadlocks de fila de entrada no jinn os. sistemas de arquivos fat32 lfn virtio ide ata microkernel self-healing rust ring 3" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-blue-400 mb-3">
+            <span class="bg-blue-950 border border-blue-800 px-2.5 py-0.5 rounded-full font-semibold">SISTEMAS DE ARQUIVOS</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-24">24 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>5 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-blue-300 transition-colors leading-snug">
+            Persistência FAT32 LFN, Driver Dual ATA/VirtIO e Auto-Recuperação no Microkernel
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como implementamos escrita persistente e criação de diretórios FAT32 com Long File Names (LFN/VFAT), driver dual virtio-blk e IDE ATA, além da arquitetura self-healing contra deadlocks de fila de entrada no Jinn OS.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">FAT32</span><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">LFN</span><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">VIRTIO</span></div>
+          <div class="flex items-center gap-1 text-xs font-semibold text-cyan-400 ml-auto">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </div>
+        </div>
+      </a>
+
+      <!-- Card: glassmorphism-acrilico-simd-compositor-aladdin -->
+      <a href="/artigos/glassmorphism-acrilico-simd-compositor-aladdin.html" data-article-card data-categories="microkernel simd" data-search="glassmorphism acrílico, simd e compositor aladdin: zero-gpu em 60 fps no bare-metal como o compositor gráfico aladdin desktop implementa transparências acrílicas com separable box blur em ponto fixo de 24 bits, cantos com antialiasing 4x supersampling e zero-copy via jhcs-daemon sem exigir placa gráfica dedicada. computação gráfica aladdin desktop simd avx2 glassmorphism zero-gpu rust microkernel" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-purple-400 mb-3">
+            <span class="bg-purple-950 border border-purple-800 px-2.5 py-0.5 rounded-full font-semibold">COMPUTAÇÃO GRÁFICA</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-24">24 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>5 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-purple-300 transition-colors leading-snug">
+            Glassmorphism Acrílico, SIMD e Compositor Aladdin: Zero-GPU em 60 FPS no Bare-Metal
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como o compositor gráfico Aladdin Desktop implementa transparências acrílicas com separable box blur em ponto fixo de 24 bits, cantos com antialiasing 4x supersampling e zero-copy via jhcs-daemon sem exigir placa gráfica dedicada.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">ALADDIN DESKTOP</span><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">SIMD</span><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">AVX2</span></div>
+          <div class="flex items-center gap-1 text-xs font-semibold text-cyan-400 ml-auto">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </div>
+        </div>
+      </a>
+
+      <!-- Card: resolucao-arp-dinamica-dns-cascata-virtualbox-qemu -->
+      <a href="/artigos/resolucao-arp-dinamica-dns-cascata-virtualbox-qemu.html" data-article-card data-categories="microkernel redes" data-search="resolução arp dinâmica, dns em cascata e hardening intel e1000: do qemu ao virtualbox bare-metal como diagnosticamos divergências de mac em camada 2 entre qemu slirp e virtualbox nat via pcap, estabilizamos os anéis de descritores do intel 82540em (e1000) e implementamos um resolvedor dns resiliente em cascata. redes intel e1000 virtualbox dns arp bare-metal rust microkernel" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-emerald-400 mb-3">
+            <span class="bg-emerald-950 border border-emerald-800 px-2.5 py-0.5 rounded-full font-semibold">REDES</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-24">24 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>5 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-emerald-300 transition-colors leading-snug">
+            Resolução ARP Dinâmica, DNS em Cascata e Hardening Intel e1000: Do QEMU ao VirtualBox Bare-Metal
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como diagnosticamos divergências de MAC em Camada 2 entre QEMU SLIRP e VirtualBox NAT via PCAP, estabilizamos os anéis de descritores do Intel 82540EM (e1000) e implementamos um resolvedor DNS resiliente em cascata.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">INTEL E1000</span><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">VIRTUALBOX</span><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">DNS</span></div>
+          <div class="flex items-center gap-1 text-xs font-semibold text-cyan-400 ml-auto">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </div>
+        </div>
+      </a>
+
+      <!-- Card: ecossistema-pacotes-jpkg-offline-shutdown -->
+      <a href="/artigos/ecossistema-pacotes-jpkg-offline-shutdown.html" data-article-card data-categories="microkernel" data-search="ecossistema de pacotes .jpkg e atualização offline-on-shutdown como implementamos contêineres de pacotes .jpkg com hash sha-256, ciclo de atualização offline-on-shutdown com tela apagada e desfoque simd zero-copy no microkernel jinn os. pacotes &amp; atualização" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-indigo-400 mb-3">
+            <span class="bg-indigo-950 border border-indigo-800 px-2.5 py-0.5 rounded-full font-semibold">PACOTES &amp; ATUALIZAÇÃO</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-24">24 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>3 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-indigo-300 transition-colors leading-snug">
+            Ecossistema de Pacotes .jpkg e Atualização Offline-on-Shutdown
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como implementamos contêineres de pacotes .jpkg com hash SHA-256, ciclo de atualização Offline-on-Shutdown com tela apagada e desfoque SIMD Zero-Copy no microkernel Jinn OS.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"></div>
+          <div class="flex items-center gap-1 text-xs font-semibold text-cyan-400 ml-auto">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </div>
+        </div>
+      </a>
+
+      <!-- Card: post-mortem-pic-eoi-zero-gpu -->
+      <a href="/artigos/post-mortem-pic-eoi-zero-gpu.html" data-article-card data-categories="microkernel simd homologacao" data-search="post-mortem: eoi incondicional no pic 8259a e zero-gpu simd como resolvemos travamentos de interrupção e atingimos 0.00% de cpu em repouso no microkernel rust jinn os através de eoi incondicional no pic 8259a e kernels avx2 no jhcs. post-mortem" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-cyan-400 mb-3">
+            <span class="bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 rounded-full font-semibold">POST-MORTEM</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-24">24 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>5 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-cyan-300 transition-colors leading-snug">
+            Post-Mortem: EOI Incondicional no PIC 8259A e Zero-GPU SIMD
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como resolvemos travamentos de interrupção e atingimos 0.00% de CPU em repouso no microkernel Rust Jinn OS através de EOI incondicional no PIC 8259A e kernels AVX2 no JHCS.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"></div>
+          <div class="flex items-center gap-1 text-xs font-semibold text-cyan-400 ml-auto">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </div>
+        </div>
+      </a>
+
+      <!-- Card: glassmorphism-simd-e1000-virtualbox -->
+      <a href="/artigos/glassmorphism-simd-e1000-virtualbox.html" data-article-card data-categories="redes simd" data-search="glassmorphism sem gpu no aladdin e hardening de rede e1000 no virtualbox engenharia de sistemas operacionais: como implementamos glassmorphism e desfoque real em ring 3 no_std sem aceleração por gpu, e eliminamos o timeout de dns no virtualbox através do anel mmio do intel e1000. computação gráfica &amp; ui" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-purple-400 mb-3">
+            <span class="bg-purple-950 border border-purple-800 px-2.5 py-0.5 rounded-full font-semibold">COMPUTAÇÃO GRÁFICA &amp; UI</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-24">24 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>5 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-purple-300 transition-colors leading-snug">
+            Glassmorphism Sem GPU no Aladdin e Hardening de Rede e1000 no VirtualBox
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Engenharia de sistemas operacionais: como implementamos Glassmorphism e desfoque real em Ring 3 no_std sem aceleração por GPU, e eliminamos o timeout de DNS no VirtualBox através do anel MMIO do Intel e1000.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"></div>
+          <div class="flex items-center gap-1 text-xs font-semibold text-cyan-400 ml-auto">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </div>
+        </div>
+      </a>
+
+      <!-- Card: resiliencia-vfs-multiparticao-fat32-ext2 -->
+      <a href="/artigos/resiliencia-vfs-multiparticao-fat32-ext2.html" data-article-card data-categories="microkernel" data-search="vfs resiliente: coexistência fat32 e ext2 no jinn os como o microkernel jinn os implementa um sistema de arquivos virtual (vfs) com suporte simultâneo a partições fat32 e ext2 com cache de blocos lru. armazenamento &amp; kernel" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-blue-400 mb-3">
+            <span class="bg-blue-950 border border-blue-800 px-2.5 py-0.5 rounded-full font-semibold">ARMAZENAMENTO &amp; KERNEL</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-24">24 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>2 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-blue-300 transition-colors leading-snug">
+            VFS Resiliente: Coexistência FAT32 e Ext2 no Jinn OS
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como o microkernel Jinn OS implementa um sistema de arquivos virtual (VFS) com suporte simultâneo a partições FAT32 e Ext2 com cache de blocos LRU.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"></div>
+          <div class="flex items-center gap-1 text-xs font-semibold text-cyan-400 ml-auto">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </div>
+        </div>
+      </a>
+
+      <!-- Card: navegador-web-nativo-microkernel-jinn -->
+      <a href="/artigos/navegador-web-nativo-microkernel-jinn.html" data-article-card data-categories="microkernel redes" data-search="navegador web nativo no microkernel jinn os — jinn browser como construímos o jinn browser: um navegador web completo em rust no_std executando em ring 3 com suporte a http/1.1, motor css em cascata, layout flexbox e runtime js reativo. jinn browser" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-rose-400 mb-3">
+            <span class="bg-rose-950 border border-rose-800 px-2.5 py-0.5 rounded-full font-semibold">JINN BROWSER</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-24">24 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>3 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-rose-300 transition-colors leading-snug">
+            Navegador Web Nativo no Microkernel Jinn OS — Jinn Browser
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como construímos o Jinn Browser: um navegador web completo em Rust no_std executando em Ring 3 com suporte a HTTP/1.1, motor CSS em cascata, layout flexbox e runtime JS reativo.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"></div>
+          <div class="flex items-center gap-1 text-xs font-semibold text-cyan-400 ml-auto">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </div>
+        </div>
+      </a>
+
+      <!-- Card: isolamento-drivers-ring3-supervisor-jaha -->
+      <a href="/artigos/isolamento-drivers-ring3-supervisor-jaha.html" data-article-card data-categories="microkernel homologacao" data-search="isolamento de drivers e supervisor jaha 1.2 como o microkernel jinn os isola drivers de dispositivos em ring 3 e utiliza a máquina de estados jaha 1.2 com circuit-breaker para tolerância extrema a falhas. microkernel" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-amber-400 mb-3">
+            <span class="bg-amber-950 border border-amber-800 px-2.5 py-0.5 rounded-full font-semibold">MICROKERNEL</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-24">24 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>2 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-amber-300 transition-colors leading-snug">
+            Isolamento de Drivers e Supervisor JAHA 1.2
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como o microkernel Jinn OS isola drivers de dispositivos em Ring 3 e utiliza a máquina de estados JAHA 1.2 com circuit-breaker para tolerância extrema a falhas.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"></div>
+          <div class="flex items-center gap-1 text-xs font-semibold text-cyan-400 ml-auto">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </div>
+        </div>
+      </a>
+
+      <!-- Card: compositor-aladdin-zero-gpu-frosted-glass -->
+      <a href="/artigos/compositor-aladdin-zero-gpu-frosted-glass.html" data-article-card data-categories="simd" data-search="compositor aladdin: frosted glass e zero-gpu em rust como construímos o compositor gráfico aladdin desktop com efeitos visuais contemporâneos, sombras e frosted glass sem acelerador 3d e com zero alocações de heap por quadro. computação gráfica &amp; ui" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-purple-400 mb-3">
+            <span class="bg-purple-950 border border-purple-800 px-2.5 py-0.5 rounded-full font-semibold">COMPUTAÇÃO GRÁFICA &amp; UI</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-24">24 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>2 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-purple-300 transition-colors leading-snug">
+            Compositor Aladdin: Frosted Glass e Zero-GPU em Rust
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como construímos o compositor gráfico Aladdin Desktop com efeitos visuais contemporâneos, sombras e frosted glass sem acelerador 3D e com zero alocações de heap por quadro.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"></div>
+          <div class="flex items-center gap-1 text-xs font-semibold text-cyan-400 ml-auto">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </div>
+        </div>
+      </a>
+
+      <!-- Card: arquitetura-tls13-nostd-soberana -->
+      <a href="/artigos/arquitetura-tls13-nostd-soberana.html" data-article-card data-categories="simd homologacao" data-search="pilha criptográfica soberana: tls 1.3 e chacha20-poly1305 em bare-metal rust como implementamos tls 1.3 (rfc 8446), key schedule hkdf e chacha20-poly1305 em rust puro sem biblioteca padrão (#![no_std]) para o microkernel jinn os. criptografia" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-emerald-400 mb-3">
+            <span class="bg-emerald-950 border border-emerald-800 px-2.5 py-0.5 rounded-full font-semibold">CRIPTOGRAFIA</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-24">24 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>4 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-emerald-300 transition-colors leading-snug">
+            Pilha Criptográfica Soberana: TLS 1.3 e ChaCha20-Poly1305 em Bare-Metal Rust
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como implementamos TLS 1.3 (RFC 8446), Key Schedule HKDF e ChaCha20-Poly1305 em Rust puro sem biblioteca padrão (#![no_std]) para o microkernel Jinn OS.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"></div>
+          <div class="flex items-center gap-1 text-xs font-semibold text-cyan-400 ml-auto">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </div>
+        </div>
+      </a>
+    </div>
+
+    <!-- Estado Vazio de Busca -->
+    <div id="empty-state" class="hidden text-center py-16 px-4 rounded-xl border border-slate-800 bg-slate-900/40 mt-6">
+      <p class="text-slate-300 font-semibold text-base">Nenhum artigo encontrado para este filtro.</p>
+      <p class="text-slate-500 text-sm mt-1">Tente limpar a busca ou voltar para a categoria Todos.</p>
+      <button type="button" id="reset-filters-btn" class="mt-4 px-4 py-1.5 rounded-lg bg-cyan-950 border border-cyan-700 text-cyan-300 text-xs font-mono hover:bg-cyan-900 transition-colors">
+        Limpar filtros
+      </button>
     </div>
   </main>
 
   <!-- Rodapé -->
-  <footer class="border-t border-slate-800 mt-16 py-8 text-xs text-slate-400 font-mono">
-    <div class="max-w-5xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+  <footer class="border-t border-slate-800 mt-12 py-8 text-xs text-slate-400 font-mono">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
       <div class="flex items-center gap-3">
         <span>Jinn OS Sovereign Systems • 2026</span>
         <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
       </div>
       <div class="flex items-center gap-4">
+        <a href="/rss.xml" class="text-emerald-400 hover:underline">RSS 2.0 (WebSub)</a>
         <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
           <i data-lucide="rss" class="w-3.5 h-3.5"></i>
           <span>Assinar Feed</span>
@@ -321,8 +517,98 @@
     </div>
   </footer>
 
+  <!-- Botão Flutuante Voltar ao Topo ↑ -->
+  <button type="button" id="back-to-top" aria-label="Voltar ao Topo"
+    class="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-full bg-slate-900/95 border border-cyan-500/60 text-cyan-300 text-xs font-mono font-semibold shadow-lg shadow-black/50 backdrop-blur-md hover:bg-cyan-950 hover:text-white transition-all duration-200 opacity-0 pointer-events-none translate-y-2">
+    Voltar ao Topo ↑
+  </button>
+
   <script>
     lucide.createIcons();
+
+    (function () {
+      const progressBar = document.getElementById('scroll-progress');
+      const backToTop = document.getElementById('back-to-top');
+      const searchInput = document.getElementById('article-search');
+      const pills = Array.from(document.querySelectorAll('.filter-pill'));
+      const cards = Array.from(document.querySelectorAll('[data-article-card]'));
+      const visibleCount = document.getElementById('visible-count');
+      const articlesCounter = document.getElementById('articles-counter');
+      const emptyState = document.getElementById('empty-state');
+      const resetBtn = document.getElementById('reset-filters-btn');
+
+      let activeFilter = 'all';
+
+      function updateScrollUI() {
+        const doc = document.documentElement;
+        const scrollTop = window.scrollY || doc.scrollTop || 0;
+        const scrollHeight = Math.max(doc.scrollHeight - window.innerHeight, 1);
+        const pct = Math.min(100, Math.max(0, (scrollTop / scrollHeight) * 100));
+        if (progressBar) progressBar.style.width = pct.toFixed(1) + '%';
+        if (backToTop) {
+          if (scrollTop > 260) {
+            backToTop.classList.remove('opacity-0', 'pointer-events-none', 'translate-y-2');
+          } else {
+            backToTop.classList.add('opacity-0', 'pointer-events-none', 'translate-y-2');
+          }
+        }
+      }
+
+      window.addEventListener('scroll', updateScrollUI, { passive: true });
+      updateScrollUI();
+
+      if (backToTop) {
+        backToTop.addEventListener('click', function () {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+      }
+
+      function applyFilters() {
+        const q = (searchInput ? searchInput.value : '').trim().toLowerCase();
+        let shown = 0;
+        cards.forEach(function (card) {
+          const cats = (card.getAttribute('data-categories') || '').split(' ');
+          const text = card.getAttribute('data-search') || '';
+          const matchCat = activeFilter === 'all' || cats.includes(activeFilter);
+          const matchText = !q || text.includes(q);
+          if (matchCat && matchText) {
+            card.classList.remove('hidden');
+            shown++;
+          } else {
+            card.classList.add('hidden');
+          }
+        });
+        if (visibleCount) visibleCount.textContent = String(shown);
+        if (articlesCounter) articlesCounter.textContent = shown + ' de ' + cards.length + ' publicações';
+        if (emptyState) emptyState.classList.toggle('hidden', shown > 0);
+      }
+
+      pills.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          activeFilter = btn.getAttribute('data-filter') || 'all';
+          pills.forEach(function (p) {
+            const selected = p === btn;
+            p.classList.toggle('border-cyan-500/70', selected);
+            p.classList.toggle('bg-cyan-950/90', selected);
+            p.classList.toggle('text-cyan-300', selected);
+            p.classList.toggle('font-semibold', selected);
+            p.classList.toggle('border-slate-700', !selected);
+            p.classList.toggle('bg-slate-900', !selected);
+            p.classList.toggle('text-slate-300', !selected);
+          });
+          applyFilters();
+        });
+      });
+
+      if (searchInput) searchInput.addEventListener('input', applyFilters);
+      if (resetBtn) {
+        resetBtn.addEventListener('click', function () {
+          if (searchInput) searchInput.value = '';
+          const allBtn = pills.find(function (p) { return p.getAttribute('data-filter') === 'all'; });
+          if (allBtn) allBtn.click();
+        });
+      }
+    })();
   </script>
 </body>
 </html>

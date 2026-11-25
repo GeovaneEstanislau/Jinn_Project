@@ -3909,6 +3909,11 @@ fn sys_readdir(
     if out_ptr.is_null() || max_entries == 0 {
         return EINVAL;
     }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(out_ptr as *const u8, core::mem::size_of::<DirEntryUser>(), true) {
+            return e;
+        }
+    }
 
     let mut path_buf = [0u8; crate::vfs::MAX_PATH_LEN];
     let path = match get_user_path(path_ptr, path_len, &mut path_buf) {

@@ -8,6 +8,46 @@
     <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
     <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
     <item>
+      <title>Homologação Completa: Desempenho Zero-Idle, Estabilidade FAT32/JPKG, Rede PCAP e Segurança Zero-Trust</title>
+      <link>https://jinn-os.dev.br/artigos/homologacao-desempenho-estabilidade-integracao-seguranca-zero-idle.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-homologacao-desempenho-estabilidade-integracao-seguranca-zero-idle</guid>
+      <pubDate>Tue, 24 Nov 2026 23:59:00 +0000</pubDate>
+      <description>Resultados reais da bateria de homologação do Jinn OS, Aladdin e JHCS em QEMU (4 vCPUs SMP e 1 vCPU com Intel e1000 e VirtIO-Net): benchmarks SIMD em .bss, Zero-Idle via Syscall 88, SHA-256 .jpkg no Offline-on-Shutdown, DNS cascata em PCAP e rejeição -EFAULT/-EINVAL.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
+      <title>AladdinSharedRings: Buffers Circulares SPSC Lock-Free Ring 3 / Ring 0 no Jinn OS</title>
+      <link>https://jinn-os.dev.br/artigos/aladdin-shared-rings-spsc-lock-free-zero-copy-io-uring.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-aladdin-shared-rings-spsc-lock-free-zero-copy-io-uring</guid>
+      <pubDate>Tue, 24 Nov 2026 23:55:00 +0000</pubDate>
+      <description>Implementação de memória compartilhada baseada em ring buffers SPSC (estilo io_uring) para loteamento de eventos de entrada e comandos gráficos entre o Aladdin Desktop (Ring 3) e o microkernel Jinn OS (Ring 0) com garantia Zero-Idle.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
+      <title>Auditoria Zero-Idle, Pré-Aquecimento de Cache e Refinamento de Syscalls no Jinn OS</title>
+      <link>https://jinn-os.dev.br/artigos/auditoria-zero-idle-cache-prefetch-syscalls-jaha-jhcs.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-auditoria-zero-idle-cache-prefetch-syscalls-jaha-jhcs</guid>
+      <pubDate>Tue, 24 Nov 2026 23:30:00 +0000</pubDate>
+      <description>Auditoria profunda de consumo próximo a zero (Zero-Idle), alinhamento de cache de 64 bytes com prefetch SIMD, escalonamento cooperativo com wakeups instantâneos por interrupção e telemetria JAHA 1.2 no Jinn OS.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
+      <title>Persistência FAT32 LFN, Driver Dual ATA/VirtIO e Auto-Recuperação no Microkernel</title>
+      <link>https://jinn-os.dev.br/artigos/persistencia-fat32-lfn-auto-recuperacao-microkernel.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-persistencia-fat32-lfn-auto-recuperacao-microkernel</guid>
+      <pubDate>Tue, 24 Nov 2026 18:10:00 -0300</pubDate>
+      <description>Como implementamos escrita persistente e criação de diretórios FAT32 com Long File Names (LFN/VFAT), driver dual virtio-blk e IDE ATA, além da arquitetura self-healing contra deadlocks de fila de entrada no Jinn OS.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
+      <title>Glassmorphism Acrílico, SIMD e Compositor Aladdin: Zero-GPU em 60 FPS no Bare-Metal</title>
+      <link>https://jinn-os.dev.br/artigos/glassmorphism-acrilico-simd-compositor-aladdin.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-glassmorphism-acrilico-simd-compositor-aladdin</guid>
+      <pubDate>Tue, 24 Nov 2026 18:05:00 -0300</pubDate>
+      <description>Como o compositor gráfico Aladdin Desktop implementa transparências acrílicas com separable box blur em ponto fixo de 24 bits, cantos com antialiasing 4x supersampling e zero-copy via jhcs-daemon sem exigir placa gráfica dedicada.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
       <title>Resolução ARP Dinâmica, DNS em Cascata e Hardening Intel e1000: Do QEMU ao VirtualBox Bare-Metal</title>
       <link>https://jinn-os.dev.br/artigos/resolucao-arp-dinamica-dns-cascata-virtualbox-qemu.html</link>
       <guid isPermaLink="false">jinn-os-artigo-resolucao-arp-dinamica-dns-cascata-virtualbox-qemu</guid>
@@ -16,11 +56,11 @@
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
-      <title>VFS Resiliente: Coexistência FAT32 e Ext2 no Jinn OS</title>
-      <link>https://jinn-os.dev.br/artigos/resiliencia-vfs-multiparticao-fat32-ext2.html</link>
-      <guid isPermaLink="false">jinn-os-artigo-resiliencia-vfs-multiparticao-fat32-ext2</guid>
-      <pubDate>Tue, 24 Nov 2026 11:31:54 -0300</pubDate>
-      <description>Como o microkernel Jinn OS implementa um sistema de arquivos virtual (VFS) com suporte simultâneo a partições FAT32 e Ext2 com cache de blocos LRU.</description>
+      <title>Ecossistema de Pacotes .jpkg e Atualização Offline-on-Shutdown</title>
+      <link>https://jinn-os.dev.br/artigos/ecossistema-pacotes-jpkg-offline-shutdown.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-ecossistema-pacotes-jpkg-offline-shutdown</guid>
+      <pubDate>Tue, 24 Nov 2026 13:28:27 -0300</pubDate>
+      <description>Como implementamos contêineres de pacotes .jpkg com hash SHA-256, ciclo de atualização Offline-on-Shutdown com tela apagada e desfoque SIMD Zero-Copy no microkernel Jinn OS.</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
@@ -32,11 +72,19 @@
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
-      <title>Persistência FAT32 LFN, Driver Dual ATA/VirtIO e Auto-Recuperação no Microkernel</title>
-      <link>https://jinn-os.dev.br/artigos/persistencia-fat32-lfn-auto-recuperacao-microkernel.html</link>
-      <guid isPermaLink="false">jinn-os-artigo-persistencia-fat32-lfn-auto-recuperacao-microkernel</guid>
-      <pubDate>Tue, 24 Nov 2026 18:10:00 -0300</pubDate>
-      <description>Como implementamos escrita persistente e criação de diretórios FAT32 com Long File Names (LFN/VFAT), driver dual virtio-blk e IDE ATA, além da arquitetura self-healing contra deadlocks de fila de entrada no Jinn OS.</description>
+      <title>Glassmorphism Sem GPU no Aladdin e Hardening de Rede e1000 no VirtualBox</title>
+      <link>https://jinn-os.dev.br/artigos/glassmorphism-simd-e1000-virtualbox.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-glassmorphism-simd-e1000-virtualbox</guid>
+      <pubDate>Tue, 24 Nov 2026 12:19:56 -0300</pubDate>
+      <description>Engenharia de sistemas operacionais: como implementamos Glassmorphism e desfoque real em Ring 3 no_std sem aceleração por GPU, e eliminamos o timeout de DNS no VirtualBox através do anel MMIO do Intel e1000.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
+      <title>VFS Resiliente: Coexistência FAT32 e Ext2 no Jinn OS</title>
+      <link>https://jinn-os.dev.br/artigos/resiliencia-vfs-multiparticao-fat32-ext2.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-resiliencia-vfs-multiparticao-fat32-ext2</guid>
+      <pubDate>Tue, 24 Nov 2026 11:31:54 -0300</pubDate>
+      <description>Como o microkernel Jinn OS implementa um sistema de arquivos virtual (VFS) com suporte simultâneo a partições FAT32 e Ext2 com cache de blocos LRU.</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
@@ -56,43 +104,11 @@
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
-      <title>Glassmorphism Sem GPU no Aladdin e Hardening de Rede e1000 no VirtualBox</title>
-      <link>https://jinn-os.dev.br/artigos/glassmorphism-simd-e1000-virtualbox.html</link>
-      <guid isPermaLink="false">jinn-os-artigo-glassmorphism-simd-e1000-virtualbox</guid>
-      <pubDate>Tue, 24 Nov 2026 12:19:56 -0300</pubDate>
-      <description>Engenharia de sistemas operacionais: como implementamos Glassmorphism e desfoque real em Ring 3 no_std sem aceleração por GPU, e eliminamos o timeout de DNS no VirtualBox através do anel MMIO do Intel e1000.</description>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>Glassmorphism Acrílico, SIMD e Compositor Aladdin: Zero-GPU em 60 FPS no Bare-Metal</title>
-      <link>https://jinn-os.dev.br/artigos/glassmorphism-acrilico-simd-compositor-aladdin.html</link>
-      <guid isPermaLink="false">jinn-os-artigo-glassmorphism-acrilico-simd-compositor-aladdin</guid>
-      <pubDate>Tue, 24 Nov 2026 18:05:00 -0300</pubDate>
-      <description>Como o compositor gráfico Aladdin Desktop implementa transparências acrílicas com separable box blur em ponto fixo de 24 bits, cantos com antialiasing 4x supersampling e zero-copy via jhcs-daemon sem exigir placa gráfica dedicada.</description>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>Ecossistema de Pacotes .jpkg e Atualização Offline-on-Shutdown</title>
-      <link>https://jinn-os.dev.br/artigos/ecossistema-pacotes-jpkg-offline-shutdown.html</link>
-      <guid isPermaLink="false">jinn-os-artigo-ecossistema-pacotes-jpkg-offline-shutdown</guid>
-      <pubDate>Tue, 24 Nov 2026 13:28:27 -0300</pubDate>
-      <description>Como implementamos contêineres de pacotes .jpkg com hash SHA-256, ciclo de atualização Offline-on-Shutdown com tela apagada e desfoque SIMD Zero-Copy no microkernel Jinn OS.</description>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
       <title>Compositor Aladdin: Frosted Glass e Zero-GPU em Rust</title>
       <link>https://jinn-os.dev.br/artigos/compositor-aladdin-zero-gpu-frosted-glass.html</link>
       <guid isPermaLink="false">jinn-os-artigo-compositor-aladdin-zero-gpu-frosted-glass</guid>
       <pubDate>Tue, 24 Nov 2026 11:31:54 -0300</pubDate>
       <description>Como construímos o compositor gráfico Aladdin Desktop com efeitos visuais contemporâneos, sombras e frosted glass sem acelerador 3D e com zero alocações de heap por quadro.</description>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>Auditoria Zero-Idle, Pré-Aquecimento de Cache e Refinamento de Syscalls no Jinn OS</title>
-      <link>https://jinn-os.dev.br/artigos/auditoria-zero-idle-cache-prefetch-syscalls-jaha-jhcs.html</link>
-      <guid isPermaLink="false">jinn-os-artigo-auditoria-zero-idle-cache-prefetch-syscalls-jaha-jhcs</guid>
-      <pubDate>Tue, 24 Nov 2026 23:30:00 +0000</pubDate>
-      <description>Auditoria profunda de consumo próximo a zero (Zero-Idle), alinhamento de cache de 64 bytes com prefetch SIMD, escalonamento cooperativo com wakeups instantâneos por interrupção e telemetria JAHA 1.2 no Jinn OS.</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
@@ -104,11 +120,11 @@
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
-      <title>AladdinSharedRings: Buffers Circulares SPSC Lock-Free Ring 3 / Ring 0 no Jinn OS</title>
-      <link>https://jinn-os.dev.br/artigos/aladdin-shared-rings-spsc-lock-free-zero-copy-io-uring.html</link>
-      <guid isPermaLink="false">jinn-os-artigo-aladdin-shared-rings-spsc-lock-free-zero-copy-io-uring</guid>
-      <pubDate>Tue, 24 Nov 2026 23:55:00 +0000</pubDate>
-      <description>Implementação de memória compartilhada baseada em ring buffers SPSC (estilo io_uring) para loteamento de eventos de entrada e comandos gráficos entre o Aladdin Desktop (Ring 3) e o microkernel Jinn OS (Ring 0) com garantia Zero-Idle.</description>
+      <title>feat(shared_rings): implement AladdinSharedRings lock-free SPSC in kernel, syscalls 89/90, and aladdin-server</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/e781c12e323d7e47e297e0b31b3c313dd0790f12</link>
+      <guid isPermaLink="false">e781c12e323d7e47e297e0b31b3c313dd0790f12</guid>
+      <pubDate>Tue, 24 Nov 2026 20:56:52 -0300</pubDate>
+      <description>feat(shared_rings): implement AladdinSharedRings lock-free SPSC in kernel, syscalls 89/90, and aladdin-server</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
@@ -180,14 +196,6 @@
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/c1b50e39d6c578c7f417fbff4b90f311d342d886</link>
       <guid isPermaLink="false">c1b50e39d6c578c7f417fbff4b90f311d342d886</guid>
       <pubDate>Tue, 24 Nov 2026 11:06:48 -0300</pubDate>
-      <description>feat(web): add W3C RSS 2.0 validation badge and valid-rss-rogers.png image</description>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>fix(dns,browser): resolve VirtualBox DNS/ARP, add CSS/JS engine, and fix stack overflow</title>
-      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/54ad7d8619104cc3dd5b5b8a8d2d2afcf76d8307</link>
-      <guid isPermaLink="false">54ad7d8619104cc3dd5b5b8a8d2d2afcf76d8307</guid>
-      <pubDate>Tue, 24 Nov 2026 11:01:45 -0300</pubDate>
       <description>---END---</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
