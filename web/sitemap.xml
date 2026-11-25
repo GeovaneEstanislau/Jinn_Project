@@ -13,6 +13,20 @@
     <priority>0.9</priority>
   </url>
   <url>
+    <loc>https://jinn-os.dev.br/artigos/auditoria-zero-idle-smp-percpu-irq-apic-gating.html</loc>
+    <lastmod>2026-11-25</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn OS Devlog</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-25</news:publication_date>
+      <news:title>Zero-Idle em SMP: Contabilidade Per-CPU, IRQ de Hardware NIC, Gating AP LAPIC e Hardening SimbadServer</news:title>
+    </news:news>
+  </url>
+  <url>
     <loc>https://jinn-os.dev.br/artigos/homologacao-desempenho-estabilidade-integracao-seguranca-zero-idle.html</loc>
     <lastmod>2026-11-24</lastmod>
     <changefreq>weekly</changefreq>

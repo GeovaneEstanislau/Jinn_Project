@@ -514,13 +514,25 @@ pub extern "C" fn _start() -> ! {
         let sc_t1 = unsafe { core::arch::x86_64::_rdtsc() };
         let cyc_per_syscall = sc_t1.saturating_sub(sc_t0) / 500;
 
-        // Entra em repouso bloqueado (~100 ticks = 1s) para validar incremento macico em cpu_idle_cycles
-        sleep(100);
+        // Entra em repouso bloqueado (~100 ticks = 1s) para validar incremento macico em cpu_idle_cycles e contadores por CPU
+        let mut pc_before = aladdin_sdk::syscall::PerCpuStatsUser::default();
+        let mut pc_after = aladdin_sdk::syscall::PerCpuStatsUser::default();
+        let _ = unsafe {
+            aladdin_sdk::syscall::syscall1(
+                aladdin_sdk::syscall::SYS_GET_PERCPU_STATS,
+                &mut pc_before as *mut _ as u64,
+            )
+        };
+        sleep(1000);
         let mut st_after = aladdin_sdk::syscall::SystemStatsUser::default();
         unsafe {
             aladdin_sdk::syscall::syscall1(
                 aladdin_sdk::syscall::SYS_GET_SYSTEM_STATS,
                 &mut st_after as *mut _ as u64,
+            );
+            let _ = aladdin_sdk::syscall::syscall1(
+                aladdin_sdk::syscall::SYS_GET_PERCPU_STATS,
+                &mut pc_after as *mut _ as u64,
             );
         }
 
@@ -535,6 +547,43 @@ pub extern "C" fn _start() -> ! {
         print(" syscalls_total=");
         print_num(st_after.syscalls_total);
         println("");
+
+        let net_irq_delta = pc_after.net_irq_count.saturating_sub(pc_before.net_irq_count);
+        print("[jhcs-test] [PERCPU] cpus=");
+        print_num(pc_after.cpu_count);
+        print(" net_irqs=");
+        print_num(pc_after.net_irq_count);
+        print(" (delta=");
+        print_num(net_irq_delta);
+        print(" verified=");
+        print_num(pc_after.net_irq_verified);
+        println(")");
+        let n = (pc_after.cpu_count as usize).min(8);
+        for idx in 0..n {
+            let b = pc_before.cores[idx];
+            let a = pc_after.cores[idx];
+            let d_tot = a.total_cycles.saturating_sub(b.total_cycles);
+            let d_hlt = a.hlt_cycles.saturating_sub(b.hlt_cycles);
+            let d_tsk = a.task_cycles.saturating_sub(b.task_cycles);
+            let d_irq = a.irq_cycles.saturating_sub(b.irq_cycles);
+            let d_trn = a.idle_transitions.saturating_sub(b.idle_transitions);
+            let d_wak = a.wakeups.saturating_sub(b.wakeups);
+            print("[jhcs-test] [PERCPU-DELTA] cpu");
+            print_num(idx as u64);
+            print(" total=");
+            print_num(d_tot);
+            print(" hlt=");
+            print_num(d_hlt);
+            print(" task=");
+            print_num(d_tsk);
+            print(" irq=");
+            print_num(d_irq);
+            print(" trans=");
+            print_num(d_trn);
+            print(" wake=");
+            print_num(d_wak);
+            println("");
+        }
     }
 
     println("[jhcs-test] ==================================================");

@@ -419,19 +419,7 @@ pub extern "C" fn syscall_dispatch_framed(frame: *mut usize) -> usize {
             let new_rsp = scheduler::get().preempt(frame as usize);
             if new_rsp == frame as usize || new_rsp == 0 {
                 let cpu_id = crate::smp::current_cpu_id();
-                let sched = scheduler::get();
-                let idle_id = sched.core_idle[cpu_id];
-                let (idle_rsp, idle_pml4) = if let Some(Some(idle)) = sched.tasks.get_mut(idle_id) {
-                    idle.state = scheduler::TaskState::Running;
-                    idle.running_on_cpu = Some(cpu_id);
-                    (idle.saved_rsp, idle.pml4_phys)
-                } else {
-                    return new_rsp;
-                };
-                sched.set_core_current(cpu_id, Some(idle_id));
-                crate::smp::set_current_pid(cpu_id, Some(idle_id));
-                unsafe { crate::memory::paging::load_cr3(idle_pml4); }
-                return idle_rsp;
+                return scheduler::switch_to_idle_fallback(cpu_id, pid);
             }
             new_rsp
         }
@@ -618,6 +606,7 @@ pub extern "C" fn syscall_dispatch(
         89 => sys_register_shared_rings(arg0, arg1),
         90 => sys_ring_doorbell(arg0 as u32),
         91 => sys_readdir(arg0 as *const u8, arg1, arg2 as *mut DirEntryUser, arg3),
+        92 => sys_get_percpu_stats(arg0 as *mut PerCpuStatsUser),
         102 => sys_getuid(),
         104 => sys_getgid(),
         107 => sys_geteuid(),
@@ -1378,7 +1367,7 @@ fn sys_waitpid(pid: usize) -> isize {
 /// `sleep(ms)` — Coloca a tarefa atual em estado de dormência por pelo menos `ms` milissegundos.
 /// A tarefa consome rigorosamente 0 ciclos de CPU enquanto dorme.
 fn sys_sleep(ms: usize) -> isize {
-    // 100 Hz timer = 10 ms por tick
+    // 100 Hz timer = 10 ms por tick (`syscall_dispatch_framed` realiza `preempt` ao retornar)
     let ticks = (ms as u64 + 9) / 10;
     let wake_tick = crate::timer::ticks().saturating_add(ticks);
     let pid = scheduler::current_pid();
@@ -2171,27 +2160,64 @@ fn sys_window_poll_event(win_id: usize, event_ptr: *mut crate::gui::ClientWindow
         return EAGAIN;
     }
 
-    match crate::gui::window_poll_event(pid, win_id) {
-        Ok(Some(ev)) => {
-            unsafe {
-                core::ptr::write_unaligned(event_ptr, ev);
+    loop {
+        match crate::gui::window_poll_event(pid, win_id) {
+            Ok(Some(ev)) => {
+                unsafe {
+                    core::ptr::write_unaligned(event_ptr, ev);
+                }
+                return 1;
             }
-            1
-        }
-        Ok(None) => {
-            if (flags & 1) != 0 {
-                EAGAIN
-            } else {
-                0
+            Ok(None) => {
+                if (flags & 1) != 0 {
+                    return EAGAIN;
+                }
+                if (flags & 2) == 0 {
+                    return 0;
+                }
+                // Bloqueio atômico contra preempção local e lost-wakeup (POLL_EVENT_BLOCKING)
+                let rflags: u64;
+                unsafe {
+                    core::arch::asm!("pushfq; pop {}; cli", out(reg) rflags, options(nomem));
+                }
+                crate::scheduler::get().block_task(pid);
+                match crate::gui::window_poll_event(pid, win_id) {
+                    Ok(Some(ev)) => {
+                        crate::scheduler::get().unblock_task(pid);
+                        if (rflags & (1 << 9)) != 0 {
+                            unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+                        }
+                        unsafe {
+                            core::ptr::write_unaligned(event_ptr, ev);
+                        }
+                        return 1;
+                    }
+                    Ok(None) => {
+                        crate::scheduler::yield_now();
+                        if (rflags & (1 << 9)) != 0 {
+                            unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+                        }
+                    }
+                    Err(err) => {
+                        crate::scheduler::get().unblock_task(pid);
+                        if (rflags & (1 << 9)) != 0 {
+                            unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+                        }
+                        if err == EBADF {
+                            return EAGAIN;
+                        }
+                        return err;
+                    }
+                }
             }
-        }
-        Err(err) => {
-            if err == EBADF {
-                // Janela ainda não registrada no compositor ou em fase de transição: yield cooperativo e retorna EAGAIN
-                crate::scheduler::yield_now();
-                EAGAIN
-            } else {
-                err
+            Err(err) => {
+                if err == EBADF {
+                    // Janela ainda não registrada no compositor ou em fase de transição: yield cooperativo e retorna EAGAIN
+                    crate::scheduler::yield_now();
+                    return EAGAIN;
+                } else {
+                    return err;
+                }
             }
         }
     }
@@ -3143,6 +3169,63 @@ fn sys_get_system_stats(out_ptr: *mut SystemStatsUser) -> isize {
 
     unsafe {
         core::ptr::copy_nonoverlapping(&u as *const SystemStatsUser, out_ptr, 1);
+    }
+    0
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PerCpuCoreStat {
+    pub cpu_id: u32,
+    pub online: u32,
+    pub total_cycles: u64,
+    pub hlt_cycles: u64,
+    pub task_cycles: u64,
+    pub irq_cycles: u64,
+    pub idle_transitions: u64,
+    pub wakeups: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PerCpuStatsUser {
+    pub cpu_count: u64,
+    pub net_irq_count: u64,
+    pub net_irq_verified: u64,
+    pub cores: [PerCpuCoreStat; 8],
+}
+
+/// `sys_get_percpu_stats(out_ptr)` — Retorna contadores reais por CPU (total, hlt, task, irq, transições, wakeups) (Syscall 92).
+fn sys_get_percpu_stats(out_ptr: *mut PerCpuStatsUser) -> isize {
+    if out_ptr.is_null() {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(out_ptr as *const u8, core::mem::size_of::<PerCpuStatsUser>(), true) {
+            return e;
+        }
+    }
+    let mut out = PerCpuStatsUser::default();
+    let n = crate::smp::online_cpus().clamp(1, crate::smp::MAX_CPUS);
+    out.cpu_count = n as u64;
+    let (net_irqs, net_verified) = crate::drivers::net::net_irq_stats();
+    out.net_irq_count = net_irqs;
+    out.net_irq_verified = if net_verified { 1 } else { 0 };
+    for i in 0..8 {
+        let s = crate::smp::snapshot_percpu_core(i);
+        out.cores[i] = PerCpuCoreStat {
+            cpu_id: s.cpu_id,
+            online: if s.online { 1 } else { 0 },
+            total_cycles: s.total_cycles,
+            hlt_cycles: s.hlt_cycles,
+            task_cycles: s.task_cycles,
+            irq_cycles: s.irq_cycles,
+            idle_transitions: s.idle_transitions,
+            wakeups: s.wakeups,
+        };
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(&out as *const PerCpuStatsUser, out_ptr, 1);
     }
     0
 }

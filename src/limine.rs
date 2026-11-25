@@ -305,6 +305,54 @@ pub static LIMINE_MODULE_REQUEST: LimineModuleRequest = LimineModuleRequest {
     response: core::ptr::null(),
 };
 
+// ── Kernel / Executable File & Cmdline Requests ──────────────────────────────
+
+#[repr(C)]
+pub struct LimineKernelFileResponse {
+    pub revision: u64,
+    pub kernel_file: *const LimineFile,
+}
+
+#[repr(C)]
+pub struct LimineKernelFileRequest {
+    pub id: [u64; 4],
+    pub revision: u64,
+    pub response: *const LimineKernelFileResponse,
+}
+
+unsafe impl Sync for LimineKernelFileRequest {}
+
+#[used]
+#[link_section = ".limine_requests"]
+pub static LIMINE_KERNEL_FILE_REQUEST: LimineKernelFileRequest = LimineKernelFileRequest {
+    id: [COMMON_MAGIC_0, COMMON_MAGIC_1, 0xad97e90e83f1ed67, 0x31eb5d1c5ff23b69],
+    revision: 0,
+    response: core::ptr::null(),
+};
+
+#[repr(C)]
+pub struct LimineExecutableCmdlineResponse {
+    pub revision: u64,
+    pub cmdline: *const u8,
+}
+
+#[repr(C)]
+pub struct LimineExecutableCmdlineRequest {
+    pub id: [u64; 4],
+    pub revision: u64,
+    pub response: *const LimineExecutableCmdlineResponse,
+}
+
+unsafe impl Sync for LimineExecutableCmdlineRequest {}
+
+#[used]
+#[link_section = ".limine_requests"]
+pub static LIMINE_EXECUTABLE_CMDLINE_REQUEST: LimineExecutableCmdlineRequest = LimineExecutableCmdlineRequest {
+    id: [COMMON_MAGIC_0, COMMON_MAGIC_1, 0x4b161536e598651e, 0xb390a37517b18e76],
+    revision: 0,
+    response: core::ptr::null(),
+};
+
 
 // ── SMP (Symmetric Multiprocessing) Request ─────────────────────────────────
 #[derive(Clone, Copy)]
@@ -614,6 +662,30 @@ pub fn smp_get_cpu(index: usize) -> Option<*mut LimineSmpInfo> {
             Some(cpu_ptr)
         }
     }
+}
+
+/// Retorna a linha de comando passada ao kernel pelo bootloader Limine (`cmdline:`).
+pub fn kernel_cmdline() -> &'static str {
+    unsafe {
+        let cmd_resp = core::ptr::read_volatile(&LIMINE_EXECUTABLE_CMDLINE_REQUEST.response);
+        if !cmd_resp.is_null() {
+            let cmd_ptr = core::ptr::read_volatile(&(*cmd_resp).cmdline);
+            if !cmd_ptr.is_null() {
+                return cstr_to_str(cmd_ptr);
+            }
+        }
+        let kf_resp = core::ptr::read_volatile(&LIMINE_KERNEL_FILE_REQUEST.response);
+        if !kf_resp.is_null() {
+            let kf_ptr = core::ptr::read_volatile(&(*kf_resp).kernel_file);
+            if !kf_ptr.is_null() {
+                let cmd_ptr = core::ptr::read_volatile(&(*kf_ptr).cmdline);
+                if !cmd_ptr.is_null() {
+                    return cstr_to_str(cmd_ptr);
+                }
+            }
+        }
+    }
+    ""
 }
 
 

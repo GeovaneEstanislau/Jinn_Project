@@ -92,6 +92,27 @@ pub fn init_timer(vector: u8, _freq_hz: u32) {
     }
 }
 
+/// Mascara o Local APIC Timer do núcleo atual (usado para suspender APs ociosos em `HLT`).
+pub fn mask_timer() {
+    unsafe {
+        if APIC_BASE_VADDR != 0 {
+            write_apic(APIC_TIMER, (1 << 16) | 32);
+            write_apic(APIC_TIMER_INIT_CNT, 0);
+        }
+    }
+}
+
+/// Reativa o Local APIC Timer do núcleo atual em modo periódico.
+pub fn unmask_timer(vector: u8, initial_count: u32) {
+    unsafe {
+        if APIC_BASE_VADDR != 0 {
+            write_apic(APIC_TIMER_DIV, 0x3);
+            write_apic(APIC_TIMER, (1 << 17) | (vector as u32));
+            write_apic(APIC_TIMER_INIT_CNT, initial_count);
+        }
+    }
+}
+
 const APIC_ICR_LOW: u32 = 0x300;
 const APIC_ICR_HIGH: u32 = 0x310;
 

@@ -94,6 +94,13 @@
     <!-- Artigo em Prosa -->
     <article class="prose prose-invert prose-cyan max-w-none text-slate-300 space-y-6 text-sm sm:text-base leading-relaxed">
 
+      <div class="bg-cyan-950/50 border border-cyan-800/60 rounded-xl p-4 my-6 text-xs sm:text-sm">
+        <div class="text-cyan-300 font-bold font-mono mb-1">ATUALIZAÇÃO DE ENGENHARIA (25/11/2026 — SMP PER-CPU &amp; GATING):</div>
+        <p class="text-slate-300 m-0">
+          As medições de <code>active_delta=0</code> exibidas na Seção 2 desta nota refletiam o contador global <code>read_tsc() - IDLE_HLT_CYCLES</code> vigente em 24/11. Na auditoria subsequente, substituímos essa fórmula por telemetria alinhada a cacheline por núcleo (<code>SYS_GET_PERCPU_STATS = 92</code>, invariante <code>task + hlt + irq == total</code>), adicionamos IRQ PCI 11 real para <code>e1000</code>/<code>VirtIO</code>, gating de timer LAPIC nos APs (<code>100,00% HLT</code> em <code>cpu2/cpu3</code>) e boot headless <code>profile=simbad</code>. Leia os novos resultados em <a href="/artigos/auditoria-zero-idle-smp-percpu-irq-apic-gating.html" class="text-cyan-300 underline hover:text-white">Zero-Idle em SMP: Contabilidade Per-CPU, IRQ PCI e SimbadServer</a>.
+        </p>
+      </div>
+
       <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2">
         1. Auditoria e Correções Estruturais Aplicadas Hoje
       </h2>

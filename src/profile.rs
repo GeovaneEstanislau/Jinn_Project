@@ -73,3 +73,25 @@ pub fn set_system_profile(profile: SystemProfile) {
         }
     }
 }
+
+/// Seleciona o perfil operacional a partir da linha de comando do kernel (ex.: `profile=simbad`).
+pub fn init_profile_from_cmdline(cmdline: &str) {
+    if cmdline.is_empty() {
+        return;
+    }
+    for token in cmdline.split(|c: char| c.is_ascii_whitespace()) {
+        if token.eq_ignore_ascii_case("profile=simbad") {
+            set_system_profile(SystemProfile::SimbadServer);
+            crate::serial_write(b"[PROFILE] Boot profile selected via cmdline: SimbadServer\n");
+            return;
+        } else if token.eq_ignore_ascii_case("profile=ifrit") {
+            set_system_profile(SystemProfile::IfritIndustrial);
+            crate::serial_write(b"[PROFILE] Boot profile selected via cmdline: IfritIndustrial\n");
+            return;
+        } else if token.eq_ignore_ascii_case("profile=aladdin") {
+            set_system_profile(SystemProfile::AladdinDesktop);
+            crate::serial_write(b"[PROFILE] Boot profile selected via cmdline: AladdinDesktop\n");
+            return;
+        }
+    }
+}

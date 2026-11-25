@@ -208,6 +208,19 @@ impl E1000Device {
     }
 }
 
+static E1000_MMIO_BASE: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Top-half lock-free executado na ISR PCI para reconhecer RX/LSC do Intel e1000.
+#[inline]
+pub fn ack_irq_top_half() -> bool {
+    let mmio = E1000_MMIO_BASE.load(core::sync::atomic::Ordering::Acquire);
+    if mmio == 0 {
+        return false;
+    }
+    let icr = unsafe { core::ptr::read_volatile((mmio + REG_ICR) as *const u32) };
+    icr != 0
+}
+
 /// Descobre e inicializa dispositivo Intel PRO/1000 compatível no barramento PCI.
 pub fn init() -> bool {
     // Lista de Device IDs suportados para Intel 82540EM / 82545EM / e1000
@@ -226,9 +239,9 @@ pub fn init() -> bool {
         None => return false,
     };
 
-    // Habilita explicitamente PCI Bus Master (bit 2) e Memory Space (bit 1) no PCI Command Register
+    // Habilita explicitamente PCI Bus Master (bit 2), Memory Space (bit 1) e INTx# (limpa bit 10)
     let cmd = pci::pci_read_u16(pci_dev.bus, pci_dev.slot, pci_dev.func, 0x04);
-    pci::pci_write_u16(pci_dev.bus, pci_dev.slot, pci_dev.func, 0x04, cmd | 0x0007);
+    pci::pci_write_u16(pci_dev.bus, pci_dev.slot, pci_dev.func, 0x04, (cmd | 0x0007) & !(1 << 10));
     let cmd_check = pci::pci_read_u16(pci_dev.bus, pci_dev.slot, pci_dev.func, 0x04);
     if (cmd_check & 0x0006) != 0x0006 {
         crate::serial_write(b"[e1000] AVISO: PCI Command nao confirmou Bus Master + Memory Space!\n");
@@ -340,6 +353,15 @@ pub fn init() -> bool {
 
         // Habilita transmissão
         dev.write_reg(REG_TCTL, TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD);
+
+        // Registra MMIO e habilita interrupções de recepção/link (RXT0 | RXO | RXDMT0 | LSC), mantendo TX sem IRQ
+        E1000_MMIO_BASE.store(mmio_base as usize, core::sync::atomic::Ordering::Release);
+        let _ = dev.read_reg(REG_ICR);
+        dev.write_reg(REG_IMS, 0x0000_00D4);
+        super::register_net_irq(pci_dev.irq_line, super::NicType::E1000);
+        if pci_dev.irq_line > 0 && pci_dev.irq_line < 16 {
+            crate::interrupts::pic::unmask_irq(pci_dev.irq_line);
+        }
 
         E1000_NET = Some(dev);
     }

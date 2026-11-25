@@ -136,6 +136,10 @@ exception_common:
 
     # Context switch: load new task's RSP returned by scheduler
     mov rsp, rax
+    mov rbp, rsp
+    and rsp, -16
+    call finish_context_switch
+    mov rsp, rbp
 
     # Se CS (em [rsp + 18*8]) tem RPL=3, configura DS e ES com USER_DATA_SEL (0x1B) para Ring 3
     test byte ptr [rsp + 18*8], 3
@@ -208,6 +212,10 @@ irq_common:
     test rax, rax
     jz .no_ctx_switch
     mov rsp, rax
+    mov rbp, rsp
+    and rsp, -16
+    call finish_context_switch
+    mov rsp, rbp
 .no_ctx_switch:
 
     # Se CS (em [rsp + 18*8]) tem RPL=3, configura DS e ES com USER_DATA_SEL (0x1B) para Ring 3
@@ -276,6 +284,10 @@ isr128_stub:
     test rax, rax
     jz .no_syscall_switch
     mov rsp, rax
+    mov rbp, rsp
+    and rsp, -16
+    call finish_context_switch
+    mov rsp, rbp
 .no_syscall_switch:
 
     # Se CS (em [rsp + 18*8]) tem RPL=3, configura DS e ES com USER_DATA_SEL (0x1B) para Ring 3

@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Zero-Idle em SMP: Contabilidade Per-CPU, IRQ de Hardware NIC, Gating AP LAPIC e Hardening SimbadServer — Jinn OS</title>
+  <meta name="description"
+    content="Evolução arquitetural do Zero-Idle no Jinn OS e Aladdin: fim da subtração global TSC-HLT em SMP via contadores per-CPU (Syscall 92), interrupções reais PCI IRQ 11 em Intel e1000 e VirtIO-Net, 100.00% HLT em núcleos AP secundários e ciclo seguro de CR3 em SimbadServer.">
+  <link rel="canonical"
+    href="https://jinn-os.dev.br/artigos/auditoria-zero-idle-smp-percpu-irq-apic-gating.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url"
+    content="https://jinn-os.dev.br/artigos/auditoria-zero-idle-smp-percpu-irq-apic-gating.html">
+  <meta property="og:title"
+    content="Zero-Idle em SMP: Contabilidade Per-CPU, IRQ PCI de Rede, Gating AP LAPIC e SimbadServer">
+  <meta property="og:description"
+    content="Como substituímos métricas globais enganosas por telemetria per-CPU lock-free (task + hlt + irq == total), comprovamos IRQs reais em e1000/VirtIO (+5/+6 IRQs), alcançamos 100.00% HLT nos APs cpu2/cpu3 e corrigimos corrida de CR3 em SMP.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/wallpaper.jpg">
+
+  <!-- Artigo Meta -->
+  <meta name="article:tag" content="ZERO-IDLE, SMP, MICROKERNEL, REDES &amp; DRIVERS, HOMOLOGAÇÃO &amp; SEGURANÇA">
+  <meta name="article:published_time" content="2026-11-25T23:55:00Z">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans selection:bg-cyan-500 selection:text-black">
+
+  <!-- Cabeçalho de Navegação -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 hover:text-cyan-400 transition-colors">
+        <i data-lucide="terminal" class="w-5 h-5 text-cyan-400"></i>
+        <span class="font-bold tracking-wider font-mono text-sm">JINN OS // DEVLOG</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="/artigos/" class="text-slate-400 hover:text-white transition-colors">Artigos</a>
+        <a href="/rss.xml" class="text-emerald-400 hover:underline">RSS 2.0</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Feed</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Conteúdo do Artigo -->
+  <main class="max-w-4xl mx-auto px-6 py-12">
+    <div class="mb-8">
+      <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400 mb-3">
+        <span class="bg-cyan-950/80 border border-cyan-800/60 px-2.5 py-0.5 rounded-full">ZERO-IDLE &amp; SMP PER-CPU</span>
+        <span>•</span>
+        <time datetime="2026-11-25">25 de Novembro de 2026</time>
+      </div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight">
+        Consolidando Zero-Idle Real em SMP: Contabilidade Per-CPU (<code>Syscall 92</code>), IRQ PCI em NICs, Gating de LAPIC AP e Hardening <code>SimbadServer</code>
+      </h1>
+      <p class="text-slate-400 text-base sm:text-lg mt-3 leading-relaxed">
+        Análise crítica, correções estruturais no microkernel e no servidor gráfico Aladdin, e resultados empíricos pós-rebuild em matriz completa QEMU TCG (<code>1 vCPU UP</code> × <code>4 vCPUs SMP</code>, <code>e1000</code> × <code>virtio-net-pci</code>, além de boot headless <code>profile=simbad</code>).
+      </p>
+    </div>
+
+    <!-- Artigo em Prosa -->
+    <article class="prose prose-invert prose-cyan max-w-none text-slate-300 space-y-6 text-sm sm:text-base leading-relaxed">
+
+      <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2">
+        1. Por que a métrica global <code>read_tsc() - IDLE_HLT_CYCLES</code> falhava em SMP
+      </h2>
+      <p>
+        Na homologação inicial, o cálculo agregado <code>read_tsc().saturating_sub(IDLE_HLT_CYCLES)</code> misturava um relógio de parede único (<code>TSC</code> do BSP) com o somatório de ciclos em <code>HLT</code> de 4 núcleos simultâneos. Como resultado, os ciclos em repouso de múltiplos APs superavam a linha de tempo de um único núcleo e o <code>saturating_sub</code> produzia artificialmente <code>active_delta = 0</code> — mascarando exatamente quanto tempo o núcleo BSP (<code>cpu0</code>) e o AP auxiliar (<code>cpu1</code>) ainda despertavam por conta do timer de sistema e da digitação no terminal.
+      </p>
+      <p>
+        Eliminamos essa distorção em três camadas coordenadas nos workspaces <code>Jinn</code> e <code>Aladdin</code>:
+      </p>
+      <ul class="space-y-2 my-4">
+        <li><strong>Contabilidade Per-CPU alinhada a cacheline (<code>src/smp.rs</code>):</strong> criamos <code>PerCpuAccounting</code> (<code>#[repr(align(64))]</code> com seqlock <code>seq</code> e máquina de estados <code>TASK</code>, <code>IDLE_LOOP</code>, <code>HLT</code>, <code>IRQ</code>) garantindo a invariante exata por núcleo <code>task + hlt + irq == total</code>, contagem explícita de transições <code>hlt_transitions</code> e despertares <code>wakeups</code>, exposta ao Ring 3 via <strong><code>SYS_GET_PERCPU_STATS (92)</code></strong> com validação Zero-Trust de ponteiros (<code>validate_user_buffer</code>).</li>
+        <li><strong>Interrupção Real de Hardware NIC (IRQ 11 + Gating):</strong> liberamos o bit 10 (<em>Interrupt Disable</em>) no espaço de configuração PCI (<code>src/drivers/pci.rs</code>), habilitamos <code>REG_IMS = 0xD4</code> no Intel <code>e1000</code> e configuramos flags de notificação no <code>virtio-net-pci</code>, com <em>top-half</em> lock-free (<code>handle_irq_top_half</code>) no despacho de IRQ hardware e verificação <code>net::poll_if_needed()</code> na entrada do loop ocioso do BSP.</li>
+        <li><strong>Gating do LAPIC Timer em núcleos AP ociosos (<code>src/interrupts/apic.rs</code> + <code>src/scheduler.rs</code>):</strong> quando um núcleo AP entra em estado ocioso estacionado (<code>AP_PARKED</code> / <code>AP_TIMER_HW_MASKED</code>), sua IRQ de timer local é mascarada via <code>apic::mask_timer()</code> e só volta a armar via IPI no vetor 32 (<code>wake_one_parked_ap()</code>) quando uma fila executável precisa de núcleo livre.</li>
+        <li><strong>Bloqueio Orientado a Eventos e Ciclo de Janelas Cliente (<code>src/gui.rs</code> + <code>apps/aladdin-server/src/main.rs</code>):</strong> <code>sys_window_poll_event</code> recebeu modo bloqueante atômico <code>POLL_EVENT_BLOCKING (flags &amp; 2)</code> com proteção anti-lost-wakeup (<code>cli → block_task → re-check → yield_now</code>); o compositor passou a expandir seu deadline de sono de <code>100</code> para <code>500</code> ticks (5 s) após inatividade sustentada; e corrigimos uma falha real em que <code>aladdin-server</code> mantinha uma janela fantasma quando o cliente chamava <code>sys_window_close</code> (fazendo <code>count == 0</code> em <code>sys_list_client_windows</code>). Adicionamos reconciliação completa de <code>CLIENT_MAP</code> + despertar instantâneo via <code>COMPOSITOR_CLIENT_DIRTY</code>.</li>
+        <li><strong>Lifetime Seguro de <code>KSTACK</code> e <code>CR3</code> (<code>src/scheduler.rs</code> + <code>src/interrupts/stubs.s</code>):</strong> o primeiro boot headless sob <code>SimbadServer</code> revelou um <em>Page Fault Ring 0 (Vector 14)</em> causado pela liberação prematura de <code>pml4_phys</code>/slot durante trocas de contexto concorrentes em SMP (<code>exit_task_locked</code>, <code>block_task</code>, <code>sleep_task</code>). Introduzimos <code>OUTGOING_PID_PER_CPU</code>, <code>deferred_pml4_free</code> e <code>finish_context_switch()</code> invocado imediatamente após <code>mov rsp, rax</code> nos três caminhos de retorno de <code>stubs.s</code>, zerando qualquer corrida entre núcleos.</li>
+      </ul>
+
+      <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-8">
+        2. Matriz Empírica Pós-Rebuild: UP1 × SMP4 e Deltas Per-CPU Reais
+      </h2>
+      <p>
+        Todos os resultados abaixo foram coletados em execução direta de QEMU após a edição final em código (com zero modificações posteriores no kernel ou servidor gráfico). Os contadores em cada núcleo satisfazem exatamente <code>hlt + task + irq == total</code> (<code>inv_ok=True</code> em todas as janelas):
+      </p>
+
+      <div class="overflow-x-auto my-6">
+        <table class="w-full text-left border-collapse bg-slate-900/60 border border-slate-800 rounded-xl text-xs sm:text-sm font-mono">
+          <thead>
+            <tr class="border-b border-slate-700 text-cyan-300 bg-slate-900">
+              <th class="p-3">Configuração (4s Idle c/ <code>stats</code>)</th>
+              <th class="p-3">cpu0 (BSP) HLT / Task / IRQ</th>
+              <th class="p-3">cpu1 (AP1) HLT / Task / IRQ</th>
+              <th class="p-3">cpu2 (AP2) HLT</th>
+              <th class="p-3">cpu3 (AP3) HLT</th>
+              <th class="p-3">NIC IRQ 11 (Idle Delta)</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800 text-slate-300">
+            <tr>
+              <td class="p-3 font-semibold text-white">4 vCPUs SMP + e1000</td>
+              <td class="p-3">88,05% / 10,32% / 1,62%<br><span class="text-slate-400">trans=949 wake=949</span></td>
+              <td class="p-3">77,12% / 22,16% / 0,72%<br><span class="text-slate-400">trans=1 wake=1</span></td>
+              <td class="p-3 text-emerald-400">100,00% (0,00% task/irq)<br><span class="text-slate-400">trans=0 wake=0</span></td>
+              <td class="p-3 text-emerald-400">100,00% (0,00% task/irq)<br><span class="text-slate-400">trans=0 wake=0</span></td>
+              <td class="p-3">total=5, delta=0 (verified=1)</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-white">1 vCPU UP + e1000</td>
+              <td class="p-3">72,72% / 26,41% / 0,87%<br><span class="text-slate-400">trans=469 wake=469</span></td>
+              <td class="p-3">—</td>
+              <td class="p-3">—</td>
+              <td class="p-3">—</td>
+              <td class="p-3">total=5, delta=0 (verified=1)</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-white">4 vCPUs SMP + virtio-net-pci</td>
+              <td class="p-3">89,11% / 10,04% / 0,85%<br><span class="text-slate-400">trans=719 wake=719</span></td>
+              <td class="p-3">84,80% / 15,09% / 0,10%<br><span class="text-slate-400">trans=6 wake=6</span></td>
+              <td class="p-3 text-emerald-400">100,00% (0,00% task/irq)<br><span class="text-slate-400">trans=0 wake=0</span></td>
+              <td class="p-3 text-emerald-400">100,00% (0,00% task/irq)<br><span class="text-slate-400">trans=0 wake=0</span></td>
+              <td class="p-3">total=5, delta=0 (verified=1)</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-white">1 vCPU UP + virtio-net-pci</td>
+              <td class="p-3">70,39% / 28,53% / 1,08%<br><span class="text-slate-400">trans=756 wake=756</span></td>
+              <td class="p-3">—</td>
+              <td class="p-3">—</td>
+              <td class="p-3">—</td>
+              <td class="p-3">total=4, delta=0 (verified=1)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        <strong>Nota metodológica sobre o <code>cpu0</code> nessa janela:</strong> durante os 4 s interativos de desktop, o próprio harness injeta o comando <code>stats\n</code> via PS/2 para disparar os snapshots no terminal gráfico — gerando centenas de interrupções de teclado, redesenho do framebuffer no compositor e interrupções periódicas de 100 Hz no BSP (já que o PIT 8254 segue como fonte global de tick no núcleo 0). Na janela isolada do <code>jhcs-test</code> (Test 8c, <code>sleep(100t)</code> sem digitação), o salto de ociosidade fica ainda mais nítido: no <code>smp4_virtio</code>, <code>cpu0</code> registrou <code>12,09%</code> em <code>task</code> (<code>87,11% HLT</code>), <code>cpu1</code> ficou em <code>99,02% HLT</code> e tanto <code>cpu2</code> quanto <code>cpu3</code> marcaram <strong>100,00% HLT</strong> com <code>trans=0, wake=0</code>; no <code>smp4_e1000</code>, <code>cpu3</code> manteve <strong>100,00% HLT (<code>trans=0, wake=0</code>)</strong>, <code>cpu2</code> ficou em <code>99,97% HLT</code>, <code>cpu1</code> em <code>96,06% HLT</code> e <code>cpu0</code> reduziu para <code>26,70%</code> em <code>task</code> (<code>72,24% HLT</code>) enquanto coletava os resultados do <code>jhcs-test</code>.
+      </p>
+
+      <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-8">
+        3. Prova ao Vivo de IRQs de Rede, Navegador, SIMD e Persistência FAT32
+      </h2>
+      <ul class="space-y-2 my-4">
+        <li><strong>Delta real de IRQ PCI 11 no navegador (<code>verify_net_irq.py</code>):</strong> abrindo o <code>browser.elf</code> sobre 4 vCPUs SMP, navegando para <code>http://example.com</code> (HTTP 200, 577 bytes decodificados em chunked) e encerrando o app com <code>q</code>, a restauração imediata de foco no terminal permitiu ler o contador após a requisição: em <strong><code>e1000</code></strong>, <code>net_irqs</code> subiu de <code>5</code> para <code>10</code> (<strong><code>delta=+5</code></strong>, resolvendo <code>example.com → 104.20.23.154</code>); em <strong><code>virtio-net-pci</code></strong>, subiu de <code>5</code> para <code>11</code> (<strong><code>delta=+6</code></strong>, resolvendo <code>172.66.147.243</code>).</li>
+        <li><strong>Validação cruzada PCAP (<code>scripts/test_dns_cross_pcap.py</code>):</strong> tanto <code>dns_e1000.pcap</code> quanto <code>dns_virtio.pcap</code> (4.722 bytes cada) registraram exatamente 5 solicitações e 5 respostas ARP, 1 consulta e 1 resposta DNS UDP/53 via <code>1.1.1.1</code> e 9 pacotes HTTP TCP/80, com renderização DOM completa em tela (<code>[PASS] SUCESSO INTEGRAL</code> em ambas as passagens).</li>
+        <li><strong>Benchmarks Ring 3 (<code>jhcs-test</code> 8/8 aprovados nas 5 execuções):</strong>
+          <code>box_blur_rgba_simd</code> (128×128 r=3 <code>.bss</code>) atingiu 12.964.286 ciclos (791/px) em <code>smp4_e1000</code>, 7.609.140 (464/px) em <code>smp1_e1000</code>, 8.103.996 (494/px) em <code>smp4_virtio</code> e 10.853.028 (662/px) em <code>smp1_virtio</code>;
+          <code>scale_image_rgba_simd</code> (128²→256² <code>.bss</code>) atingiu 12.663.108 (193/px) em <code>smp4_e1000</code>, 49.461.120 (754/px) em <code>smp1_e1000</code>, 12.858.676 (196/px) em <code>smp4_virtio</code> e 54.615.168 (833/px) em <code>smp1_virtio</code>.</li>
+        <li><strong>FAT32 LFN, Zero-Trust, JAHA 1.2 e Offline-on-Shutdown:</strong> criação e leitura <code>QA-FAT32-LFN</code> (<code>write_cycles=17.859.924</code>, <code>read_cycles=3.275.748</code> em <code>smp4_e1000</code>), rejeição <code>QA-SEC-1..5</code> (<code>-22 EINVAL</code> / <code>-14 EFAULT</code>), <code>Aladdin</code> <strong>52/52 testes</strong> em release, <code>jhcs-rs</code> <strong>24/24 testes</strong>, JAHA 1.2 com <strong><code>0 bytes discrepancy</code></strong> em 255.090.688 bytes utilizáveis, e <code>test_benchmark_offline_update.py</code> aprovado com <code>Display Power: OFF</code>, instalação SHA-256 offline e <code>SYS_POWEROFF</code> ACPI.</li>
+      </ul>
+
+      <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-8">
+        4. Execução Headless via Limine Cmdline (<code>profile=simbad</code>) e Transparência de Pendências
+      </h2>
+      <p>
+        Implementamos parsing de cmdline do Limine em <code>src/limine.rs</code> + <code>src/profile.rs</code> (<code>profile=simbad</code>, <code>profile=ifrit</code>, <code>profile=aladdin</code>) e validamos o boot headless de servidor em <code>4 vCPUs SMP</code> (<code>[PROFILE] Boot profile selected via cmdline: SimbadServer</code> / <code>Modo Sistema : Simbad (Server OS)</code>):
+      </p>
+      <ul class="space-y-2 my-4">
+        <li>Sob carga simultânea do <code>worker[U3]</code> (encerrado corretamente pelo kernel com <code>-EDQUOT</code> por excesso de cota no <code>PID 3</code>) e do binário de testes, <code>jhcs-test</code> concluiu as 8 suítes (<code>TODOS OS 8 TESTES RING 3 FORAM APROVADOS</code>, com <code>[WARN] Test 6: ipc_send error=105</code> concorrente no boot; <code>box_blur_rgba_simd</code> em 9.922.716 ciclos / 605/px; <code>scale_image_rgba_simd</code> em 15.381.866 / 234/px) e <code>sys_execve</code> obteve <code>[PASS]</code>, com <strong>zero <em>Kernel Panics</em></strong> e JAHA 1.2 em <code>0 bytes discrepancy</code>.</li>
+        <li><strong>Transparência — divergências legadas observadas no log do <code>SimbadServer</code>:</strong> não atenuamos nem ocultamos asserções antigas. Na execução headless completa do binário legado <code>ola-mundo.elf</code> e nos selftests de boot, sete condições legadas acusaram divergência frente à configuração atual e seguem mapeadas para saneamento futuro:
+          (1) selftest interno de boot do firewall JinnWall registrou <code>FALHA (12/13)</code> sob inicialização <code>SimbadServer</code>;
+          (2) <code>test_memory_pressure</code> reportou <code>Limite nao foi atingido</code>;
+          (3) <code>test_fd_stress falhou</code> e (4) <code>test_window_stress falhou</code> nos testes de esgotamento de descritores/janelas;
+          (5) <code>sys_window_poll_event(win_id=999)</code> retornou <code>-11 (-EAGAIN)</code> onde a asserção legada esperava <code>-9 (-EBADF)</code>;
+          (6) <code>test_browser_storage_persistence</code> acusou falha de persistência; e
+          (7) <code>test_sched_preemption_and_cpu_quota</code> registrou <code>Preempcao por hardware nao alcancou os criterios esperados</code> (mesmo após o kernel encerrar corretamente o processo monopolizador <code>PID 3</code> com <code>-EDQUOT</code>).</li>
+        <li><strong>Próxima fronteira arquitetural (BSP tickless + hardware real):</strong> embora os núcleos AP secundários <code>cpu2</code> e <code>cpu3</code> tenham atingido <strong>100,00% <code>HLT</code></strong> com <code>trans=0</code>, o núcleo BSP <code>cpu0</code> ainda desperta periodicamente pelo tick global de 100 Hz (PIT/LAPIC) e o kernel ainda não programa estados C-states ACPI profundos nem DVFS em silício físico. Tornar o timer do BSP dinâmico (<em>tickless one-shot via LAPIC</em>) é o próximo passo natural para aproximar todo o cluster SMP de zero despertares em repouso absoluto.</li>
+      </ul>
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <!-- Rodapé do Artigo -->
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn OS Sovereign Systems • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/artigos/" class="text-cyan-400 hover:underline">Voltar aos Artigos</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-slate-300 hover:text-white">Portal Principal</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>

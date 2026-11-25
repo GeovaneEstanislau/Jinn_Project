@@ -80,9 +80,36 @@ pub fn init() {
 }
 
 static NET_POLL_LOCK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static LAST_NET_POLL_TICK: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// Informa se a ISR de rede sinalizou pacotes pendentes para processamento imediato.
+#[inline]
+pub fn has_pending_work() -> bool {
+    crate::drivers::net::NET_IRQ_PENDING.load(core::sync::atomic::Ordering::Acquire)
+}
+
+/// Processa rede sob demanda via IRQ (Zero-Idle) com fallback lento de segurança se nenhuma IRQ foi observada ainda.
+pub fn poll_if_needed() {
+    let pending = crate::drivers::net::NET_IRQ_PENDING.swap(false, core::sync::atomic::Ordering::AcqRel);
+    let ticks = crate::timer::ticks();
+    if pending {
+        LAST_NET_POLL_TICK.store(ticks, core::sync::atomic::Ordering::Relaxed);
+        poll();
+        return;
+    }
+    let last = LAST_NET_POLL_TICK.load(core::sync::atomic::Ordering::Relaxed);
+    let verified = crate::drivers::net::NET_IRQ_VERIFIED.load(core::sync::atomic::Ordering::Acquire);
+    let fallback_interval = if verified { 100 } else { 5 };
+    if ticks.saturating_sub(last) >= fallback_interval {
+        LAST_NET_POLL_TICK.store(ticks, core::sync::atomic::Ordering::Relaxed);
+        poll();
+    }
+}
 
 /// Processa pacotes de rede recebidos da placa física e barramento loopback.
 pub fn poll() {
+    // Limpa pendência antes de drenar o anel para evitar lost-wakeup caso novo pacote chegue durante a leitura
+    crate::drivers::net::NET_IRQ_PENDING.store(false, core::sync::atomic::Ordering::Release);
     // Processa tráfego de loopback interno independente do hardware de rede
     tcp::drain_loopback();
 

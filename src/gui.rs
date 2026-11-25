@@ -345,6 +345,21 @@ pub fn flush_shared_gfx_cmds(caller_pid: usize) -> usize {
     flushed_count
 }
 
+static COMPOSITOR_CLIENT_DIRTY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+fn wake_compositor_on_client_change() {
+    COMPOSITOR_CLIENT_DIRTY.store(true, Ordering::SeqCst);
+    let rings_addr = SHARED_RINGS_HHDM.load(Ordering::Acquire);
+    if rings_addr != 0 {
+        let rings = unsafe { &*(rings_addr as *const AladdinSharedRings) };
+        rings.rx_header.flags.fetch_and(!CONSUMER_SLEEPING, Ordering::SeqCst);
+    }
+    let g_pid = GRAPHICS_SERVER_PID.load(Ordering::Acquire);
+    if g_pid != 0 {
+        crate::scheduler::wake_task(g_pid);
+    }
+}
+
 /// Aciona a campainha do anel (Doorbell - Syscall 90) para flush de comandos gráficos e repouso anti-lost-wakeup.
 pub fn ring_doorbell(caller_pid: usize, flags: u32) -> Result<isize, isize> {
     RING_DOORBELL_CALLS.fetch_add(1, Ordering::Relaxed);
@@ -366,14 +381,16 @@ pub fn ring_doorbell(caller_pid: usize, flags: u32) -> Result<isize, isize> {
             let head = rings.rx_header.head.load(Ordering::Acquire);
             let tail = rings.rx_header.tail.load(Ordering::Acquire);
 
-            if head != tail {
-                // Eventos já disponíveis! Limpa flag e retorna imediatamente sem bloquear
+            if head != tail || COMPOSITOR_CLIENT_DIRTY.swap(false, Ordering::SeqCst) {
+                // Eventos ou atualizações de janela cliente já disponíveis! Retorna sem bloquear
                 rings.rx_header.flags.fetch_and(!CONSUMER_SLEEPING, Ordering::SeqCst);
                 return Ok(total_flushed);
             }
 
-            // Coloca a tarefa em repouso até o próximo evento de hardware ou timeout (50 ticks = 500ms)
-            let wake_tick = crate::timer::ticks().wrapping_add(50);
+            // Coloca a tarefa em repouso até o próximo evento de hardware ou deadline solicitado pelo compositor (bits [31:16], padrão 100 ticks = 1s)
+            let req_ticks = (flags >> 16) as u64;
+            let timeout_ticks = if req_ticks == 0 { 100 } else { req_ticks.clamp(1, 6000) };
+            let wake_tick = crate::timer::ticks().wrapping_add(timeout_ticks);
             crate::scheduler::get().sleep_task(caller_pid, wake_tick);
             crate::scheduler::yield_now();
 
@@ -550,6 +567,8 @@ pub fn client_window_create(owner_pid: usize, title: &str, width: usize, height:
                     let _ = session.create_client_window(owner_pid, title, width, height);
                 }
             }
+            drop(windows);
+            wake_compositor_on_client_change();
 
             return Ok(win_id);
         }
@@ -586,6 +605,8 @@ pub fn client_window_update(owner_pid: usize, win_id: usize, buffer: &[u32]) -> 
                         let _ = session.update_client_buffer(owner_pid, win_id, buffer);
                     }
                 }
+                drop(windows);
+                wake_compositor_on_client_change();
                 return Ok(());
             }
         }
@@ -594,28 +615,37 @@ pub fn client_window_update(owner_pid: usize, win_id: usize, buffer: &[u32]) -> 
 }
 
 pub fn client_window_close(owner_pid: usize, win_id: usize) -> Result<(), isize> {
-    let mut windows = CLIENT_WINDOWS.lock();
-    for slot in windows.iter_mut() {
-        if let Some(w) = slot {
-            if w.id == win_id {
-                if w.owner_pid != owner_pid {
-                    return Err(crate::syscall::EPERM);
-                }
-                // Zero-Idle GC: devolve o backbuffer integralmente ao heap
-                w.buffer.clear();
-                w.buffer.shrink_to_fit();
-                *slot = None;
-                if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(owner_pid) {
-                    task.resources.close_window();
-                }
-                unsafe {
-                    if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
-                        let _ = session.close_client_window(owner_pid, win_id);
+    let mut closed_owner = None;
+    {
+        let mut windows = CLIENT_WINDOWS.lock();
+        for slot in windows.iter_mut() {
+            if let Some(w) = slot {
+                if w.id == win_id {
+                    if w.owner_pid != owner_pid {
+                        return Err(crate::syscall::EPERM);
                     }
+                    // Zero-Idle GC: devolve o backbuffer integralmente ao heap
+                    w.buffer.clear();
+                    w.buffer.shrink_to_fit();
+                    *slot = None;
+                    if let Some(Some(task)) = crate::scheduler::get().tasks.get_mut(owner_pid) {
+                        task.resources.close_window();
+                    }
+                    unsafe {
+                        if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
+                            let _ = session.close_client_window(owner_pid, win_id);
+                        }
+                    }
+                    closed_owner = Some(owner_pid);
+                    break;
                 }
-                return Ok(());
             }
         }
+    }
+    if let Some(pid) = closed_owner {
+        crate::scheduler::wake_task(pid);
+        wake_compositor_on_client_change();
+        return Ok(());
     }
     Err(crate::syscall::EBADF)
 }

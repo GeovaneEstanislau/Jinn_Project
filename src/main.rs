@@ -226,6 +226,9 @@ pub extern "C" fn _start() -> ! {
     w.set_color(Color::LightGray, Color::Black);
     w.write_string("    Perfil Ativo       : ");
     w.write_line(caps.profile.name());
+    profile::init_profile_from_cmdline(limine::kernel_cmdline());
+    w.write_string("    Modo Sistema       : ");
+    w.write_line(profile::get_system_profile().name());
 
     w.write_string("[+] VFS + ramfs /dev...");
     vfs::ramfs::init_dev();

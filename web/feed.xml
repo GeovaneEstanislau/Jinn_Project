@@ -7,14 +7,13 @@
     <language>pt-br</language>
     <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
     <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
-        <item>
-      <title>docs(qa,web): publish performance, stability, integration, security audit and sc</title>
-      <link>https://jinn-os.dev.br</link>
-      <guid isPermaLink="false">jinn-os-docs-qa-web---publish-performance--stability--integration--security-audit-and-sc-202611250259</guid>
-      <pubDate>Wed, 25 Nov 2026 02:59:32 +0000</pubDate>
-      <description><![CDATA[
-        <p>Consolidamos o suporte a resolucao DNS cascateada (Cloudflare/Google), decodificacao de imagens bare-metal no Jinn Browser, aceleracao SIMD AVX2 no JHCS e persistencia estrita em disco FAT32 com zero-idle.</p>
-      ]]></description>
+    <item>
+      <title>Zero-Idle em SMP: Contabilidade Per-CPU, IRQ de Hardware NIC, Gating AP LAPIC e Hardening SimbadServer</title>
+      <link>https://jinn-os.dev.br/artigos/auditoria-zero-idle-smp-percpu-irq-apic-gating.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-auditoria-zero-idle-smp-percpu-irq-apic-gating</guid>
+      <pubDate>Wed, 25 Nov 2026 23:55:00 +0000</pubDate>
+      <description>Evolução arquitetural do Zero-Idle no Jinn OS e Aladdin: fim da subtração global TSC-HLT em SMP via contadores per-CPU (Syscall 92), interrupções reais PCI IRQ 11 em Intel e1000 e VirtIO-Net, 100.00% HLT em núcleos AP secundários e ciclo seguro de CR3 em SimbadServer.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
       <title>Homologação Completa: Desempenho Zero-Idle, Estabilidade FAT32/JPKG, Rede PCAP e Segurança Zero-Trust</title>
@@ -129,6 +128,14 @@
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
+      <title>docs(qa,web): publish performance, stability, integration, security audit and scrollable articles hub [announce]</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/f6439da9fc061f05122705dcb3b0ec0dd04ea3ee</link>
+      <guid isPermaLink="false">f6439da9fc061f05122705dcb3b0ec0dd04ea3ee</guid>
+      <pubDate>Tue, 24 Nov 2026 23:59:19 -0300</pubDate>
+      <description>docs(qa,web): publish performance, stability, integration, security audit and scrollable articles hub [announce]</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
       <title>feat(shared_rings): implement AladdinSharedRings lock-free SPSC in kernel, syscalls 89/90, and aladdin-server</title>
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/e781c12e323d7e47e297e0b31b3c313dd0790f12</link>
       <guid isPermaLink="false">e781c12e323d7e47e297e0b31b3c313dd0790f12</guid>
@@ -197,14 +204,6 @@
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/2e76b6e55e30ab1dd5d2a99688f1a8b85caf9198</link>
       <guid isPermaLink="false">2e76b6e55e30ab1dd5d2a99688f1a8b85caf9198</guid>
       <pubDate>Tue, 24 Nov 2026 11:31:54 -0300</pubDate>
-      <description>feat(web): organize articles in dedicated web/artigos directory, add technical articles from project history, disable RRM autoPrompt, and automate feeds/sitemap</description>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>feat(web): add W3C RSS 2.0 validation badge and valid-rss-rogers.png image</title>
-      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/c1b50e39d6c578c7f417fbff4b90f311d342d886</link>
-      <guid isPermaLink="false">c1b50e39d6c578c7f417fbff4b90f311d342d886</guid>
-      <pubDate>Tue, 24 Nov 2026 11:06:48 -0300</pubDate>
       <description>---END---</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>

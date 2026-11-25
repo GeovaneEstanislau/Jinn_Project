@@ -250,6 +250,19 @@ impl VirtioNetDevice {
     }
 }
 
+static VIRTIO_IO_BASE: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(0);
+
+/// Top-half lock-free executado na ISR PCI para reconhecer e limpar VIRTIO_PCI_ISR.
+#[inline]
+pub fn ack_irq_top_half() -> bool {
+    let io_base = VIRTIO_IO_BASE.load(core::sync::atomic::Ordering::Acquire);
+    if io_base == 0 {
+        return false;
+    }
+    let isr = unsafe { inb(io_base + VIRTIO_PCI_ISR) };
+    (isr & 0x03) != 0
+}
+
 /// Inicializa o dispositivo VirtIO-Net descoberto no barramento PCI.
 pub fn init() -> bool {
     // Procura o dispositivo PCI VirtIO-Net (Vendor 0x1AF4, Device 0x1000 ou 0x1041)
@@ -334,9 +347,12 @@ pub fn init() -> bool {
             tx_buffers_phys,
         };
 
-        // Popula descritores de recepção (RX)
+        // Popula descritores de recepção (RX) e suprime IRQs de conclusão de transmissão (VRING_AVAIL_F_NO_INTERRUPT)
         let rx_desc = rx_virt as *mut VRingDesc;
         let rx_avail = (rx_virt + 4096) as *mut VRingAvail;
+        let tx_avail = (tx_virt + 4096) as *mut VRingAvail;
+        (*rx_avail).flags = 0;
+        (*tx_avail).flags = 1;
 
         for i in 0..NUM_BUFFERS {
             let desc = &mut *rx_desc.add(i);
@@ -352,6 +368,14 @@ pub fn init() -> bool {
 
         // 5. Conclui handshake com DRIVER_OK
         outb(io_base + VIRTIO_PCI_STATUS, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK);
+
+        // Registra top-half de IRQ e desmascara linha PIC correspondente
+        VIRTIO_IO_BASE.store(io_base, core::sync::atomic::Ordering::Release);
+        let _ = inb(io_base + VIRTIO_PCI_ISR);
+        super::register_net_irq(pci_dev.irq_line, super::NicType::Virtio);
+        if pci_dev.irq_line > 0 && pci_dev.irq_line < 16 {
+            crate::interrupts::pic::unmask_irq(pci_dev.irq_line);
+        }
 
         // Notifica host da disponibilidade dos buffers RX
         outw(io_base + VIRTIO_PCI_QUEUE_NOTIFY, 0);

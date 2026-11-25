@@ -524,12 +524,18 @@ impl SystemHost for UserSystem {
     }
 
     fn yield_cpu(&self) {
+        self.yield_idle_ticks(100);
+    }
+
+    fn yield_idle_ticks(&self, wait_ticks: u16) {
         if unsafe { SHARED_RINGS_ACTIVE } {
             unsafe {
-                aladdin_sdk::syscall::ring_doorbell(DOORBELL_FLUSH_GFX | DOORBELL_WAIT_INPUT);
+                let flags = DOORBELL_FLUSH_GFX | DOORBELL_WAIT_INPUT | ((wait_ticks as u32) << 16);
+                aladdin_sdk::syscall::ring_doorbell(flags);
             }
         } else {
-            aladdin_sdk::time::sleep(10);
+            let ms = (wait_ticks as u64).max(1) * 10;
+            aladdin_sdk::time::sleep(ms);
         }
     }
 
@@ -925,7 +931,42 @@ impl ProcessHost for UserProcess {
             aladdin_sdk::console::print(" ring_tx=");
             aladdin_sdk::console::print_num(st.ring_cmds_flushed);
             aladdin_sdk::console::println("");
-            output("Telemetria Zero-Idle & Syscall 88 registrada na serial.", 0x0022_C55E);
+            let mut pc = aladdin_sdk::syscall::PerCpuStatsUser::default();
+            let pc_ret = unsafe {
+                aladdin_sdk::syscall::syscall1(
+                    aladdin_sdk::syscall::SYS_GET_PERCPU_STATS,
+                    &mut pc as *mut _ as u64,
+                )
+            };
+            if pc_ret == 0 {
+                aladdin_sdk::console::print("[aladdin-server] [PERCPU] cpus=");
+                aladdin_sdk::console::print_num(pc.cpu_count);
+                aladdin_sdk::console::print(" net_irqs=");
+                aladdin_sdk::console::print_num(pc.net_irq_count);
+                aladdin_sdk::console::print(" net_verified=");
+                aladdin_sdk::console::print_num(pc.net_irq_verified);
+                aladdin_sdk::console::println("");
+                let n = (pc.cpu_count as usize).min(8);
+                for idx in 0..n {
+                    let c = pc.cores[idx];
+                    aladdin_sdk::console::print("  cpu");
+                    aladdin_sdk::console::print_num(c.cpu_id as u64);
+                    aladdin_sdk::console::print(": total=");
+                    aladdin_sdk::console::print_num(c.total_cycles);
+                    aladdin_sdk::console::print(" hlt=");
+                    aladdin_sdk::console::print_num(c.hlt_cycles);
+                    aladdin_sdk::console::print(" task=");
+                    aladdin_sdk::console::print_num(c.task_cycles);
+                    aladdin_sdk::console::print(" irq=");
+                    aladdin_sdk::console::print_num(c.irq_cycles);
+                    aladdin_sdk::console::print(" trans=");
+                    aladdin_sdk::console::print_num(c.idle_transitions);
+                    aladdin_sdk::console::print(" wake=");
+                    aladdin_sdk::console::print_num(c.wakeups);
+                    aladdin_sdk::console::println("");
+                }
+            }
+            output("Telemetria Zero-Idle & Syscall 88/92 registrada na serial.", 0x0022_C55E);
         } else if trimmed.eq_ignore_ascii_case("help") {
             output("Comandos: browser, spawn <path>, stats, uptime, reboot, clear", 0x0093_C5FD);
         } else if trimmed.eq_ignore_ascii_case("reboot") {
@@ -1237,25 +1278,36 @@ pub extern "C" fn _start() -> ! {
         // Extrai o próximo estado da fila de mouse ou retorna o estado atômico mais recente
         let res_mouse = dequeue_mouse().unwrap_or(unsafe { CURRENT_MOUSE });
 
-        // Sincroniza janelas de clientes Ring 3 ativas imediatamente em arraste/clique ou a cada 3 ciclos
+        // Sincroniza janelas de clientes Ring 3 imediatamente se houver janela mapeada ativa, clique ou a cada 3 ciclos
         win_sync_count = win_sync_count.wrapping_add(1);
-        if (res_mouse.2 & 1) != 0 || win_sync_count % 3 == 0 {
+        let has_mapped_clients = unsafe {
+            (*core::ptr::addr_of!(CLIENT_MAP)).iter().any(|m| m.active)
+        };
+        if has_mapped_clients || (res_mouse.2 & 1) != 0 || win_sync_count % 3 == 0 {
             unsafe {
                 if let Some(sess) = GLOBAL_SESSION.as_mut() {
                     let count = sys_list_client_windows(client_info_list.as_mut_ptr(), 16);
-                let client_map = &mut *core::ptr::addr_of_mut!(CLIENT_MAP);
-                if count > 0 {
-                    for i in 0..(count as usize).min(16) {
-                        let win = &client_info_list[i];
+                    let list_len = if count > 0 { (count as usize).min(16) } else { 0 };
+                    let client_map = &mut *core::ptr::addr_of_mut!(CLIENT_MAP);
 
-                        // 1. Trata fechamento de janela
+                    // 1. Reconcilia janelas que desapareceram da lista do kernel (ex.: sys_window_close liberou o slot)
+                    //    ou que estao explicitamente marcadas com is_open == 0.
+                    for map in client_map.iter_mut() {
+                        if !map.active {
+                            continue;
+                        }
+                        let still_open = client_info_list[..list_len].iter().any(|w| {
+                            w.is_open != 0 && w.win_id == map.kernel_win_id && w.owner_pid == map.owner_pid
+                        });
+                        if !still_open {
+                            let _ = sess.close_client_window(map.owner_pid as usize, map.wm_win_id);
+                            map.active = false;
+                        }
+                    }
+
+                    for i in 0..list_len {
+                        let win = &client_info_list[i];
                         if win.is_open == 0 {
-                            for map in client_map.iter_mut() {
-                                if map.active && map.kernel_win_id == win.win_id {
-                                    let _ = sess.close_client_window(map.owner_pid as usize, map.wm_win_id);
-                                    map.active = false;
-                                }
-                            }
                             continue;
                         }
 
@@ -1332,7 +1384,6 @@ pub extern "C" fn _start() -> ! {
                     }
                 }
             }
-        }
         }
 
         res_mouse

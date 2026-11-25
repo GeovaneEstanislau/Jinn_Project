@@ -13,6 +13,64 @@ pub use e1000::E1000Device;
 pub use pcnet::PcnetDevice;
 pub use virtio::VirtioNetDevice;
 
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+
+static NET_IRQ_LINE: AtomicU8 = AtomicU8::new(0);
+static NET_IRQ_KIND: AtomicU8 = AtomicU8::new(0); // 1 = Virtio, 2 = E1000
+pub static NET_IRQ_COUNT: AtomicU64 = AtomicU64::new(0);
+pub static NET_IRQ_VERIFIED: AtomicBool = AtomicBool::new(false);
+pub static NET_IRQ_PENDING: AtomicBool = AtomicBool::new(false);
+
+/// Registra a linha IRQ PCI da NIC ativa e o tipo para despacho lock-free na ISR.
+pub fn register_net_irq(irq_line: u8, nic_type: NicType) {
+    if irq_line > 0 && irq_line < 16 {
+        let kind = match nic_type {
+            NicType::Virtio => 1,
+            NicType::E1000 => 2,
+            _ => 0,
+        };
+        NET_IRQ_KIND.store(kind, Ordering::Release);
+        NET_IRQ_LINE.store(irq_line, Ordering::Release);
+        crate::serial_write(b"[NET-IRQ] Registered PCI IRQ ");
+        if irq_line >= 10 {
+            crate::serial_write_byte(b'0' + (irq_line / 10));
+        }
+        crate::serial_write_byte(b'0' + (irq_line % 10));
+        crate::serial_write(b"\n");
+    }
+}
+
+/// Retorna true se `irq` corresponde à linha PCI registrada para a NIC ativa.
+#[inline]
+pub fn is_net_irq(irq: u8) -> bool {
+    let line = NET_IRQ_LINE.load(Ordering::Acquire);
+    line != 0 && line == irq
+}
+
+/// Top-half lock-free executado dentro da ISR de rede: reconhece a causa de hardware e sinaliza pendência.
+#[inline]
+pub fn handle_irq_top_half() -> bool {
+    let asserted = match NET_IRQ_KIND.load(Ordering::Acquire) {
+        1 => virtio::ack_irq_top_half(),
+        2 => e1000::ack_irq_top_half(),
+        _ => false,
+    };
+    if asserted {
+        NET_IRQ_COUNT.fetch_add(1, Ordering::Relaxed);
+        NET_IRQ_VERIFIED.store(true, Ordering::Release);
+        NET_IRQ_PENDING.store(true, Ordering::Release);
+    }
+    asserted
+}
+
+/// Retorna `(net_irq_count, net_irq_verified)` para telemetria.
+pub fn net_irq_stats() -> (u64, bool) {
+    (
+        NET_IRQ_COUNT.load(Ordering::Relaxed),
+        NET_IRQ_VERIFIED.load(Ordering::Acquire),
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NicType {
     None,

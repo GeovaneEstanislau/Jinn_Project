@@ -84,7 +84,8 @@ pub fn pci_write_u16(bus: u8, slot: u8, func: u8, offset: u8, value: u16) {
 pub fn enable_bus_mastering(bus: u8, slot: u8, func: u8) {
     let cmd = pci_read_u16(bus, slot, func, 0x04);
     // Bit 0: I/O Space Enable, Bit 1: Memory Space Enable, Bit 2: Bus Master Enable
-    pci_write_u16(bus, slot, func, 0x04, cmd | 0x0007);
+    // Limpa Bit 10 (Interrupt Disable) para habilitar entrega real de IRQ PCI INTx#.
+    pci_write_u16(bus, slot, func, 0x04, (cmd | 0x0007) & !(1 << 10));
 }
 
 // ── Estruturas de Dados ───────────────────────────────────────────────────────

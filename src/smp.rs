@@ -144,6 +144,255 @@ pub fn get_current_pid(cpu_id: usize) -> Option<usize> {
     }
 }
 
+// ── Contabilização Lock-Free Por Núcleo (Zero-Idle Audit SMP) ────────────────
+
+const ACCT_STATE_TASK: u8 = 0;
+const ACCT_STATE_IDLE_LOOP: u8 = 1;
+const ACCT_STATE_HLT: u8 = 2;
+const ACCT_STATE_IRQ: u8 = 3;
+
+#[repr(align(64))]
+pub struct PerCpuAccounting {
+    seq: core::sync::atomic::AtomicU64,
+    online: core::sync::atomic::AtomicBool,
+    on_idle: core::sync::atomic::AtomicBool,
+    state: core::sync::atomic::AtomicU8,
+    last_tsc: core::sync::atomic::AtomicU64,
+    task_cycles: core::sync::atomic::AtomicU64,
+    hlt_cycles: core::sync::atomic::AtomicU64,
+    irq_cycles: core::sync::atomic::AtomicU64,
+    idle_transitions: core::sync::atomic::AtomicU64,
+    wakeups: core::sync::atomic::AtomicU64,
+}
+
+impl PerCpuAccounting {
+    pub const fn new() -> Self {
+        Self {
+            seq: core::sync::atomic::AtomicU64::new(0),
+            online: core::sync::atomic::AtomicBool::new(false),
+            on_idle: core::sync::atomic::AtomicBool::new(false),
+            state: core::sync::atomic::AtomicU8::new(ACCT_STATE_TASK),
+            last_tsc: core::sync::atomic::AtomicU64::new(0),
+            task_cycles: core::sync::atomic::AtomicU64::new(0),
+            hlt_cycles: core::sync::atomic::AtomicU64::new(0),
+            irq_cycles: core::sync::atomic::AtomicU64::new(0),
+            idle_transitions: core::sync::atomic::AtomicU64::new(0),
+            wakeups: core::sync::atomic::AtomicU64::new(0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PerCpuCoreSnapshot {
+    pub cpu_id: u32,
+    pub online: bool,
+    pub total_cycles: u64,
+    pub hlt_cycles: u64,
+    pub task_cycles: u64,
+    pub irq_cycles: u64,
+    pub idle_transitions: u64,
+    pub wakeups: u64,
+}
+
+static PER_CPU_ACCT: [PerCpuAccounting; MAX_CPUS] = [
+    PerCpuAccounting::new(), PerCpuAccounting::new(), PerCpuAccounting::new(), PerCpuAccounting::new(),
+    PerCpuAccounting::new(), PerCpuAccounting::new(), PerCpuAccounting::new(), PerCpuAccounting::new(),
+];
+
+static CPUID_TO_LAPIC: [core::sync::atomic::AtomicU32; MAX_CPUS] = [
+    core::sync::atomic::AtomicU32::new(0), core::sync::atomic::AtomicU32::new(0),
+    core::sync::atomic::AtomicU32::new(0), core::sync::atomic::AtomicU32::new(0),
+    core::sync::atomic::AtomicU32::new(0), core::sync::atomic::AtomicU32::new(0),
+    core::sync::atomic::AtomicU32::new(0), core::sync::atomic::AtomicU32::new(0),
+];
+
+/// Registra o LAPIC ID correspondente a `cpu_id` (Lock-Free).
+pub fn set_cpu_lapic_id(cpu_id: usize, lapic_id: u32) {
+    if cpu_id < MAX_CPUS {
+        CPUID_TO_LAPIC[cpu_id].store(lapic_id, Ordering::Release);
+    }
+}
+
+/// Retorna o LAPIC ID correspondente a `cpu_id` (Lock-Free).
+pub fn cpu_lapic_id(cpu_id: usize) -> Option<u32> {
+    if cpu_id < MAX_CPUS {
+        Some(CPUID_TO_LAPIC[cpu_id].load(Ordering::Acquire))
+    } else {
+        None
+    }
+}
+
+/// Inicializa a contabilização por núcleo com ponto zero consistente no TSC.
+pub fn init_cpu_accounting(cpu_id: usize, lapic_id: u32, start_on_idle: bool) {
+    if cpu_id >= MAX_CPUS {
+        return;
+    }
+    set_cpu_lapic_id(cpu_id, lapic_id);
+    let c = &PER_CPU_ACCT[cpu_id];
+    let now = crate::scheduler::read_tsc();
+    c.seq.fetch_add(1, Ordering::Release);
+    c.on_idle.store(start_on_idle, Ordering::Relaxed);
+    c.state.store(if start_on_idle { ACCT_STATE_IDLE_LOOP } else { ACCT_STATE_TASK }, Ordering::Relaxed);
+    c.last_tsc.store(now, Ordering::Relaxed);
+    c.task_cycles.store(0, Ordering::Relaxed);
+    c.hlt_cycles.store(0, Ordering::Relaxed);
+    c.irq_cycles.store(0, Ordering::Relaxed);
+    c.idle_transitions.store(0, Ordering::Relaxed);
+    c.wakeups.store(0, Ordering::Relaxed);
+    c.online.store(true, Ordering::Release);
+    c.seq.fetch_add(1, Ordering::Release);
+}
+
+/// Atualiza o indicador se o núcleo está atualmente despachado em sua thread Idle.
+#[inline]
+pub fn set_cpu_on_idle(cpu_id: usize, is_idle: bool) {
+    if cpu_id < MAX_CPUS {
+        PER_CPU_ACCT[cpu_id].on_idle.store(is_idle, Ordering::Relaxed);
+    }
+}
+
+/// Fecha o intervalo anterior antes de entrar em HLT (chamar SOMENTE com IF=0 imediatamente antes de `sti; hlt`).
+#[inline]
+pub fn account_enter_hlt(cpu_id: usize) {
+    if cpu_id >= MAX_CPUS {
+        return;
+    }
+    let c = &PER_CPU_ACCT[cpu_id];
+    if !c.online.load(Ordering::Relaxed) {
+        return;
+    }
+    c.seq.fetch_add(1, Ordering::Release);
+    let now = crate::scheduler::read_tsc();
+    let last = c.last_tsc.load(Ordering::Relaxed);
+    let delta = now.saturating_sub(last);
+    match c.state.load(Ordering::Relaxed) {
+        ACCT_STATE_HLT => { c.hlt_cycles.fetch_add(delta, Ordering::Relaxed); }
+        ACCT_STATE_IDLE_LOOP | ACCT_STATE_IRQ => { c.irq_cycles.fetch_add(delta, Ordering::Relaxed); }
+        _ => { c.task_cycles.fetch_add(delta, Ordering::Relaxed); }
+    }
+    c.last_tsc.store(now, Ordering::Relaxed);
+    c.state.store(ACCT_STATE_HLT, Ordering::Relaxed);
+    c.idle_transitions.fetch_add(1, Ordering::Relaxed);
+    c.seq.fetch_add(1, Ordering::Release);
+}
+
+/// Contabiliza a saída do estado anterior na entrada de uma interrupção de hardware (`IF=0`).
+#[inline]
+pub fn account_exit_on_irq(cpu_id: usize) {
+    if cpu_id >= MAX_CPUS {
+        return;
+    }
+    let c = &PER_CPU_ACCT[cpu_id];
+    if !c.online.load(Ordering::Relaxed) {
+        return;
+    }
+    c.seq.fetch_add(1, Ordering::Release);
+    let now = crate::scheduler::read_tsc();
+    let last = c.last_tsc.load(Ordering::Relaxed);
+    let delta = now.saturating_sub(last);
+    match c.state.load(Ordering::Relaxed) {
+        ACCT_STATE_HLT => {
+            c.hlt_cycles.fetch_add(delta, Ordering::Relaxed);
+            c.wakeups.fetch_add(1, Ordering::Relaxed);
+        }
+        ACCT_STATE_IDLE_LOOP | ACCT_STATE_IRQ => {
+            c.irq_cycles.fetch_add(delta, Ordering::Relaxed);
+        }
+        _ => {
+            c.task_cycles.fetch_add(delta, Ordering::Relaxed);
+        }
+    }
+    c.last_tsc.store(now, Ordering::Relaxed);
+    c.state.store(ACCT_STATE_IRQ, Ordering::Relaxed);
+    c.seq.fetch_add(1, Ordering::Release);
+}
+
+/// Fecha o intervalo de execução de ISR antes de retornar via `iretq` (ou trocar de tarefa).
+#[inline]
+pub fn account_irq_end(cpu_id: usize) {
+    if cpu_id >= MAX_CPUS {
+        return;
+    }
+    let c = &PER_CPU_ACCT[cpu_id];
+    if !c.online.load(Ordering::Relaxed) {
+        return;
+    }
+    c.seq.fetch_add(1, Ordering::Release);
+    let now = crate::scheduler::read_tsc();
+    let last = c.last_tsc.load(Ordering::Relaxed);
+    let delta = now.saturating_sub(last);
+    c.irq_cycles.fetch_add(delta, Ordering::Relaxed);
+    c.last_tsc.store(now, Ordering::Relaxed);
+    let next_state = if c.on_idle.load(Ordering::Relaxed) {
+        ACCT_STATE_IDLE_LOOP
+    } else {
+        ACCT_STATE_TASK
+    };
+    c.state.store(next_state, Ordering::Relaxed);
+    c.seq.fetch_add(1, Ordering::Release);
+}
+
+/// Captura snapshot consistente e lock-free de um núcleo (incluindo tempo corrente no estado atual).
+pub fn snapshot_percpu_core(cpu_id: usize) -> PerCpuCoreSnapshot {
+    if cpu_id >= MAX_CPUS {
+        return PerCpuCoreSnapshot::default();
+    }
+    let c = &PER_CPU_ACCT[cpu_id];
+    loop {
+        let s1 = c.seq.load(Ordering::Acquire);
+        if (s1 & 1) != 0 {
+            core::hint::spin_loop();
+            continue;
+        }
+        let online = c.online.load(Ordering::Relaxed);
+        let mut task = c.task_cycles.load(Ordering::Relaxed);
+        let mut hlt = c.hlt_cycles.load(Ordering::Relaxed);
+        let mut irq = c.irq_cycles.load(Ordering::Relaxed);
+        let last_tsc = c.last_tsc.load(Ordering::Relaxed);
+        let state = c.state.load(Ordering::Relaxed);
+        let idle_transitions = c.idle_transitions.load(Ordering::Relaxed);
+        let wakeups = c.wakeups.load(Ordering::Relaxed);
+        let s2 = c.seq.load(Ordering::Acquire);
+        if s1 == s2 {
+            if online {
+                let now = crate::scheduler::read_tsc();
+                let pending = now.saturating_sub(last_tsc);
+                match state {
+                    ACCT_STATE_HLT => hlt = hlt.saturating_add(pending),
+                    ACCT_STATE_IDLE_LOOP | ACCT_STATE_IRQ => irq = irq.saturating_add(pending),
+                    _ => task = task.saturating_add(pending),
+                }
+            }
+            let total = task.saturating_add(hlt).saturating_add(irq);
+            return PerCpuCoreSnapshot {
+                cpu_id: cpu_id as u32,
+                online,
+                total_cycles: total,
+                hlt_cycles: hlt,
+                task_cycles: task,
+                irq_cycles: irq,
+                idle_transitions,
+                wakeups,
+            };
+        }
+    }
+}
+
+/// Agrega (ciclos_ativos = task + irq, ciclos_em_hlt) entre todos os núcleos online.
+pub fn aggregated_cycle_stats() -> (u64, u64) {
+    let n = online_cpus().clamp(1, MAX_CPUS);
+    let mut active = 0u64;
+    let mut idle = 0u64;
+    for cpu in 0..n {
+        let s = snapshot_percpu_core(cpu);
+        if s.online {
+            active = active.saturating_add(s.task_cycles).saturating_add(s.irq_cycles);
+            idle = idle.saturating_add(s.hlt_cycles);
+        }
+    }
+    (active, idle)
+}
+
 /// Contabiliza um tick de timer no núcleo informado (Lock-Free, seguro em ISR).
 pub fn record_tick(cpu_id: usize) {
     if cpu_id < MAX_CPUS {
@@ -188,12 +437,13 @@ pub unsafe extern "C" fn ap_entry(info: *const LimineSmpInfo) -> ! {
     // 6. Configura o timer Local APIC deste núcleo no vetor 32 para preempção a 100 Hz
     apic::init_timer(32, 100);
 
-    // 7. Registra estado online
+    // 7. Registra estado online e inicializa contabilização lock-free por núcleo
     {
         let mut guard = CPUS.lock();
         guard[cpu_id].is_online = true;
         guard[cpu_id].lapic_id = lapic_id;
     }
+    init_cpu_accounting(cpu_id, lapic_id, true);
     ONLINE_CPUS.fetch_add(1, Ordering::SeqCst);
 
     // Mensagem de diagnóstico serial
@@ -208,6 +458,8 @@ pub unsafe extern "C" fn ap_entry(info: *const LimineSmpInfo) -> ! {
 
     // 9. Loop de espera (Idle Loop do AP enquanto aguarda ou executa tarefas)
     loop {
+        core::arch::asm!("cli", options(nomem, nostack));
+        account_enter_hlt(cpu_id);
         core::arch::asm!("sti; hlt");
     }
 }
@@ -236,6 +488,7 @@ pub fn init() -> usize {
         guard[0].is_online = true;
         guard[0].lapic_id = bsp_lapic;
     }
+    init_cpu_accounting(0, bsp_lapic, false);
     ONLINE_CPUS.store(1, Ordering::SeqCst);
 
     // 3. Lê contagem e descritores do Limine

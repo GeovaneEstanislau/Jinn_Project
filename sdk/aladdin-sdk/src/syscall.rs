@@ -42,6 +42,29 @@ pub const SYS_GET_SYSTEM_STATS:              u64 = 88;
 pub const SYS_REGISTER_SHARED_RINGS:         u64 = 89;
 pub const SYS_RING_DOORBELL:                 u64 = 90;
 pub const SYS_READDIR:                       u64 = 91;
+pub const SYS_GET_PERCPU_STATS:              u64 = 92;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PerCpuCoreStat {
+    pub cpu_id: u32,
+    pub online: u32,
+    pub total_cycles: u64,
+    pub hlt_cycles: u64,
+    pub task_cycles: u64,
+    pub irq_cycles: u64,
+    pub idle_transitions: u64,
+    pub wakeups: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PerCpuStatsUser {
+    pub cpu_count: u64,
+    pub net_irq_count: u64,
+    pub net_irq_verified: u64,
+    pub cores: [PerCpuCoreStat; 8],
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
