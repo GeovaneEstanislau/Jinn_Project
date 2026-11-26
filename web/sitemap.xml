@@ -13,6 +13,62 @@
     <priority>0.9</priority>
   </url>
   <url>
+    <loc>https://jinn-os.dev.br/artigos/network-failure-observability-kernel-userspace-jinn-os.html</loc>
+    <lastmod>2026-11-26</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn Engineering Observatory</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-26</news:publication_date>
+      <news:title>Network Failure Observability in Jinn OS: Diagnóstico Estruturado na Fronteira Kernel–User Space</news:title>
+    </news:news>
+  </url>
+  <url>
+    <loc>https://jinn-os.dev.br/artigos/protocol-fallback-https-http-downgrade-audit-jinn-browser.html</loc>
+    <lastmod>2026-11-26</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn Engineering Observatory</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-26</news:publication_date>
+      <news:title>Protocol Fallback in Experimental Browsers: Trade-offs de Confiabilidade, UX e Auditoria Anti-Downgrade no Jinn Browser</news:title>
+    </news:news>
+  </url>
+  <url>
+    <loc>https://jinn-os.dev.br/artigos/debugging-tls13-pcap-e2e-qemu-intel-e1000-virtio.html</loc>
+    <lastmod>2026-11-26</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn Engineering Observatory</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-26</news:publication_date>
+      <news:title>Debugging TLS 1.3 Through Packet Capture and End-to-End Testing: Traces PCAP no QEMU e Regressão Cruzada e1000/VirtIO</news:title>
+    </news:news>
+  </url>
+  <url>
+    <loc>https://jinn-os.dev.br/artigos/building-tls13-browser-rust-microkernel-security-audit.html</loc>
+    <lastmod>2026-11-26</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn Engineering Observatory</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-26</news:publication_date>
+      <news:title>Building a TLS 1.3 Browser in a Rust Microkernel Operating System: Arquitetura Ring 3 e Auditoria Honesta de PKI</news:title>
+    </news:news>
+  </url>
+  <url>
     <loc>https://jinn-os.dev.br/artigos/jinn-browser-redirecionamentos-srcset-stagegeometry-fullscreen-f11.html</loc>
     <lastmod>2026-11-26</lastmod>
     <changefreq>weekly</changefreq>

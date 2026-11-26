@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Network Failure Observability in Jinn OS: Diagnóstico Estruturado na Fronteira Kernel–User Space — Jinn OS</title>
+  <meta name="description"
+    content="Observabilidade na fronteira do microkernel Jinn OS: como o Jinn Browser e o Aladdin Desktop combinam FetchDiagInfo em Ring 3 com as Syscalls 88 e 97 (HotRouteTable) para expor estágio da falha, IP/DNS, driver NIC, MAC ARP e contadores TX/RX com 0% de overhead em idle.">
+  <link rel="canonical"
+    href="https://jinn-os.dev.br/artigos/network-failure-observability-kernel-userspace-jinn-os.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url"
+    content="https://jinn-os.dev.br/artigos/network-failure-observability-kernel-userspace-jinn-os.html">
+  <meta property="og:title"
+    content="Network Failure Observability in Jinn OS: Structured Diagnostics Across the Kernel–User Space Boundary">
+  <meta property="og:description"
+    content="Arquitetura Ring 3 -> Syscalls 88/97 -> Ring 0 (HotRouteTable & NIC e1000/VirtIO): por que a aplicação de usuário deve saber exatamente onde e por que a conexão falhou.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/browser-net-error-telemetry-clean.png">
+
+  <!-- Artigo Meta (Indexação Google News / RSS / Feed) -->
+  <meta name="article:tag" content="FASTPATH, ZERO-IDLE, ARCHITECTURE, OBSERVABILITY, MICROKERNEL">
+  <meta name="article:published_time" content="2026-11-26T18:35:00-03:00">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Jinn Engineering Observatory: Schema.org TechArticle (Auto-Generated) -->
+  <script type="application/ld+json" id="jinn-techarticle-jsonld">
+{
+  "@context": "https://schema.org",
+  "@type": [
+    "TechArticle",
+    "NewsArticle"
+  ],
+  "headline": "Network Failure Observability in Jinn OS: Diagnóstico Estruturado na Fronteira Kernel–User Space",
+  "description": "Observabilidade na fronteira do microkernel Jinn OS: como o Jinn Browser e o Aladdin Desktop combinam FetchDiagInfo em Ring 3 com as Syscalls 88 e 97 (HotRouteTable) para expor estágio da falha, IP/DNS, driver NIC, MAC ARP e contadores TX/RX com 0% de overhead em idle.",
+  "image": [
+    "https://jinn-os.dev.br/assets/browser-net-error-telemetry-clean.png"
+  ],
+  "datePublished": "2026-11-26T18:35:00-03:00",
+  "dateModified": "2026-11-26T18:35:00-03:00",
+  "inLanguage": "pt-BR",
+  "articleSection": [
+    "Architecture & RFCs",
+    "Post-Mortems & Failure Logs"
+  ],
+  "author": {
+    "@type": "Person",
+    "name": "Geovane da Conceição Estanislau",
+    "url": "https://github.com/GeovaneEstanislau"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Jinn Engineering Observatory",
+    "url": "https://jinn-os.dev.br/",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://jinn-os.dev.br/assets/wallpaper.jpg"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://jinn-os.dev.br/artigos/network-failure-observability-kernel-userspace-jinn-os.html"
+  },
+  "about": [
+    {
+      "@type": "Thing",
+      "name": "process isolation"
+    },
+    {
+      "@type": "Thing",
+      "name": "W^X memory enforcement"
+    },
+    {
+      "@type": "Thing",
+      "name": "driver fault containment in Ring 3"
+    },
+    {
+      "@type": "Thing",
+      "name": "supply-chain integrity"
+    },
+    {
+      "@type": "Thing",
+      "name": "bare-metal TLS 1.3 security"
+    },
+    {
+      "@type": "Thing",
+      "name": "deterministic scheduling"
+    },
+    {
+      "@type": "Thing",
+      "name": "power reduction"
+    },
+    {
+      "@type": "Thing",
+      "name": "energy-proportional computing"
+    },
+    {
+      "@type": "Thing",
+      "name": "SMP per-CPU accounting"
+    },
+    {
+      "@type": "Thing",
+      "name": "lazy TTL cache evaluation"
+    },
+    {
+      "@type": "Thing",
+      "name": "zero-copy IPC ring buffers"
+    },
+    {
+      "@type": "Thing",
+      "name": "L2/L3 fast-path networking"
+    },
+    {
+      "@type": "Thing",
+      "name": "workload efficiency"
+    },
+    {
+      "@type": "Thing",
+      "name": "three-tier DNS resolution"
+    },
+    {
+      "@type": "Thing",
+      "name": "sovereign bare-metal TCP/IP"
+    }
+  ],
+  "mentions": [
+    {
+      "@type": "Organization",
+      "name": "Red Hat"
+    },
+    {
+      "@type": "Organization",
+      "name": "Canonical"
+    },
+    {
+      "@type": "Organization",
+      "name": "Google"
+    },
+    {
+      "@type": "Organization",
+      "name": "Siemens"
+    },
+    {
+      "@type": "Thing",
+      "name": "Sovereign & Civic Infrastructure"
+    },
+    {
+      "@type": "Organization",
+      "name": "Arm"
+    },
+    {
+      "@type": "Organization",
+      "name": "Qualcomm"
+    },
+    {
+      "@type": "Organization",
+      "name": "LF Edge"
+    },
+    {
+      "@type": "Thing",
+      "name": "Industrial Automation"
+    },
+    {
+      "@type": "Thing",
+      "name": "Green Public Infrastructure"
+    },
+    {
+      "@type": "Organization",
+      "name": "Cloudflare"
+    },
+    {
+      "@type": "Organization",
+      "name": "Akamai"
+    },
+    {
+      "@type": "Organization",
+      "name": "Huawei"
+    },
+    {
+      "@type": "Organization",
+      "name": "RISC-V International"
+    },
+    {
+      "@type": "Thing",
+      "name": "Local Edge Gateways"
+    }
+  ],
+  "keywords": "Jinn OS, Microkernel, Rust no_std, x86_64, FASTPATH, ZERO-IDLE, ARCHITECTURE, OBSERVABILITY, MICROKERNEL, Ring 3 Drivers, W^X, Zero-Trust Syscalls, JAHA 1.2, JinnWall SPI, Supply-Chain Integrity, TLS 1.3 no_std, HLT, SMP, APIC Timer Gating, Per-CPU Accounting, Lazy TTL, Preemptive Scheduler, Energy-Proportional Runtime, SPSC Ring Buffer, Zero-Copy IPC, io_uring, HotRouteTable, 3-Tier DNS, e1000, VirtIO-Net, Jinn Browser, TLS 1.3"
+}
+  </script>
+  <!-- /Jinn Engineering Observatory: Schema.org TechArticle -->
+</head>
+
+<body class="bg-slate-950 text-slate-200 min-h-screen antialiased selection:bg-cyan-500/30">
+  <header class="border-b border-slate-800 bg-slate-900/70 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-4xl mx-auto px-6 h-14 flex items-center justify-between">
+      <a href="/artigos/?lab=architecture-rfcs" class="flex items-center gap-2 hover:text-cyan-400 transition-colors text-xs font-mono">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span>Observability &amp; RFCs (Observatory)</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="/feed.xml" target="_blank" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS</span>
+        </a>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="text-cyan-300 hover:text-white">Jinn_Project GitHub</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-6 py-10 space-y-8">
+    <article class="prose prose-invert prose-slate max-w-none space-y-6">
+      <div class="space-y-3 border-b border-slate-800 pb-6">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400">
+          <span class="bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 rounded-full">OBSERVABILITY</span>
+          <span class="bg-emerald-950 border border-emerald-800 text-emerald-300 px-2.5 py-0.5 rounded-full">KERNEL–USER BOUNDARY</span>
+          <span class="text-slate-500">•</span>
+          <time datetime="2026-11-26">26 Nov 2026</time>
+          <span class="text-slate-500">•</span>
+          <span class="text-slate-400">Geovane da Conceição Estanislau</span>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white leading-tight">
+          Network Failure Observability in Jinn OS: Diagnóstico Estruturado na Fronteira Kernel–User Space
+        </h1>
+        <p class="text-base sm:text-lg text-slate-300 leading-relaxed">
+          Parte 4 da série <em>Jinn Browser — Internet Connectivity, TLS and Network Observability</em>. A maioria dos projetos experimentais de sistema operacional exibe apenas mensagens genéricas quando uma conexão falha. No Jinn OS, não reinventamos a ideia clássica de telemetria de rede (presente via netlink/<code>ss</code>/eBPF em sistemas consolidados), mas projetamos e integramos um canal determinístico <strong>sob demanda</strong> cruzando a fronteira <code>Ring 3 → Syscalls → Ring 0</code> para que a aplicação saiba exatamente onde e por que a pilha de rede parou.
+        </p>
+      </div>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">1. O Problema Levantado &amp; Arquitetura da Fronteira Kernel–User Space</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          Em capturas iniciais do Jinn Browser, erros de rede imprimiam apenas rótulos estáticos com valores vazios (<code>Estagio da Falha:</code>, <code>IP Gateway/DNS Consultado:</code> sem dados). Quando um processo em Ring 3 precisa diagnosticar falhas em sistemas isolados, erros opacos como <code>-110</code> escondem se o problema ocorreu no DNS, ARP do gateway, 3-way handshake TCP, entropia ou handshake/AEAD TLS 1.3.
+        </p>
+        <div class="p-4 rounded-xl bg-slate-900/90 border border-slate-800 font-mono text-xs text-cyan-200 overflow-x-auto">
+          Ring 3 Browser (FetchDiagInfo / LAST_FETCH_DIAG) ──► Syscall 88 (SystemStatsUser: NIC, IP, TX/RX) &amp; Syscall 97 (HotRouteTable: MAC ARP) ──► format_net_error_html_diag()
+        </div>
+        <ul class="list-disc list-inside space-y-1.5 text-sm text-slate-300">
+          <li><strong>Estado local em Ring 3 (<code>apps/ola-mundo/src/main.rs#L1848-L1876</code>):</strong> <code>FetchDiagInfo</code> grava apenas quando ocorre requisição/erro: <code>host</code>, <code>resolved_ip</code>, <code>has_resolved_ip</code>, <code>is_https</code>, <code>port</code>, <code>dns_code</code>, <code>connect_code</code> e <code>http_status</code>, mapeando estágios nominais (<code>TCP_CONNECT (-110 ETIMEDOUT)</code>, <code>TLS_HANDSHAKE (RFC 8446)</code>, <code>TLS_DECRYPT (AEAD)</code>, <code>RECV (-11 ETIMEDOUT)</code>, <code>TLS_ENTROPY (Sys69)</code>, <code>HTTP_REDIRECT</code>).</li>
+          <li><strong>Telemetria viva do Kernel (Syscall <code>88</code> e Syscall <code>97</code>):</strong> somente no momento da falha, o navegador consulta <code>sys_get_system_stats</code> (<code>SystemStatsUser</code> em <code>src/syscall.rs#L3303-L3373</code>: <code>net_adapter</code>, <code>net_ip</code>, <code>net_state_desc</code>, <code>net_tx_packets</code>, <code>net_rx_packets</code>) e <code>sys_net_hot_route_list</code> (<code>src/syscall.rs#L3215-L3233</code>) para recuperar o próximo salto e <code>next_hop_mac</code> já resolvidos na <code>HotRouteTable</code>.</li>
+        </ul>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">2. Melhorias Implementadas &amp; Custo Zero-Idle</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          Por consultar o estado do kernel exclusivamente no caminho de exceção (<em>lazy-on-error</em>) e via leitura direta da janela de estado gráfico no Aladdin Desktop, a arquitetura preserva a política <strong>Zero-Idle Resource Consumption</strong>: nos testes E2E em QEMU pós-build (<code>test_hot_routes_e2e.py</code>), os núcleos AP (<code>cpu1..cpu3</code>) permaneceram com <code>d_task=0</code> e <code>idle=100.00%</code> durante a janela ociosa de 4 segundos, enquanto a mesma infraestrutura de syscalls alimenta em tempo real as abas <em>DNS Local</em> e <em>Rotas Quentes</em> no Aladdin Desktop.
+        </p>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">3. Evidências Visuais Reais (Ring 3 Browser + Aladdin Monitor)</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 not-prose">
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/tls13-telemetria-erro-browser.png" alt="Tela de Diagnóstico de Fluxo e Pilha de Rede com Estagio da Falha, IP Externo, Interface Intel 82540EM e Pacotes TX/RX" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 1: Visão completa do bloco <em>Diagnostico de Fluxo e Pilha de Rede</em> populado com <code>TCP_CONNECT (-110 ETIMEDOUT)</code>, IP <code>10.0.2.2</code>, interface <code>Intel 82540EM (10.0.2.15)</code> e contadores <code>TX: 167 | RX: 146</code>.
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/browser-net-error-telemetry-clean.png" alt="Tela de erro TCP com barra de endereço limpa sem colisão com badge TLS1.3" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 2: Build atualizado com recorte limpo da URL na pílula sem sobrepor a badge <code>TLS1.3</code> ao exibir falha em <code>https://10.0.2.2:59999</code>.
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/hot-routes-aladdin.png" alt="Painel Rotas Quentes no Aladdin consumindo Syscall 97 HotRouteTable" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 3: Painel <em>Rotas Quentes</em> no Aladdin exibindo IPv4, MAC do gateway ARP (<code>52:55:0a:00:02:02</code>), hits e RTT médio vindos da Syscall <code>97</code>.
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/dns-panel-aladdin.png" alt="Painel DNS Local no Aladdin exibindo origem HOSTS/CACHE, TTL e Hits" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 4: Aba <em>DNS Local</em> exibindo origem (<code>HOSTS</code> / <code>CACHE</code>), TTL e acertos via Syscalls <code>93/96</code> sem tráfego UDP extra no cache hit.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">4. Aplicabilidade: Indústria, Uso Doméstico e Servidores</h2>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-emerald-300 mb-1">Usos Industriais, Automação &amp; Sistemas Embarcados</h3>
+            <p>Em equipamentos sem console SSH contínuo, o operador visualiza imediatamente se uma falha de envio vem de cabo desconectado (<code>net_state_desc</code>), ARP pendente, timeout DNS ou handshake TLS rejeitado — reduzindo tempo de triagem em campo sem agentes pesados de telemetria.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-cyan-300 mb-1">Usos Domésticos &amp; Suporte Técnico</h3>
+            <p>Substitui erros crípticos de soquete por causa raiz legível (estágio de DNS vs TCP vs TLS), permitindo ao usuário ou suporte saber se o roteador respondeu ao ARP ou se houve falha externa na porta 443.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-purple-300 mb-1">Usos em Servidores, Edge &amp; Monitoramento</h3>
+            <p>Fornece inspeção rápida na fronteira microkernel–usuário sobre tabelas quentes L2/L3 (<code>HotRouteTable</code>) e contadores NIC (<code>TX/RX</code>) sob demanda via syscall, evitando daemons em background que consomem ciclos em servidores ociosos.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-3 border-t border-slate-800 pt-6">
+        <h2 class="text-xl font-bold text-white">5. Limitações Conhecidas, Custos &amp; Privacidade</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          Três pontos permanecem abertos nesta arquitetura para próximas iterações: (1) o custo isolado em ciclos/nanossegundos da dupla chamada <code>Syscall 88 + Syscall 97</code> sob carga não foi medido em microbenchmark dedicado; (2) <code>FetchDiagInfo</code> ainda não inclui campos dedicados para <code>fallback_occurred</code> nem código de erro detalhado X.509/PKI; e (3) a exibição de IPs locais, gateway e MAC exige política de sanitização antes de exportar capturas de erro para suporte externo.
+        </p>
+      </section>
+      <!-- Jinn Ecosystem & Open Collaboration Block (Auto-Generated) -->
+      <section aria-labelledby="ecosystems-collaboration-heading" class="not-prose my-10 p-6 rounded-xl bg-slate-900/75 border border-slate-800 space-y-5">
+        <div class="space-y-2">
+          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Engineering Observatory • Open Collaboration</p>
+          <h3 id="ecosystems-collaboration-heading" class="text-lg sm:text-xl font-bold text-white">
+            Applicable Ecosystems &amp; Open Collaboration
+          </h3>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Conexões arquiteturais deste estudo com domínios industriais, pesquisa científica e infraestrutura auditável:
+          </p>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <a href="/artigos/?lab=architecture-rfcs" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400"><span>Architecture &amp; RFCs</span></a>
+          <a href="/artigos/?lab=post-mortems" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-rose-950/80 border-rose-700/70 text-rose-300 hover:border-rose-400"><span>Post-Mortems &amp; Failure Logs</span></a>
+          <a href="/artigos/?eco=microkernel-security" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400"><span>Microkernel &amp; Segurança</span><span class="opacity-70">&bull; Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity</span></a>
+          <a href="/artigos/?eco=zero-idle-efficiency" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400"><span>Zero-Idle &amp; SMP</span><span class="opacity-70">&bull; Energy-Proportional Runtime, SMP Accounting &amp; Low-Overhead Scheduling</span></a>
+          <a href="/artigos/?eco=fastpath-ipc-net" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400"><span>IPC &amp; Redes Fast-Path</span><span class="opacity-70">&bull; Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking</span></a>
+        </div>
+
+        <div class="pt-1">
+          <div class="text-[11px] font-mono text-slate-400 mb-2">Ecossistemas de referência pertinentes (Nível B contextual):</div>
+          <div class="flex flex-wrap gap-1.5">
+            <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Red Hat</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Canonical</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Google</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Siemens</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Sovereign &amp; Civic Infrastructure</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Arm</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Qualcomm</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">LF Edge</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Industrial Automation</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Green Public Infrastructure</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Cloudflare</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Akamai</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Huawei</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">RISC-V International</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Local Edge Gateways</span>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-emerald-300 font-mono">
+            Chamada Aberta: Indústria Local, Academia &amp; Setor Público Eticamente Responsável
+          </h4>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Convidamos <strong>empresas regionais de automação industrial e integradores</strong>, <strong>universidades e grupos de pesquisa em sistemas operacionais</strong> e <strong>projetos públicos/governamentais eticamente responsáveis</strong> (com transparência e código auditável) a reproduzirem estes experimentos em bancada física, propor <em>workloads</em> comparativos ou avaliar pilotos com o <strong>Jinn OS</strong> e o <strong>JHCS</strong>.
+          </p>
+          <div class="flex flex-wrap gap-2.5 text-xs font-mono pt-1">
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-cyan-400 text-slate-200 hover:text-cyan-300 transition-colors">
+              GitHub: Jinn_Project
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/jhcs-rs" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-purple-400 text-slate-200 hover:text-purple-300 transition-colors">
+              GitHub: jhcs-rs
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/ENGINEERING_STATUS_AND_LIMITATIONS.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-amber-400 text-slate-200 hover:text-amber-300 transition-colors">
+              Fronteira Honesta &amp; Evidências
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/strategy/OPPORTUNITY_RADAR_50.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
+              Radar &amp; 6ª Trilha Aberta
+            </a>
+            <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-cyan-950/90 border border-cyan-600/70 hover:bg-cyan-900 text-cyan-200 transition-colors">
+              Contato Técnico &amp; Pilotos
+            </a>
+          </div>
+        </div>
+      </section>
+      <!-- /Jinn Ecosystem & Open Collaboration Block -->
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn Engineering Observatory • Observability &amp; RFCs • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/artigos/?lab=fastpath-ipc-net" class="text-cyan-400 hover:underline">FastPath &amp; Observability</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-slate-300 hover:text-white">Portal Principal</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>

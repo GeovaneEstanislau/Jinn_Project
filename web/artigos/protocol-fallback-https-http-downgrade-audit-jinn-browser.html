@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Protocol Fallback in Experimental Browsers: Trade-offs de Confiabilidade, UX e Auditoria Anti-Downgrade no Jinn Browser — Jinn OS</title>
+  <meta name="description"
+    content="RFC técnico e auditoria de segurança sobre fallback HTTPS→HTTP em entradas sem esquema no Jinn Browser: distinção implícita vs. explícita, riscos de downgrade silencioso, redirecionamentos, subrecursos <img> e roadmap de proteção.">
+  <link rel="canonical"
+    href="https://jinn-os.dev.br/artigos/protocol-fallback-https-http-downgrade-audit-jinn-browser.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url"
+    content="https://jinn-os.dev.br/artigos/protocol-fallback-https-http-downgrade-audit-jinn-browser.html">
+  <meta property="og:title"
+    content="Protocol Fallback in Experimental Browsers: Confiabilidade vs. Risco de Downgrade">
+  <meta property="og:description"
+    content="Decisões de projeto e auditoria franca das brechas de segurança no fallback HTTPS→HTTP do Jinn Browser: o que já bloqueia downgrade em https:// explícito e o que ainda precisa de HSTS e badge visual dedicado.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/tls-explicit-https-blocked.png">
+
+  <!-- Artigo Meta (Indexação Google News / RSS / Feed) -->
+  <meta name="article:tag" content="SECURITY LAB, ARCHITECTURE, FALLBACK, PROTOCOL, JINN BROWSER">
+  <meta name="article:published_time" content="2026-11-26T18:30:00-03:00">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Jinn Engineering Observatory: Schema.org TechArticle (Auto-Generated) -->
+  <script type="application/ld+json" id="jinn-techarticle-jsonld">
+{
+  "@context": "https://schema.org",
+  "@type": [
+    "TechArticle",
+    "NewsArticle"
+  ],
+  "headline": "Protocol Fallback in Experimental Browsers: Trade-offs de Confiabilidade, UX e Auditoria Anti-Downgrade no Jinn Browser",
+  "description": "RFC técnico e auditoria de segurança sobre fallback HTTPS→HTTP em entradas sem esquema no Jinn Browser: distinção implícita vs. explícita, riscos de downgrade silencioso, redirecionamentos, subrecursos <img> e roadmap de proteção.",
+  "image": [
+    "https://jinn-os.dev.br/assets/tls-explicit-https-blocked.png"
+  ],
+  "datePublished": "2026-11-26T18:30:00-03:00",
+  "dateModified": "2026-11-26T18:30:00-03:00",
+  "inLanguage": "pt-BR",
+  "articleSection": [
+    "Architecture & RFCs",
+    "Security Lab"
+  ],
+  "author": {
+    "@type": "Person",
+    "name": "Geovane da Conceição Estanislau",
+    "url": "https://github.com/GeovaneEstanislau"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Jinn Engineering Observatory",
+    "url": "https://jinn-os.dev.br/",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://jinn-os.dev.br/assets/wallpaper.jpg"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://jinn-os.dev.br/artigos/protocol-fallback-https-http-downgrade-audit-jinn-browser.html"
+  },
+  "about": [
+    {
+      "@type": "Thing",
+      "name": "zero-copy IPC ring buffers"
+    },
+    {
+      "@type": "Thing",
+      "name": "L2/L3 fast-path networking"
+    },
+    {
+      "@type": "Thing",
+      "name": "workload efficiency"
+    },
+    {
+      "@type": "Thing",
+      "name": "three-tier DNS resolution"
+    },
+    {
+      "@type": "Thing",
+      "name": "sovereign bare-metal TCP/IP"
+    },
+    {
+      "@type": "Thing",
+      "name": "process isolation"
+    },
+    {
+      "@type": "Thing",
+      "name": "W^X memory enforcement"
+    },
+    {
+      "@type": "Thing",
+      "name": "driver fault containment in Ring 3"
+    },
+    {
+      "@type": "Thing",
+      "name": "supply-chain integrity"
+    },
+    {
+      "@type": "Thing",
+      "name": "bare-metal TLS 1.3 security"
+    }
+  ],
+  "mentions": [
+    {
+      "@type": "Organization",
+      "name": "Cloudflare"
+    },
+    {
+      "@type": "Organization",
+      "name": "Akamai"
+    },
+    {
+      "@type": "Organization",
+      "name": "Huawei"
+    },
+    {
+      "@type": "Organization",
+      "name": "RISC-V International"
+    },
+    {
+      "@type": "Thing",
+      "name": "Local Edge Gateways"
+    },
+    {
+      "@type": "Organization",
+      "name": "Red Hat"
+    },
+    {
+      "@type": "Organization",
+      "name": "Canonical"
+    },
+    {
+      "@type": "Organization",
+      "name": "Google"
+    },
+    {
+      "@type": "Organization",
+      "name": "Siemens"
+    },
+    {
+      "@type": "Thing",
+      "name": "Sovereign & Civic Infrastructure"
+    }
+  ],
+  "keywords": "Jinn OS, Microkernel, Rust no_std, x86_64, SECURITY LAB, ARCHITECTURE, FALLBACK, PROTOCOL, JINN BROWSER, SPSC Ring Buffer, Zero-Copy IPC, io_uring, HotRouteTable, 3-Tier DNS, e1000, VirtIO-Net, TLS 1.3, Ring 3 Drivers, W^X, Zero-Trust Syscalls, JAHA 1.2, JinnWall SPI, Supply-Chain Integrity, TLS 1.3 no_std"
+}
+  </script>
+  <!-- /Jinn Engineering Observatory: Schema.org TechArticle -->
+</head>
+
+<body class="bg-slate-950 text-slate-200 min-h-screen antialiased selection:bg-amber-500/30">
+  <header class="border-b border-slate-800 bg-slate-900/70 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-4xl mx-auto px-6 h-14 flex items-center justify-between">
+      <a href="/artigos/?lab=architecture-rfcs" class="flex items-center gap-2 hover:text-amber-400 transition-colors text-xs font-mono">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-amber-400"></i>
+        <span>Architecture &amp; RFCs (Observatory)</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="/feed.xml" target="_blank" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS</span>
+        </a>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="text-amber-300 hover:text-white">Jinn_Project GitHub</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-6 py-10 space-y-8">
+    <article class="prose prose-invert prose-slate max-w-none space-y-6">
+      <div class="space-y-3 border-b border-slate-800 pb-6">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-amber-400">
+          <span class="bg-amber-950 border border-amber-800 px-2.5 py-0.5 rounded-full">ARCHITECTURE RFC</span>
+          <span class="bg-emerald-950 border border-emerald-800 text-emerald-300 px-2.5 py-0.5 rounded-full">SECURITY AUDIT</span>
+          <span class="text-slate-500">•</span>
+          <time datetime="2026-11-26">26 Nov 2026</time>
+          <span class="text-slate-500">•</span>
+          <span class="text-slate-400">Geovane da Conceição Estanislau</span>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white leading-tight">
+          Protocol Fallback in Experimental Browsers: Trade-offs de Confiabilidade, UX e Auditoria Anti-Downgrade no Jinn Browser
+        </h1>
+        <p class="text-base sm:text-lg text-slate-300 leading-relaxed">
+          Parte 3 da série <em>Jinn Browser — Internet Connectivity, TLS and Network Observability</em>. Quando um usuário digita um domínio sem prefixo (ex.: <code>frogfind.com</code> ou um servidor local legado na porta 80), navegadores precisam decidir entre tentar HTTPS primeiro, falhar em definitivo ou recorrer a HTTP. Neste RFC documentamos a implementação experimental do fallback no Jinn Browser e <strong>auditamos abertamente os riscos de downgrade identificados no código atual</strong> antes de promovê-la para uso geral.
+        </p>
+      </div>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">1. Comportamento Atual &amp; Diagnóstico da Auditoria de Código</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          Em <code>apps/ola-mundo/src/main.rs</code>, a função <code>resolve_target_with_mode</code> (linhas <code>3446–3486</code>) classifica a URL de entrada em três políticas:
+        </p>
+        <ul class="list-disc list-inside space-y-1.5 text-sm text-slate-300">
+          <li><strong>Entrada explícita <code>https://</code>:</strong> define <code>allow_http_fallback = false</code> — se TLS 1.3 falhar, exibe erro explícito sem rebaixar a conexão para texto claro.</li>
+          <li><strong>Entrada explícita <code>http://</code>:</strong> conecta direto na porta 80 sem tentativa inicial de TLS.</li>
+          <li><strong>Domínio sem esquema:</strong> normaliza para <code>https://</code> com <code>allow_http_fallback = true</code>; em caso de erro em <code>fetch_http_document_inner</code>, <code>browser_load_and_display</code> (linhas <code>2789–2817</code>) reenvia a requisição em <code>http://</code>.</li>
+        </ul>
+
+        <div class="p-4 rounded-xl bg-amber-950/30 border border-amber-700/50 space-y-2 text-sm">
+          <h3 class="font-bold text-amber-300 font-mono">3 Brechas Concretas Encontradas na Auditoria de Segurança</h3>
+          <ol class="list-decimal list-inside space-y-1.5 text-slate-300">
+            <li><strong>Ausência de indicador dedicado de downgrade:</strong> em <code>browser.rs</code> (<code>5166–5173</code>), a badge exibe apenas <code>TLS1.3</code> ou <code>e1000</code> — não há selo distinto indicando que ocorreu fallback após falha HTTPS (<code>HTTP (SEM TLS)</code>).</li>
+            <li><strong>Redirecionamentos <code>301/302/307/308</code> e <code>&lt;meta refresh&gt;</code> permitem downgrade silencioso:</strong> um salto de <code>https://</code> para <code>Location: http://...</code> (<code>main.rs:2524–2546</code> e <code>2838–2860</code>) continua aceitando texto claro sem bloqueio nem HSTS.</li>
+            <li><strong>Subrecursos <code>&lt;img&gt;</code> liberam fallback mesmo em páginas HTTPS:</strong> <code>prefetch_page_images</code> (<code>main.rs:2688</code>) invoca <code>fetch_http_document_inner(..., true, ...)</code> com <code>allow_http_fallback = true</code>.</li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">2. Evidência Visual: Fallback Sem Esquema vs. Bloqueio em <code>https://</code> Explícito</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 not-prose">
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/tls-http-fallback-demo.png" alt="Fallback HTTP funcionando em alvo sem esquema para porta HTTP 18080" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 1: Alvo digitado sem esquema sofre falha de TLS e cai para HTTP/1.1 em texto claro — note que a badge atual exibe apenas <code>e1000</code> (ponto apontado pela auditoria para evolução).
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/tls-explicit-https-blocked.png" alt="URL explícita https://10.0.2.2:18080 recusando fallback para HTTP" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 2: Quando o usuário exige explicitamente <code>https://</code>, <code>allow_http_fallback = false</code> impede transição automática para HTTP e expõe o diagnóstico <code>TLS_HANDSHAKE</code>.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">3. Melhorias Planejadas Antes de Claims Comerciais</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          Para tratar fallback como funcionalidade segura e não apenas conveniência experimental, o roadmap de hardening define: badge vermelha/âmbar explícita quando houver downgrade, bloqueio de redirecionamentos <code>https:// → http://</code> em sessões explicitamente HTTPS, remoção de <code>allow_http_fallback = true</code> no carregamento de imagens de páginas seguras, bloqueio de envio de formulários sem confirmação explícita após downgrade e suporte a política HSTS.
+        </p>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">4. Aplicabilidade: Indústria, Uso Doméstico e Servidores</h2>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-emerald-300 mb-1">Usos Industriais &amp; Redes Isoladas (OT/ICS)</h3>
+            <p>Em intranets industriais segmentadas sem infraestrutura ACME/CA interna, o fallback controlado permite alcançar painéis legados apenas HTTP quando não há risco de exposição externa — desde que acompanhado de indicação visual inequívoca ao operador.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-cyan-300 mb-1">Usos Domésticos &amp; Navegação Web Clássica</h3>
+            <p>Acesso transparente a portais retro/textuais HTTP sem obrigar o usuário a saber de antemão a porta/esquema, enquanto links ou bookmarks com <code>https://</code> explícito jamais silenciam erros TLS.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-purple-300 mb-1">Usos em Servidores &amp; Ambientes Auditáveis</h3>
+            <p>Em servidores, o recomendável é desabilitar fallback por padrão (<em>strict HTTPS-only</em>), mantendo a política explícita para endpoints internos HTTP conhecidos e testando cenários adversariais contra intermediários ativos (MITM).</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-3 border-t border-slate-800 pt-6">
+        <h2 class="text-xl font-bold text-white">5. Limitações Conhecidas</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          O mecanismo atual de fallback é uma <strong>decisão experimental de UX em evolução</strong>. Uma resposta HTTP bem-sucedida após falha TLS não comprova legitimidade do servidor remoto; combinada à ausência de HSTS e de verificação X.509 completa em Ring 3, não deve ser usada para autenticação ou transmissão de dados sensíveis neste estágio.
+        </p>
+      </section>
+      <!-- Jinn Ecosystem & Open Collaboration Block (Auto-Generated) -->
+      <section aria-labelledby="ecosystems-collaboration-heading" class="not-prose my-10 p-6 rounded-xl bg-slate-900/75 border border-slate-800 space-y-5">
+        <div class="space-y-2">
+          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Engineering Observatory • Open Collaboration</p>
+          <h3 id="ecosystems-collaboration-heading" class="text-lg sm:text-xl font-bold text-white">
+            Applicable Ecosystems &amp; Open Collaboration
+          </h3>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Conexões arquiteturais deste estudo com domínios industriais, pesquisa científica e infraestrutura auditável:
+          </p>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <a href="/artigos/?lab=architecture-rfcs" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400"><span>Architecture &amp; RFCs</span></a>
+          <a href="/artigos/?lab=security-lab" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400"><span>Security Lab</span></a>
+          <a href="/artigos/?eco=fastpath-ipc-net" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400"><span>IPC &amp; Redes Fast-Path</span><span class="opacity-70">&bull; Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking</span></a>
+          <a href="/artigos/?eco=microkernel-security" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400"><span>Microkernel &amp; Segurança</span><span class="opacity-70">&bull; Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity</span></a>
+        </div>
+
+        <div class="pt-1">
+          <div class="text-[11px] font-mono text-slate-400 mb-2">Ecossistemas de referência pertinentes (Nível B contextual):</div>
+          <div class="flex flex-wrap gap-1.5">
+            <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Cloudflare</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Akamai</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Huawei</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">RISC-V International</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Local Edge Gateways</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Red Hat</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Canonical</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Google</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Siemens</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Sovereign &amp; Civic Infrastructure</span>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-emerald-300 font-mono">
+            Chamada Aberta: Indústria Local, Academia &amp; Setor Público Eticamente Responsável
+          </h4>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Convidamos <strong>empresas regionais de automação industrial e integradores</strong>, <strong>universidades e grupos de pesquisa em sistemas operacionais</strong> e <strong>projetos públicos/governamentais eticamente responsáveis</strong> (com transparência e código auditável) a reproduzirem estes experimentos em bancada física, propor <em>workloads</em> comparativos ou avaliar pilotos com o <strong>Jinn OS</strong> e o <strong>JHCS</strong>.
+          </p>
+          <div class="flex flex-wrap gap-2.5 text-xs font-mono pt-1">
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-cyan-400 text-slate-200 hover:text-cyan-300 transition-colors">
+              GitHub: Jinn_Project
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/jhcs-rs" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-purple-400 text-slate-200 hover:text-purple-300 transition-colors">
+              GitHub: jhcs-rs
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/ENGINEERING_STATUS_AND_LIMITATIONS.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-amber-400 text-slate-200 hover:text-amber-300 transition-colors">
+              Fronteira Honesta &amp; Evidências
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/strategy/OPPORTUNITY_RADAR_50.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
+              Radar &amp; 6ª Trilha Aberta
+            </a>
+            <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-cyan-950/90 border border-cyan-600/70 hover:bg-cyan-900 text-cyan-200 transition-colors">
+              Contato Técnico &amp; Pilotos
+            </a>
+          </div>
+        </div>
+      </section>
+      <!-- /Jinn Ecosystem & Open Collaboration Block -->
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn Engineering Observatory • Architecture &amp; RFCs • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/artigos/?lab=architecture-rfcs" class="text-amber-400 hover:underline">Architecture &amp; RFCs</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-slate-300 hover:text-white">Portal Principal</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>

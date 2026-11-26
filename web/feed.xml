@@ -7,16 +7,54 @@
     <language>pt-br</language>
     <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
     <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
-        <item>
-      <title>fix F11/1024x768 fullscreen sync, verify E2E suites and publish Google News post-mortem</title>
-      <link>https://jinn-os.dev.br</link>
-      <guid isPermaLink="false">jinn-os-fix-f11-1024x768-fullscreen-sync--verify-e2e-suites-and-publish-google-news-post-mortem-202611262107</guid>
-      <pubDate>Thu, 26 Nov 2026 21:07:09 +0000</pubDate>
-      <category>compute-simd</category>
+    <item>
+      <title>Network Failure Observability in Jinn OS: Diagnóstico Estruturado na Fronteira Kernel–User Space</title>
+      <link>https://jinn-os.dev.br/artigos/network-failure-observability-kernel-userspace-jinn-os.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-network-failure-observability-kernel-userspace-jinn-os</guid>
+      <pubDate>Thu, 26 Nov 2026 18:35:00 -0300</pubDate>
+      <description>Observabilidade na fronteira do microkernel Jinn OS: como o Jinn Browser e o Aladdin Desktop combinam FetchDiagInfo em Ring 3 com as Syscalls 88 e 97 (HotRouteTable) para expor estágio da falha, IP/DNS, driver NIC, MAC ARP e contadores TX/RX com 0% de overhead em idle. [Ganho técnico: Indicadores citados no relatório: 0%] [Ecossistemas aplicáveis: Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity (Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure) | Energy-Proportional Runtime, SMP Accounting &amp; Low-Overhead Scheduling (Arm, Qualcomm, LF Edge, Industrial Automation, Green Public Infrastructure) | Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking (Cloudflare, Akamai, Huawei, RISC-V International, Local Edge Gateways)] [Colaboração aberta — indústria local, academia e setor público responsável: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
       <category>microkernel-security</category>
-      <description><![CDATA[
-        <p>Avanço verificado no Jinn Microkernel, compositor Aladdin e computação heterogênea JHCS com foco em isolamento Ring 3 e previsibilidade de recursos. [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas aplicáveis: Heterogeneous Compute, SIMD & Zero-GPU Acceleration (Intel, AMD, Arm, Tenstorrent, SiFive, HPC Research Labs) | Zero-Trust Isolation, W^X Enforcement & Supply-Chain Integrity (Red Hat, Canonical, Google, Siemens, Sovereign & Civic Infrastructure)] [Colaboração aberta — indústria local, academia e setor público responsável: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</p>
-      ]]></description>
+      <category>zero-idle-efficiency</category>
+      <category>fastpath-ipc-net</category>
+      <category>architecture-rfcs</category>
+      <category>post-mortems</category>
+      <enclosure url="https://jinn-os.dev.br/assets/browser-net-error-telemetry-clean.png" length="63728" type="image/png" />
+    </item>
+    <item>
+      <title>Protocol Fallback in Experimental Browsers: Trade-offs de Confiabilidade, UX e Auditoria Anti-Downgrade no Jinn Browser</title>
+      <link>https://jinn-os.dev.br/artigos/protocol-fallback-https-http-downgrade-audit-jinn-browser.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-protocol-fallback-https-http-downgrade-audit-jinn-browser</guid>
+      <pubDate>Thu, 26 Nov 2026 18:30:00 -0300</pubDate>
+      <description>RFC técnico e auditoria de segurança sobre fallback HTTPS→HTTP em entradas sem esquema no Jinn Browser: distinção implícita vs. explícita, riscos de downgrade silencioso, redirecionamentos, subrecursos &lt;img&gt; e roadmap de proteção. [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas aplicáveis: Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking (Cloudflare, Akamai, Huawei, RISC-V International, Local Edge Gateways) | Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity (Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure)] [Colaboração aberta — indústria local, academia e setor público responsável: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
+      <category>fastpath-ipc-net</category>
+      <category>microkernel-security</category>
+      <category>architecture-rfcs</category>
+      <category>security-lab</category>
+      <enclosure url="https://jinn-os.dev.br/assets/tls-explicit-https-blocked.png" length="64053" type="image/png" />
+    </item>
+    <item>
+      <title>Debugging TLS 1.3 Through Packet Capture and End-to-End Testing: Traces PCAP no QEMU e Regressão Cruzada e1000/VirtIO</title>
+      <link>https://jinn-os.dev.br/artigos/debugging-tls13-pcap-e2e-qemu-intel-e1000-virtio.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-debugging-tls13-pcap-e2e-qemu-intel-e1000-virtio</guid>
+      <pubDate>Thu, 26 Nov 2026 18:25:00 -0300</pubDate>
+      <description>Como capturas PCAP em QEMU (-object filter-dump), logs seriais de handshake e suítes E2E automatizadas isolaram falhas de fragmentação TLS 1.3, Poly1305 e alertas close_notify, validando regressão cruzada Intel e1000 e VirtIO-Net. [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas aplicáveis: Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking (Cloudflare, Akamai, Huawei, RISC-V International, Local Edge Gateways) | Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity (Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure)] [Colaboração aberta — indústria local, academia e setor público responsável: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
+      <category>fastpath-ipc-net</category>
+      <category>microkernel-security</category>
+      <category>post-mortems</category>
+      <category>security-lab</category>
+      <enclosure url="https://jinn-os.dev.br/assets/tls-debug-before-empty-diag.png" length="63457" type="image/png" />
+    </item>
+    <item>
+      <title>Building a TLS 1.3 Browser in a Rust Microkernel Operating System: Arquitetura Ring 3 e Auditoria Honesta de PKI</title>
+      <link>https://jinn-os.dev.br/artigos/building-tls13-browser-rust-microkernel-security-audit.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-building-tls13-browser-rust-microkernel-security-audit</guid>
+      <pubDate>Thu, 26 Nov 2026 18:20:00 -0300</pubDate>
+      <description>Arquitetura e auditoria de código do cliente TLS 1.3 do Jinn Browser em Ring 3 (#![no_std]): handshake X25519/HKDF-SHA256, ChaCha20-Poly1305 e AES-128-GCM, reassembly multi-record, decodificação HTTP chunked e fronteira honesta sobre validação X.509 entre Ring 0 e Ring 3. [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas aplicáveis: Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity (Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure) | Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking (Cloudflare, Akamai, Huawei, RISC-V International, Local Edge Gateways)] [Colaboração aberta — indústria local, academia e setor público responsável: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
+      <category>microkernel-security</category>
+      <category>fastpath-ipc-net</category>
+      <category>security-lab</category>
+      <category>architecture-rfcs</category>
+      <enclosure url="https://jinn-os.dev.br/assets/browser-jinn-os-fullscreen.png" length="8469" type="image/png" />
     </item>
     <item>
       <title>Jinn Browser em Maturidade: Redirecionamentos Multi-Hop, Picture/Srcset, StageGeometry e Tela Cheia 1024x768 (F11)</title>
@@ -29,7 +67,7 @@
       <category>compute-simd</category>
       <category>architecture-rfcs</category>
       <category>post-mortems</category>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+      <enclosure url="https://jinn-os.dev.br/assets/browser-jinn-os-fullscreen.png" length="8469" type="image/png" />
     </item>
     <item>
       <title>Compute Lab: Ponto de Equilíbrio (Breakeven) Real no jhcs-rs entre CPU Escalar, AVX2/FMA SIMD e GPU wgpu</title>
@@ -40,7 +78,7 @@
       <category>compute-simd</category>
       <category>zero-idle-efficiency</category>
       <category>compute-lab</category>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+      <enclosure url="https://jinn-os.dev.br/assets/jhcs-breakeven-chart.png" length="7492" type="image/png" />
     </item>
     <item>
       <title>Jinn Engineering Observatory: Posicionamento Modular, Matriz de IP, Fronteira Honesta e Aplicações Industriais, Domésticas e em Servidores</title>
@@ -52,7 +90,7 @@
       <category>zero-idle-efficiency</category>
       <category>architecture-rfcs</category>
       <category>security-lab</category>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+      <enclosure url="https://jinn-os.dev.br/assets/hot-routes-aladdin.png" length="55491" type="image/png" />
     </item>
     <item>
       <title>VFS Resiliente: Coexistência FAT32 e Ext2 no Jinn OS</title>
@@ -158,7 +196,7 @@
       <category>microkernel-security</category>
       <category>post-mortems</category>
       <category>security-lab</category>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+      <enclosure url="https://jinn-os.dev.br/assets/tls13-jinn-os-browser.png" length="63945" type="image/png" />
     </item>
     <item>
       <title>Tabela de Rotas Mais Usadas (`HotRouteTable`): Fast-Path Unificado DNS + L2/L3 no Jinn OS</title>
@@ -171,7 +209,7 @@
       <category>microkernel-security</category>
       <category>architecture-rfcs</category>
       <category>performance-lab</category>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+      <enclosure url="https://jinn-os.dev.br/assets/hot-routes-aladdin.png" length="55491" type="image/png" />
     </item>
     <item>
       <title>Tabela Local de DNS em 3 Camadas: Hosts Estáticos, Cache LRU Persistente com TTL e Painel Aladdin</title>
@@ -184,7 +222,7 @@
       <category>compute-simd</category>
       <category>architecture-rfcs</category>
       <category>efficiency-lab</category>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+      <enclosure url="https://jinn-os.dev.br/assets/dns-panel-aladdin.png" length="54408" type="image/png" />
     </item>
     <item>
       <title>Zero-Idle em SMP: Contabilidade Per-CPU, IRQ de Hardware NIC, Gating AP LAPIC e Hardening SimbadServer</title>
@@ -275,8 +313,8 @@
     </item>
     <item>
       <title>feat(browser,fullscreen,frente6): fix F11/1024x768 fullscreen sync, verify E2E suites and publish Google News post-mortem [announce]</title>
-      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/07f830816381fbbae24d7c120ef57be42070dab0</link>
-      <guid isPermaLink="false">07f830816381fbbae24d7c120ef57be42070dab0</guid>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/275d8ea396f93539b7efafcc434b41c63bcb7f51</link>
+      <guid isPermaLink="false">275d8ea396f93539b7efafcc434b41c63bcb7f51</guid>
       <pubDate>Thu, 26 Nov 2026 18:05:54 -0300</pubDate>
       <description>feat(browser,fullscreen,frente6): fix F11/1024x768 fullscreen sync, verify E2E suites and publish Google News post-mortem [announce] [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas aplicáveis: Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking (Cloudflare, Akamai, Huawei, RISC-V International, Local Edge Gateways)] [Colaboração aberta — indústria local, academia e setor público responsável: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
       <category>fastpath-ipc-net</category>

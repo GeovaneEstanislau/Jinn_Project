@@ -349,12 +349,13 @@ def build_techarticle_jsonld(meta: dict) -> str:
 
     lab_titles = [OBSERVATORY_LABS[l]["title"] for l in meta.get("labs", []) if l in OBSERVATORY_LABS]
 
+    img_url = meta.get("image", DEFAULT_IMAGE_URL)
     payload = {
         "@context": "https://schema.org",
         "@type": ["TechArticle", "NewsArticle"],
         "headline": meta["title"],
         "description": meta["description"],
-        "image": [DEFAULT_IMAGE_URL],
+        "image": [img_url],
         "datePublished": meta["pub_iso_full"],
         "dateModified": meta["pub_iso_full"],
         "inLanguage": "pt-BR",
@@ -606,6 +607,15 @@ def extract_article_meta(html_path: Path, enrich: bool = True):
             pub_iso_full = mtime.strftime("%Y-%m-%dT%H:%M:%SZ")
             sort_ts = mtime.strftime("%Y-%m-%dT%H:%M:%S")
 
+    img_match = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\'](.*?)["\']', content, re.IGNORECASE)
+    image_url = img_match.group(1).strip() if img_match else DEFAULT_IMAGE_URL
+    image_length = 70707
+    image_mime = "image/png" if image_url.lower().endswith(".png") else "image/jpeg"
+    if image_url.startswith(f"{SITE_URL}/assets/"):
+        asset_path = WEB_DIR / "assets" / image_url.split("/assets/", 1)[1]
+        if asset_path.exists():
+            image_length = asset_path.stat().st_size
+
     ecosystems = classify_ecosystems(tag, all_tags, html_path.stem, title, plain_text)
     labs = classify_labs(tag, all_tags, html_path.stem, title, plain_text)
     measurable_gain = extract_measurable_gain(description, plain_text)
@@ -630,6 +640,9 @@ def extract_article_meta(html_path: Path, enrich: bool = True):
         "guid": guid,
         "date_rfc2822": pub_date_rfc2822,
         "date_iso": pub_date_iso,
+        "image": image_url,
+        "image_length": str(image_length),
+        "image_mime": image_mime,
     }
 
     if enrich:
@@ -1204,9 +1217,9 @@ def build_rss_feeds(articles, commits):
             ET.SubElement(item, "category").text = lab_id
 
         enc = ET.SubElement(item, "enclosure")
-        enc.set("url", DEFAULT_IMAGE_URL)
-        enc.set("length", "70707")
-        enc.set("type", "image/jpeg")
+        enc.set("url", art.get("image", DEFAULT_IMAGE_URL))
+        enc.set("length", art.get("image_length", "70707"))
+        enc.set("type", art.get("image_mime", "image/jpeg"))
 
     # 2. Commits Técnicos Recentes
     for c in commits:
