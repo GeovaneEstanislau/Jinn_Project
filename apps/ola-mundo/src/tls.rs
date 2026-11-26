@@ -4,6 +4,7 @@
 //! RFC 7748 (Curve25519 / X25519) e RFC 6234 (SHA-256) operando inteiramente
 //! sobre buffers estáticos e pilhas de execução, sem dependência de alocador dinâmico.
 
+pub const TLS_AES_128_GCM_SHA256: u16 = 0x1301;
 pub const TLS_CHACHA20_POLY1305_SHA256: u16 = 0x1303;
 pub const TLS13_VERSION: u16 = 0x0304;
 
@@ -581,9 +582,20 @@ pub struct Poly1305 {
 
 impl Poly1305 {
     pub fn new(key: &[u8; 32]) -> Self {
-        let r0 = u64::from_le_bytes([key[0], key[1], key[2], key[3], key[4], key[5], 0, 0]) & 0x0ffffffc0fffffff;
-        let r1 = (u64::from_le_bytes([key[3], key[4], key[5], key[6], key[7], key[8], key[9], key[10]]) >> 6) & 0x0ffffffc0ffffffc;
-        let r2 = (u64::from_le_bytes([key[9], key[10], key[11], key[12], key[13], key[14], key[15], 0]) >> 12) & 0x000000000ffffffc;
+        let mut clamped = [0u8; 16];
+        clamped.copy_from_slice(&key[..16]);
+        clamped[3] &= 15;
+        clamped[7] &= 15;
+        clamped[11] &= 15;
+        clamped[15] &= 15;
+        clamped[4] &= 252;
+        clamped[8] &= 252;
+        clamped[12] &= 252;
+
+        let r_full = u128::from_le_bytes(clamped);
+        let r0 = (r_full & 0x0fff_ffff_ffff) as u64;
+        let r1 = ((r_full >> 44) & 0x0fff_ffff_ffff) as u64;
+        let r2 = ((r_full >> 88) & 0x03ff_ffff_ffff) as u64;
 
         let mut pad = [0u8; 16];
         pad.copy_from_slice(&key[16..32]);
@@ -598,13 +610,19 @@ impl Poly1305 {
     }
 
     fn process_block(&mut self, block: &[u8], is_final: bool) {
-        let mut b = [0u8; 17];
-        b[..block.len()].copy_from_slice(block);
-        if is_final { b[block.len()] = 1; } else { b[16] = 1; }
+        let mut lo = [0u8; 16];
+        lo[..block.len()].copy_from_slice(block);
+        let hi_bit: u128 = if is_final && block.len() < 16 {
+            lo[block.len()] = 1;
+            0
+        } else {
+            1
+        };
 
-        let m0 = u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], 0, 0]) & 0x3ffffffffffff;
-        let m1 = (u64::from_le_bytes([b[5], b[6], b[7], b[8], b[9], b[10], b[11], 0]) >> 2) & 0x3ffffffffffff;
-        let m2 = (u64::from_le_bytes([b[11], b[12], b[13], b[14], b[15], b[16], 0, 0]) >> 4) & 0x3ffffffffffff;
+        let m_lo = u128::from_le_bytes(lo);
+        let m0 = (m_lo & 0x0fff_ffff_ffff) as u64;
+        let m1 = ((m_lo >> 44) & 0x0fff_ffff_ffff) as u64;
+        let m2 = (((m_lo >> 88) & 0x00ff_ffff_ffff) | (hi_bit << 40)) as u64;
 
         self.h0 += m0;
         self.h1 += m1;
@@ -776,6 +794,205 @@ impl ChaCha20Poly1305 {
     }
 }
 
+// ── AES-128-GCM AEAD (NIST FIPS 197 / SP 800-38D, Zero Alloc) ────────────────
+
+const AES_SBOX: [u8; 256] = [
+    0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
+    0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
+    0xb7,0xfd,0x93,0x26,0x36,0x3f,0xf7,0xcc,0x34,0xa5,0xe5,0xf1,0x71,0xd8,0x31,0x15,
+    0x04,0xc7,0x23,0xc3,0x18,0x96,0x05,0x9a,0x07,0x12,0x80,0xe2,0xeb,0x27,0xb2,0x75,
+    0x09,0x83,0x2c,0x1a,0x1b,0x6e,0x5a,0xa0,0x52,0x3b,0xd6,0xb3,0x29,0xe3,0x2f,0x84,
+    0x53,0xd1,0x00,0xed,0x20,0xfc,0xb1,0x5b,0x6a,0xcb,0xbe,0x39,0x4a,0x4c,0x58,0xcf,
+    0xd0,0xef,0xaa,0xfb,0x43,0x4d,0x33,0x85,0x45,0xf9,0x02,0x7f,0x50,0x3c,0x9f,0xa8,
+    0x51,0xa3,0x40,0x8f,0x92,0x9d,0x38,0xf5,0xbc,0xb6,0xda,0x21,0x10,0xff,0xf3,0xd2,
+    0xcd,0x0c,0x13,0xec,0x5f,0x97,0x44,0x17,0xc4,0xa7,0x7e,0x3d,0x64,0x5d,0x19,0x73,
+    0x60,0x81,0x4f,0xdc,0x22,0x2a,0x90,0x88,0x46,0xee,0xb8,0x14,0xde,0x5e,0x0b,0xdb,
+    0xe0,0x32,0x3a,0x0a,0x49,0x06,0x24,0x5c,0xc2,0xd3,0xac,0x62,0x91,0x95,0xe4,0x79,
+    0xe7,0xc8,0x37,0x6d,0x8d,0xd5,0x4e,0xa9,0x6c,0x56,0xf4,0xea,0x65,0x7a,0xae,0x08,
+    0xba,0x78,0x25,0x2e,0x1c,0xa6,0xb4,0xc6,0xe8,0xdd,0x74,0x1f,0x4b,0xbd,0x8b,0x8a,
+    0x70,0x3e,0xb5,0x66,0x48,0x03,0xf6,0x0e,0x61,0x35,0x57,0xb9,0x86,0xc1,0x1d,0x9e,
+    0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
+    0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16,
+];
+
+const AES_RCON: [u8; 10] = [0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36];
+
+#[inline(always)]
+fn xtime(b: u8) -> u8 {
+    (b << 1) ^ (((b >> 7) & 1).wrapping_mul(0x1b))
+}
+
+fn aes128_key_schedule(key: &[u8; 16]) -> [[u8; 16]; 11] {
+    let mut w = [0u8; 176];
+    w[..16].copy_from_slice(key);
+    for r in 0..10 {
+        let off = (r + 1) * 16;
+        let t0 = AES_SBOX[w[off - 3] as usize] ^ AES_RCON[r];
+        let t1 = AES_SBOX[w[off - 2] as usize];
+        let t2 = AES_SBOX[w[off - 1] as usize];
+        let t3 = AES_SBOX[w[off - 4] as usize];
+        w[off] = w[off - 16] ^ t0;
+        w[off + 1] = w[off - 15] ^ t1;
+        w[off + 2] = w[off - 14] ^ t2;
+        w[off + 3] = w[off - 13] ^ t3;
+        for i in 4..16 {
+            w[off + i] = w[off + i - 16] ^ w[off + i - 4];
+        }
+    }
+    let mut rk = [[0u8; 16]; 11];
+    for r in 0..11 {
+        rk[r].copy_from_slice(&w[r * 16..(r + 1) * 16]);
+    }
+    rk
+}
+
+fn aes128_encrypt_block(rk: &[[u8; 16]; 11], inp: &[u8; 16]) -> [u8; 16] {
+    let mut s = [0u8; 16];
+    for i in 0..16 {
+        s[i] = inp[i] ^ rk[0][i];
+    }
+    for rnd in 1..=10 {
+        for b in s.iter_mut() {
+            *b = AES_SBOX[*b as usize];
+        }
+        s = [
+            s[0], s[5], s[10], s[15],
+            s[4], s[9], s[14], s[3],
+            s[8], s[13], s[2], s[7],
+            s[12], s[1], s[6], s[11],
+        ];
+        if rnd < 10 {
+            let mut ns = [0u8; 16];
+            for c in 0..4 {
+                let a = s[4 * c];
+                let b = s[4 * c + 1];
+                let c0 = s[4 * c + 2];
+                let d = s[4 * c + 3];
+                ns[4 * c]     = xtime(a) ^ xtime(b) ^ b ^ c0 ^ d;
+                ns[4 * c + 1] = a ^ xtime(b) ^ xtime(c0) ^ c0 ^ d;
+                ns[4 * c + 2] = a ^ b ^ xtime(c0) ^ xtime(d) ^ d;
+                ns[4 * c + 3] = xtime(a) ^ a ^ b ^ c0 ^ xtime(d);
+            }
+            s = ns;
+        }
+        for i in 0..16 {
+            s[i] ^= rk[rnd][i];
+        }
+    }
+    s
+}
+
+fn gf_mul_128(x: &[u8; 16], y: &[u8; 16]) -> [u8; 16] {
+    let vx = u128::from_be_bytes(*x);
+    let mut vy = u128::from_be_bytes(*y);
+    let mut z: u128 = 0;
+    for i in 0..128 {
+        if ((vx >> (127 - i)) & 1) != 0 {
+            z ^= vy;
+        }
+        let lsb = vy & 1;
+        vy >>= 1;
+        if lsb != 0 {
+            vy ^= 0xE1u128 << 120;
+        }
+    }
+    z.to_be_bytes()
+}
+
+fn gcm_ghash(h: &[u8; 16], aad: &[u8], ct: &[u8]) -> [u8; 16] {
+    let mut y = [0u8; 16];
+    let mut update = |data: &[u8]| {
+        let mut off = 0;
+        while off < data.len() {
+            let take = (data.len() - off).min(16);
+            let mut blk = y;
+            for j in 0..take {
+                blk[j] ^= data[off + j];
+            }
+            y = gf_mul_128(&blk, h);
+            off += 16;
+        }
+    };
+    update(aad);
+    update(ct);
+    let mut lens = [0u8; 16];
+    lens[..8].copy_from_slice(&((aad.len() as u64) * 8).to_be_bytes());
+    lens[8..].copy_from_slice(&((ct.len() as u64) * 8).to_be_bytes());
+    for j in 0..16 {
+        y[j] ^= lens[j];
+    }
+    gf_mul_128(&y, h)
+}
+
+pub struct Aes128Gcm;
+
+impl Aes128Gcm {
+    fn keystream_xor(rk: &[[u8; 16]; 11], nonce: &[u8; 12], data: &mut [u8]) {
+        let mut ctr_blk = [0u8; 16];
+        ctr_blk[..12].copy_from_slice(nonce);
+        let mut off = 0usize;
+        let mut ctr: u32 = 2;
+        while off < data.len() {
+            ctr_blk[12..16].copy_from_slice(&ctr.to_be_bytes());
+            let ks = aes128_encrypt_block(rk, &ctr_blk);
+            let take = (data.len() - off).min(16);
+            for j in 0..take {
+                data[off + j] ^= ks[j];
+            }
+            off += 16;
+            ctr = ctr.wrapping_add(1);
+        }
+    }
+
+    pub fn encrypt(key: &[u8; 16], nonce: &[u8; 12], aad: &[u8], plaintext: &mut [u8]) -> [u8; 16] {
+        let rk = aes128_key_schedule(key);
+        let h = aes128_encrypt_block(&rk, &[0u8; 16]);
+        Self::keystream_xor(&rk, nonce, plaintext);
+        let y = gcm_ghash(&h, aad, plaintext);
+        let mut j0 = [0u8; 16];
+        j0[..12].copy_from_slice(nonce);
+        j0[15] = 1;
+        let s0 = aes128_encrypt_block(&rk, &j0);
+        let mut tag = [0u8; 16];
+        for i in 0..16 {
+            tag[i] = y[i] ^ s0[i];
+        }
+        tag
+    }
+
+    pub fn decrypt(key: &[u8; 16], nonce: &[u8; 12], aad: &[u8], ciphertext: &mut [u8], expected_tag: &[u8; 16]) -> bool {
+        let rk = aes128_key_schedule(key);
+        let h = aes128_encrypt_block(&rk, &[0u8; 16]);
+        let y = gcm_ghash(&h, aad, ciphertext);
+        let mut j0 = [0u8; 16];
+        j0[..12].copy_from_slice(nonce);
+        j0[15] = 1;
+        let s0 = aes128_encrypt_block(&rk, &j0);
+        let mut diff = 0u8;
+        for i in 0..16 {
+            diff |= (y[i] ^ s0[i]) ^ expected_tag[i];
+        }
+        if diff != 0 {
+            return false;
+        }
+        Self::keystream_xor(&rk, nonce, ciphertext);
+        true
+    }
+}
+
+fn is_ipv4_literal_bytes(host: &[u8]) -> bool {
+    if host.is_empty() { return false; }
+    let mut dots = 0usize;
+    for &b in host {
+        if b == b'.' { dots += 1; }
+        else if !b.is_ascii_digit() { return false; }
+    }
+    dots == 3
+}
+
+static mut HS_DECRYPT_BUF: [u8; 18432] = [0u8; 18432];
+static mut HS_REASM_BUF: [u8; 32768] = [0u8; 32768];
+
 // ── TLS 1.3 Client Handshake Protocol (Buffer Estático RFC 8446) ─────────────
 
 pub struct Tls13ClientSession {
@@ -802,8 +1019,17 @@ pub struct Tls13ClientSession {
     pub server_hs_seq: u64,
     pub client_seq: u64,
     pub server_seq: u64,
+    pub cipher_suite: u16,
+    pub hs_reasm_len: usize,
     pub has_server_hello: bool,
     pub is_established: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AppRecord {
+    Data(usize),
+    Handshake,
+    Alert(u8, u8),
 }
 
 impl Tls13ClientSession {
@@ -839,6 +1065,8 @@ impl Tls13ClientSession {
             server_hs_seq: 0,
             client_seq: 0,
             server_seq: 0,
+            cipher_suite: TLS_CHACHA20_POLY1305_SHA256,
+            hs_reasm_len: 0,
             has_server_hello: false,
             is_established: false,
         }
@@ -878,15 +1106,17 @@ impl Tls13ClientSession {
         let ext_len_pos = p; p += 2;
         let ext_start = p;
 
-        // 1. server_name (SNI - 0x0000)
-        out[p] = 0x00; out[p + 1] = 0x00; p += 2;
-        let sni_len = 2 + 1 + 2 + hostname.len();
-        out[p] = (sni_len >> 8) as u8; out[p + 1] = sni_len as u8; p += 2;
-        let list_len = (hostname.len() + 3) as u16;
-        out[p] = (list_len >> 8) as u8; out[p + 1] = list_len as u8; p += 2;
-        out[p] = 0; p += 1; // HostName
-        out[p] = (hostname.len() >> 8) as u8; out[p + 1] = hostname.len() as u8; p += 2;
-        out[p..p + hostname.len()].copy_from_slice(hostname); p += hostname.len();
+        // 1. server_name (SNI - 0x0000): omitido para IPv4 literal conforme RFC 6066
+        if !hostname.is_empty() && !is_ipv4_literal_bytes(hostname) {
+            out[p] = 0x00; out[p + 1] = 0x00; p += 2;
+            let sni_len = 2 + 1 + 2 + hostname.len();
+            out[p] = (sni_len >> 8) as u8; out[p + 1] = sni_len as u8; p += 2;
+            let list_len = (hostname.len() + 3) as u16;
+            out[p] = (list_len >> 8) as u8; out[p + 1] = list_len as u8; p += 2;
+            out[p] = 0; p += 1; // HostName
+            out[p] = (hostname.len() >> 8) as u8; out[p + 1] = hostname.len() as u8; p += 2;
+            out[p..p + hostname.len()].copy_from_slice(hostname); p += hostname.len();
+        }
 
         // 2. supported_groups (0x000A): X25519 (0x001D) e secp256r1 (0x0017)
         out[p] = 0x00; out[p + 1] = 0x0A; p += 2;
@@ -895,13 +1125,17 @@ impl Tls13ClientSession {
         out[p] = 0x00; out[p + 1] = 0x1D; p += 2; // X25519
         out[p] = 0x00; out[p + 1] = 0x17; p += 2; // secp256r1
 
-        // 3. signature_algorithms (0x000D): ECDSA P-256, RSA-PSS e RSA PKCS#1 SHA-256
+        // 3. signature_algorithms (0x000D): ECDSA P-256/P-384, Ed25519, RSA-PSS e RSA PKCS#1
         out[p] = 0x00; out[p + 1] = 0x0D; p += 2;
-        out[p] = 0x00; out[p + 1] = 0x08; p += 2; // ext_len = 8
-        out[p] = 0x00; out[p + 1] = 0x06; p += 2; // list_len = 6
+        out[p] = 0x00; out[p + 1] = 0x10; p += 2; // ext_len = 16
+        out[p] = 0x00; out[p + 1] = 0x0E; p += 2; // list_len = 14 (7 algs)
         out[p] = 0x04; out[p + 1] = 0x03; p += 2; // ecdsa_secp256r1_sha256 (0x0403)
         out[p] = 0x08; out[p + 1] = 0x04; p += 2; // rsa_pss_rsae_sha256 (0x0804)
         out[p] = 0x04; out[p + 1] = 0x01; p += 2; // rsa_pkcs1_sha256 (0x0401)
+        out[p] = 0x05; out[p + 1] = 0x03; p += 2; // ecdsa_secp384r1_sha384 (0x0503)
+        out[p] = 0x08; out[p + 1] = 0x05; p += 2; // rsa_pss_rsae_sha384 (0x0805)
+        out[p] = 0x08; out[p + 1] = 0x06; p += 2; // rsa_pss_rsae_sha512 (0x0806)
+        out[p] = 0x08; out[p + 1] = 0x07; p += 2; // ed25519 (0x0807)
 
         // 4. supported_versions (0x002B): TLS 1.3 (0x0304)
         out[p] = 0x00; out[p + 1] = 0x2B; p += 2;
@@ -949,42 +1183,64 @@ impl Tls13ClientSession {
         if hs_data.len() < 40 || hs_data[0] != 2 {
             return false;
         }
+        let msg_len = ((hs_data[1] as usize) << 16) | ((hs_data[2] as usize) << 8) | (hs_data[3] as usize);
+        let hs_end = (4 + msg_len).min(hs_data.len());
+        let sh_msg = &hs_data[..hs_end];
 
-        self.transcript.update(hs_data);
+        // Server random (detecta HelloRetryRequest magico da RFC 8446)
+        self.server_random.copy_from_slice(&sh_msg[6..38]);
+        const HRR_RANDOM: [u8; 32] = [
+            0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11,
+            0xbe, 0x1d, 0x8c, 0x02, 0x1e, 0x65, 0xb8, 0x91,
+            0xc2, 0xa2, 0x11, 0x16, 0x7a, 0xbb, 0x8c, 0x5e,
+            0x07, 0x9e, 0x09, 0xe2, 0xc8, 0xa8, 0x33, 0x9c,
+        ];
+        if self.server_random == HRR_RANDOM {
+            return false;
+        }
 
-        // Server random
-        self.server_random.copy_from_slice(&hs_data[6..38]);
+        let sess_len = sh_msg[38] as usize;
+        let mut pos = 39 + sess_len;
+        if pos + 3 > sh_msg.len() { return false; }
+        let selected_cs = ((sh_msg[pos] as u16) << 8) | (sh_msg[pos + 1] as u16);
+        if selected_cs != TLS_CHACHA20_POLY1305_SHA256 && selected_cs != TLS_AES_128_GCM_SHA256 {
+            return false;
+        }
+        self.cipher_suite = selected_cs;
+        pos += 3; // cipher suite (2) + compression (1)
 
-        // Localiza key_share nas extensões do ServerHello
         let mut server_pub = [0u8; 32];
         let mut found_ks = false;
+        let mut tls13_confirmed = false;
 
-        let sess_len = hs_data[38] as usize;
-        let mut pos = 39 + sess_len;
-        if pos + 2 > hs_data.len() { return false; }
-        pos += 2 + 1; // cipher suite + compression
-
-        if pos + 2 <= hs_data.len() {
-            let ext_len = ((hs_data[pos] as usize) << 8) | (hs_data[pos + 1] as usize);
+        if pos + 2 <= sh_msg.len() {
+            let ext_len = ((sh_msg[pos] as usize) << 8) | (sh_msg[pos + 1] as usize);
             pos += 2;
             let end = pos + ext_len;
-            while pos + 4 <= end && pos + 4 <= hs_data.len() {
-                let ext_id = ((hs_data[pos] as u16) << 8) | (hs_data[pos + 1] as u16);
-                let e_len = ((hs_data[pos + 2] as usize) << 8) | (hs_data[pos + 3] as usize);
+            while pos + 4 <= end && pos + 4 <= sh_msg.len() {
+                let ext_id = ((sh_msg[pos] as u16) << 8) | (sh_msg[pos + 1] as u16);
+                let e_len = ((sh_msg[pos + 2] as usize) << 8) | (sh_msg[pos + 3] as usize);
                 pos += 4;
-                if ext_id == 51 && e_len >= 36 && pos + 36 <= hs_data.len() {
-                    let group = ((hs_data[pos] as u16) << 8) | (hs_data[pos + 1] as u16);
+                if pos + e_len > sh_msg.len() { break; }
+                if ext_id == 0x002B && e_len >= 2 {
+                    let ver = ((sh_msg[pos] as u16) << 8) | (sh_msg[pos + 1] as u16);
+                    if ver == TLS13_VERSION {
+                        tls13_confirmed = true;
+                    }
+                } else if ext_id == 0x0033 && e_len >= 36 {
+                    let group = ((sh_msg[pos] as u16) << 8) | (sh_msg[pos + 1] as u16);
                     if group == 0x001D {
-                        server_pub.copy_from_slice(&hs_data[pos + 4..pos + 36]);
+                        server_pub.copy_from_slice(&sh_msg[pos + 4..pos + 36]);
                         found_ks = true;
-                        break;
                     }
                 }
                 pos += e_len;
             }
         }
 
-        if !found_ks { return false; }
+        if !found_ks || !tls13_confirmed { return false; }
+
+        self.transcript.update(sh_msg);
 
         // Deriva segredo compartilhado X25519
         let shared_secret = x25519(&self.client_priv, &server_pub);
@@ -999,19 +1255,41 @@ impl Tls13ClientSession {
         self.client_hs_traffic_secret = derive_secret(&self.handshake_secret, b"c hs traffic", &transcript_hash);
         self.server_hs_traffic_secret = derive_secret(&self.handshake_secret, b"s hs traffic", &transcript_hash);
 
-        hkdf_expand_label(&self.client_hs_traffic_secret, b"key", &[], &mut self.client_hs_key);
+        let key_len = if self.cipher_suite == TLS_AES_128_GCM_SHA256 { 16 } else { 32 };
+        hkdf_expand_label(&self.client_hs_traffic_secret, b"key", &[], &mut self.client_hs_key[..key_len]);
         hkdf_expand_label(&self.client_hs_traffic_secret, b"iv", &[], &mut self.client_hs_iv);
-        hkdf_expand_label(&self.server_hs_traffic_secret, b"key", &[], &mut self.server_hs_key);
+        hkdf_expand_label(&self.server_hs_traffic_secret, b"key", &[], &mut self.server_hs_key[..key_len]);
         hkdf_expand_label(&self.server_hs_traffic_secret, b"iv", &[], &mut self.server_hs_iv);
 
         self.server_hs_seq = 0;
         self.client_hs_seq = 0;
+        self.hs_reasm_len = 0;
         self.has_server_hello = true;
         true
     }
 
-    /// Processa registros cifrados de Handshake recebidos (EncryptedExtensions, Certificate, CertificateVerify, Finished)
-    /// Quando o Finished do servidor é autenticado, deriva as chaves de aplicação e constrói o Finished do cliente.
+    fn aead_decrypt(&self, key: &[u8; 32], nonce: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16]) -> bool {
+        if self.cipher_suite == TLS_AES_128_GCM_SHA256 {
+            let mut k16 = [0u8; 16];
+            k16.copy_from_slice(&key[..16]);
+            Aes128Gcm::decrypt(&k16, nonce, aad, buf, tag)
+        } else {
+            ChaCha20Poly1305::decrypt(key, nonce, aad, buf, tag)
+        }
+    }
+
+    fn aead_encrypt(&self, key: &[u8; 32], nonce: &[u8; 12], aad: &[u8], buf: &mut [u8]) -> [u8; 16] {
+        if self.cipher_suite == TLS_AES_128_GCM_SHA256 {
+            let mut k16 = [0u8; 16];
+            k16.copy_from_slice(&key[..16]);
+            Aes128Gcm::encrypt(&k16, nonce, aad, buf)
+        } else {
+            ChaCha20Poly1305::encrypt(key, nonce, aad, buf)
+        }
+    }
+
+    /// Processa registros cifrados de Handshake recebidos com reassembly multi-registro
+    /// (`EncryptedExtensions`, `Certificate` fragmentado em vários records, `CertificateVerify`, `Finished`).
     pub fn process_handshake_record(&mut self, record: &[u8], client_finished_out: &mut [u8]) -> Result<Option<usize>, &'static str> {
         if record.len() < 5 + 16 + 1 {
             return Err("Tamanho de registro insuficiente");
@@ -1031,23 +1309,15 @@ impl Tls13ClientSession {
         let mut expected_tag = [0u8; 16];
         expected_tag.copy_from_slice(&record[5 + pt_and_type_len..5 + ct_len]);
 
-        // Buffer estático para decifrar a carga útil do handshake sem alocação dinâmica
-        static mut HS_DECRYPT_BUF: [u8; 8192] = [0u8; 8192];
-        if pt_and_type_len > 8192 {
-            return Err("Mensagem de handshake excede limite de 8KB");
+        let hs_dec_cap = unsafe { HS_DECRYPT_BUF.len() };
+        if pt_and_type_len > hs_dec_cap {
+            return Err("Mensagem de handshake excede limite de 18KB");
         }
         let pt_buf = unsafe { &mut HS_DECRYPT_BUF[..pt_and_type_len] };
         pt_buf.copy_from_slice(&record[5..5 + pt_and_type_len]);
 
-        let ok = ChaCha20Poly1305::decrypt(
-            &self.server_hs_key,
-            &nonce,
-            aad,
-            pt_buf,
-            &expected_tag,
-        );
-        if !ok {
-            return Err("Falha de autenticacao Poly1305 no handshake");
+        if !self.aead_decrypt(&self.server_hs_key, &nonce, aad, pt_buf, &expected_tag) {
+            return Err("Falha de autenticacao AEAD (Poly1305/GCM) no handshake");
         }
 
         let mut end = pt_and_type_len;
@@ -1056,26 +1326,35 @@ impl Tls13ClientSession {
         let inner_type = pt_buf[end - 1];
         end -= 1;
 
+        if inner_type == CONTENT_ALERT {
+            return Err("Alerta TLS cifrado recebido durante handshake");
+        }
         if inner_type != CONTENT_HANDSHAKE {
             return Err("Tipo interno nao eh Handshake");
         }
 
-        // Itera sobre as mensagens de handshake no interior do bloco
+        // Anexa no buffer contínuo de reassembly handshake (suporta mensagens cruzando múltiplos records TLS)
+        let reasm = unsafe { &mut HS_REASM_BUF };
+        if self.hs_reasm_len + end > reasm.len() {
+            return Err("Fluxo acumulado de handshake excede 32KB");
+        }
+        reasm[self.hs_reasm_len..self.hs_reasm_len + end].copy_from_slice(&pt_buf[..end]);
+        self.hs_reasm_len += end;
+
         let mut pos = 0;
         let mut generated_client_finished = None;
 
-        while pos + 4 <= end {
-            let msg_type = pt_buf[pos];
-            let msg_len = ((pt_buf[pos + 1] as usize) << 16) | ((pt_buf[pos + 2] as usize) << 8) | (pt_buf[pos + 3] as usize);
+        while pos + 4 <= self.hs_reasm_len {
+            let msg_type = reasm[pos];
+            let msg_len = ((reasm[pos + 1] as usize) << 16) | ((reasm[pos + 2] as usize) << 8) | (reasm[pos + 3] as usize);
             let full_msg_len = 4 + msg_len;
-            if pos + full_msg_len > end {
-                return Err("Mensagem handshake fragmentada ou truncada");
+            if pos + full_msg_len > self.hs_reasm_len {
+                // Mensagem continua no(s) próximo(s) registro(s) TLS: aguarda próximo record
+                break;
             }
-            let full_msg = &pt_buf[pos..pos + full_msg_len];
-            let body = &pt_buf[pos + 4..pos + full_msg_len];
 
             if msg_type == 20 { // Finished
-                if body.len() < 32 {
+                if msg_len < 32 {
                     return Err("Finished do servidor invalido");
                 }
                 let mut server_finished_key = [0u8; 32];
@@ -1083,6 +1362,7 @@ impl Tls13ClientSession {
                 let transcript_before_sf = self.transcript.current_digest();
                 let expected_server_verify_data = hmac_sha256(&server_finished_key, &transcript_before_sf);
 
+                let body = &reasm[pos + 4..pos + full_msg_len];
                 let mut diff = 0u8;
                 for i in 0..32 {
                     diff |= body[i] ^ expected_server_verify_data[i];
@@ -1092,7 +1372,7 @@ impl Tls13ClientSession {
                 }
 
                 // Finished autenticado! Atualiza transcript com a mensagem do servidor
-                self.transcript.update(full_msg);
+                self.transcript.update(&reasm[pos..pos + full_msg_len]);
 
                 // Transição para Master Secret e chaves de tráfego de aplicação (RFC 8446 Seção 7.1)
                 let empty_hash = Sha256::digest(&[]);
@@ -1103,9 +1383,10 @@ impl Tls13ClientSession {
                 self.client_app_traffic_secret = derive_secret(&self.master_secret, b"c ap traffic", &transcript_after_sf);
                 self.server_app_traffic_secret = derive_secret(&self.master_secret, b"s ap traffic", &transcript_after_sf);
 
-                hkdf_expand_label(&self.client_app_traffic_secret, b"key", &[], &mut self.client_app_key);
+                let key_len = if self.cipher_suite == TLS_AES_128_GCM_SHA256 { 16 } else { 32 };
+                hkdf_expand_label(&self.client_app_traffic_secret, b"key", &[], &mut self.client_app_key[..key_len]);
                 hkdf_expand_label(&self.client_app_traffic_secret, b"iv", &[], &mut self.client_app_iv);
-                hkdf_expand_label(&self.server_app_traffic_secret, b"key", &[], &mut self.server_app_key);
+                hkdf_expand_label(&self.server_app_traffic_secret, b"key", &[], &mut self.server_app_key[..key_len]);
                 hkdf_expand_label(&self.server_app_traffic_secret, b"iv", &[], &mut self.server_app_iv);
 
                 self.client_seq = 0;
@@ -1140,22 +1421,25 @@ impl Tls13ClientSession {
                 client_finished_out[41] = CONTENT_HANDSHAKE;
 
                 let fin_aad = [client_finished_out[0], client_finished_out[1], client_finished_out[2], client_finished_out[3], client_finished_out[4]];
-                let tag = ChaCha20Poly1305::encrypt(
-                    &self.client_hs_key,
-                    &fin_nonce,
-                    &fin_aad,
-                    &mut client_finished_out[5..42],
-                );
+                let key_copy = self.client_hs_key;
+                let tag = self.aead_encrypt(&key_copy, &fin_nonce, &fin_aad, &mut client_finished_out[5..42]);
                 client_finished_out[42..58].copy_from_slice(&tag);
 
                 self.is_established = true;
                 generated_client_finished = Some(58);
             } else {
-                // EncryptedExtensions (8), Certificate (11), CertificateVerify (15):
-                // Atualiza transcript
-                self.transcript.update(full_msg);
+                // EncryptedExtensions (8), Certificate (11), CertificateVerify (15)
+                self.transcript.update(&reasm[pos..pos + full_msg_len]);
             }
             pos += full_msg_len;
+        }
+
+        if pos > 0 {
+            let rem = self.hs_reasm_len - pos;
+            if rem > 0 {
+                reasm.copy_within(pos..self.hs_reasm_len, 0);
+            }
+            self.hs_reasm_len = rem;
         }
 
         Ok(generated_client_finished)
@@ -1179,22 +1463,18 @@ impl Tls13ClientSession {
         out[5 + payload.len()] = CONTENT_APPLICATION_DATA;
 
         let aad = [out[0], out[1], out[2], out[3], out[4]];
-        let tag = ChaCha20Poly1305::encrypt(
-            &self.client_app_key,
-            &nonce,
-            &aad,
-            &mut out[5..5 + payload.len() + 1],
-        );
+        let key_copy = self.client_app_key;
+        let tag = self.aead_encrypt(&key_copy, &nonce, &aad, &mut out[5..5 + payload.len() + 1]);
         out[5 + payload.len() + 1..5 + ct_len].copy_from_slice(&tag);
 
         5 + ct_len
     }
 
-    /// Descriptografa registro recebido de volta para o buffer
-    pub fn decrypt_application_data(&mut self, record: &[u8], out_payload: &mut [u8]) -> Option<usize> {
-        if record.len() < 5 + 16 + 1 { return None; }
+    /// Descriptografa registro TLSCiphertext de aplicação e retorna o inner ContentType decifrado
+    pub fn decrypt_application_record(&mut self, record: &[u8], out_payload: &mut [u8]) -> Result<AppRecord, ()> {
+        if record.len() < 5 + 16 + 1 { return Err(()); }
         let ct_len = ((record[3] as usize) << 8) | (record[4] as usize);
-        if 5 + ct_len > record.len() { return None; }
+        if 5 + ct_len > record.len() { return Err(()); }
 
         let mut nonce = self.server_app_iv;
         let seq_bytes = self.server_seq.to_be_bytes();
@@ -1202,35 +1482,44 @@ impl Tls13ClientSession {
         self.server_seq += 1;
 
         let pt_and_type_len = ct_len - 16;
+        if pt_and_type_len > out_payload.len() { return Err(()); }
         let aad = &record[0..5];
         let mut expected_tag = [0u8; 16];
         expected_tag.copy_from_slice(&record[5 + pt_and_type_len..5 + ct_len]);
 
         out_payload[..pt_and_type_len].copy_from_slice(&record[5..5 + pt_and_type_len]);
 
-        let ok = ChaCha20Poly1305::decrypt(
-            &self.server_app_key,
-            &nonce,
-            aad,
-            &mut out_payload[..pt_and_type_len],
-            &expected_tag,
-        );
+        let key_copy = self.server_app_key;
+        let ok = self.aead_decrypt(&key_copy, &nonce, aad, &mut out_payload[..pt_and_type_len], &expected_tag);
 
-        if !ok { return None; }
+        if !ok { return Err(()); }
 
         let mut end = pt_and_type_len;
         while end > 0 && out_payload[end - 1] == 0 { end -= 1; }
-        if end == 0 { return None; }
+        if end == 0 { return Err(()); }
         let inner_type = out_payload[end - 1];
         end -= 1;
 
         if inner_type == CONTENT_APPLICATION_DATA {
-            Some(end)
+            Ok(AppRecord::Data(end))
         } else if inner_type == CONTENT_HANDSHAKE {
-            // NewSessionTicket post-handshake emitido pelo Cloudflare/Google: ignora e retorna 0 bytes
-            Some(0)
+            // NewSessionTicket post-handshake emitido pelo servidor
+            Ok(AppRecord::Handshake)
+        } else if inner_type == CONTENT_ALERT {
+            let level = if end >= 1 { out_payload[0] } else { 0 };
+            let desc = if end >= 2 { out_payload[1] } else { 0 };
+            Ok(AppRecord::Alert(level, desc))
         } else {
-            None
+            Err(())
+        }
+    }
+
+    /// Descriptografa registro recebido de volta para o buffer
+    pub fn decrypt_application_data(&mut self, record: &[u8], out_payload: &mut [u8]) -> Option<usize> {
+        match self.decrypt_application_record(record, out_payload) {
+            Ok(AppRecord::Data(n)) => Some(n),
+            Ok(AppRecord::Handshake) => Some(0),
+            Ok(AppRecord::Alert(_, _)) | Err(()) => None,
         }
     }
 }

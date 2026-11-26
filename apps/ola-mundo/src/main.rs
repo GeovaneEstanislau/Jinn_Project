@@ -422,6 +422,47 @@ unsafe fn sys_get_system_stats(stats: *mut SystemStatsUser) -> i64 {
 }
 
 #[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct HotRouteEntryUser {
+    pub hit_count: u32,
+    pub last_rtt_ticks: u32,
+    pub ttl_remaining_secs: u32,
+    pub hostname: [u8; 96],
+    pub hostname_len: u8,
+    pub dst_ip: [u8; 4],
+    pub next_hop_ip: [u8; 4],
+    pub next_hop_mac: [u8; 6],
+    pub flags: u8,
+    pub valid: u8,
+    pub stale: u8,
+    pub _reserved: [u8; 2],
+}
+
+impl HotRouteEntryUser {
+    pub const fn empty() -> Self {
+        Self {
+            hit_count: 0,
+            last_rtt_ticks: 0,
+            ttl_remaining_secs: 0,
+            hostname: [0u8; 96],
+            hostname_len: 0,
+            dst_ip: [0u8; 4],
+            next_hop_ip: [0u8; 4],
+            next_hop_mac: [0u8; 6],
+            flags: 0,
+            valid: 0,
+            stale: 0,
+            _reserved: [0u8; 2],
+        }
+    }
+}
+
+#[inline(always)]
+unsafe fn sys_net_hot_route_list(out: &mut [HotRouteEntryUser]) -> i64 {
+    syscall3(97, out.as_mut_ptr() as u64, out.len() as u64, 0)
+}
+
+#[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct JinnWallStats {
     pub inspected: u64,
@@ -1795,11 +1836,108 @@ impl DynamicSurfaceBuffer {
         Ok(())
     }
 }
-pub const HTTP_BUF_SIZE: usize = 65536;
+pub const HTTP_BUF_SIZE: usize = 131072;
 static mut HTML_FILE_BUF: [u8; HTTP_BUF_SIZE] = [0; HTTP_BUF_SIZE];
 static mut HTTP_RX_BUF: [u8; HTTP_BUF_SIZE] = [0; HTTP_BUF_SIZE];
 static mut HTTP_PLAIN_BUF: [u8; HTTP_BUF_SIZE] = [0; HTTP_BUF_SIZE];
 static mut BROWSER_SESSION: browser::BrowserSession = browser::BrowserSession::new();
+static mut HOT_ROUTE_TMP: [HotRouteEntryUser; 16] = [HotRouteEntryUser::empty(); 16];
+
+#[derive(Clone, Copy)]
+struct FetchDiagInfo {
+    host: [u8; 96],
+    host_len: usize,
+    resolved_ip: [u8; 4],
+    has_resolved_ip: bool,
+    is_https: bool,
+    port: u16,
+    dns_code: i64,
+    connect_code: i64,
+    http_status: u16,
+}
+
+impl FetchDiagInfo {
+    const fn empty() -> Self {
+        Self {
+            host: [0u8; 96],
+            host_len: 0,
+            resolved_ip: [0u8; 4],
+            has_resolved_ip: false,
+            is_https: false,
+            port: 0,
+            dns_code: 0,
+            connect_code: 0,
+            http_status: 0,
+        }
+    }
+}
+
+static mut LAST_FETCH_DIAG: FetchDiagInfo = FetchDiagInfo::empty();
+
+#[inline]
+fn diag_push_bytes(dst: &mut [u8], pos: &mut usize, src: &[u8]) {
+    let take = src.len().min(dst.len().saturating_sub(*pos));
+    dst[*pos..*pos + take].copy_from_slice(&src[..take]);
+    *pos += take;
+}
+
+fn diag_push_u64(dst: &mut [u8], pos: &mut usize, mut val: u64) {
+    if val == 0 {
+        diag_push_bytes(dst, pos, b"0");
+        return;
+    }
+    let mut tmp = [0u8; 20];
+    let mut n = 0usize;
+    while val > 0 {
+        tmp[n] = b'0' + (val % 10) as u8;
+        val /= 10;
+        n += 1;
+    }
+    while n > 0 {
+        n -= 1;
+        diag_push_bytes(dst, pos, &[tmp[n]]);
+    }
+}
+
+fn diag_push_i64(dst: &mut [u8], pos: &mut usize, val: i64) {
+    if val < 0 {
+        diag_push_bytes(dst, pos, b"-");
+        diag_push_u64(dst, pos, val.unsigned_abs());
+    } else {
+        diag_push_u64(dst, pos, val as u64);
+    }
+}
+
+fn diag_push_ipv4(dst: &mut [u8], pos: &mut usize, ip: [u8; 4]) {
+    for idx in 0..4 {
+        if idx > 0 {
+            diag_push_bytes(dst, pos, b".");
+        }
+        diag_push_u64(dst, pos, ip[idx] as u64);
+    }
+}
+
+fn diag_push_mac(dst: &mut [u8], pos: &mut usize, mac: [u8; 6]) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    for idx in 0..6 {
+        if idx > 0 {
+            diag_push_bytes(dst, pos, b":");
+        }
+        let b = mac[idx];
+        diag_push_bytes(dst, pos, &[HEX[(b >> 4) as usize], HEX[(b & 0x0F) as usize]]);
+    }
+}
+
+fn diag_cstr_trim(buf: &[u8]) -> &[u8] {
+    let mut end = 0usize;
+    while end < buf.len() && buf[end] != 0 {
+        end += 1;
+    }
+    while end > 0 && buf[end - 1] == b' ' {
+        end -= 1;
+    }
+    &buf[..end]
+}
 
 unsafe fn read_html_file(path: &[u8]) -> Option<usize> {
     let fd = sys_open(path, O_RDONLY);
@@ -1842,6 +1980,14 @@ unsafe fn fetch_http_document(
     initial_url: &[u8],
     out_buf: &mut [u8],
 ) -> Result<usize, FetchError> {
+    fetch_http_document_inner(initial_url, out_buf, false)
+}
+
+unsafe fn fetch_http_document_inner(
+    initial_url: &[u8],
+    out_buf: &mut [u8],
+    reject_http_errors: bool,
+) -> Result<usize, FetchError> {
     let mut current_target = [0u8; 128];
     let len = initial_url.len().min(127);
     current_target[..len].copy_from_slice(&initial_url[..len]);
@@ -1854,6 +2000,14 @@ unsafe fn fetch_http_document(
             None => return Err(FetchError::InvalidHttp),
         };
 
+        let mut diag = FetchDiagInfo::empty();
+        let h_cpy = parsed.host_len.min(diag.host.len());
+        diag.host[..h_cpy].copy_from_slice(&parsed.host[..h_cpy]);
+        diag.host_len = h_cpy;
+        diag.is_https = parsed.is_https;
+        diag.port = parsed.port;
+        LAST_FETCH_DIAG = diag;
+
         print_str(b"[DIAG-FLOW] URL: ");
         print_str(target_slice);
         print_str(b"\n");
@@ -1865,6 +2019,7 @@ unsafe fn fetch_http_document(
         let mut ip = [0u8; 4];
         let dns_res = sys_dns_resolve(parsed.host.as_ptr(), parsed.host_len, ip.as_mut_ptr());
         if dns_res < 0 {
+            LAST_FETCH_DIAG.dns_code = dns_res;
             if dns_res == -2 {
                 print_str(b"[DIAG-FLOW] DNS: ERRO [NxDomain]: Dominio inexistente (NXDOMAIN)!\n");
                 return Err(FetchError::DnsNxDomain);
@@ -1887,6 +2042,8 @@ unsafe fn fetch_http_document(
                 return Err(FetchError::DnsFailed);
             }
         }
+        LAST_FETCH_DIAG.resolved_ip = ip;
+        LAST_FETCH_DIAG.has_resolved_ip = true;
 
         print_str(b"[DIAG-FLOW] IP: ");
         print_u64(ip[0] as u64); print_str(b".");
@@ -1914,6 +2071,7 @@ unsafe fn fetch_http_document(
         print_str(b"[DIAG-FLOW] TCP: Estabelecendo 3-way handshake com servidor remoto...\n");
         let conn_res = sys_connect(sockfd, &addr);
         if conn_res < 0 {
+            LAST_FETCH_DIAG.connect_code = conn_res;
             print_str(b"[DIAG-FLOW] TCP: ERRO: sys_connect falhou com codigo ");
             print_i64(conn_res);
             print_str(b"\n");
@@ -1975,12 +2133,23 @@ unsafe fn fetch_http_document(
 
                 let rec_type = *rx_ptr;
                 let rec_len = (((*rx_ptr.add(3)) as usize) << 8) | ((*rx_ptr.add(4)) as usize);
+                if rec_len == 0 || rec_len > 18432 {
+                    print_str(b"[DIAG-FLOW] TLS: Registro TLS com tamanho invalido no handshake!\n");
+                    let _ = sys_close(sockfd);
+                    return Err(FetchError::TlsHandshakeFailed);
+                }
                 let total_rec_len = 5 + rec_len;
+                if total_rec_len > HTTP_BUF_SIZE {
+                    print_str(b"[DIAG-FLOW] TLS: Registro excede HTTP_BUF_SIZE!\n");
+                    let _ = sys_close(sockfd);
+                    return Err(FetchError::TlsHandshakeFailed);
+                }
 
-                // Garante recebimento do registro completo
+                // Garante recebimento do registro completo antes de processar ou decifrar
                 while rx_len < total_rec_len {
                     let need = total_rec_len - rx_len;
-                    let n = sys_recv(sockfd, rx_ptr.add(rx_len), need);
+                    let space = HTTP_BUF_SIZE.saturating_sub(rx_len);
+                    let n = sys_recv(sockfd, rx_ptr.add(rx_len), need.min(space));
                     if n > 0 {
                         rx_len += n as usize;
                         hs_spins = 0;
@@ -2000,7 +2169,6 @@ unsafe fn fetch_http_document(
                 let rec_slice = core::slice::from_raw_parts(rx_ptr as *const u8, total_rec_len);
 
                 if rec_type == tls::CONTENT_HANDSHAKE && !sess.has_server_hello {
-                    // Processa ServerHello inicial
                     if !sess.process_server_hello(rec_slice) {
                         print_str(b"[DIAG-FLOW] TLS: Handshake TLS 1.3 ServerHello rejeitado!\n");
                         let _ = sys_close(sockfd);
@@ -2008,17 +2176,18 @@ unsafe fn fetch_http_document(
                     }
                     print_str(b"[DIAG-FLOW] TLS: ServerHello aceito! Segredos de handshake derivados.\n");
                 } else if rec_type == 0x14 {
-                    // ChangeCipherSpec (Middlebox compat) - ignora silenciosamente
                     print_str(b"[DIAG-FLOW] TLS: ChangeCipherSpec recebido (Middlebox compat).\n");
+                } else if rec_type == tls::CONTENT_ALERT {
+                    print_str(b"[DIAG-FLOW] TLS: Alerta TLS recebido durante handshake!\n");
+                    let _ = sys_close(sockfd);
+                    return Err(FetchError::TlsHandshakeFailed);
                 } else if rec_type == tls::CONTENT_APPLICATION_DATA {
                     // Registros cifrados de Handshake (EncryptedExtensions, Certificate, CertificateVerify, Finished)
                     match sess.process_handshake_record(rec_slice, &mut client_fin_buf) {
                         Ok(Some(fin_len)) => {
                             print_str(b"[DIAG-FLOW] TLS: Finished do servidor autenticado! Enviando Client Finished...\n");
-                            // Envia registro ChangeCipherSpec (Middlebox compat)
                             let ccs = [0x14u8, 0x03, 0x03, 0x00, 0x01, 0x01];
                             let _ = sys_send(sockfd, ccs.as_ptr(), ccs.len());
-                            // Envia Client Finished cifrado
                             let sent_fin = sys_send(sockfd, client_fin_buf.as_ptr(), fin_len);
                             if sent_fin < 0 {
                                 let _ = sys_close(sockfd);
@@ -2026,9 +2195,7 @@ unsafe fn fetch_http_document(
                             }
                             print_str(b"[DIAG-FLOW] TLS: Handshake TLS 1.3 concluido com sucesso! Canal seguro ativo.\n");
                         }
-                        Ok(None) => {
-                            // Mais mensagens de handshake processadas (EncryptedExtensions/Cert), continuando
-                        }
+                        Ok(None) => {}
                         Err(e) => {
                             print_str(b"[DIAG-FLOW] TLS: Falha no handshake cifrado: ");
                             print_str(e.as_bytes());
@@ -2037,6 +2204,10 @@ unsafe fn fetch_http_document(
                             return Err(FetchError::TlsHandshakeFailed);
                         }
                     }
+                } else {
+                    print_str(b"[DIAG-FLOW] TLS: ContentType inesperado no handshake!\n");
+                    let _ = sys_close(sockfd);
+                    return Err(FetchError::TlsHandshakeFailed);
                 }
 
                 // Desloca os bytes restantes no buffer
@@ -2058,7 +2229,11 @@ unsafe fn fetch_http_document(
         let req_len = browser::build_http_get_request(&parsed, &mut req_buf);
 
         if let Some(ref mut sess) = tls_sess_opt {
-            print_str(b"[DIAG-FLOW] TLS: Criptografando requisicao HTTP GET via ChaCha20-Poly1305...\n");
+            if sess.cipher_suite == tls::TLS_AES_128_GCM_SHA256 {
+                print_str(b"[DIAG-FLOW] TLS: Criptografando requisicao HTTP GET via AES-128-GCM...\n");
+            } else {
+                print_str(b"[DIAG-FLOW] TLS: Criptografando requisicao HTTP GET via ChaCha20-Poly1305...\n");
+            }
             let mut enc_buf = [0u8; 600];
             let enc_len = sess.encrypt_application_data(&req_buf[..req_len], &mut enc_buf);
             let sent = sys_send(sockfd, enc_buf.as_ptr(), enc_len);
@@ -2083,14 +2258,24 @@ unsafe fn fetch_http_document(
         let mut idle_spins = 0usize;
 
         if let Some(ref mut sess) = tls_sess_opt {
+            let mut tls_eof = false;
+            let mut tls_fatal_alert = false;
             loop {
                 // Tenta decifrar registros completos disponiveis em HTTP_RX_BUF
                 let mut pos = 0;
                 while pos + 5 <= rx_total {
                     let rec_type = *rx_ptr.add(pos);
                     let rec_len = (((*rx_ptr.add(pos + 3)) as usize) << 8) | ((*rx_ptr.add(pos + 4)) as usize);
+                    if rec_len == 0 || rec_len > 18432 {
+                        print_str(b"[TLS-HTTP-RX] Erro: tamanho de registro TLS invalido!\n");
+                        let _ = sys_close(sockfd);
+                        return Err(FetchError::TlsDecryptFailed);
+                    }
                     let total_rec = 5 + rec_len;
                     if pos + total_rec > rx_total {
+                        break;
+                    }
+                    if plain_total + rec_len + 32 > HTTP_BUF_SIZE {
                         break;
                     }
 
@@ -2098,9 +2283,36 @@ unsafe fn fetch_http_document(
                     let plain_slice = core::slice::from_raw_parts_mut(plain_ptr.add(plain_total), HTTP_BUF_SIZE - plain_total);
 
                     if rec_type == tls::CONTENT_APPLICATION_DATA {
-                        if let Some(dec_len) = sess.decrypt_application_data(rec_slice, plain_slice) {
-                            plain_total += dec_len;
+                        match sess.decrypt_application_record(rec_slice, plain_slice) {
+                            Ok(tls::AppRecord::Data(dec_len)) => {
+                                plain_total += dec_len;
+                            }
+                            Ok(tls::AppRecord::Handshake) => {
+                                // NewSessionTicket / post-handshake metadata: ignora silenciosamente
+                            }
+                            Ok(tls::AppRecord::Alert(level, desc)) => {
+                                print_str(b"[TLS-HTTP-RX] Alerta TLS cifrado (level=");
+                                print_u64(level as u64);
+                                print_str(b", desc=");
+                                print_u64(desc as u64);
+                                print_str(b")\n");
+                                if level == 2 && desc != 0 {
+                                    tls_fatal_alert = true;
+                                }
+                                tls_eof = true;
+                                pos += total_rec;
+                                break;
+                            }
+                            Err(()) => {
+                                print_str(b"[TLS-HTTP-RX] Falha AEAD ao decifrar registro TLS!\n");
+                                let _ = sys_close(sockfd);
+                                return Err(FetchError::TlsDecryptFailed);
+                            }
                         }
+                    } else if rec_type == tls::CONTENT_ALERT {
+                        tls_eof = true;
+                        pos += total_rec;
+                        break;
                     }
                     pos += total_rec;
                 }
@@ -2125,6 +2337,10 @@ unsafe fn fetch_http_document(
                             break;
                         }
                     }
+                }
+
+                if tls_eof {
+                    break;
                 }
 
                 let space = HTTP_BUF_SIZE - rx_total;
@@ -2154,6 +2370,10 @@ unsafe fn fetch_http_document(
                                 break;
                             }
                         }
+                        if plain_total == 0 {
+                            let _ = sys_close(sockfd);
+                            return Err(FetchError::RecvTimeout);
+                        }
                         break;
                     }
                     let _ = sys_sleep(5);
@@ -2164,11 +2384,15 @@ unsafe fn fetch_http_document(
                     break;
                 }
             }
+            if plain_total == 0 {
+                let _ = sys_close(sockfd);
+                return Err(if tls_fatal_alert { FetchError::TlsHandshakeFailed } else { FetchError::RecvTimeout });
+            }
         } else {
             loop {
                 let space = HTTP_BUF_SIZE - rx_total;
                 if space == 0 {
-                    print_str(b"[BROWSER-NET] Buffer de recepcao cheio (64 KiB)!\n");
+                    print_str(b"[BROWSER-NET] Buffer de recepcao cheio (128 KiB)!\n");
                     break;
                 }
                 let n = sys_recv(sockfd, rx_ptr.add(rx_total), space);
@@ -2237,6 +2461,7 @@ unsafe fn fetch_http_document(
             Some(h) => h,
             None => return Err(FetchError::InvalidHttp),
         };
+        LAST_FETCH_DIAG.http_status = hdr.status_code;
 
         print_str(b"[BROWSER-NET] HTTP Status: ");
         print_u64(hdr.status_code as u64);
@@ -2272,7 +2497,7 @@ unsafe fn fetch_http_document(
 
         if hdr.status_code >= 400 {
             let body_bytes = &rx_slice[hdr.header_len..];
-            if body_bytes.iter().position(|&b| b == b'<').is_some() {
+            if !reject_http_errors && body_bytes.iter().position(|&b| b == b'<').is_some() {
                 let copy_len = body_bytes.len().min(out_buf.len());
                 out_buf[..copy_len].copy_from_slice(&body_bytes[..copy_len]);
                 return Ok(copy_len);
@@ -2373,7 +2598,7 @@ unsafe fn browser_load_and_display(
     buf_slice: &mut [u32],
 ) -> bool {
     let mut path_buf = [0u8; 128];
-    let path = resolve_target_path(target, &mut path_buf);
+    let (path, allow_http_fallback) = resolve_target_with_mode(target, &mut path_buf);
 
     if path.starts_with(b"about:") {
         let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
@@ -2397,7 +2622,7 @@ unsafe fn browser_load_and_display(
             out_buf[..s.len()].copy_from_slice(s);
             s.len()
         } else if path == b"about:unsupported" {
-            let s = b"<html><head><title>Esquema Nao Suportado</title></head><body><h1>Esquema Nao Suportado</h1><p>O Jinn Browser suporta atualmente os protocolos http://, file:/// e about:.</p><p>Esquemas como https://, ftp:// e mailto: requerem servicos especializados adicionais em desenvolvimento.</p><hr/><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>";
+            let s = b"<html><head><title>Esquema Nao Suportado</title></head><body><h1>Esquema Nao Suportado</h1><p>O Jinn Browser suporta atualmente os protocolos https://, http://, file:/// e about:.</p><p>Esquemas como ftp:// e mailto: requerem servicos especializados adicionais em desenvolvimento.</p><hr/><p><a href=\"index.htm\">Voltar ao Inicio</a></p></body></html>";
             out_buf[..s.len()].copy_from_slice(s);
             s.len()
         } else {
@@ -2420,7 +2645,7 @@ unsafe fn browser_load_and_display(
         let f_ptr = core::ptr::addr_of_mut!(HTML_FILE_BUF) as *mut u8;
         let out_buf = core::slice::from_raw_parts_mut(f_ptr, HTTP_BUF_SIZE);
 
-        // Verifica cache local (/disk/browser/cache/) antes da requisição de rede
+        // Verifica cache local (/disk/browser/cache/) antes da requisicao de rede
         if let Some(cached_len) = browser::storage::BrowserCacheStore::retrieve(path, out_buf) {
             print_str(b"[BROWSER-CACHE] Recurso obtido do cache local (/disk/browser/cache/)!\n");
             let doc_slice = &out_buf[..cached_len];
@@ -2438,7 +2663,38 @@ unsafe fn browser_load_and_display(
         print_str(path);
         print_str(b"\n");
 
-        match fetch_http_document(path, out_buf) {
+        let mut active_url_buf = [0u8; 128];
+        let p_len = path.len().min(127);
+        active_url_buf[..p_len].copy_from_slice(&path[..p_len]);
+        let mut active_url_len = p_len;
+
+        let mut fetch_res = fetch_http_document_inner(path, out_buf, allow_http_fallback);
+        if fetch_res.is_err() && allow_http_fallback && path.starts_with(b"https://") {
+            let rest = &path[8..];
+            let fb_prefix = b"http://";
+            let mut fb_buf = [0u8; 128];
+            fb_buf[..fb_prefix.len()].copy_from_slice(fb_prefix);
+            let rlen = rest.len().min(127 - fb_prefix.len());
+            fb_buf[fb_prefix.len()..fb_prefix.len() + rlen].copy_from_slice(&rest[..rlen]);
+            let fb_len = fb_prefix.len() + rlen;
+            let fb_url = &fb_buf[..fb_len];
+
+            print_str(b"[BROWSER-NET] HTTPS/TLS indisponivel para alvo sem esquema; executando fallback HTTP automatico: ");
+            print_str(fb_url);
+            print_str(b"\n");
+
+            active_url_buf[..fb_len].copy_from_slice(fb_url);
+            active_url_len = fb_len;
+
+            if let Some(cached_len) = browser::storage::BrowserCacheStore::retrieve(fb_url, out_buf) {
+                fetch_res = Ok(cached_len);
+            } else {
+                fetch_res = fetch_http_document_inner(fb_url, out_buf, false);
+            }
+        }
+
+        let active_url = &active_url_buf[..active_url_len];
+        match fetch_res {
             Ok(body_len) => {
                 let doc_slice = &out_buf[..body_len];
                 print_str(b"[DIAG-FLOW] HTML: Extraindo corpo do documento HTML (bytes=");
@@ -2451,156 +2707,276 @@ unsafe fn browser_load_and_display(
                     print_str(b"[HTML-INTEGRITY] AVISO: Documento sem tags HTML estruturais padrao (renderizando como texto/bloco).\n");
                 }
                 print_str(b"[DIAG-FLOW] DOM: Convertendo HTML para arvore de elementos DOM...\n");
-                session.load_document_bytes(doc_slice, path);
-                session.record_navigation_current(path);
-                // Armazena cópia transacional no cache local (/disk/browser/cache/)
-                browser::storage::BrowserCacheStore::store(path, doc_slice);
+                session.load_document_bytes(doc_slice, active_url);
+                session.record_navigation_current(active_url);
+                // Armazena copia transacional no cache local (/disk/browser/cache/)
+                browser::storage::BrowserCacheStore::store(active_url, doc_slice);
 
                 print_str(b"[DIAG-FLOW] RENDER: Desenhando documento na janela do Aladdin...\n");
                 session.render(buf_slice);
                 let _ = sys_window_update(win_id, buf_slice);
                 print_str(b"[DIAG-FLOW] SUCESSO: Pagina externa renderizada com exito na tela!\n");
                 print_str(b"[BROWSER-INTERACTION] PAGE_LOADED target=");
-                print_str(path);
+                print_str(active_url);
                 print_str(b" (bytes=");
                 print_u64(body_len as u64);
                 print_str(b")\n");
                 true
             }
             Err(err) => {
-                let (err_title, err_msg, err_detail, stage): (&[u8], &[u8], &[u8], &[u8]) = match err {
-                    FetchError::DnsNxDomain => (
-                        b"Dominio Inexistente",
-                        b"Nao foi possivel encontrar o servidor. Verifique o dominio digitado.",
-                        b"NXDOMAIN: O servidor DNS confirmou que o dominio informado nao existe (RFC 1035 RCODE 3)",
-                        b"DNS_UDP",
-                    ),
-                    FetchError::DnsTimeout => (
-                        b"Servidor DNS Inacessivel",
-                        b"O servidor DNS upstream nao respondeu dentro do limite de tempo.",
-                        b"ETIMEDOUT: Nenhuma resposta do servidor DNS (10.0.2.3 / 8.8.8.8)",
-                        b"DNS_UDP",
-                    ),
-                    FetchError::DnsArpFailed => (
-                        b"Falha de Resolucao ARP",
-                        b"Nao foi possivel localizar o endereco fisico (MAC) do gateway na rede local.",
-                        b"EHOSTUNREACH: O gateway ou servidor DNS nao respondeu a requisicoes ARP L2",
-                        b"ARP",
-                    ),
-                    FetchError::DnsNetDown => (
-                        b"Interface de Rede Inoperante",
-                        b"Nenhum adaptador de rede ativo foi detectado no sistema operacional.",
-                        b"ENETDOWN: Placa de rede (VirtIO, Intel e1000 ou AMD PCnet) indisponivel ou cabo desconectado",
-                        b"LINK_DOWN",
-                    ),
-                    FetchError::DnsServerFailure => (
-                        b"Falha no Servidor DNS",
-                        b"O servidor DNS upstream reportou uma falha ao processar a consulta.",
-                        b"SERVFAIL / Refused: O servidor encontrou um erro interno (RFC 1035 RCODE 2 / 5)",
-                        b"DNS_UDP",
-                    ),
-                    FetchError::DnsFailed => (
-                        b"Erro de Resolucao DNS",
-                        b"Falha desconhecida durante a resolucao do nome de dominio.",
-                        b"sys_dns_resolve falhou com codigo generico",
-                        b"DNS_UDP",
-                    ),
-                    FetchError::SocketFailed => (
-                        b"Erro de Rede Interno",
-                        b"Nao foi possivel alocar socket de rede no sistema.",
-                        b"sys_socket retornou EMFILE ou memoria esgotada",
-                        b"TCP_SOCKET",
-                    ),
-                    FetchError::ConnectFailed(code) => (
-                        b"Falha de Conexao TCP",
-                        b"Nao foi possivel conectar ao servidor remoto. O host pode estar indisponivel.",
-                        if code == -111 { b"ECONNREFUSED (Conexao recusada pelo host remoto)" }
-                        else if code == -110 { b"ETIMEDOUT (Tempo limite de conexao excedido)" }
-                        else { b"Erro durante o 3-way handshake SYN/ACK" },
-                        b"TCP_SYN",
-                    ),
-                    FetchError::SendFailed => (
-                        b"Erro de Transmissao",
-                        b"Falha ao transmitir os dados da requisicao HTTP.",
-                        b"sys_send falhou",
-                        b"TCP_TX",
-                    ),
-                    FetchError::RecvTimeout => (
-                        b"Tempo Esgotado",
-                        b"O servidor remoto nao enviou resposta a tempo.",
-                        b"Timeout de leitura excedido (3.0s)",
-                        b"HTTP_RECV",
-                    ),
-                    FetchError::InvalidHttp => (
-                        b"Resposta Invalida",
-                        b"O servidor retornou uma resposta que nao segue o padrao HTTP/1.1.",
-                        b"Cabecalhos HTTP ausentes ou corrompidos",
-                        b"HTTP_PARSER",
-                    ),
-                    FetchError::TooManyRedirects => (
-                        b"Redirecionamento em Loop",
-                        b"Muitos redirecionamentos seguidos (limite maximo de 5 excedido).",
-                        b"HTTP 301/302 loop",
-                        b"HTTP_REDIRECT",
-                    ),
-                    FetchError::HttpStatus(code) => (
-                        b"Erro HTTP do Servidor",
-                        b"O servidor retornou um codigo de erro HTTP.",
-                        if code == 404 { b"HTTP 404 Not Found" }
-                        else if code == 500 { b"HTTP 500 Internal Server Error" }
-                        else { b"Status HTTP de erro retornado pelo host" },
-                        b"HTTP_STATUS",
-                    ),
-                    FetchError::HttpsRedirect => (
-                        b"Redirecionamento para HTTPS",
-                        b"O servidor remoto redirecionou a conexao para uma conexao segura (HTTPS).",
-                        b"Redirecionamento HTTPS nao pode ser concluido.",
-                        b"HTTP_TO_HTTPS",
-                    ),
-                    FetchError::TlsEntropyFailed => (
-                        b"Falha no Subsistema de Entropia",
-                        b"Nao foi possivel obter numeros pseudoaleatorios seguros do microkernel.",
-                        b"Syscall 69 (sys_getrandom) falhou ou retornou entropia insuficiente",
-                        b"TLS_ENTROPY",
-                    ),
-                    FetchError::TlsHandshakeFailed => (
-                        b"Falha de Negociacao TLS 1.3",
-                        b"O servidor remoto nao aceitou os parametros criptograficos ou rejeitou a conexao TLS 1.3.",
-                        b"Handshake RFC 8446 falhou (Curve25519 ou ChaCha20-Poly1305)",
-                        b"TLS_HANDSHAKE",
-                    ),
-                    FetchError::TlsDecryptFailed => (
-                        b"Erro de Criptografia TLS",
-                        b"Falha na autenticacao de integridade (Poly1305 MAC) dos dados recebidos.",
-                        b"Registro cifrado corrompido ou chave incorreta",
-                        b"TLS_DECRYPT",
-                    ),
+                let diag = LAST_FETCH_DIAG;
+                let mut stage_buf = [0u8; 64];
+                let mut stage_len = 0usize;
+
+                let (err_title, err_msg, err_detail): (&[u8], &[u8], &[u8]) = match err {
+                    FetchError::DnsNxDomain => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"DNS_UDP (-2 NXDOMAIN)");
+                        (
+                            b"Dominio Inexistente",
+                            b"Nao foi possivel encontrar o servidor. Verifique o dominio digitado.",
+                            b"NXDOMAIN: O servidor DNS confirmou que o dominio informado nao existe (RFC 1035 RCODE 3)",
+                        )
+                    }
+                    FetchError::DnsTimeout => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"DNS_UDP (-110 ETIMEDOUT)");
+                        (
+                            b"Servidor DNS Inacessivel",
+                            b"O servidor DNS upstream nao respondeu dentro do limite de tempo.",
+                            b"ETIMEDOUT: Nenhuma resposta do servidor DNS (10.0.2.3 / 1.1.1.1 / 8.8.8.8)",
+                        )
+                    }
+                    FetchError::DnsArpFailed => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"ARP (-113 EHOSTUNREACH)");
+                        (
+                            b"Falha de Resolucao ARP",
+                            b"Nao foi possivel localizar o endereco fisico (MAC) do gateway na rede local.",
+                            b"EHOSTUNREACH: O gateway ou servidor DNS nao respondeu a requisicoes ARP L2",
+                        )
+                    }
+                    FetchError::DnsNetDown => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"LINK_DOWN (-100 ENETDOWN)");
+                        (
+                            b"Interface de Rede Inoperante",
+                            b"Nenhum adaptador de rede ativo foi detectado no sistema operacional.",
+                            b"ENETDOWN: Placa de rede (VirtIO, Intel e1000 ou AMD PCnet) indisponivel ou sem link",
+                        )
+                    }
+                    FetchError::DnsServerFailure => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"DNS_UDP (-5 SERVFAIL)");
+                        (
+                            b"Falha no Servidor DNS",
+                            b"O servidor DNS upstream reportou uma falha ao processar a consulta.",
+                            b"SERVFAIL / Refused: O servidor encontrou erro interno (RFC 1035 RCODE 2 / 5)",
+                        )
+                    }
+                    FetchError::DnsFailed => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"DNS_UDP (");
+                        diag_push_i64(&mut stage_buf, &mut stage_len, diag.dns_code);
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b")");
+                        (
+                            b"Erro de Resolucao DNS",
+                            b"Falha durante a resolucao do nome de dominio.",
+                            b"sys_dns_resolve falhou ao consultar cache/upstream",
+                        )
+                    }
+                    FetchError::SocketFailed => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"TCP_SOCKET (EMFILE)");
+                        (
+                            b"Erro de Rede Interno",
+                            b"Nao foi possivel alocar socket de rede no sistema.",
+                            b"sys_socket retornou EMFILE ou memoria esgotada",
+                        )
+                    }
+                    FetchError::ConnectFailed(code) => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"TCP_CONNECT (");
+                        diag_push_i64(&mut stage_buf, &mut stage_len, code);
+                        if code == -111 {
+                            diag_push_bytes(&mut stage_buf, &mut stage_len, b" ECONNREFUSED)");
+                        } else if code == -110 {
+                            diag_push_bytes(&mut stage_buf, &mut stage_len, b" ETIMEDOUT)");
+                        } else {
+                            diag_push_bytes(&mut stage_buf, &mut stage_len, b" ERR)");
+                        }
+                        (
+                            b"Falha de Conexao TCP",
+                            b"Nao foi possivel conectar ao servidor remoto na porta solicitada.",
+                            if code == -111 { b"ECONNREFUSED: Conexao TCP recusada (RST) pelo host remoto" }
+                            else if code == -110 { b"ETIMEDOUT: Tempo limite do 3-way handshake SYN/ACK excedido" }
+                            else { b"Erro durante o 3-way handshake TCP SYN/ACK" },
+                        )
+                    }
+                    FetchError::SendFailed => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"TCP_TX (SendFailed)");
+                        (
+                            b"Erro de Transmissao",
+                            b"Falha ao transmitir os dados da requisicao pela conexao TCP.",
+                            b"sys_send retornou codigo negativo",
+                        )
+                    }
+                    FetchError::RecvTimeout => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"RECV (-11 ETIMEDOUT)");
+                        (
+                            b"Tempo Esgotado",
+                            b"O servidor remoto nao enviou resposta dentro do limite de tempo.",
+                            b"Timeout de leitura excedido aguardando segmentos TCP/TLS",
+                        )
+                    }
+                    FetchError::InvalidHttp => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"HTTP_PARSER (Invalid)");
+                        (
+                            b"Resposta Invalida",
+                            b"O servidor retornou uma resposta fora do padrao HTTP/1.1.",
+                            b"Cabecalhos HTTP ausentes ou malformados",
+                        )
+                    }
+                    FetchError::TooManyRedirects => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"HTTP_REDIRECT (Max5)");
+                        (
+                            b"Redirecionamento em Loop",
+                            b"Muitos redirecionamentos seguidos (limite maximo de 5 excedido).",
+                            b"HTTP 301/302 loop excedido",
+                        )
+                    }
+                    FetchError::HttpStatus(code) => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"HTTP_STATUS (");
+                        diag_push_u64(&mut stage_buf, &mut stage_len, code as u64);
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b")");
+                        (
+                            b"Erro HTTP do Servidor",
+                            b"O servidor retornou um codigo de erro HTTP sem documento HTML.",
+                            if code == 404 { b"HTTP 404 Not Found" }
+                            else if code == 500 { b"HTTP 500 Internal Server Error" }
+                            else { b"Status HTTP >= 400 retornado pelo servidor" },
+                        )
+                    }
+                    FetchError::HttpsRedirect => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"HTTP_TO_HTTPS (301/302)");
+                        (
+                            b"Redirecionamento para HTTPS",
+                            b"O servidor remoto exigiu redirecionamento para HTTPS.",
+                            b"Redirecionamento HTTPS nao concluido",
+                        )
+                    }
+                    FetchError::TlsEntropyFailed => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"TLS_ENTROPY (Sys69)");
+                        (
+                            b"Falha no Subsistema de Entropia",
+                            b"Nao foi possivel obter entropia aleatoria segura do microkernel.",
+                            b"Syscall 69 (sys_getrandom) falhou ou retornou bytes insuficientes",
+                        )
+                    }
+                    FetchError::TlsHandshakeFailed => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"TLS_HANDSHAKE (RFC 8446)");
+                        (
+                            b"Falha de Negociacao TLS 1.3",
+                            b"O servidor remoto nao aceitou os parametros ou encerrou o handshake TLS 1.3.",
+                            b"Handshake TLS 1.3 (X25519 / ChaCha20-Poly1305 / AES-128-GCM) falhou",
+                        )
+                    }
+                    FetchError::TlsDecryptFailed => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"TLS_DECRYPT (AEAD)");
+                        (
+                            b"Erro de Criptografia TLS",
+                            b"Falha na autenticacao AEAD (Poly1305 / GHASH) dos dados recebidos.",
+                            b"Registro cifrado rejeitado na verificacao da tag AEAD",
+                        )
+                    }
                 };
 
                 let mut stats = SystemStatsUser::default();
                 let _ = sys_get_system_stats(&mut stats as *mut SystemStatsUser);
-                let target_ip: &[u8] = if stage == b"ARP" || stage == b"DNS_UDP" {
-                    b"10.0.2.3 (DNS Gateway)"
+
+                let hr_ptr = core::ptr::addr_of_mut!(HOT_ROUTE_TMP) as *mut [HotRouteEntryUser; 16];
+                let hr_count = sys_net_hot_route_list(&mut *hr_ptr).max(0) as usize;
+                let mut matched_hotroute = false;
+                let mut found_mac = [0u8; 6];
+                let mut has_mac = false;
+
+                for idx in 0..hr_count.min(16) {
+                    let entry = &(*hr_ptr)[idx];
+                    if entry.valid == 0 {
+                        continue;
+                    }
+                    if !has_mac && entry.next_hop_mac != [0; 6] {
+                        found_mac = entry.next_hop_mac;
+                        has_mac = true;
+                    }
+                    let hlen = (entry.hostname_len as usize).min(entry.hostname.len());
+                    if diag.host_len > 0 && hlen == diag.host_len && entry.hostname[..hlen].eq_ignore_ascii_case(&diag.host[..diag.host_len]) {
+                        matched_hotroute = true;
+                        if entry.next_hop_mac != [0; 6] {
+                            found_mac = entry.next_hop_mac;
+                            has_mac = true;
+                        }
+                    } else if diag.has_resolved_ip && entry.dst_ip == diag.resolved_ip {
+                        matched_hotroute = true;
+                        if entry.next_hop_mac != [0; 6] {
+                            found_mac = entry.next_hop_mac;
+                            has_mac = true;
+                        }
+                    }
+                }
+
+                // Formata IP Externo / DNS Resolvido
+                let mut ip_buf = [0u8; 80];
+                let mut ip_len = 0usize;
+                if diag.has_resolved_ip {
+                    diag_push_ipv4(&mut ip_buf, &mut ip_len, diag.resolved_ip);
+                    if matched_hotroute {
+                        diag_push_bytes(&mut ip_buf, &mut ip_len, b" (HotRoute)");
+                    } else if diag.resolved_ip[0] == 127 {
+                        diag_push_bytes(&mut ip_buf, &mut ip_len, b" (Loopback)");
+                    } else if diag.resolved_ip == [10, 0, 2, 2] {
+                        diag_push_bytes(&mut ip_buf, &mut ip_len, b" (NAT Gateway)");
+                    } else {
+                        diag_push_bytes(&mut ip_buf, &mut ip_len, b" (DNS Resolvido)");
+                    }
+                } else if stats.net_ip != [0; 4] {
+                    diag_push_bytes(&mut ip_buf, &mut ip_len, b"10.0.2.3 (DNS Upstream)");
                 } else {
-                    b"10.0.2.2 (NAT Gateway)"
-                };
+                    diag_push_bytes(&mut ip_buf, &mut ip_len, b"Nao resolvido");
+                }
+
+                // Formata Interface de Rede real do kernel (Syscall 88)
+                let mut iface_buf = [0u8; 96];
+                let mut iface_len = 0usize;
+                let adapter_raw = diag_cstr_trim(&stats.net_adapter);
+                let state_raw = diag_cstr_trim(&stats.net_state_desc);
+                let adapter_s = if adapter_raw.is_empty() { b"Desconhecido" } else { adapter_raw };
+                let state_s = if state_raw.is_empty() { b"Link Desconhecido" } else { state_raw };
+                diag_push_bytes(&mut iface_buf, &mut iface_len, adapter_s);
+                diag_push_bytes(&mut iface_buf, &mut iface_len, b" (");
+                diag_push_ipv4(&mut iface_buf, &mut iface_len, stats.net_ip);
+                diag_push_bytes(&mut iface_buf, &mut iface_len, b") - ");
+                diag_push_bytes(&mut iface_buf, &mut iface_len, state_s);
+
+                // Formata MAC ARP Gateway (HotRouteTable Syscall 97)
+                let mut mac_buf = [0u8; 32];
+                let mut mac_len = 0usize;
+                if has_mac {
+                    diag_push_mac(&mut mac_buf, &mut mac_len, found_mac);
+                } else {
+                    diag_push_bytes(&mut mac_buf, &mut mac_len, b"Pendente ARP");
+                }
 
                 let err_len = browser::format_net_error_html_diag(
-                    path,
+                    active_url,
                     err_title,
                     err_msg,
                     err_detail,
-                    stage,
-                    target_ip,
+                    &stage_buf[..stage_len],
+                    &ip_buf[..ip_len],
+                    &iface_buf[..iface_len],
+                    &mac_buf[..mac_len],
                     stats.net_tx_packets,
                     stats.net_rx_packets,
                     out_buf,
                 );
-                session.load_document_bytes(&out_buf[..err_len], path);
+                session.load_document_bytes(&out_buf[..err_len], active_url);
                 session.render(buf_slice);
                 let _ = sys_window_update(win_id, buf_slice);
                 print_str(b"[BROWSER-INTERACTION] PAGE_NET_ERROR target=");
-                print_str(path);
+                print_str(active_url);
                 print_str(b"\n");
                 false
             }
@@ -2862,7 +3238,7 @@ fn str_contains(haystack: *const u8, needle: &[u8]) -> bool {
     false
 }
 
-fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
+fn resolve_target_with_mode<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> (&'a [u8], bool) {
     let mut start = 0;
     while start < target.len() && (target[start] == b' ' || target[start] == b'\t') {
         start += 1;
@@ -2877,7 +3253,7 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
         let b = b"about:blank";
         buf[..b.len()].copy_from_slice(b);
         buf[b.len()] = 0;
-        return &buf[..b.len()];
+        return (&buf[..b.len()], false);
     }
 
     // 1. Esquema interno about:
@@ -2885,23 +3261,23 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
         let len = clean.len().min(127);
         buf[..len].copy_from_slice(&clean[..len]);
         buf[len] = 0;
-        return &buf[..len];
+        return (&buf[..len], false);
     }
 
-    // 2. HTTPS: navegacao remota segura via TLS 1.3
+    // 2. HTTPS explicito: navegacao segura obrigatoria via TLS 1.3 (sem fallback HTTP)
     if clean.starts_with(b"https://") {
         let len = clean.len().min(127);
         buf[..len].copy_from_slice(&clean[..len]);
         buf[len] = 0;
-        return &buf[..len];
+        return (&buf[..len], false);
     }
 
-    // 3. HTTP: navegacao remota real na internet
+    // 3. HTTP explicito: navegacao direta em porta 80
     if clean.starts_with(b"http://") {
         let len = clean.len().min(127);
         buf[..len].copy_from_slice(&clean[..len]);
         buf[len] = 0;
-        return &buf[..len];
+        return (&buf[..len], false);
     }
 
     // 4. file:/// -> remove prefixo de protocolo local
@@ -2921,7 +3297,7 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
         let blk = b"about:blocked";
         buf[..blk.len()].copy_from_slice(blk);
         buf[blk.len()] = 0;
-        return &buf[..blk.len()];
+        return (&buf[..blk.len()], false);
     }
 
     // 5. Caminhos absolutos do VFS local (/disk/ ou /ext2/)
@@ -2929,7 +3305,7 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
         let len = clean.len().min(127);
         buf[..len].copy_from_slice(&clean[..len]);
         buf[len] = 0;
-        return &buf[..len];
+        return (&buf[..len], false);
     }
 
     // 6. Esquemas explicitamente nao suportados
@@ -2937,7 +3313,7 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
         let blk = b"about:unsupported";
         buf[..blk.len()].copy_from_slice(blk);
         buf[blk.len()] = 0;
-        return &buf[..blk.len()];
+        return (&buf[..blk.len()], false);
     }
 
     // 7. Arquivos locais raiz conhecidos do VFS (/disk/INDEX.HTM, /disk/about.htm, /disk/readme.txt)
@@ -2953,7 +3329,7 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
         buf[p_len..p_len + c_len].copy_from_slice(&clean[..c_len]);
         let total = p_len + c_len;
         buf[total] = 0;
-        return &buf[..total];
+        return (&buf[..total], false);
     }
 
     // Se comecar com barra absoluta mas nao pertencer a volumes autorizados (/disk/ ou /ext2/)
@@ -2961,45 +3337,38 @@ fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
         let blk = b"about:blocked";
         buf[..blk.len()].copy_from_slice(blk);
         buf[blk.len()] = 0;
-        return &buf[..blk.len()];
+        return (&buf[..blk.len()], false);
     }
 
-    // 8. Dominio sem esquema (ex: "google.com", "jinn-os.dev.br", "10.0.2.2:8080")
-    // Normalização inteligente de domínios conhecidos e correção de digitação:
-    if clean.eq_ignore_ascii_case(b"jinn.os.dev.br") || clean.eq_ignore_ascii_case(b"jinn-os.dev.br") {
-        let p = b"https://jinn-os.dev.br";
-        buf[..p.len()].copy_from_slice(p);
-        buf[p.len()] = 0;
-        return &buf[..p.len()];
-    }
-    if clean.starts_with(b"jinn.os.dev.br/") {
-        let prefix = b"https://jinn-os.dev.br";
+    // 8. Dominio sem esquema (ex: "68k.news", "frogfind.com", "jinn-os.dev.br"):
+    // Normaliza "jinn.os.dev.br" e inicia sempre via HTTPS com fallback automatico para HTTP
+    let prefix = b"https://";
+    buf[..prefix.len()].copy_from_slice(prefix);
+    let mut out_len = prefix.len();
+    if clean.eq_ignore_ascii_case(b"jinn.os.dev.br") {
+        let canonical = b"jinn-os.dev.br";
+        buf[out_len..out_len + canonical.len()].copy_from_slice(canonical);
+        out_len += canonical.len();
+    } else if clean.len() > 14 && clean[..15].eq_ignore_ascii_case(b"jinn.os.dev.br/") {
+        let canonical = b"jinn-os.dev.br";
+        buf[out_len..out_len + canonical.len()].copy_from_slice(canonical);
+        out_len += canonical.len();
         let rest = &clean[14..];
-        buf[..prefix.len()].copy_from_slice(prefix);
-        let rlen = rest.len().min(127 - prefix.len());
-        buf[prefix.len()..prefix.len() + rlen].copy_from_slice(&rest[..rlen]);
-        let total = prefix.len() + rlen;
-        buf[total] = 0;
-        return &buf[..total];
+        let rlen = rest.len().min(127 - out_len);
+        buf[out_len..out_len + rlen].copy_from_slice(&rest[..rlen]);
+        out_len += rlen;
+    } else {
+        let c_len = clean.len().min(127 - out_len);
+        buf[out_len..out_len + c_len].copy_from_slice(&clean[..c_len]);
+        out_len += c_len;
     }
-    if clean.starts_with(b"jinn-os.dev.br/") {
-        let prefix = b"https://";
-        buf[..prefix.len()].copy_from_slice(prefix);
-        let rlen = clean.len().min(127 - prefix.len());
-        buf[prefix.len()..prefix.len() + rlen].copy_from_slice(&clean[..rlen]);
-        let total = prefix.len() + rlen;
-        buf[total] = 0;
-        return &buf[..total];
-    }
+    buf[out_len] = 0;
+    (&buf[..out_len], true)
+}
 
-    let prefix = b"http://";
-    let p_len = prefix.len();
-    buf[..p_len].copy_from_slice(prefix);
-    let c_len = clean.len().min(127 - p_len);
-    buf[p_len..p_len + c_len].copy_from_slice(&clean[..c_len]);
-    let total = p_len + c_len;
-    buf[total] = 0;
-    &buf[..total]
+#[allow(dead_code)]
+fn resolve_target_path<'a>(target: &[u8], buf: &'a mut [u8; 128]) -> &'a [u8] {
+    resolve_target_with_mode(target, buf).0
 }
 
 #[allow(dead_code)]

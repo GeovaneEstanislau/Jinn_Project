@@ -1336,9 +1336,20 @@ pub struct Poly1305 {
 
 impl Poly1305 {
     pub fn new(key: &[u8; 32]) -> Self {
-        let r0 = u64::from_le_bytes([key[0], key[1], key[2], key[3], key[4], key[5], 0, 0]) & 0x0ffffffc0fffffff;
-        let r1 = (u64::from_le_bytes([key[3], key[4], key[5], key[6], key[7], key[8], key[9], key[10]]) >> 6) & 0x0ffffffc0ffffffc;
-        let r2 = (u64::from_le_bytes([key[9], key[10], key[11], key[12], key[13], key[14], key[15], 0]) >> 12) & 0x000000000ffffffc;
+        let mut clamped = [0u8; 16];
+        clamped.copy_from_slice(&key[..16]);
+        clamped[3] &= 15;
+        clamped[7] &= 15;
+        clamped[11] &= 15;
+        clamped[15] &= 15;
+        clamped[4] &= 252;
+        clamped[8] &= 252;
+        clamped[12] &= 252;
+
+        let r_full = u128::from_le_bytes(clamped);
+        let r0 = (r_full & 0x0fff_ffff_ffff) as u64;
+        let r1 = ((r_full >> 44) & 0x0fff_ffff_ffff) as u64;
+        let r2 = ((r_full >> 88) & 0x03ff_ffff_ffff) as u64;
 
         let mut pad = [0u8; 16];
         pad.copy_from_slice(&key[16..32]);
@@ -1353,13 +1364,19 @@ impl Poly1305 {
     }
 
     fn process_block(&mut self, block: &[u8], is_final: bool) {
-        let mut b = [0u8; 17];
-        b[..block.len()].copy_from_slice(block);
-        if is_final { b[block.len()] = 1; } else { b[16] = 1; }
+        let mut lo = [0u8; 16];
+        lo[..block.len()].copy_from_slice(block);
+        let hi_bit: u128 = if is_final && block.len() < 16 {
+            lo[block.len()] = 1;
+            0
+        } else {
+            1
+        };
 
-        let m0 = u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], 0, 0]) & 0x3ffffffffffff;
-        let m1 = (u64::from_le_bytes([b[5], b[6], b[7], b[8], b[9], b[10], b[11], 0]) >> 2) & 0x3ffffffffffff;
-        let m2 = (u64::from_le_bytes([b[11], b[12], b[13], b[14], b[15], b[16], 0, 0]) >> 4) & 0x3ffffffffffff;
+        let m_lo = u128::from_le_bytes(lo);
+        let m0 = (m_lo & 0x0fff_ffff_ffff) as u64;
+        let m1 = ((m_lo >> 44) & 0x0fff_ffff_ffff) as u64;
+        let m2 = (((m_lo >> 88) & 0x00ff_ffff_ffff) | (hi_bit << 40)) as u64;
 
         self.h0 += m0;
         self.h1 += m1;

@@ -34,7 +34,7 @@ pub const COLOR_SCROLL_THUMB_BORDER: u32 = 0x0089_DCEB;
 
 // ── Pipeline Completo: Flat Vector DOM, Mini-CSS e Mini-JS (no_std) ──────────
 
-pub const MAX_DOM_NODES: usize = 256;
+pub const MAX_DOM_NODES: usize = 512;
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -744,9 +744,13 @@ impl MiniCss {
             style.display_block = true;
             style.margin_top = 2;
             style.margin_bottom = 2;
-        } else if tag_bytes == b"span" {
+        } else if tag_bytes == b"span" || tag_bytes == b"#text" || tag_bytes == b"i" || tag_bytes == b"em" || tag_bytes == b"code" || tag_bytes == b"small" {
             style.display = DisplayMode::Inline;
             style.display_block = false;
+            if tag_bytes == b"#text" {
+                style.margin_top = 0;
+                style.margin_bottom = 0;
+            }
         } else if tag_bytes == b"input" {
             style.color = COLOR_TEXT;
             style.bg_color = Some(0x0018_1825);
@@ -991,9 +995,13 @@ impl MiniCss {
             node.computed_style.display_block = true;
             node.computed_style.margin_top = 2;
             node.computed_style.margin_bottom = 2;
-        } else if tag == b"span" {
+        } else if tag == b"span" || tag == b"#text" || tag == b"i" || tag == b"em" || tag == b"code" || tag == b"small" {
             node.computed_style.display = DisplayMode::Inline;
             node.computed_style.display_block = false;
+            if tag == b"#text" {
+                node.computed_style.margin_top = 0;
+                node.computed_style.margin_bottom = 0;
+            }
         }
 
         for i in 0..self.rule_count {
@@ -2080,7 +2088,19 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                 while i < len && html[i] != b'>' { i += 1; }
                 if i < len { i += 1; }
 
-                if stack_depth > 0 {
+                let is_unstacked_close = ctag_name == b"html"
+                    || ctag_name == b"head"
+                    || ctag_name == b"body"
+                    || ctag_name == b"meta"
+                    || ctag_name == b"link"
+                    || ctag_name == b"base"
+                    || ctag_name == b"param"
+                    || ctag_name == b"hr"
+                    || ctag_name == b"br"
+                    || ctag_name == b"img"
+                    || ctag_name == b"input";
+
+                if !is_unstacked_close && stack_depth > 0 {
                     let mut match_idx = None;
                     for s in (0..stack_depth).rev() {
                         let pid = parent_stack[s];
@@ -2424,7 +2444,36 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
 
             css.resolve(&mut dom.nodes[node_id]);
         } else {
-            i += 1;
+            // Captura texto após tags de fechamento (ex.: "<p><b>Label: </b>Valor</p>") como nó DomNodeType::Text
+            let mut text_buf = [0u8; 256];
+            let mut t_idx = 0usize;
+            while i < len && html[i] != b'<' {
+                if t_idx < 255 {
+                    text_buf[t_idx] = html[i];
+                    t_idx += 1;
+                }
+                i += 1;
+            }
+            if t_idx > 0 && stack_depth > 0 {
+                let mut norm_buf = [0u8; 256];
+                let norm_len = normalize_html_text(&text_buf[..t_idx], &mut norm_buf);
+                if norm_len > 0 {
+                    if let Some(text_id) = dom.alloc_node(DomNodeType::Text) {
+                        dom.nodes[text_id].tag[..5].copy_from_slice(b"#text");
+                        dom.nodes[text_id].tag_len = 5;
+                        dom.nodes[text_id].text[..norm_len].copy_from_slice(&norm_buf[..norm_len]);
+                        dom.nodes[text_id].text_len = norm_len;
+                        let pid = parent_stack[stack_depth - 1];
+                        dom.nodes[text_id].parent = Some(pid);
+                        if dom.nodes[pid].child_count < MAX_DOM_CHILDREN {
+                            let c = dom.nodes[pid].child_count;
+                            dom.nodes[pid].children[c] = text_id;
+                            dom.nodes[pid].child_count += 1;
+                        }
+                        css.resolve(&mut dom.nodes[text_id]);
+                    }
+                }
+            }
         }
     }
 
@@ -3124,22 +3173,85 @@ impl DocumentLayout {
 
             *curr_y += pad_top;
 
-            // Direct text of container if any
-            if node.text_len > 0 {
-                let max_chars = (avail_width.saturating_sub(mar_left + mar_right + pad_left + pad_right) / font::FONT_WIDTH).max(1);
-                let text_x = base_x + mar_left + pad_left + 4;
-                let enclosing_link = Self::find_enclosing_link(dom, node_idx);
-                let is_link = enclosing_link.is_some();
-                let color = if is_link { COLOR_LINK } else { node.computed_style.color };
-                self.add_wrapped_text(&node.text[..node.text_len], text_x, curr_y, max_chars, color, is_link, enclosing_link);
-            }
-
-            // Lay out all children
-            let child_base_x = base_x + mar_left + pad_left;
-            let child_width = avail_width.saturating_sub(mar_left + mar_right + pad_left + pad_right);
+            // Direct text of container if any, or coalescing of simple inline children (e.g. <p><b>Label: </b>Valor</p>)
+            let mut all_inline_text = true;
             for c in 0..node.child_count {
                 let child_id = node.children[c];
-                self.layout_subtree(dom, child_id, child_base_x, curr_y, child_width, laid_out);
+                if child_id >= dom.node_count {
+                    all_inline_text = false;
+                    break;
+                }
+                let child = &dom.nodes[child_id];
+                let ctag = &child.tag[..child.tag_len];
+                let is_simple_inline = child.node_type == DomNodeType::Text
+                    || ((ctag == b"b" || ctag == b"strong" || ctag == b"i" || ctag == b"em" || ctag == b"code" || ctag == b"small" || ctag == b"span")
+                        && child.child_count == 0
+                        && child.href_len == 0
+                        && child.onclick_len == 0
+                        && child.computed_style.bg_color.is_none()
+                        && child.computed_style.border_color.is_none());
+                if !is_simple_inline {
+                    all_inline_text = false;
+                    break;
+                }
+            }
+
+            if all_inline_text {
+                let mut combined = [0u8; 512];
+                let mut c_len = 0usize;
+                let append_chunk = |dst: &mut [u8; 512], dst_len: &mut usize, src: &[u8]| {
+                    if src.is_empty() || *dst_len >= dst.len() {
+                        return;
+                    }
+                    if *dst_len > 0 && dst[*dst_len - 1] != b' ' {
+                        let first = src[0];
+                        let is_punct = first == b'.' || first == b',' || first == b';' || first == b'!' || first == b'?' || first == b')' || first == b']';
+                        if !is_punct && *dst_len < dst.len() {
+                            dst[*dst_len] = b' ';
+                            *dst_len += 1;
+                        }
+                    }
+                    let take = src.len().min(dst.len() - *dst_len);
+                    dst[*dst_len..*dst_len + take].copy_from_slice(&src[..take]);
+                    *dst_len += take;
+                };
+
+                if node.text_len > 0 {
+                    append_chunk(&mut combined, &mut c_len, &node.text[..node.text_len]);
+                }
+                for c in 0..node.child_count {
+                    let child_id = node.children[c];
+                    laid_out[child_id] = true;
+                    let child = &dom.nodes[child_id];
+                    if child.computed_style.display != DisplayMode::None && child.text_len > 0 {
+                        append_chunk(&mut combined, &mut c_len, &child.text[..child.text_len]);
+                    }
+                }
+                if c_len > 0 {
+                    let max_chars = (avail_width.saturating_sub(mar_left + mar_right + pad_left + pad_right) / font::FONT_WIDTH).max(1);
+                    let text_x = base_x + mar_left + pad_left + 4;
+                    let enclosing_link = Self::find_enclosing_link(dom, node_idx);
+                    let is_link = enclosing_link.is_some();
+                    let color = if is_link { COLOR_LINK } else { node.computed_style.color };
+                    self.add_wrapped_text(&combined[..c_len], text_x, curr_y, max_chars, color, is_link, enclosing_link);
+                }
+            } else {
+                if node.text_len > 0 {
+                    let max_chars = (avail_width.saturating_sub(mar_left + mar_right + pad_left + pad_right) / font::FONT_WIDTH).max(1);
+                    let text_x = base_x + mar_left + pad_left + 4;
+                    let enclosing_link = Self::find_enclosing_link(dom, node_idx);
+                    let is_link = enclosing_link.is_some();
+                    let color = if is_link { COLOR_LINK } else { node.computed_style.color };
+                    self.add_wrapped_text(&node.text[..node.text_len], text_x, curr_y, max_chars, color, is_link, enclosing_link);
+                }
+
+                // Lay out all children
+                let child_base_x = base_x + mar_left + pad_left;
+                let child_width = avail_width.saturating_sub(mar_left + mar_right + pad_left + pad_right);
+                for c in 0..node.child_count {
+                    let child_id = node.children[c];
+                    self.layout_subtree(dom, child_id, child_base_x, curr_y, child_width, laid_out);
+                }
             }
 
             *curr_y += pad_bottom;
@@ -5452,7 +5564,7 @@ impl SliceTrim for [u8] {
     }
 }
 
-/// Gera documento HTML formatado com diagnóstico completo para erros de rede (ARP, DNS, TCP, HTTP)
+/// Gera documento HTML formatado com diagnóstico completo para erros de rede (ARP, DNS, TCP, TLS, HTTP)
 pub fn format_net_error_html_diag(
     url: &[u8],
     title: &[u8],
@@ -5460,6 +5572,8 @@ pub fn format_net_error_html_diag(
     detail: &[u8],
     stage: &[u8],
     target_ip: &[u8],
+    iface_info: &[u8],
+    gw_mac: &[u8],
     tx_pkts: u64,
     rx_pkts: u64,
     out: &mut [u8],
@@ -5501,25 +5615,40 @@ pub fn format_net_error_html_diag(
     append(out, &mut pos, url);
     append(out, &mut pos, b"</p><p><b>Diagnostico: </b>");
     append(out, &mut pos, msg);
-    append(out, &mut pos, b"</p><hr/><h3>Telemetria da Placa e Pilha de Rede</h3>");
-    append(out, &mut pos, b"<p><b>Estagio da Falha: </b>[");
+    append(out, &mut pos, b"</p><hr/><h3>Diagnostico de Fluxo e Pilha de Rede</h3>");
+    append(out, &mut pos, b"<p><b>Estagio da Falha: </b>");
     append(out, &mut pos, stage);
-    append(out, &mut pos, b"]</p><p><b>IP Gateway/DNS Consultado: </b>");
+    append(out, &mut pos, b"</p><p><b>IP Externo/DNS Resolvido: </b>");
     append(out, &mut pos, target_ip);
-    append(out, &mut pos, b"</p><p><b>Adaptador de Rede: </b>Intel PRO/1000 MT Desktop (82540EM)</p>");
-    append(out, &mut pos, b"<p><b>Contador de Pacotes: </b>TX: ");
+    append(out, &mut pos, b"</p><p><b>Interface de Rede: </b>");
+    append(out, &mut pos, iface_info);
+    append(out, &mut pos, b"</p><p><b>Contador de Pacotes: </b>TX: ");
     append_u64(out, &mut pos, tx_pkts);
-    append(out, &mut pos, b" pacotes | RX: ");
+    append(out, &mut pos, b" | RX: ");
     append_u64(out, &mut pos, rx_pkts);
-    append(out, &mut pos, b" pacotes</p><p><i>Detalhes tecnicos: </i>");
+    append(out, &mut pos, b" | ARP Gateway: ");
+    append(out, &mut pos, gw_mac);
+    append(out, &mut pos, b"</p><p><i>Detalhes tecnicos: </i>");
     append(out, &mut pos, detail);
     append(out, &mut pos, b"</p><hr/><p><a href=\"index.htm\">Voltar ao Inicio</a></p></div></body></html>");
     pos
 }
 
-/// Gera documento HTML formatado para erros de rede
+/// Gera documento HTML formatado para erros locais / de rede sem telemetria ativa
 pub fn format_net_error_html(url: &[u8], title: &[u8], msg: &[u8], detail: &[u8], out: &mut [u8]) -> usize {
-    format_net_error_html_diag(url, title, msg, detail, b"NET_STACK", b"10.0.2.3 (DNS)", 0, 0, out)
+    format_net_error_html_diag(
+        url,
+        title,
+        msg,
+        detail,
+        b"VFS_OR_URL",
+        b"N/A (Local)",
+        b"VFS Local (/disk)",
+        b"--:--:--:--:--:--",
+        0,
+        0,
+        out,
+    )
 }
 
 /// Gera documento HTML informativo sobre o status real de HTTPS/TLS 1.3
