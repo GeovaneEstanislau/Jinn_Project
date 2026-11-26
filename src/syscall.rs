@@ -611,6 +611,9 @@ pub extern "C" fn syscall_dispatch(
         94 => sys_net_dns_host_add(arg0 as *const u8, arg1, arg2 as *const u8, arg3),
         95 => sys_net_dns_cache_flush(),
         96 => sys_net_dns_config(arg0 as u32, arg1 as *mut u8, arg2 as *mut u8, arg3 as *mut u8),
+        97 => sys_net_hot_route_list(arg0 as *mut crate::net::hot_routes::HotRouteEntryUser, arg1),
+        98 => sys_net_hot_route_pin(arg0 as *const u8, arg1, arg2 as *const u8),
+        99 => sys_net_hot_route_flush(),
         102 => sys_getuid(),
         104 => sys_getgid(),
         107 => sys_geteuid(),
@@ -2376,6 +2379,7 @@ fn sys_poweroff() -> isize {
     }
     crate::serial_write(b"\n");
     crate::net::dns::save_dns_cache_to_vfs();
+    crate::net::hot_routes::save_if_dirty();
     crate::benchmark::sys_poweroff_machine();
 }
 
@@ -2426,6 +2430,7 @@ fn sys_hardware_probe(out_ptr: *mut crate::benchmark::HardwareReportUser) -> isi
 /// `sys_sync()` — Sincroniza cache DNS e todos os sistemas de arquivos montados com a mídia não volátil.
 fn sys_sync() -> isize {
     crate::net::dns::save_dns_cache_to_vfs();
+    crate::net::hot_routes::save_if_dirty();
     match crate::vfs::sync_all() {
         Ok(()) => 0,
         Err(_) => EIO,
@@ -3204,6 +3209,73 @@ fn sys_net_dns_config(set_flag: u32, primary_ptr: *mut u8, secondary_ptr: *mut u
         }
         0
     }
+}
+
+/// `sys_net_hot_route_list(out_ptr, max_entries)` — Lista as Top-N rotas mais acessadas em Ring 0 (Syscall 97).
+fn sys_net_hot_route_list(
+    out_ptr: *mut crate::net::hot_routes::HotRouteEntryUser,
+    max_entries: usize,
+) -> isize {
+    if out_ptr.is_null() || max_entries == 0 || max_entries > crate::net::hot_routes::MAX_HOT_ROUTES {
+        return EINVAL;
+    }
+    let byte_len = match max_entries.checked_mul(core::mem::size_of::<crate::net::hot_routes::HotRouteEntryUser>()) {
+        Some(b) if b > 0 => b,
+        _ => return EINVAL,
+    };
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(out_ptr as *const u8, byte_len, true) {
+            return e;
+        }
+    }
+    let cap = max_entries.min(crate::net::hot_routes::MAX_HOT_ROUTES);
+    let mut kbuf = alloc::vec![crate::net::hot_routes::HotRouteEntryUser::empty(); cap];
+    let copied = crate::net::hot_routes::snapshot_top_routes(&mut kbuf[..cap]);
+    unsafe {
+        if copied > 0 {
+            core::ptr::copy_nonoverlapping(kbuf.as_ptr(), out_ptr, copied);
+        }
+    }
+    copied as isize
+}
+
+/// `sys_net_hot_route_pin(host_ptr, host_len, ip_ptr_opt)` — Fixa (PIN) um domínio na `HotRouteTable` (Syscall 98).
+fn sys_net_hot_route_pin(host_ptr: *const u8, host_len: usize, ip_ptr_opt: *const u8) -> isize {
+    if host_ptr.is_null() || host_len == 0 || host_len > crate::net::hot_routes::MAX_HOST_LEN {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(host_ptr, host_len, false) {
+            return e;
+        }
+        if !ip_ptr_opt.is_null() {
+            if let Err(e) = validate_user_buffer(ip_ptr_opt, 4, false) {
+                return e;
+            }
+        }
+    }
+    let host_bytes = unsafe { core::slice::from_raw_parts(host_ptr, host_len) };
+    let host_str = match core::str::from_utf8(host_bytes) {
+        Ok(s) => s,
+        Err(_) => return EINVAL,
+    };
+    let ip_opt = if ip_ptr_opt.is_null() {
+        None
+    } else {
+        let mut ip = [0u8; 4];
+        unsafe { core::ptr::copy_nonoverlapping(ip_ptr_opt, ip.as_mut_ptr(), 4); }
+        Some(ip)
+    };
+    if crate::net::hot_routes::pin_hot_route(host_str, ip_opt) {
+        0
+    } else {
+        EINVAL
+    }
+}
+
+/// `sys_net_hot_route_flush()` — Limpa rotas dinâmicas preservando entradas `PINNED_SEED` (Syscall 99).
+fn sys_net_hot_route_flush() -> isize {
+    crate::net::hot_routes::flush_dynamic_routes() as isize
 }
 
 #[repr(C)]

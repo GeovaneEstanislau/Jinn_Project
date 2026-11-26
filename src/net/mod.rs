@@ -5,6 +5,7 @@ pub mod dhcp;
 pub mod diagnostics;
 pub mod dns;
 pub mod ethernet;
+pub mod hot_routes;
 pub mod icmp;
 pub mod ipv4;
 pub mod jinnwall;
@@ -16,8 +17,15 @@ pub mod udp;
 pub mod x509;
 
 pub use diagnostics::NET_DIAGNOSTICS;
+pub use hot_routes::{HotRouteEntryUser, ResolvedRoute};
 pub use pki::{TrustStore, TrustAnchor, CertificateValidationError, validate_chain, validate_certificate, verify_hostname_match};
 pub use x509::{ParsedCertificate, PublicKey, SignatureAlgorithm, parse_der_certificate, x509_date_to_unix};
+
+/// Consulta Fast-Path unificada (DNS + Gateway IP + Gateway MAC) em uma única leitura de memória.
+#[inline]
+pub fn resolve_fast_route(hostname: &str) -> Option<hot_routes::ResolvedRoute> {
+    hot_routes::lookup_fast_route(hostname)
+}
 
 use ethernet::{EthernetFrame, ETHERTYPE_ARP, ETHERTYPE_IPV4};
 use ipv4::{Ipv4Packet, PROTO_ICMP, PROTO_TCP, PROTO_UDP};
@@ -73,6 +81,7 @@ pub fn init() {
         arp::ARP_CACHE.init_defaults();
     }
     dns::init_tables();
+    hot_routes::init_hot_routes();
 
     // Dispara requisição ARP proativa para o default gateway
     arp::send_arp_request([10, 0, 2, 2]);

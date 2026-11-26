@@ -333,10 +333,17 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
         }
     }
 
-    // Garante resolucao de proximo salto se não for loopback
-    if !is_loopback {
-        let _ = crate::net::arp::resolve_mac_for_ip(remote_ip);
-    }
+    // Garante resolucao de proximo salto se não for loopback (Fast-Path HotRouteTable antes do ARP)
+    let fast_mac_opt = if !is_loopback {
+        if let Some(mac) = crate::net::hot_routes::lookup_mac_for_ip(remote_ip) {
+            Some(mac)
+        } else {
+            let _ = crate::net::arp::resolve_mac_for_ip(remote_ip);
+            None
+        }
+    } else {
+        None
+    };
 
     let syn_seq = unsafe { SOCKET_TABLE[sockfd].as_ref().unwrap().tcb.local_seq };
     crate::net::NET_DIAGNOSTICS.record_tcp_syn_sent();
@@ -366,6 +373,13 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
         unsafe {
             if let Some(Some(ref s)) = SOCKET_TABLE.get(sockfd) {
                 if s.tcb.state == crate::net::tcp::TcpState::Established {
+                    if !is_loopback {
+                        let rtt = crate::timer::ticks().saturating_sub(start_tick).max(1) as u32;
+                        let mac = fast_mac_opt.unwrap_or_else(|| {
+                            crate::net::hot_routes::lookup_mac_for_ip(remote_ip).unwrap_or([0u8; 6])
+                        });
+                        crate::net::hot_routes::record_connect_rtt(remote_ip, mac, rtt);
+                    }
                     return Ok(());
                 }
                 if s.tcb.state == crate::net::tcp::TcpState::Closed {
@@ -724,7 +738,8 @@ pub fn send_socket(pid: usize, sockfd: usize, data: &[u8]) -> Result<usize, isiz
 
         let mut eth_buf = [0u8; 1536];
         let payload_len = data.len().min(1024);
-        let target_mac = crate::net::arp::resolve_mac_for_ip(remote_ip);
+        let target_mac = crate::net::hot_routes::lookup_mac_for_ip(remote_ip)
+            .unwrap_or_else(|| crate::net::arp::resolve_mac_for_ip(remote_ip));
 
         crate::net::ethernet::EthernetFrame::write_header(
             &mut eth_buf[0..14],

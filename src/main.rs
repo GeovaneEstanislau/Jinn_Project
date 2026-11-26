@@ -502,6 +502,26 @@ pub extern "C" fn _start() -> ! {
         w.set_color(Color::LightGray, Color::Black);
     }
 
+    w.write_string("[+] Testes Fast-Path HotRouteTable...");
+    let (hr_passed, hr_total) = net::hot_routes::run_hot_route_selftests();
+    if hr_passed == hr_total {
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_string(" OK (");
+        w.write_decimal(hr_passed);
+        w.write_string("/");
+        w.write_decimal(hr_total);
+        w.write_line(" aprovados)");
+        w.set_color(Color::LightGray, Color::Black);
+    } else {
+        w.set_color(Color::LightRed, Color::Black);
+        w.write_string(" FALHA (");
+        w.write_decimal(hr_passed);
+        w.write_string("/");
+        w.write_decimal(hr_total);
+        w.write_line(")");
+        w.set_color(Color::LightGray, Color::Black);
+    }
+
     w.write_string("[+] Testes de Politicas e SPI JinnWall...");
     let (jw_passed, jw_total) = net::jinnwall::run_jinnwall_selftests();
     if jw_passed == jw_total {

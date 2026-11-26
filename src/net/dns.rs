@@ -606,6 +606,7 @@ pub fn add_static_host(name: &str, ip: [u8; 4]) -> bool {
         st.upsert_host_inner(name, ip, false)
     };
     if ok {
+        crate::net::hot_routes::invalidate_host(name);
         save_hosts_to_vfs();
     }
     ok
@@ -618,6 +619,7 @@ pub fn remove_static_host(name: &str) -> bool {
         st.remove_host_inner(name)
     };
     if removed {
+        crate::net::hot_routes::invalidate_host(name);
         save_hosts_to_vfs();
     }
     removed
@@ -1556,7 +1558,14 @@ pub fn send_query_to(name: &str, tx_id: u16, server_override: Option<[u8; 4]>) -
         dns_server_ip = [1, 1, 1, 1];
     }
     let our_mac = dev.mac_address();
-    let target_mac = crate::net::arp::resolve_mac_for_ip(dns_server_ip);
+    let target_mac = if let Some(fast_mac) = crate::net::hot_routes::lookup_mac_for_ip(dns_server_ip) {
+        fast_mac
+    } else {
+        let mac = crate::net::arp::resolve_mac_for_ip(dns_server_ip);
+        let nh_ip = crate::net::ipv4::get_next_hop_ip(dns_server_ip);
+        crate::net::hot_routes::confirm_gateway_seed(dns_server_ip, nh_ip, mac);
+        mac
+    };
 
     let mut frame = [0u8; 1536];
     EthernetFrame::write_header(&mut frame[0..14], target_mac, our_mac, ETHERTYPE_IPV4);
@@ -1606,7 +1615,7 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
         return Err(DnsResolveError::InvalidName);
     }
 
-    // Estágio 1 (/disk/hosts) e Estágio 2 (DnsCacheTable LRU com TTL preguiçoso)
+    // Estágio 1 (/disk/hosts) tem precedência soberana sobre o cache
     {
         let mut st = DNS_TABLE.lock();
         if let Some(static_ip) = st.lookup_static_host(name) {
@@ -1614,6 +1623,21 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
             log_dns_cache_hit(name, static_ip, "HOSTS");
             return Ok(static_ip);
         }
+    }
+
+    // Estágio Fast-Path Unificado (`HotRouteTable`: DNS + L2/L3 Next-Hop MAC)
+    if let Some(fast_route) = crate::net::hot_routes::lookup_fast_route(name) {
+        // Sincroniza contador de hits na camada DnsCacheTable em RAM sem gerar I/O de disco
+        {
+            let mut st = DNS_TABLE.lock();
+            let _ = st.cache.lookup(name, ticks);
+        }
+        return Ok(fast_route.dst_ip);
+    }
+
+    // Estágio 2 (DnsCacheTable LRU com TTL preguiçoso)
+    {
+        let mut st = DNS_TABLE.lock();
         if let Some(cached_ip) = st.cache.lookup(name, ticks) {
             drop(st);
             log_dns_cache_hit(name, cached_ip, "CACHE");
@@ -1631,6 +1655,9 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
         if let Some(stale_ip) = stale_opt {
             log_dns_stale_hit(name, stale_ip);
             return Ok(stale_ip);
+        }
+        if let Some(stale_route) = crate::net::hot_routes::lookup_stale_route(name) {
+            return Ok(stale_route.dst_ip);
         }
         return Err(DnsResolveError::InterfaceDown);
     }
@@ -1668,6 +1695,9 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
             log_dns_stale_hit(name, stale_ip);
             return Ok(stale_ip);
         }
+        if let Some(stale_route) = crate::net::hot_routes::lookup_stale_route(name) {
+            return Ok(stale_route.dst_ip);
+        }
         return Err(DnsResolveError::ArpFailed);
     }
 
@@ -1680,11 +1710,22 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
 
         if let Some(status) = unsafe { PENDING_DNS_TABLE.get_status(tx_id) } {
             match status {
-                DnsQueryStatus::Resolved(ip, _, _) => {
+                DnsQueryStatus::Resolved(ip, ttl_secs, _) => {
+                    let dns_rtt_ticks = crate::timer::ticks().saturating_sub(start_tick).max(1) as u32;
                     unsafe {
                         PENDING_QUERY = None;
                         PENDING_DNS_TABLE.remove(tx_id);
                     }
+                    let (nh_ip, nh_mac) = crate::net::ipv4::resolve_route_endpoints(ip);
+                    crate::net::hot_routes::record_route_resolved(
+                        name,
+                        ip,
+                        ttl_secs,
+                        nh_ip,
+                        nh_mac,
+                        dns_rtt_ticks,
+                        true,
+                    );
                     save_dns_cache_to_vfs();
                     log_dns_resolved(name, ip);
                     return Ok(ip);
@@ -1778,6 +1819,9 @@ pub fn resolve(name: &str) -> Result<[u8; 4], DnsResolveError> {
     if let Some(stale_ip) = stale_opt {
         log_dns_stale_hit(name, stale_ip);
         return Ok(stale_ip);
+    }
+    if let Some(stale_route) = crate::net::hot_routes::lookup_stale_route(name) {
+        return Ok(stale_route.dst_ip);
     }
 
     crate::net::NET_DIAGNOSTICS.record_dns_timeout();

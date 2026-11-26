@@ -13,6 +13,20 @@
     <priority>0.9</priority>
   </url>
   <url>
+    <loc>https://jinn-os.dev.br/artigos/tabela-rotas-quentes-dns-l2-fast-path-jinn-os.html</loc>
+    <lastmod>2026-11-26</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn OS Devlog</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-26</news:publication_date>
+      <news:title>Tabela de Rotas Mais Usadas (`HotRouteTable`): Fast-Path Unificado DNS + L2/L3 no Jinn OS</news:title>
+    </news:news>
+  </url>
+  <url>
     <loc>https://jinn-os.dev.br/artigos/tabela-local-dns-hosts-cache-persistente-ttl-aladdin.html</loc>
     <lastmod>2026-11-26</lastmod>
     <changefreq>weekly</changefreq>

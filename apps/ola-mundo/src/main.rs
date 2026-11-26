@@ -262,6 +262,7 @@ pub const EVENT_SCROLL: u32 = 6;
 pub const EVENT_WINDOW_CLOSE: u32 = 7;
 pub const EVENT_WINDOW_RESIZE: u32 = 8;
 pub const EVENT_WINDOW_EXPOSE: u32 = 9;
+pub const EVENT_NAVIGATE_PENDING: u32 = 10;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -3107,7 +3108,7 @@ unsafe fn apply_wallpaper_action(target: &[u8]) {
     print_str(b"[BROWSER-WALLPAPER] [OK] Papel de parede definido com sucesso!\n");
 }
 
-unsafe fn run_browser_interactive() -> ! {
+unsafe fn run_browser_interactive(initial_url: Option<&[u8]>) -> ! {
     print_str(b"[BROWSER] Iniciando processo...\n");
     print_str(b"\n==================================================================\n");
     print_str(b"  JINN BROWSER 0.5.0 - SESSAO INTERATIVA NATIVA (RING 3)\n");
@@ -3163,7 +3164,7 @@ unsafe fn run_browser_interactive() -> ! {
     print_u64(win_id as u64);
     print_str(b"\n");
 
-    // 3. Renderiza e atualiza primeiro quadro
+    // 3. Renderiza e atualiza primeiro quadro (ou carrega URL direta passada via argv/Aladdin)
     session.render(buf_slice);
     let upd_ret = sys_window_update(win_id, buf_slice);
     if upd_ret < 0 {
@@ -3172,6 +3173,18 @@ unsafe fn run_browser_interactive() -> ! {
         print_str(b"\n");
     } else {
         print_str(b"[BROWSER] Primeiro frame renderizado.\n");
+    }
+
+    if let Some(init_u) = initial_url {
+        if !init_u.is_empty() {
+            print_str(b"[BROWSER] Abrindo URL direta solicitada pelo Aladdin: ");
+            print_str(init_u);
+            print_str(b"\n");
+            let mut norm_u = [0u8; 128];
+            let copy_len = init_u.len().min(127);
+            norm_u[..copy_len].copy_from_slice(&init_u[..copy_len]);
+            browser_load_and_display(&mut session, &norm_u[..copy_len], win_id, buf_slice);
+        }
     }
 
     // 4. Laço Interativo de Eventos do Aladdin (Zero-Idle com bloqueio cooperativo)
@@ -3222,6 +3235,33 @@ unsafe fn run_browser_interactive() -> ! {
                     let buf_cur = surface.slice_mut();
                     session.render(buf_cur);
                     let _ = sys_window_update(win_id, buf_cur);
+                }
+                EVENT_NAVIGATE_PENDING => {
+                    let nav_path = b"/disk/browser/.nav_url";
+                    let fd = sys_open(nav_path, O_RDONLY);
+                    if fd >= 0 {
+                        let mut url_buf = [0u8; 128];
+                        let n = sys_read(fd as u64, url_buf.as_mut_ptr(), 127);
+                        let _ = sys_close(fd as u64);
+                        // Trunca para não re-navegar no próximo evento
+                        let clr_fd = sys_open(nav_path, O_WRONLY | O_CREAT | O_TRUNC);
+                        if clr_fd >= 0 {
+                            let _ = sys_close(clr_fd as u64);
+                        }
+                        if n > 0 {
+                            let mut ulen = n as usize;
+                            while ulen > 0 && (url_buf[ulen - 1] == b'\n' || url_buf[ulen - 1] == b'\r' || url_buf[ulen - 1] == 0) {
+                                ulen -= 1;
+                            }
+                            if ulen > 0 {
+                                print_str(b"[BROWSER] Navegando via HotRoute 1-click para: ");
+                                print_str(&url_buf[..ulen]);
+                                print_str(b"\n");
+                                let buf_cur = surface.slice_mut();
+                                browser_load_and_display(&mut session, &url_buf[..ulen], win_id, buf_cur);
+                            }
+                        }
+                    }
                 }
                 EVENT_MOUSE_DOWN | EVENT_MOUSE_UP => {
                     if ev.x < 0 || ev.y < 0 {
@@ -4892,17 +4932,36 @@ unsafe fn test_adv_qa_security_and_fat32_lfn() {
 pub extern "C" fn _start(argc: usize, argv: *const *const u8, _envp: *const *const u8) -> ! {
     unsafe {
         // 1. Prioridade máxima absoluta: se invocado como navegador (browser), executa imediatamente
+        let extract_arg_url = |idx: usize| -> Option<&'static [u8]> {
+            if argc > idx && !(*argv.add(idx)).is_null() {
+                let p = *argv.add(idx);
+                let mut l = 0usize;
+                while l < 127 && *p.add(l) != 0 {
+                    l += 1;
+                }
+                if l > 0 {
+                    return Some(core::slice::from_raw_parts(p, l));
+                }
+            }
+            None
+        };
+
         if argc > 0 && !argv.is_null() {
             let arg0 = *argv;
             if str_contains(arg0, b"browser") {
-                run_browser_interactive();
+                let init_url = if argc > 1 && !str_contains(*argv.add(1), b"browser") {
+                    extract_arg_url(1)
+                } else {
+                    extract_arg_url(2)
+                };
+                run_browser_interactive(init_url);
             }
         }
 
         if argc > 1 && !argv.is_null() {
             let arg1 = *argv.add(1);
             if str_contains(arg1, b"browser") {
-                run_browser_interactive();
+                run_browser_interactive(extract_arg_url(2));
             } else if streq(arg1, b"qa") {
                 test_adv_qa_security_and_fat32_lfn();
                 sys_exit(0);

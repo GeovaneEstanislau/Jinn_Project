@@ -131,3 +131,43 @@ pub fn get_next_hop_ip(dst_ip: [u8; 4]) -> [u8; 4] {
         [10, 0, 2, 2]
     }
 }
+
+/// Resolve em uma chamada os parâmetros finais de roteamento L3+L2 (`next_hop_ip`, `next_hop_mac`),
+/// consultando primeiramente o Fast-Path `HotRouteTable` antes de recorrer ao ARP bloqueante.
+pub fn resolve_route_endpoints(dst_ip: [u8; 4]) -> ([u8; 4], [u8; 6]) {
+    let nh_ip = get_next_hop_ip(dst_ip);
+    if let Some(mac) = crate::net::hot_routes::lookup_mac_for_ip(dst_ip) {
+        return (nh_ip, mac);
+    }
+    let mac = crate::net::arp::resolve_mac_for_ip(dst_ip);
+    (nh_ip, mac)
+}
+
+/// Constrói diretamente os cabeçalhos Ethernet + IPv4 usando o MAC confirmado do Fast-Path.
+pub fn write_fast_route_headers(
+    frame_buf: &mut [u8],
+    src_mac: [u8; 6],
+    dst_mac: [u8; 6],
+    src_ip: [u8; 4],
+    dst_ip: [u8; 4],
+    protocol: u8,
+    transport_len: usize,
+) -> usize {
+    if frame_buf.len() < 34 {
+        return 0;
+    }
+    crate::net::ethernet::EthernetFrame::write_header(
+        &mut frame_buf[0..14],
+        dst_mac,
+        src_mac,
+        crate::net::ethernet::ETHERTYPE_IPV4,
+    );
+    Ipv4Packet::write_header(
+        &mut frame_buf[14..34],
+        src_ip,
+        dst_ip,
+        protocol,
+        transport_len,
+    );
+    34
+}

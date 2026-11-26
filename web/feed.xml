@@ -7,14 +7,13 @@
     <language>pt-br</language>
     <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
     <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
-        <item>
-      <title>3-tier DNS table (/disk/hosts + LRU TTL /disk/dns_cache.db), syscalls 93-96, IRQ</title>
-      <link>https://jinn-os.dev.br</link>
-      <guid isPermaLink="false">jinn-os-3-tier-dns-table---disk-hosts---lru-ttl--disk-dns-cache-db---syscalls-93-96--irq-202611260425</guid>
-      <pubDate>Thu, 26 Nov 2026 04:25:29 +0000</pubDate>
-      <description><![CDATA[
-        <p>Consolidamos o suporte a resolucao DNS cascateada (Cloudflare/Google), decodificacao de imagens bare-metal no Jinn Browser, aceleracao SIMD AVX2 no JHCS e persistencia estrita em disco FAT32 com zero-idle.</p>
-      ]]></description>
+    <item>
+      <title>Tabela de Rotas Mais Usadas (`HotRouteTable`): Fast-Path Unificado DNS + L2/L3 no Jinn OS</title>
+      <link>https://jinn-os.dev.br/artigos/tabela-rotas-quentes-dns-l2-fast-path-jinn-os.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-tabela-rotas-quentes-dns-l2-fast-path-jinn-os</guid>
+      <pubDate>Thu, 26 Nov 2026 02:02:00 +0000</pubDate>
+      <description>Como o Jinn OS unifica resolução de nomes DNS, Next-Hop IPv4 e endereço MAC L2 na HotRouteTable alinhada a 64 bytes em .bss estático com /disk/hot_routes.db, envio direto de TCP SYN (0 pacotes DNS/ARP na 2ª conexão e pós-Cold-Reboot), UI Rotas Mais Acessadas no Aladdin Desktop e 0,00% CPU ociosa.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
       <title>Tabela Local de DNS em 3 Camadas: Hosts Estáticos, Cache LRU Persistente com TTL e Painel Aladdin</title>
@@ -145,6 +144,22 @@
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
+      <title>feat(net): add unified HotRouteTable (DNS + L2/L3 Fast-Path), syscalls 97..99, and E2E PCAP suite</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/09d6dd4ed7697eb5701f3d1200a8f44b3cda2bff</link>
+      <guid isPermaLink="false">09d6dd4ed7697eb5701f3d1200a8f44b3cda2bff</guid>
+      <pubDate>Thu, 26 Nov 2026 02:02:36 -0300</pubDate>
+      <description>feat(net): add unified HotRouteTable (DNS + L2/L3 Fast-Path), syscalls 97..99, and E2E PCAP suite</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
+      <title>feat(dns,zero-idle): 3-tier DNS table (/disk/hosts + LRU TTL /disk/dns_cache.db), syscalls 93-96, IRQ RX wakeups and SimbadServer hardening [announce]</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/172c65159d21c0b80e180a477db6cbb1dc61b1d8</link>
+      <guid isPermaLink="false">172c65159d21c0b80e180a477db6cbb1dc61b1d8</guid>
+      <pubDate>Thu, 26 Nov 2026 01:23:57 -0300</pubDate>
+      <description>feat(dns,zero-idle): 3-tier DNS table (/disk/hosts + LRU TTL /disk/dns_cache.db), syscalls 93-96, IRQ RX wakeups and SimbadServer hardening [announce]</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
       <title>feat(zero-idle,smp): per-CPU accounting, PCI NIC IRQs, AP LAPIC timer gating, CR3 lifetime fix and SimbadServer audit [announce]</title>
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/81461b045cbf01cc8dd92a18746767007a0be86b</link>
       <guid isPermaLink="false">81461b045cbf01cc8dd92a18746767007a0be86b</guid>
@@ -205,22 +220,6 @@
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/251654654b31f332fd4d8ee01b5f8448007d4ec7</link>
       <guid isPermaLink="false">251654654b31f332fd4d8ee01b5f8448007d4ec7</guid>
       <pubDate>Tue, 24 Nov 2026 13:28:27 -0300</pubDate>
-      <description>feat(pkg,offline,simd,web): add native .jpkg container, offline-on-shutdown installer, zero-copy blur IPC, and publish devlog article</description>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>feat(tls,browser,net,web): implement full RFC 8446 TLS 1.3 handshake, SNI, signature algorithms, translucent browser toolbar, and update feeds</title>
-      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/9fcb7bdeceff63e16d61032d8b2a1b5c650c0fae</link>
-      <guid isPermaLink="false">9fcb7bdeceff63e16d61032d8b2a1b5c650c0fae</guid>
-      <pubDate>Tue, 24 Nov 2026 12:59:07 -0300</pubDate>
-      <description>feat(tls,browser,net,web): implement full RFC 8446 TLS 1.3 handshake, SNI, signature algorithms, translucent browser toolbar, and update feeds</description>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>feat(net,browser,web): harden Intel e1000 driver &amp; VirtualBox ARP fallback, modernize Jinn Browser UI, add technical article and publish RSS/sitemap feeds</title>
-      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/6508b00473d17b28f2ef2b49277f5b047004dc62</link>
-      <guid isPermaLink="false">6508b00473d17b28f2ef2b49277f5b047004dc62</guid>
-      <pubDate>Tue, 24 Nov 2026 12:19:56 -0300</pubDate>
       <description>---END---</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>

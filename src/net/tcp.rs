@@ -359,7 +359,8 @@ pub fn send_tcp_packet(
         .map(|d| d.mac_address())
         .unwrap_or([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
 
-    let target_mac = crate::net::arp::resolve_mac_for_ip(dst_ip);
+    let target_mac = crate::net::hot_routes::lookup_mac_for_ip(dst_ip)
+        .unwrap_or_else(|| crate::net::arp::resolve_mac_for_ip(dst_ip));
 
     let mut eth_buf = [0u8; 1536];
     EthernetFrame::write_header(

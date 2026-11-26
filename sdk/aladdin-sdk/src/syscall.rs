@@ -20,6 +20,7 @@ pub const SYS_WINDOW_CLOSE:      u64 = 22;
 pub const SYS_WINDOW_POLL_EVENT: u64 = 24;
 pub const SYS_JDA_SHM_SHARE:     u64 = 26;
 pub const SYS_JDA_SHM_GET_VADDR: u64 = 29;
+pub const SYS_SYNC:              u64 = 23;
 pub const SYS_SPAWN_PROCESS:     u64 = 39;
 pub const SYS_CLOCK_GETTIME:      u64 = 70;
 
@@ -47,6 +48,49 @@ pub const SYS_NET_DNS_CACHE_LIST:            u64 = 93;
 pub const SYS_NET_DNS_HOST_ADD:              u64 = 94;
 pub const SYS_NET_DNS_CACHE_FLUSH:           u64 = 95;
 pub const SYS_NET_DNS_CONFIG:                u64 = 96;
+pub const SYS_NET_HOT_ROUTE_LIST:            u64 = 97;
+pub const SYS_NET_HOT_ROUTE_PIN:             u64 = 98;
+pub const SYS_NET_HOT_ROUTE_FLUSH:           u64 = 99;
+
+pub const HOT_ROUTE_FLAG_PINNED_SEED:   u8 = 1 << 0;
+pub const HOT_ROUTE_FLAG_VALID:         u8 = 1 << 1;
+pub const HOT_ROUTE_FLAG_STALE_ALLOWED: u8 = 1 << 2;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct HotRouteEntryUser {
+    pub hit_count: u32,
+    pub last_rtt_ticks: u32,
+    pub ttl_remaining_secs: u32,
+    pub hostname: [u8; 96],
+    pub hostname_len: u8,
+    pub dst_ip: [u8; 4],
+    pub next_hop_ip: [u8; 4],
+    pub next_hop_mac: [u8; 6],
+    pub flags: u8,
+    pub valid: u8,
+    pub stale: u8,
+    pub _reserved: [u8; 2],
+}
+
+impl Default for HotRouteEntryUser {
+    fn default() -> Self {
+        Self {
+            hit_count: 0,
+            last_rtt_ticks: 0,
+            ttl_remaining_secs: 0,
+            hostname: [0u8; 96],
+            hostname_len: 0,
+            dst_ip: [0u8; 4],
+            next_hop_ip: [0u8; 4],
+            next_hop_mac: [0u8; 6],
+            flags: 0,
+            valid: 0,
+            stale: 0,
+            _reserved: [0u8; 2],
+        }
+    }
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -326,5 +370,33 @@ pub unsafe fn register_shared_rings(rings_vaddr: usize, backbuffer_vaddr: usize)
 #[inline(always)]
 pub unsafe fn ring_doorbell(flags: u32) -> i64 {
     syscall1(SYS_RING_DOORBELL, flags as u64)
+}
+
+/// Sincroniza caches de rede e VFS com a mídia persistente (Syscall 23)
+#[inline(always)]
+pub unsafe fn sys_sync() -> i64 {
+    syscall0(SYS_SYNC)
+}
+
+/// Lista as Top-N rotas mais acessadas do Fast-Path (`HotRouteTable`) (Syscall 97)
+#[inline(always)]
+pub unsafe fn sys_net_hot_route_list(out: &mut [HotRouteEntryUser]) -> i64 {
+    syscall2(SYS_NET_HOT_ROUTE_LIST, out.as_mut_ptr() as u64, out.len() as u64)
+}
+
+/// Fixa (PIN) um domínio favorito na `HotRouteTable` (Syscall 98)
+#[inline(always)]
+pub unsafe fn sys_net_hot_route_pin(host: &[u8], explicit_ip: Option<&[u8; 4]>) -> i64 {
+    let ip_ptr = match explicit_ip {
+        Some(ip) => ip.as_ptr() as u64,
+        None => 0,
+    };
+    syscall3(SYS_NET_HOT_ROUTE_PIN, host.as_ptr() as u64, host.len() as u64, ip_ptr)
+}
+
+/// Limpa rotas dinâmicas da `HotRouteTable` preservando as sementes fixadas (Syscall 99)
+#[inline(always)]
+pub unsafe fn sys_net_hot_route_flush() -> i64 {
+    syscall0(SYS_NET_HOT_ROUTE_FLUSH)
 }
 

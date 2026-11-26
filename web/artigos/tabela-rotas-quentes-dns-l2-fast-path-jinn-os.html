@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tabela de Rotas Mais Usadas (`HotRouteTable`): Fast-Path Unificado DNS + L2/L3 no Jinn OS — Jinn OS</title>
+  <meta name="description"
+    content="Como o Jinn OS unifica resolução de nomes DNS, Next-Hop IPv4 e endereço MAC L2 na HotRouteTable alinhada a 64 bytes em .bss estático com /disk/hot_routes.db, envio direto de TCP SYN (0 pacotes DNS/ARP na 2ª conexão e pós-Cold-Reboot), UI Rotas Mais Acessadas no Aladdin Desktop e 0,00% CPU ociosa.">
+  <link rel="canonical"
+    href="https://jinn-os.dev.br/artigos/tabela-rotas-quentes-dns-l2-fast-path-jinn-os.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url"
+    content="https://jinn-os.dev.br/artigos/tabela-rotas-quentes-dns-l2-fast-path-jinn-os.html">
+  <meta property="og:title"
+    content="Tabela de Rotas Mais Usadas (HotRouteTable): Fast-Path DNS + L2/L3 no Jinn OS &amp; Aladdin">
+  <meta property="og:description"
+    content="TCP SYN imediato sem pacotes DNS ou ARP prévios na 2ª navegação e após Cold-Reboot no QEMU, evicção LFU/LRU preservando PINNED_SEED, syscalls 97–99 Zero-Trust e painel Rotas Mais Acessadas com 1 clique no Aladdin Desktop.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/hot-routes-aladdin.png">
+
+  <!-- Artigo Meta -->
+  <meta name="article:tag" content="REDES &amp; DRIVERS, ZERO-IDLE, MICROKERNEL, ALADDIN UI, JINN BROWSER">
+  <meta name="article:published_time" content="2026-11-26T02:02:00Z">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans selection:bg-cyan-500 selection:text-black">
+
+  <!-- Cabeçalho de Navegação -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 hover:text-cyan-400 transition-colors">
+        <i data-lucide="terminal" class="w-5 h-5 text-cyan-400"></i>
+        <span class="font-bold tracking-wider font-mono text-sm">JINN OS // DEVLOG</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="/artigos/" class="text-slate-400 hover:text-white transition-colors">Artigos</a>
+        <a href="/rss.xml" class="text-emerald-400 hover:underline">RSS 2.0</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Feed</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Conteúdo do Artigo -->
+  <main class="max-w-4xl mx-auto px-6 py-12">
+    <div class="mb-8">
+      <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400 mb-3">
+        <span class="bg-emerald-950/80 border border-emerald-800/60 px-2.5 py-0.5 rounded-full">REDES &amp; DRIVERS</span>
+        <span>•</span>
+        <time datetime="2026-11-26">26 de Novembro de 2026</time>
+      </div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight">
+        Tabela de Rotas Mais Usadas (<code>HotRouteTable</code>): Fast-Path Unificado DNS + L2/L3 no Jinn OS &amp; Aladdin Desktop
+      </h1>
+      <p class="text-slate-400 text-base sm:text-lg mt-3 leading-relaxed">
+        Implementação de <code>src/net/hot_routes.rs</code> para eliminar idas e vindas separadas de DNS e ARP por conexão no Jinn Browser: uma única busca em <code>.bss</code> alinhada a 64 bytes entrega <code>dst_ip</code>, <code>next_hop_ip</code> e <code>next_hop_mac</code> já confirmados, com persistência <code>JHRTE1</code> em <code>/disk/hot_routes.db</code> e expiração estritamente sob demanda (<em>Zero-Idle</em>).
+      </p>
+    </div>
+
+    <article class="prose prose-invert prose-cyan max-w-none text-slate-300 space-y-6 text-sm sm:text-base leading-relaxed">
+      <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2">
+        1. Por que Unificar DNS + Roteamento L2/L3 (HotRouteTable)
+      </h2>
+      <p>
+        Mesmo após a introdução do cache local DNS em 3 camadas, o caminho de transmissão L4 (<code>socket::connect_socket</code> e <code>tcp::send_tcp_packet</code>) ainda dependia de resoluções separadas para determinar o próximo salto L3 e o endereço MAC do gateway na tabela ARP antes de emitir o pacote Ethernet. Com o novo módulo <code>src/net/hot_routes.rs</code>, o kernel passa a manter uma tabela estática <code>HotRouteTable</code> com <strong>64 entradas</strong> (<code>#[repr(align(64))]</code>) sob <code>IrqSafeSpinLock</code>:
+      </p>
+      <ul class="space-y-2 my-4">
+        <li><strong>Tupla completa de Fast-Path:</strong> cada <code>HotRouteEntry</code> indexa o hash <em>FNV-1a 64-bit</em> do hostname normalizado (até 96 bytes), <code>dst_ip</code>, <code>next_hop_ip</code>, <code>next_hop_mac</code>, <code>hit_count</code>, <code>last_rtt_ticks</code> (atualizado no término do handshake TCP e exibido em ms), <code>expires_at_tick</code> / <code>expires_at_unix</code> (clamp <code>120 s</code> a <code>86400 s</code>) e bitmask <code>flags</code> (<code>PINNED_SEED</code>, <code>VALID</code>, <code>STALE_ALLOWED</code>).</li>
+        <li><strong>Sementes de primeiro boot (8 entradas <code>PINNED_SEED</code>):</strong> quando <code>/disk/hot_routes.db</code> ainda não existe na inicialização da rede (<code>net::init()</code>), são pré-semeados os domínios <code>jinn-os.dev.br</code>, <code>68k.news</code>, <code>frogfind.com</code>, <code>example.com</code>, <code>github.com</code>, <code>raw.githubusercontent.com</code> e os upstreams <code>1.1.1.1</code> / <code>8.8.8.8</code>, confirmando IPs e MACs reais no primeiro uso em rede.</li>
+        <li><strong>Política Zero-Idle e Evicção LFU/LRU:</strong> não existem varreduras periódicas em background. A validade do TTL e a seleção de vítimas de despejo acontecem apenas durante consultas e inserções (<em>lazy-on-lookup</em>). Em tabela lotada, a evicção LFU/LRU remove prioritariamente entradas expiradas ou com menor <code>hit_count</code> que <em>não</em> possuam <code>FLAG_PINNED_SEED</code>.</li>
+        <li><strong>Persistência <code>/disk/hot_routes.db</code> sem trava de IRQ:</strong> gravações em FAT32 ocorrem fora do <code>IrqSafeSpinLock</code> (com buffer dedicado em <code>.bss</code> e <code>HotIoGuard</code>) exclusivamente em inserções, alteração de IPv4/MAC, pin/flush explícitos ou desligamento/sincronização (<code>sys_sync</code> / <code>sys_poweroff</code>).</li>
+      </ul>
+
+      <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-8">
+        2. Fast-Path na Pilha de Rede, Syscalls 97–99 e UI no Aladdin Desktop
+      </h2>
+      <p>
+        Expusemos <code>net::resolve_fast_route()</code>, <code>ipv4::resolve_route_endpoints()</code> e integramos <code>hot_routes::lookup_mac_for_ip()</code> diretamente nos pontos críticos de transmissão em <code>src/net/dns.rs</code>, <code>src/net/socket.rs</code> e <code>src/net/tcp.rs</code>, somando também <em>Stale-If-Error</em> quando a cascata DNS falha. Para o espaço de usuário (<code>src/syscall.rs</code> e <code>sdk/aladdin-sdk</code>), adicionamos as syscalls protegidas por <code>validate_user_buffer</code>:
+      </p>
+      <ul class="space-y-2 my-4">
+        <li><code>SYS_NET_HOT_ROUTE_LIST (97)</code>: exporta o ranking Top-N ordenado decrescentemente por <code>hit_count</code> (<code>HotRouteEntryUser</code> ABI de 128 bytes sem padding implícito).</li>
+        <li><code>SYS_NET_HOT_ROUTE_PIN (98)</code>: fixa um domínio favorito (<code>PINNED_SEED</code>) com persistência imediata.</li>
+        <li><code>SYS_NET_HOT_ROUTE_FLUSH (99)</code>: limpa rotas dinâmicas mantendo as entradas fixadas intactas.</li>
+      </ul>
+      <p>
+        No repositório <strong>Aladdin</strong>, a aba <strong>Rede &amp; DNS</strong> em <code>src/apps/network_dns.rs</code> ganhou a sub-visão <strong>Rotas Mais Acessadas</strong> com ranking <code>#N Domínio</code>, <code>IPv4</code>, <code>GW MAC</code> completo, <code>Hits/RTT (ms)</code>, indicador <code>TTL/Fixo</code> e os botões <strong>+ Fixar Site</strong>, <strong>Abrir no Jinn Browser</strong> (navegação direta em 1 clique via argumento <code>argv</code> ou evento IPC <code>EVENT_NAVIGATE_PENDING = 10</code> em <code>apps/ola-mundo</code>) e <strong>Limpar Historico de Rotas</strong>.
+      </p>
+
+      <div class="my-6 rounded-xl overflow-hidden border border-slate-800 bg-slate-900/70">
+        <img src="/assets/hot-routes-aladdin.png" alt="Painel Rotas Mais Acessadas no Aladdin Desktop exibindo kernel.org, example.com, frogfind.com e 68k.news com IPv4, GW MAC, Hits e RTT em ms" class="w-full h-auto">
+        <p class="text-xs font-mono text-slate-400 px-4 py-2 border-t border-slate-800">
+          Captura real em QEMU TCG (<code>e1000</code>, 4 vCPUs, 512 MiB): sub-visão <strong>Rotas Quentes</strong> do Aladdin Desktop após fixar <code>kernel.org</code> e navegar por <code>example.com</code>, <code>frogfind.com</code> e <code>68k.news</code>.
+        </p>
+      </div>
+
+      <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-8">
+        3. Prova PCAP em Navegação Real no Jinn Browser, Cold-Reboot e Zero-Idle
+      </h2>
+
+      <div class="overflow-x-auto my-4">
+        <table class="w-full text-left border-collapse border border-slate-800 text-xs sm:text-sm font-mono">
+          <thead>
+            <tr class="bg-slate-900 text-cyan-400 border-b border-slate-800">
+              <th class="p-3">Etapa (QEMU <code>e1000</code>, 4 vCPUs)</th>
+              <th class="p-3">ARP no PCAP</th>
+              <th class="p-3">DNS UDP/53</th>
+              <th class="p-3">TCP SYN Imediato</th>
+              <th class="p-3">Observação Serial / Estado</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800/80">
+            <tr>
+              <td class="p-3 font-semibold text-white">Boot 1 — 1ª visita (<code>68k.news</code> + <code>example.com</code>)</td>
+              <td class="p-3 text-amber-300">10 (boot + aprendizado)</td>
+              <td class="p-3 text-amber-300">7 queries</td>
+              <td class="p-3">Handshake inicial</td>
+              <td class="p-3"><code>LEARNED</code> gravou IP + MAC em <code>/disk/hot_routes.db</code></td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-white">Boot 1 — 2ª visita (<code>68k.news</code> + <code>example.com/?fast=2</code>)</td>
+              <td class="p-3 text-emerald-400 font-bold">0 pacotes</td>
+              <td class="p-3 text-emerald-400 font-bold">0 pacotes</td>
+              <td class="p-3 text-cyan-300 font-bold">3 SYNs diretos</td>
+              <td class="p-3"><code>[NET-FASTROUTE] HIT</code> com carga completa HTML (65.303 B / 577 B)</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-white">Boot 2 — Cold-Reboot (<code>/disk/hot_routes.db</code> + visita Fast-Path)</td>
+              <td class="p-3 text-emerald-400 font-bold">0 pacotes</td>
+              <td class="p-3 text-emerald-400 font-bold">0 pacotes</td>
+              <td class="p-3 text-cyan-300 font-bold">1 SYN direto</td>
+              <td class="p-3">9 entradas restauradas (<code>kernel.org hits=4</code>, <code>68k.news hits=2</code>, <code>example.com hits=2</code>)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <ul class="space-y-2 my-4">
+        <li><strong>Auto-testes e Segurança Zero-Trust:</strong> <code>run_hot_route_selftests()</code> aprovou <code>10/10</code> casos no boot (LFU/LRU preservando <code>PINNED_SEED</code>, lazy expiry, clamping <code>120–86400 s</code> e <em>Stale-If-Error</em>) e o comando <code>hottest</code> confirmou rejeição de ponteiros nulos, kernel-space e overflow nas syscalls 97–99 (<code>-22 EINVAL</code> / <code>-14 EFAULT</code>).</li>
+        <li><strong>Zero-Idle confirmado pós-Cold-Reboot:</strong> na medição de 4 s sobre o Boot 2 (<code>scripts/test_hot_routes_e2e.py</code>), os núcleos secundários <code>cpu2</code> (<code>d_hlt=15799369175 == d_total</code>) e <code>cpu3</code> (<code>d_hlt=15799369139 == d_total</code>) mantiveram <code>d_task=0</code> e <strong>100,00% em HLT (0,00% CPU ativa)</strong>.</li>
+        <li><strong>Suítes de regressão após a última edição:</strong> aprovadas com saída <code>0</code> em cadeia (<code>test_hot_routes_e2e.py</code>, <code>test_dns_cache_e2e.py</code>, <code>test_dns_cross_pcap.py</code> com <code>e1000</code> e <code>virtio-net-pci</code>, e <code>test_jaha_12_integrity.py</code> com <code>0 bytes discrepancy</code>).</li>
+      </ul>
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <!-- Rodapé do Artigo -->
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn OS Sovereign Systems • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/artigos/" class="text-cyan-400 hover:underline">Voltar aos Artigos</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-slate-300 hover:text-white">Portal Principal</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>
