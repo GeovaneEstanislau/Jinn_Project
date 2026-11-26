@@ -144,16 +144,16 @@ rustup target add x86_64-unknown-none
 > [!IMPORTANT]
 > **秘密鍵の不可侵分離原則:** Jinn マイクロカーネル（Ring 0）は、ユーザーの秘密鍵、シードフレーズ、または金融トランザクションにアクセス、保存、または関与することは絶対にありません。すべての暗号資産操作は、ユーザー空間（Ring 3）の **Aladdin Wallet** アプリケーション内に厳密に隔離されています。
 
-- **経済提案書およびホワイトペーパー:** [`JINN_TOKEN_PROPOSAL.md`](JINN_TOKEN_PROPOSAL.md)
-- **EVM 検証およびフェーズ II 監査レポート:** [`docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md`](docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md)
-- **マルチシグ・ガバナンスおよび財務仕様:** [`docs/JINN_OPEN_ECONOMY_GOVERNANCE.md`](docs/JINN_OPEN_ECONOMY_GOVERNANCE.md)
-- **PoUC 仕様書 (バウンティ制度):** [`docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md`](docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md)
-- **Ring 3 ウォレット設計仕様:** [`docs/JINN_WALLET_ARCHITECTURE.md`](docs/JINN_WALLET_ARCHITECTURE.md)
+- **経済提案書およびホワイトペーパー:** [`JINN_TOKEN_PROPOSAL.md`](docs/archive/JINN_TOKEN_PROPOSAL.md)
+- **EVM 検証およびフェーズ II 監査レポート:** [`docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md`](docs/archive/JINN_WEB3_PHASE2_AUDIT_REPORT.md)
+- **マルチシグ・ガバナンスおよび財務仕様:** [`docs/JINN_OPEN_ECONOMY_GOVERNANCE.md`](docs/archive/JINN_OPEN_ECONOMY_GOVERNANCE.md)
+- **PoUC 仕様書 (バウンティ制度):** [`docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md`](docs/archive/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md)
+- **Ring 3 ウォレット設計仕様:** [`docs/JINN_WALLET_ARCHITECTURE.md`](docs/archive/JINN_WALLET_ARCHITECTURE.md)
 - **Aladdin Wallet 実装コード:** [`apps/ola-mundo/src/wallet.rs`](apps/ola-mundo/src/wallet.rs)
 - **ユーザー空間デーモン `jinn-web3d`:** [`tools/jinn-web3/src/daemon.rs`](tools/jinn-web3/src/daemon.rs)
-- **DePIN 計算経済仕様 (JDA):** [`docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md`](docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md)
-- **スマートコントラクト内部監査報告書:** [`docs/SMART_CONTRACTS_AUDIT_REPORT.md`](docs/SMART_CONTRACTS_AUDIT_REPORT.md)
-- **テストネット・デプロイ手順書:** [`docs/TESTNET_DEPLOYMENT_GUIDE.md`](docs/TESTNET_DEPLOYMENT_GUIDE.md)
+- **DePIN 計算経済仕様 (JDA):** [`docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md`](docs/archive/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md)
+- **スマートコントラクト内部監査報告書:** [`docs/SMART_CONTRACTS_AUDIT_REPORT.md`](docs/archive/SMART_CONTRACTS_AUDIT_REPORT.md)
+- **テストネット・デプロイ手順書:** [`docs/TESTNET_DEPLOYMENT_GUIDE.md`](docs/archive/TESTNET_DEPLOYMENT_GUIDE.md)
 
 ---
 

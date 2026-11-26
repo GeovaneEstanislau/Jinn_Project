@@ -144,16 +144,16 @@ rustup target add x86_64-unknown-none
 > [!IMPORTANT]
 > **绝对的私钥隔离红线：** Jinn 微内核（Ring 0）绝不存储、不中继、也不接触任何用户的私钥、助记词或资产凭证。全部 Web3 与链上计算均严格限制在用户态（Ring 3）的 **Aladdin Wallet** 独立进程中。
 
-- **经济学提案与白皮书：** [`JINN_TOKEN_PROPOSAL.md`](JINN_TOKEN_PROPOSAL.md)
-- **EVM 验证与第二阶段审计报告：** [`docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md`](docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md)
-- **多签金库与去中心化治理规范：** [`docs/JINN_OPEN_ECONOMY_GOVERNANCE.md`](docs/JINN_OPEN_ECONOMY_GOVERNANCE.md)
-- **PoUC 贡献证明规范与赏金机制：** [`docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md`](docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md)
-- **Ring 3 钱包架构设计文档：** [`docs/JINN_WALLET_ARCHITECTURE.md`](docs/JINN_WALLET_ARCHITECTURE.md)
+- **经济学提案与白皮书：** [`JINN_TOKEN_PROPOSAL.md`](docs/archive/JINN_TOKEN_PROPOSAL.md)
+- **EVM 验证与第二阶段审计报告：** [`docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md`](docs/archive/JINN_WEB3_PHASE2_AUDIT_REPORT.md)
+- **多签金库与去中心化治理规范：** [`docs/JINN_OPEN_ECONOMY_GOVERNANCE.md`](docs/archive/JINN_OPEN_ECONOMY_GOVERNANCE.md)
+- **PoUC 贡献证明规范与赏金机制：** [`docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md`](docs/archive/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md)
+- **Ring 3 钱包架构设计文档：** [`docs/JINN_WALLET_ARCHITECTURE.md`](docs/archive/JINN_WALLET_ARCHITECTURE.md)
 - **Aladdin Wallet 界面源码：** [`apps/ola-mundo/src/wallet.rs`](apps/ola-mundo/src/wallet.rs)
 - **用户态守护进程 `jinn-web3d`：** [`tools/jinn-web3/src/daemon.rs`](tools/jinn-web3/src/daemon.rs)
-- **DePIN 计算经济学规范 (JDA)：** [`docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md`](docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md)
-- **智能合约内部安全审计报告：** [`docs/SMART_CONTRACTS_AUDIT_REPORT.md`](docs/SMART_CONTRACTS_AUDIT_REPORT.md)
-- **测试网部署指南：** [`docs/TESTNET_DEPLOYMENT_GUIDE.md`](docs/TESTNET_DEPLOYMENT_GUIDE.md)
+- **DePIN 计算经济学规范 (JDA)：** [`docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md`](docs/archive/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md)
+- **智能合约内部安全审计报告：** [`docs/SMART_CONTRACTS_AUDIT_REPORT.md`](docs/archive/SMART_CONTRACTS_AUDIT_REPORT.md)
+- **测试网部署指南：** [`docs/TESTNET_DEPLOYMENT_GUIDE.md`](docs/archive/TESTNET_DEPLOYMENT_GUIDE.md)
 
 ---
 

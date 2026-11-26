@@ -144,16 +144,16 @@ Kako bi se osigurala dugoročna financijska održivost istraživanja otvorenih o
 > [!IMPORTANT]
 > **Apsolutna Izolacija Privatnih Ključeva:** Jinn mikrokernal (Ring 0) nikada ne pristupa, ne pohranjuje niti obrađuje korisničke privatne ključeve, mnemoničke fraze ili financijske transakcije. Sve kriptografske operacije ostaju strogo izolirane u korisničkom prostoru (Ring 3) unutar aplikacije **Aladdin Wallet**.
 
-- **Ekonomski Prijedlog i Whitepaper:** [`JINN_TOKEN_PROPOSAL.md`](JINN_TOKEN_PROPOSAL.md)
-- **EVM Validacija i Izvješće o Reviziji Faze II:** [`docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md`](docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md)
-- **Multi-Sig Upravljanje i Riznica:** [`docs/JINN_OPEN_ECONOMY_GOVERNANCE.md`](docs/JINN_OPEN_ECONOMY_GOVERNANCE.md)
-- **PoUC Specifikacija (Sustav Nagrađivanja):** [`docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md`](docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md)
-- **Arhitektura Novčanika (Ring 3):** [`docs/JINN_WALLET_ARCHITECTURE.md`](docs/JINN_WALLET_ARCHITECTURE.md)
+- **Ekonomski Prijedlog i Whitepaper:** [`JINN_TOKEN_PROPOSAL.md`](docs/archive/JINN_TOKEN_PROPOSAL.md)
+- **EVM Validacija i Izvješće o Reviziji Faze II:** [`docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md`](docs/archive/JINN_WEB3_PHASE2_AUDIT_REPORT.md)
+- **Multi-Sig Upravljanje i Riznica:** [`docs/JINN_OPEN_ECONOMY_GOVERNANCE.md`](docs/archive/JINN_OPEN_ECONOMY_GOVERNANCE.md)
+- **PoUC Specifikacija (Sustav Nagrađivanja):** [`docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md`](docs/archive/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md)
+- **Arhitektura Novčanika (Ring 3):** [`docs/JINN_WALLET_ARCHITECTURE.md`](docs/archive/JINN_WALLET_ARCHITECTURE.md)
 - **Izvorni Kod Aladdin Wallet Sučelja:** [`apps/ola-mundo/src/wallet.rs`](apps/ola-mundo/src/wallet.rs)
 - **Demon Korisničkog Prostora `jinn-web3d`:** [`tools/jinn-web3/src/daemon.rs`](tools/jinn-web3/src/daemon.rs)
-- **DePIN Računalna Ekonomija (JDA):** [`docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md`](docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md)
-- **Interna Revizija Pametnih Ugovora:** [`docs/SMART_CONTRACTS_AUDIT_REPORT.md`](docs/SMART_CONTRACTS_AUDIT_REPORT.md)
-- **Vodič za Postavljanje na Testnet:** [`docs/TESTNET_DEPLOYMENT_GUIDE.md`](docs/TESTNET_DEPLOYMENT_GUIDE.md)
+- **DePIN Računalna Ekonomija (JDA):** [`docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md`](docs/archive/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md)
+- **Interna Revizija Pametnih Ugovora:** [`docs/SMART_CONTRACTS_AUDIT_REPORT.md`](docs/archive/SMART_CONTRACTS_AUDIT_REPORT.md)
+- **Vodič za Postavljanje na Testnet:** [`docs/TESTNET_DEPLOYMENT_GUIDE.md`](docs/archive/TESTNET_DEPLOYMENT_GUIDE.md)
 
 ---
 

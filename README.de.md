@@ -144,16 +144,16 @@ Zur Sicherung der langfristigen wirtschaftlichen Souveränität, zur Finanzierun
 > [!IMPORTANT]
 > **Strikte Trennung kryptografischer Schlüssel:** Der Jinn-Mikrokernel (Ring 0) greift niemals auf private Schlüssel, mnemonische Phrasen oder Wallet-Daten zu. Sämtliche kryptografische Berechnungen sind vollständig im Benutzerraum (Ring 3) innerhalb der Anwendung **Aladdin Wallet** gekapselt.
 
-- **Wirtschaftsvorschlag & Whitepaper:** [`JINN_TOKEN_PROPOSAL.md`](JINN_TOKEN_PROPOSAL.md)
-- **EVM-Validierungs- und Phase-II-Auditbericht:** [`docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md`](docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md)
-- **Multi-Sig-Governance & Treasury-Spezifikation:** [`docs/JINN_OPEN_ECONOMY_GOVERNANCE.md`](docs/JINN_OPEN_ECONOMY_GOVERNANCE.md)
-- **PoUC-Spezifikation (Bounties):** [`docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md`](docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md)
-- **Architektur der Wallet (Ring 3):** [`docs/JINN_WALLET_ARCHITECTURE.md`](docs/JINN_WALLET_ARCHITECTURE.md)
+- **Wirtschaftsvorschlag & Whitepaper:** [`JINN_TOKEN_PROPOSAL.md`](docs/archive/JINN_TOKEN_PROPOSAL.md)
+- **EVM-Validierungs- und Phase-II-Auditbericht:** [`docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md`](docs/archive/JINN_WEB3_PHASE2_AUDIT_REPORT.md)
+- **Multi-Sig-Governance & Treasury-Spezifikation:** [`docs/JINN_OPEN_ECONOMY_GOVERNANCE.md`](docs/archive/JINN_OPEN_ECONOMY_GOVERNANCE.md)
+- **PoUC-Spezifikation (Bounties):** [`docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md`](docs/archive/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md)
+- **Architektur der Wallet (Ring 3):** [`docs/JINN_WALLET_ARCHITECTURE.md`](docs/archive/JINN_WALLET_ARCHITECTURE.md)
 - **Aladdin Wallet Quellcode:** [`apps/ola-mundo/src/wallet.rs`](apps/ola-mundo/src/wallet.rs)
 - **User-Space-Daemon `jinn-web3d`:** [`tools/jinn-web3/src/daemon.rs`](tools/jinn-web3/src/daemon.rs)
-- **DePIN Rechenökonomie (JDA):** [`docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md`](docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md)
-- **Interner Smart-Contract-Audit:** [`docs/SMART_CONTRACTS_AUDIT_REPORT.md`](docs/SMART_CONTRACTS_AUDIT_REPORT.md)
-- **Testnet-Leitfaden:** [`docs/TESTNET_DEPLOYMENT_GUIDE.md`](docs/TESTNET_DEPLOYMENT_GUIDE.md)
+- **DePIN Rechenökonomie (JDA):** [`docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md`](docs/archive/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md)
+- **Interner Smart-Contract-Audit:** [`docs/SMART_CONTRACTS_AUDIT_REPORT.md`](docs/archive/SMART_CONTRACTS_AUDIT_REPORT.md)
+- **Testnet-Leitfaden:** [`docs/TESTNET_DEPLOYMENT_GUIDE.md`](docs/archive/TESTNET_DEPLOYMENT_GUIDE.md)
 
 ---
 

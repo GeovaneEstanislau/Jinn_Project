@@ -144,16 +144,16 @@ rustup target add x86_64-unknown-none
 > [!IMPORTANT]
 > **निजी कुंजियों का पूर्ण अलगाव:** Jinn माइक्रोकर्नल (Ring 0) कभी भी किसी निजी कुंजी, सीड फ़्रेज़ अथवा वित्तीय क्रेडेंशियल्स को एक्सेस या स्टोर नहीं करता। सभी क्रिप्टोग्राफ़िक संचालन यूज़र स्पेस (Ring 3) के भीतर **Aladdin Wallet** एप्लिकेशन में सुरक्षित रूप से पृथक रहते हैं।
 
-- **आर्थिक प्रस्ताव और व्हाइटपेपर:** [`JINN_TOKEN_PROPOSAL.md`](JINN_TOKEN_PROPOSAL.md)
-- **EVM सत्यापन और चरण II ऑडिट रिपोर्ट:** [`docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md`](docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md)
-- **मल्टी-सिग गवर्नेंस और ट्रेजरी विनिर्देश:** [`docs/JINN_OPEN_ECONOMY_GOVERNANCE.md`](docs/JINN_OPEN_ECONOMY_GOVERNANCE.md)
-- **PoUC विनिर्देश (इनाम प्रणाली):** [`docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md`](docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md)
-- **वॉलेट आर्किटेक्चर (Ring 3):** [`docs/JINN_WALLET_ARCHITECTURE.md`](docs/JINN_WALLET_ARCHITECTURE.md)
+- **आर्थिक प्रस्ताव और व्हाइटपेपर:** [`JINN_TOKEN_PROPOSAL.md`](docs/archive/JINN_TOKEN_PROPOSAL.md)
+- **EVM सत्यापन और चरण II ऑडिट रिपोर्ट:** [`docs/JINN_WEB3_PHASE2_AUDIT_REPORT.md`](docs/archive/JINN_WEB3_PHASE2_AUDIT_REPORT.md)
+- **मल्टी-सिग गवर्नेंस और ट्रेजरी विनिर्देश:** [`docs/JINN_OPEN_ECONOMY_GOVERNANCE.md`](docs/archive/JINN_OPEN_ECONOMY_GOVERNANCE.md)
+- **PoUC विनिर्देश (इनाम प्रणाली):** [`docs/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md`](docs/archive/PROOF_OF_USEFUL_CONTRIBUTION_SPEC.md)
+- **वॉलेट आर्किटेक्चर (Ring 3):** [`docs/JINN_WALLET_ARCHITECTURE.md`](docs/archive/JINN_WALLET_ARCHITECTURE.md)
 - **Aladdin Wallet यूआई सोर्स कोड:** [`apps/ola-mundo/src/wallet.rs`](apps/ola-mundo/src/wallet.rs)
 - **यूज़र-स्पेस डेमॉन `jinn-web3d`:** [`tools/jinn-web3/src/daemon.rs`](tools/jinn-web3/src/daemon.rs)
-- **DePIN कंप्यूटेशनल इकोनॉमी (JDA):** [`docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md`](docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md)
-- **स्मार्ट कॉन्ट्रैक्ट्स आंतरिक ऑडिट:** [`docs/SMART_CONTRACTS_AUDIT_REPORT.md`](docs/SMART_CONTRACTS_AUDIT_REPORT.md)
-- **टेस्टनेट डिप्लॉयमेंट गाइड:** [`docs/TESTNET_DEPLOYMENT_GUIDE.md`](docs/TESTNET_DEPLOYMENT_GUIDE.md)
+- **DePIN कंप्यूटेशनल इकोनॉमी (JDA):** [`docs/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md`](docs/archive/JDA_DEPIN_COMPUTATIONAL_ECONOMY.md)
+- **स्मार्ट कॉन्ट्रैक्ट्स आंतरिक ऑडिट:** [`docs/SMART_CONTRACTS_AUDIT_REPORT.md`](docs/archive/SMART_CONTRACTS_AUDIT_REPORT.md)
+- **टेस्टनेट डिप्लॉयमेंट गाइड:** [`docs/TESTNET_DEPLOYMENT_GUIDE.md`](docs/archive/TESTNET_DEPLOYMENT_GUIDE.md)
 
 ---
 

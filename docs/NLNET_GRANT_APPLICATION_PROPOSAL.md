@@ -1,10 +1,14 @@
 # NLnet Foundation / NGI Zero Grant Application Proposal
 
-**Project Title:** Jinn OS & Aladdin Desktop: A Memory-Safe, High-Efficiency Rust Microkernel and Desktop Ecosystem for Digital Sovereignty and E-Waste Reduction  
+**Project Title:** Jinn OS & Modular Architecture: An Experimental Microkernel, Ring 3 Compositor (`Aladdin`), and Heterogeneous Compute Engine (`jhcs-rs`) for Efficient Computing  
 **Target Program:** NGI Zero Core / NGI Zero Entrust (Next Generation Internet)  
-**Applicant:** Geovane Feitosa (Lead Architect & Core Developer)  
-**Repository:** https://github.com/geovane-feitosa/jinn *(Adjust to canonical repository URL)*  
-**Primary License:** Open Source (`GPL-2.0-only` for community / public domain compatibility)  
+**Applicant:** Geovane da Conceição Estanislau (Lead Architect & Core Developer)  
+**Canonical Repositories:**  
+- Microkernel & OS Testbed: https://github.com/GeovaneEstanislau/Jinn_Project  
+- Out-of-Kernel Compositor: https://github.com/GeovaneEstanislau/Aladdin  
+- Portable Heterogeneous Compute Broker: https://github.com/GeovaneEstanislau/jhcs-rs  
+- Technical Observatory: https://jinn-os.dev.br  
+**Primary License:** `GPL-2.0-only` (Jinn OS community license, with optional commercial track under `CLA.md`), `MIT OR Apache-2.0` (`Aladdin`), `Apache-2.0` (`jhcs-rs`)  
 **Requested Funding:** €45,000 EUR  
 **Duration:** 6–8 Months (Milestone-based delivery)  
 
@@ -13,7 +17,7 @@
 ## 1. General Project Information
 
 ### 1.1 Project Abstract (Elevator Pitch — max 120 words)
-Modern computing is trapped in an operating system and browser duopoly dominated by monolithic C/C++ codebases that suffer from systemic memory vulnerabilities and bloated memory footprints, forcing artificial hardware obsolescence. **Jinn OS** is a modern, preemptive, memory-safe microkernel written entirely in Rust (`#![no_std]`, bare-metal x86_64) paired with the **Aladdin Desktop Environment** and native browser engine. By enforcing strict CPU privilege isolation (Ring 0 limited to scheduling and memory paging; drivers, file systems, and network stacks residing in Ring 3) and operating stably within a **64 MiB to 256 MiB RAM envelope**, Jinn delivers sovereign, privacy-preserving, and memory-safe personal computing to billions of legacy and edge devices otherwise destined for landfills.
+Modern systems infrastructure relies heavily on monolithic C/C++ kernels whose driver attack surface and baseline idle overhead push millions of devices toward premature obsolescence. **Jinn** is an experimental, memory-safe `x86_64` Rust (`#![no_std]`) microkernel architecture engineered as a verifiable testbed for efficient, isolated, and heterogeneous computing. Alongside the OS, its modular building blocks—**Zero-Idle event-driven SMP scheduling**, **JAHA 1.2 deterministic memory accounting**, **Aladdin** out-of-kernel Ring 3 compositor (`AladdinSharedRings`), **`HotRouteTable` + 3-layer sovereign DNS/TLS 1.3 networking**, and the portable **`jhcs-rs`** compute broker—are engineered for independent verification, low-resource **64 MiB–256 MiB** execution, and digital sovereignty.
 
 ---
 
@@ -27,12 +31,12 @@ The foundational software layer of the internet—the operating system and brows
 3. **Monopolistic Web Monoculture:** The web browsing engine market has coalesced around a Blink/WebKit monoculture. Independent, privacy-respecting, lightweight engines that can operate securely without multi-gigabyte runtimes or complex multi-process telemetry are virtually non-existent.
 
 ### 2.2 Proposed Solution
-Jinn OS addresses these foundational failures by reimagining personal and edge computing from bare metal:
+Jinn addresses these foundational bottlenecks cleanly from bare metal while preserving modular reuse:
 
-* **True Microkernel Architecture:** Jinn's Ring 0 kernel is strictly minimal (~6,000 lines of verified Rust). It only manages preemptive round-robin thread scheduling, 4-level x86_64 paging (PML4), and synchronous lock-free Inter-Process Communication (IPC).
-* **Complete Ring 3 Driver Isolation:** All device drivers (PS/2, IDE/ATA, PCI, Realtek/Intel NICs), Virtual File Systems (FAT32, Ext2), and network stacks run as unprivileged userspace processes. If a driver crashes or receives malicious malformed input, it fails in user space without triggering a kernel panic and can be hot-restarted by the system supervisor.
-* **JDA (Jinn Directed Acyclic Graph) / IoRing Engine:** An asynchronous, zero-copy I/O subsystem inspired by `io_uring` that pipelines storage and network dataflows with lock-free submission and completion rings, eliminating syscall overhead.
-* **Aladdin Desktop & Browser Engine (JBE):** A native, non-bloated desktop compositor and HTTP/TLS 1.3 browser engine designed to run without floating-point unit (FPU) dependencies and operate with full interactive GUI fidelity inside **64 MiB of physical RAM** (verified on QEMU `-m 64M` with only 44.3 MiB usable RAM).
+* **Minimalist Microkernel Architecture:** Jinn's Ring 0 kernel limits privileges to preemptive SMP per-CPU thread scheduling (`Zero-Idle` event-driven `HLT` gating), 4-level x86_64 PML4 `W^X` paging, `IrqSafeSpinLock` synchronization, unconditional PIC 8259A EOI signaling, and static `.bss` IPC mailboxes.
+* **Complete Ring 3 Driver & Service Isolation:** Hardware drivers (PS/2, ATA/IDE, PCI, Intel E1000, VirtIO-Net), VFS layers (FAT32/Ext2 with `.TMP -> .BAK` transactional safety), the 3-layer DNS resolver + `HotRouteTable`, and the **TLS 1.3** (RFC 8446) / browser stack execute as unprivileged Ring 3 processes.
+* **Aladdin & `AladdinSharedRings`:** An out-of-kernel compositor operating via lock-free zero-copy SPSC shared memory rings (`sdk/aladdin-sdk/`), dirty rectangle compositing, and CPU SIMD frosted glass, validated even within **64 MiB physical RAM** constraints on QEMU (`-m 64M`).
+* **JHCS-RS (`jhcs-rs`):** A standalone Rust heterogeneous compute broker (portable across Linux, Windows, and Jinn Ring 3) that evaluates DAG workloads and selects Scalar CPU, SIMD (`AVX2`/`FMA`), or `wgpu` GPU backends using empirical breakeven cost models.
 
 ---
 
