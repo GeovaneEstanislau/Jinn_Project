@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Computação Heterogênea em Rust (jhcs-rs): Breakeven Scalar vs AVX2/FMA vs GPU wgpu — Jinn</title>
+  <meta name="description"
+    content="Orquestrador heterogêneo Apache-2.0 para host e #![no_std]: dados medidos mostram exatamente quando ficar na CPU Escalar/AVX2 e quando despachar para GPU wgpu.">
+  <link rel="canonical" href="https://jinn-os.dev.br/solucoes/computacao-heterogenea-jhcs.html">
+
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://jinn-os.dev.br/solucoes/computacao-heterogenea-jhcs.html">
+  <meta property="og:title" content="Computação Heterogênea sem Offload Cego: jhcs-rs">
+  <meta property="og:description" content="Breakeven real de 8x8 até 1024x1024 entre CPU Escalar, AVX2/FMA e GTX 1650 wgpu.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/jhcs-breakeven-chart.png">
+
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-slate-950 text-slate-200 antialiased">
+  <nav class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-5xl mx-auto px-5 h-14 flex items-center justify-between text-xs font-mono">
+      <a href="/" class="font-bold text-white flex items-center gap-2">
+        <span class="px-2 py-0.5 rounded bg-purple-950 border border-purple-700 text-purple-300">JHCS-RS</span>
+        <span class="hidden sm:inline text-slate-400">Apache-2.0 • Host + #![no_std]</span>
+      </a>
+      <div class="flex items-center gap-4">
+        <a href="/solucoes/edge-industrial-zero-idle.html" class="text-slate-300 hover:text-cyan-300 hidden md:inline">Edge Zero-Idle</a>
+        <a href="/solucoes/infraestrutura-auditavel-zero-trust.html" class="text-slate-300 hover:text-emerald-300 hidden md:inline">Zero-Trust</a>
+        <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-semibold">Propor Piloto</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="max-w-5xl mx-auto px-5 py-10 space-y-12">
+    <!-- Hero < 30s -->
+    <section class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+      <div class="lg:col-span-7 space-y-4">
+        <span class="inline-block text-xs font-mono px-2.5 py-1 rounded-full bg-purple-950 border border-purple-700 text-purple-300">
+          ORQUESTRAÇÃO HETEROGÊNEA DETERMINÍSTICA • APACHE-2.0
+        </span>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white leading-tight">
+          Pare de pagar 6 ms de PCIe por matrizes que a CPU resolve em 639 ns.
+        </h1>
+        <p class="text-slate-300 text-base leading-relaxed">
+          Enviar micro-lotes às cegas para uma GPU desperdiça latência e energia em staging buffers. O <strong><code>jhcs-rs</code></strong> mede o ponto exato de equilíbrio entre <strong>CPU Escalar</strong>, <strong>AVX2+FMA SIMD</strong> e <strong>GPU <code>wgpu</code></strong>, com núcleo DAG em <code>#![no_std]</code> e zero acoplamento ao kernel.
+        </p>
+        <div class="flex flex-wrap gap-3 pt-1 text-xs font-mono">
+          <a href="#reproduzir" class="px-4 py-2.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold">Rodar Benchmark Agora</a>
+          <a href="/artigos/compute-lab-jhcs-breakeven-escalar-simd-wgpu.html" class="px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-700 hover:border-purple-400 text-slate-200">Relatório Completo</a>
+          <a href="https://github.com/GeovaneEstanislau/jhcs-rs" target="_blank" rel="noopener noreferrer" class="px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-700 hover:border-cyan-400 text-cyan-300">GitHub jhcs-rs</a>
+        </div>
+      </div>
+      <div class="lg:col-span-5 rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
+        <img src="../assets/jhcs-breakeven-chart.png" alt="Breakeven MatMul Scalar vs AVX2/FMA vs wgpu GTX 1650 no jhcs-rs" class="w-full h-auto" />
+        <p class="p-3 text-[11px] font-mono text-slate-400">Medição real em host Windows x86_64 (AVX2+FMA + GTX 1650 via wgpu): 8x8 até 1024x1024.</p>
+      </div>
+    </section>
+
+    <!-- 1. Problema & Evidência -->
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+        <p class="text-xs font-mono text-amber-400">8x8 MATMUL &amp; VECTOR_ADD</p>
+        <p class="text-2xl font-extrabold text-white font-mono">639 ns</p>
+        <p class="text-xs text-slate-300">CPU Escalar direta vence SIMD (<code>1.135 ns</code> E2E) e é <strong>~10.500x mais rápida</strong> que GPU (<code>6,71 ms</code>). Em <code>OP_VECTOR_ADD</code> limitado por RAM, escalar vence até <code>1024^2</code>.</p>
+      </div>
+      <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+        <p class="text-xs font-mono text-cyan-400">16x16 .. 256x256 MATMUL</p>
+        <p class="text-2xl font-extrabold text-white font-mono">14,76 GFLOP/s</p>
+        <p class="text-xs text-slate-300"><code>SimdBackend</code> (<code>AVX2+FMA</code> em <code>#[repr(C, align(64))]</code>) amortiza o <code>ComputeBroker</code> (~1 µs) e domina a faixa intermediária de baixa latência.</p>
+      </div>
+      <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+        <p class="text-xs font-mono text-emerald-400">512x512 .. 1024x1024 MATMUL</p>
+        <p class="text-2xl font-extrabold text-white font-mono">105,55 GFLOP/s</p>
+        <p class="text-xs text-slate-300"><code>wgpu</code> (GTX 1650) cruza em <code>512x512</code> (<code>4,48 ms</code> vs <code>15,57 ms</code> SIMD) e entrega <code>11,4x</code> de ganho ponta a ponta em <code>1024x1024</code> incl. PCIe.</p>
+      </div>
+    </section>
+
+    <!-- 2. Comparação Arquitetural -->
+    <section class="space-y-4">
+      <h2 class="text-xl font-bold text-white">Comparação Arquitetural &amp; Fronteira Honesta</h2>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs font-mono border border-slate-800 bg-slate-900/60">
+          <thead class="bg-slate-900 text-slate-300 border-b border-slate-800">
+            <tr>
+              <th class="p-3">Critério Técnico</th>
+              <th class="p-3">Offload GPU Ingênuo / Stacks C++</th>
+              <th class="p-3 text-purple-300">Abordagem <code>jhcs-rs</code></th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800 text-slate-300">
+            <tr><td class="p-3">Roteamento por Tamanho</td><td class="p-3">Envia tudo à GPU ou exige tuning manual opaco</td><td class="p-3 text-emerald-300">Política baseada em <em>breakeven</em> medido Escalar/SIMD/wgpu</td></tr>
+            <tr><td class="p-3">Portabilidade Bare-Metal</td><td class="p-3">Exige libc/CUDA/ROCm no host</td><td class="p-3 text-emerald-300"><code>jhcs-core</code> + <code>simd</code> compilam <code>#![no_std]</code> (<code>x86_64-unknown-none</code>)</td></tr>
+            <tr><td class="p-3">Licenciamento</td><td class="p-3">SDKs proprietários ou copyleft no app</td><td class="p-3 text-emerald-300"><code>Apache-2.0</code> (subcrates <code>MIT OR Apache-2.0</code>), pronto para adoção host</td></tr>
+            <tr><td class="p-3">Limitações Abertas (Honestidade)</td><td class="p-3">—</td><td class="p-3 text-amber-300"><code>wgpu</code> roda só em host <code>std</code> (sem driver GPU bare-metal no Jinn); SIMD ainda sem L3 blocking &gt;512x512</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 3. Como Testar / Piloto -->
+    <section id="reproduzir" class="p-6 rounded-xl bg-slate-900 border border-purple-700/40 space-y-4">
+      <h2 class="text-xl font-bold text-white">Reproduza em 60 segundos ou proponha um workload piloto</h2>
+      <pre class="p-4 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono text-cyan-300 overflow-x-auto">git clone https://github.com/GeovaneEstanislau/jhcs-rs
+cd jhcs-rs
+cargo run --release -p benchmark-breakeven</pre>
+      <div class="flex flex-wrap gap-3 text-xs font-mono">
+        <a href="/#win-contact" class="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold">Solicitar Piloto / Benchmark Conjunto</a>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/ENGINEERING_STATUS_AND_LIMITATIONS.md" target="_blank" rel="noopener noreferrer" class="px-4 py-2 rounded-lg bg-slate-950 border border-slate-700 text-slate-300 hover:border-amber-400">Ver Limitações (Tabela B)</a>
+      </div>
+    </section>
+  </main>
+</body>
+
+</html>

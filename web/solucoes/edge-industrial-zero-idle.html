@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Edge Industrial, IHMs Zero-GPU &amp; Eficiência Zero-Idle — Jinn OS &amp; Aladdin</title>
+  <meta name="description"
+    content="Runtime experimental x86_64 em Rust #![no_std] para automação, gateways fanless, terminais PDV e laboratórios: Zero-Idle HLT em SMP, AladdinSharedRings 4 KiB SPSC, HotRouteTable 64B e operação em 64-256 MiB RAM.">
+  <link rel="canonical" href="https://jinn-os.dev.br/solucoes/edge-industrial-zero-idle.html">
+
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://jinn-os.dev.br/solucoes/edge-industrial-zero-idle.html">
+  <meta property="og:title" content="Edge Industrial Zero-Idle &amp; IHMs Zero-GPU (Jinn + Aladdin)">
+  <meta property="og:description" content="0.00% CPU ociosa nos APs em QEMU (-smp 4), Ring 3 SharedRings 4 KiB e cache de rotas 64B sem timers em background.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/assets-audit-jaha-smp-rings.png">
+
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-slate-950 text-slate-200 antialiased">
+  <nav class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-5xl mx-auto px-5 h-14 flex items-center justify-between text-xs font-mono">
+      <a href="/" class="font-bold text-white flex items-center gap-2">
+        <span class="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-700 text-emerald-300">EDGE ZERO-IDLE</span>
+        <span class="hidden sm:inline text-slate-400">Jinn OS + Compositor Aladdin (MIT/Apache-2.0)</span>
+      </a>
+      <div class="flex items-center gap-4">
+        <a href="/solucoes/computacao-heterogenea-jhcs.html" class="text-slate-300 hover:text-purple-300 hidden md:inline">Compute JHCS</a>
+        <a href="/solucoes/infraestrutura-auditavel-zero-trust.html" class="text-slate-300 hover:text-cyan-300 hidden md:inline">Zero-Trust</a>
+        <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold">Bancada Piloto</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="max-w-5xl mx-auto px-5 py-10 space-y-12">
+    <section class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+      <div class="lg:col-span-7 space-y-4">
+        <span class="inline-block text-xs font-mono px-2.5 py-1 rounded-full bg-emerald-950 border border-emerald-700 text-emerald-300">
+          EDGE COMPUTING • AUTOMATION IHMs • ZERO-IDLE ARCHITECTURE
+        </span>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white leading-tight">
+          Runtime x86 enxuto (64–256 MiB) com Zero-Idle orientado a eventos e IHM sem GPU.
+        </h1>
+        <p class="text-slate-300 text-base leading-relaxed">
+          Controladores <em>fanless</em>, gateways de telemetria e terminais dedicados sofrem com bloat de sistemas convencionais e desperdício de ciclos em repouso. O <strong>Jinn OS</strong> combina bloqueio real <code>TaskState::Blocked + HLT</code>, compositor Ring 3 <strong>Aladdin</strong> sem GPU via <code>AladdinSharedRings</code> (<code>4 KiB</code>) e <code>HotRouteTable</code> (<code>64 B</code>) sem timers periódicos.
+        </p>
+        <div class="flex flex-wrap gap-3 pt-1 text-xs font-mono">
+          <a href="#piloto" class="px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold">Testar no QEMU / Propor Placa</a>
+          <a href="/artigos/auditoria-ativos-jinn-arquitetura-eficiencia-isolamento.html" class="px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-700 hover:border-emerald-400 text-slate-200">Auditoria dos 5 Pilares</a>
+          <a href="https://github.com/GeovaneEstanislau/Aladdin" target="_blank" rel="noopener noreferrer" class="px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-700 hover:border-cyan-400 text-cyan-300">Aladdin MIT/Apache-2.0</a>
+        </div>
+      </div>
+      <div class="lg:col-span-5 rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
+        <img src="../assets/assets-audit-jaha-smp-rings.png" alt="Monitor JAHA SMP Zero-Idle HLT e Terminal Ring 3 em 29 MB RAM no QEMU" class="w-full h-auto" />
+        <p class="p-3 text-[11px] font-mono text-slate-400">Captura real em QEMU (-smp 4): 29 MB de RAM em execução, Zero-Idle HLT e AladdinSharedRings ativos.</p>
+      </div>
+    </section>
+
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+        <p class="text-xs font-mono text-emerald-400">EFICIÊNCIA SMP EM REPOUSO</p>
+        <p class="text-2xl font-extrabold text-white font-mono">100.00% HLT</p>
+        <p class="text-xs text-slate-300">Nos testes E2E (<code>test_hot_routes_e2e.py</code>, janela idle 4s), <code>cpu1..cpu3</code> mantiveram <code>d_task = 0</code> e <code>idle = 100.00%</code> sem varredura em background.</p>
+      </div>
+      <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+        <p class="text-xs font-mono text-cyan-400">IPC GRÁFICO ZERO-COPY</p>
+        <p class="text-2xl font-extrabold text-white font-mono">4.096 B SPSC</p>
+        <p class="text-xs text-slate-300"><code>AladdinSharedRings</code> isola cabeçalhos RX/TX em cache lines de <code>64 B</code> com acordo sob demanda via bit <code>CONSUMER_SLEEPING</code> e Syscall <code>90</code>.</p>
+      </div>
+      <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+        <p class="text-xs font-mono text-amber-400">REDE DETERMINÍSTICA</p>
+        <p class="text-2xl font-extrabold text-white font-mono">ARP=0 DNS=0</p>
+        <p class="text-xs text-slate-300"><code>HotRouteTable</code> em <code>.bss</code> + <code>/disk/hot_routes.db</code> unifica DNS e gateway MAC sem pacotes redundantes após cold reboot (e1000 &amp; VirtIO).</p>
+      </div>
+    </section>
+
+    <section class="space-y-4">
+      <h2 class="text-xl font-bold text-white">Onde Resolve Dores Fora do Radar &amp; Fronteira Honesta</h2>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs font-mono border border-slate-800 bg-slate-900/60">
+          <thead class="bg-slate-900 text-slate-300 border-b border-slate-800">
+            <tr>
+              <th class="p-3">Segmento</th>
+              <th class="p-3">Dor Operacional</th>
+              <th class="p-3 text-emerald-300">Mecanismo Jinn / Aladdin</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800 text-slate-300">
+            <tr><td class="p-3">PLCs, IHMs SCADA &amp; PDVs</td><td class="p-3">Interfaces Electron vazam RAM e corrompem config em queda de energia</td><td class="p-3">Compositor SIMD Zero-GPU em Ring 3 + persistência <code>.TMP → .BAK</code> em FAT32</td></tr>
+            <tr><td class="p-3">Gateways IoT &amp; Telemetria</td><td class="p-3">Timeout genérico sem saber se falhou link, ARP, DNS ou TLS</td><td class="p-3">Observabilidade Syscall <code>88/97</code> + cache <code>HotRouteTable</code> com TTL preguiçoso</td></tr>
+            <tr><td class="p-3">Limitação Atual (Tabela B)</td><td class="p-3">Homologação física / silício real</td><td class="p-3 text-amber-300">Escalonador ainda usa PIT 100 Hz (não LAPIC one-shot) e medições atuais são em QEMU TCG (sem wattímetro físico ainda)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="piloto" class="p-6 rounded-xl bg-slate-900 border border-emerald-700/40 space-y-4">
+      <h2 class="text-xl font-bold text-white">Indústria, Academia &amp; Parcerias Regionais (6ª Trilha)</h2>
+      <p class="text-sm text-slate-300">
+        Convidamos integradores de automação, fabricantes de hardware <em>fanless</em> e grupos universitários a validar esta arquitetura em bancadas físicas (wattímetro / RAPL / Modbus-CAN em Ring 3).
+      </p>
+      <div class="flex flex-wrap gap-3 text-xs font-mono">
+        <a href="/#win-contact" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold">Conversar Sobre Bancada Física</a>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/strategy/EXPANDED_ECOSYSTEM_RADAR.md" target="_blank" rel="noopener noreferrer" class="px-4 py-2 rounded-lg bg-slate-950 border border-slate-700 text-slate-300 hover:border-cyan-400">Ver Radar Expandido</a>
+      </div>
+    </section>
+  </main>
+</body>
+
+</html>

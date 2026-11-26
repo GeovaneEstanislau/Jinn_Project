@@ -1273,6 +1273,18 @@ def build_sitemap(articles):
     ET.SubElement(url_artigos, "{http://www.sitemaps.org/schemas/sitemap/0.9}changefreq").text = "daily"
     ET.SubElement(url_artigos, "{http://www.sitemaps.org/schemas/sitemap/0.9}priority").text = "0.9"
 
+    # Landing Pages Técnicas (/solucoes/)
+    sol_count = 0
+    sol_dir = WEB_DIR / "solucoes"
+    if sol_dir.exists():
+        for sol_file in sorted(sol_dir.glob("*.html")):
+            url_sol = ET.SubElement(urlset, "{http://www.sitemaps.org/schemas/sitemap/0.9}url")
+            ET.SubElement(url_sol, "{http://www.sitemaps.org/schemas/sitemap/0.9}loc").text = f"{SITE_URL}/solucoes/{sol_file.name}"
+            ET.SubElement(url_sol, "{http://www.sitemaps.org/schemas/sitemap/0.9}lastmod").text = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            ET.SubElement(url_sol, "{http://www.sitemaps.org/schemas/sitemap/0.9}changefreq").text = "weekly"
+            ET.SubElement(url_sol, "{http://www.sitemaps.org/schemas/sitemap/0.9}priority").text = "0.9"
+            sol_count += 1
+
     # Cada Artigo Técnico
     for art in articles:
         url_art = ET.SubElement(urlset, "{http://www.sitemaps.org/schemas/sitemap/0.9}url")
@@ -1291,7 +1303,7 @@ def build_sitemap(articles):
     tree = ET.ElementTree(urlset)
     ET.indent(tree, space="  ")
     tree.write(SITEMAP_PATH, encoding="utf-8", xml_declaration=True)
-    print(f"  [PASS] {len(articles) + 2} URLs catalogadas com sucesso em sitemap.xml!")
+    print(f"  [PASS] {len(articles) + 2 + sol_count} URLs catalogadas com sucesso em sitemap.xml!")
 
 
 def main():

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Infraestrutura Auditável, Drivers em Ring 3 &amp; Isolamento Zero-Trust — Jinn OS</title>
+  <meta name="description"
+    content="Microkernel x86_64 Rust #![no_std] com 0 dependências crates.io no núcleo, enforçamento PML4 W^X, validação -EFAULT de syscalls, contabilidade física JAHA 1.2 (0B discrepância) e verificação SHA-256 .jpkg.">
+  <link rel="canonical" href="https://jinn-os.dev.br/solucoes/infraestrutura-auditavel-zero-trust.html">
+
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://jinn-os.dev.br/solucoes/infraestrutura-auditavel-zero-trust.html">
+  <meta property="og:title" content="Infraestrutura Auditável Zero-Trust: Microkernel Rust sem crates.io no Núcleo">
+  <meta property="og:description" content="PML4 W^X, JAHA 1.2 sem overcommit (0B discrepância), drivers/compositor em Ring 3 e observabilidade Syscall 88/97.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/browser-net-error-telemetry-clean.png">
+
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-slate-950 text-slate-200 antialiased">
+  <nav class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-5xl mx-auto px-5 h-14 flex items-center justify-between text-xs font-mono">
+      <a href="/" class="font-bold text-white flex items-center gap-2">
+        <span class="px-2 py-0.5 rounded bg-cyan-950 border border-cyan-700 text-cyan-300">ZERO-TRUST &amp; AUDIT</span>
+        <span class="hidden sm:inline text-slate-400">0 crates.io no Kernel • GPL-2.0-only / Commercial</span>
+      </a>
+      <div class="flex items-center gap-4">
+        <a href="/solucoes/computacao-heterogenea-jhcs.html" class="text-slate-300 hover:text-purple-300 hidden md:inline">Compute JHCS</a>
+        <a href="/solucoes/edge-industrial-zero-idle.html" class="text-slate-300 hover:text-emerald-300 hidden md:inline">Edge Zero-Idle</a>
+        <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold">Auditar / Contato</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="max-w-5xl mx-auto px-5 py-10 space-y-12">
+    <section class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+      <div class="lg:col-span-7 space-y-4">
+        <span class="inline-block text-xs font-mono px-2.5 py-1 rounded-full bg-cyan-950 border border-cyan-700 text-cyan-300">
+          AUDITABLE INFRASTRUCTURE • RING 3 ISOLATION • JAHA 1.2
+        </span>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white leading-tight">
+          Núcleo auditável com zero crates externas, <code>W^X</code> estrito e observabilidade na fronteira de syscall.
+        </h1>
+        <p class="text-slate-300 text-base leading-relaxed">
+          Infraestruturas críticas e órgãos públicos não conseguem auditar dezenas de milhões de linhas nem aceitar <em>OOM kills</em> aleatórios. O <strong>Jinn OS</strong> separa compositor, navegador e daemons no espaço de usuário (<code>Ring 3</code>), impõe <code>NO_EXEC</code>/<code>W^X</code> em PML4, reconcilia cada byte físico via <strong>JAHA 1.2</strong> e valida pacotes <code>.jpkg</code> com SHA-256 antes de executar.
+        </p>
+        <div class="flex flex-wrap gap-3 pt-1 text-xs font-mono">
+          <a href="#auditoria" class="px-4 py-2.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold">Inspecionar Invariantes</a>
+          <a href="/artigos/network-failure-observability-kernel-userspace-jinn-os.html" class="px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-700 hover:border-cyan-400 text-slate-200">Observabilidade Ring 3↔0</a>
+          <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/STRATEGY_IP_AND_LICENSING.md" target="_blank" rel="noopener noreferrer" class="px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-700 hover:border-emerald-400 text-emerald-300">Matriz de IP &amp; Licenças</a>
+        </div>
+      </div>
+      <div class="lg:col-span-5 rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
+        <img src="../assets/browser-net-error-telemetry-clean.png" alt="Diagnóstico estruturado na fronteira kernel-usuário no Jinn Browser" class="w-full h-auto" />
+        <p class="p-3 text-[11px] font-mono text-slate-400">Observabilidade sob demanda via Syscalls 88/97 + contenção em Ring 3 preservando integridade do kernel.</p>
+      </div>
+    </section>
+
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+        <p class="text-xs font-mono text-emerald-400">CONTABILIDADE JAHA 1.2</p>
+        <p class="text-2xl font-extrabold text-white font-mono">0 B Discrepancy</p>
+        <p class="text-xs text-slate-300">Reconciliação no-overcommit verificada em <code>255.090.688 B</code> utilizáveis por <code>test_jaha_12_integrity.py</code> (Kernel + Services + Compositor + Free).</p>
+      </div>
+      <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+        <p class="text-xs font-mono text-cyan-400">FRONTEIRA DE MEMÓRIA</p>
+        <p class="text-2xl font-extrabold text-white font-mono">W^X + -EFAULT</p>
+        <p class="text-xs text-slate-300"><code>src/elf.rs</code> bloqueia páginas graváveis+executáveis; <code>validate_user_buffer</code> valida cada página no PML4 ativo em toda syscall com ponteiro.</p>
+      </div>
+      <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+        <p class="text-xs font-mono text-amber-400">SUPPLY-CHAIN DE PACOTES</p>
+        <p class="text-2xl font-extrabold text-white font-mono">SHA-256 .jpkg</p>
+        <p class="text-xs text-slate-300">Contêineres binários offline verificados em Ring 3 sem <code>std</code> (<code>verify_and_extract_elf</code> + teste <code>52/52</code> no Aladdin) antes do carregamento ELF.</p>
+      </div>
+    </section>
+
+    <section class="space-y-4">
+      <h2 class="text-xl font-bold text-white">Transparência de Auditoria (O que já existe vs. Pendente)</h2>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs font-mono border border-slate-800 bg-slate-900/60">
+          <thead class="bg-slate-900 text-slate-300 border-b border-slate-800">
+            <tr>
+              <th class="p-3">Domínio de Segurança</th>
+              <th class="p-3 text-emerald-300">Implementado &amp; Testado</th>
+              <th class="p-3 text-amber-300">Lacuna Declarada (Roadmap)</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800 text-slate-300">
+            <tr><td class="p-3">Dependências &amp; Kernel</td><td class="p-3">0 crates <code>crates.io</code> no kernel; <code>W^X</code> e firewall SPI <code>JinnWall</code></td><td class="p-3">Falta IOMMU (<code>VT-d/AMD-Vi</code>) para drivers DMA e isolamento KPTI</td></tr>
+            <tr><td class="p-3">Criptografia TLS 1.3</td><td class="p-3">AEAD ChaCha20-Poly1305 &amp; AES-128-GCM no Ring 3; X.509/PKI DER pronto em Ring 0</td><td class="p-3">Conectar X.509/SAN/<code>CertificateVerify</code> no cliente Ring 3 + badge de downgrade</td></tr>
+            <tr><td class="p-3">Pacotes &amp; Governança</td><td class="p-3">Integridade SHA-256 `.jpkg`, CLA &amp; check SPDX em CI</td><td class="p-3">Assinatura assimétrica Ed25519 de publicadores nos pacotes `.jpkg`</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="auditoria" class="p-6 rounded-xl bg-slate-900 border border-cyan-700/40 space-y-4">
+      <h2 class="text-xl font-bold text-white">Para Pesquisadores, Fundações &amp; Setor Público Responsável</h2>
+      <p class="text-sm text-slate-300">
+        Código integralmente inspecionável com modelo de licenciamento limpo (kernel sob <code>GPL-2.0-only OR Jinn-Commercial-1.0</code>, <code>Aladdin</code> sob <code>MIT OR Apache-2.0</code>, <code>jhcs-rs</code> sob <code>Apache-2.0</code>). Proibido uso para vigilância invasiva.
+      </p>
+      <div class="flex flex-wrap gap-3 text-xs font-mono">
+        <a href="/#win-contact" class="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold">Propor Auditoria / Grant / Pesquisa</a>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/NLNET_GRANT_APPLICATION_PROPOSAL.md" target="_blank" rel="noopener noreferrer" class="px-4 py-2 rounded-lg bg-slate-950 border border-slate-700 text-slate-300 hover:border-emerald-400">Proposta Técnica (NLnet)</a>
+      </div>
+    </section>
+  </main>
+</body>
+
+</html>

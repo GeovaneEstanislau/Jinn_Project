@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Arquitetura de Captura Técnica B2B/Deep Tech: Google Ads de Alta Precisão, Landing Pages /solucoes e Playbook Social no Jinn OS — Jinn OS</title>
+  <meta name="description"
+    content="Como estruturamos aquisição orgânica e paga de baixo atrito para computação heterogênea (jhcs-rs), edge industrial Zero-Idle e infraestrutura auditável Zero-Trust: 4 grupos de intenção exata/frase, negativas rigorosas, 3 landing pages (<30s) e playbook para LinkedIn, X, Hacker News e Reddit.">
+  <link rel="canonical"
+    href="https://jinn-os.dev.br/artigos/arquitetura-captura-tecnica-ecossistemas-edge-hpc-jinn.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url"
+    content="https://jinn-os.dev.br/artigos/arquitetura-captura-tecnica-ecossistemas-edge-hpc-jinn.html">
+  <meta property="og:title"
+    content="Arquitetura de Captura Técnica B2B/Deep Tech, Landing Pages /solucoes e Kit Social Jinn OS">
+  <meta property="og:description"
+    content="Funil verificável do clique técnico até o benchmark reproduzível e proposta de piloto: Google Ads (4 grupos + negativas), 3 páginas /solucoes e roteamento /#win-contact.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/jinn-capture-architecture-funnel.png">
+
+  <!-- Artigo Meta (Indexação Google News / RSS / Feed) -->
+  <meta name="article:tag" content="ARCHITECTURE, COMPUTE LAB, EDGE, ZERO-IDLE, SECURITY LAB">
+  <meta name="article:published_time" content="2026-11-26T18:55:00-03:00">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Jinn Engineering Observatory: Schema.org TechArticle (Auto-Generated) -->
+  <script type="application/ld+json" id="jinn-techarticle-jsonld">
+{
+  "@context": "https://schema.org",
+  "@type": [
+    "TechArticle",
+    "NewsArticle"
+  ],
+  "headline": "Arquitetura de Captura Técnica B2B/Deep Tech: Google Ads de Alta Precisão, Landing Pages /solucoes e Playbook Social no Jinn OS",
+  "description": "Como estruturamos aquisição orgânica e paga de baixo atrito para computação heterogênea (jhcs-rs), edge industrial Zero-Idle e infraestrutura auditável Zero-Trust: 4 grupos de intenção exata/frase, negativas rigorosas, 3 landing pages (<30s) e playbook para LinkedIn, X, Hacker News e Reddit.",
+  "image": [
+    "https://jinn-os.dev.br/assets/jinn-capture-architecture-funnel.png"
+  ],
+  "datePublished": "2026-11-26T18:55:00-03:00",
+  "dateModified": "2026-11-26T18:55:00-03:00",
+  "inLanguage": "pt-BR",
+  "articleSection": [
+    "Architecture & RFCs",
+    "Efficiency Lab"
+  ],
+  "author": {
+    "@type": "Person",
+    "name": "Geovane da Conceição Estanislau",
+    "url": "https://github.com/GeovaneEstanislau"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Jinn Engineering Observatory",
+    "url": "https://jinn-os.dev.br/",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://jinn-os.dev.br/assets/wallpaper.jpg"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://jinn-os.dev.br/artigos/arquitetura-captura-tecnica-ecossistemas-edge-hpc-jinn.html"
+  },
+  "about": [
+    {
+      "@type": "Thing",
+      "name": "deterministic scheduling"
+    },
+    {
+      "@type": "Thing",
+      "name": "power reduction"
+    },
+    {
+      "@type": "Thing",
+      "name": "energy-proportional computing"
+    },
+    {
+      "@type": "Thing",
+      "name": "SMP per-CPU accounting"
+    },
+    {
+      "@type": "Thing",
+      "name": "lazy TTL cache evaluation"
+    }
+  ],
+  "mentions": [
+    {
+      "@type": "Organization",
+      "name": "Arm"
+    },
+    {
+      "@type": "Organization",
+      "name": "Qualcomm"
+    },
+    {
+      "@type": "Organization",
+      "name": "LF Edge"
+    },
+    {
+      "@type": "Thing",
+      "name": "Industrial Automation"
+    },
+    {
+      "@type": "Thing",
+      "name": "Green Public Infrastructure"
+    }
+  ],
+  "keywords": "Jinn OS, Microkernel, Rust no_std, x86_64, ARCHITECTURE, COMPUTE LAB, EDGE, ZERO-IDLE, SECURITY LAB, HLT, SMP, APIC Timer Gating, Per-CPU Accounting, Lazy TTL, Preemptive Scheduler, Energy-Proportional Runtime"
+}
+  </script>
+  <!-- /Jinn Engineering Observatory: Schema.org TechArticle -->
+</head>
+
+<body class="bg-slate-950 text-slate-200 min-h-screen antialiased selection:bg-cyan-500/30">
+  <header class="border-b border-slate-800 bg-slate-900/70 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-4xl mx-auto px-6 h-14 flex items-center justify-between">
+      <a href="/artigos/?lab=architecture-rfcs" class="flex items-center gap-2 hover:text-cyan-400 transition-colors text-xs font-mono">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span>Observatory • Captura &amp; Ecossistemas</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="/feed.xml" target="_blank" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS</span>
+        </a>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="text-cyan-300 hover:text-white">Jinn_Project GitHub</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-6 py-10 space-y-8">
+    <article class="prose prose-invert prose-slate max-w-none space-y-6">
+      <div class="space-y-3 border-b border-slate-800 pb-6">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400">
+          <span class="bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 rounded-full">TECHNICAL ACQUISITION</span>
+          <span class="bg-purple-950 border border-purple-800 text-purple-300 px-2.5 py-0.5 rounded-full">EDGE • HPC • ZERO-TRUST</span>
+          <span class="text-slate-500">•</span>
+          <time datetime="2026-11-26">26 Nov 2026</time>
+          <span class="text-slate-500">•</span>
+          <span class="text-slate-400">Geovane da Conceição Estanislau</span>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white leading-tight">
+          Arquitetura de Captura Técnica B2B/Deep Tech: Google Ads de Alta Precisão, Landing Pages <code>/solucoes/</code> e Kit Social
+        </h1>
+        <p class="text-base sm:text-lg text-slate-300 leading-relaxed">
+          Visibilidade internacional em engenharia não nasce de anúncios amplos nem de slogans genéricos. Projetamos uma arquitetura enxuta que conecta buscas técnicas exatas (Google Ads <code>AW-884426711</code> e comunidades como Hacker News, Reddit <code>r/rust</code>/<code>r/osdev</code>, X e LinkedIn) diretamente a páginas de diagnóstico rápido (<code>&lt; 30s</code>) ancoradas em código reproduzível, métricas reais e transparência da <strong>Tabela B</strong>.
+        </p>
+      </div>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">1. Diagnóstico do Problema &amp; Decisões de Engenharia de Captura</h2>
+        <ul class="list-disc list-inside space-y-2 text-sm text-slate-300 leading-relaxed">
+          <li>
+            <strong>Desperdício em palavras amplas e portais genéricos:</strong> campanhas de tecnologia sem filtro exato e negativas acabam consumidas por cliques de suporte doméstico, jogos, downloads ou vagas de emprego. Para evitar isso, <code>docs/strategy/GOOGLE_ADS_INTENT_MATRIX.md</code> restringe todos os <strong>4 Grupos de Anúncios</strong> a correspondência <strong>Exata (<code>[...]</code>) e de Frase (<code>"..."</code>)</strong>, com <strong>24 títulos/descrições</strong> validados programaticamente dentro dos limites de 30 e 90 caracteres, URLs com UTM padronizado e uma lista mestra de negativas bloqueando tráfego não-técnico.
+          </li>
+          <li>
+            <strong>Fricção de interpretação para visitantes técnicos:</strong> enviar um engenheiro de performance ou automação direto para uma landing institucional exige minutos para descobrir o que já funciona. Cada página em <code>web/solucoes/*.html</code> responde em menos de 30 segundos: <em>Qual dor resolve → Métrica verificada → Comparação arquitetural + Tabela B → Comando CLI / canal de piloto</em>.
+          </li>
+          <li>
+            <strong>Indexação e deep-link de contato seguro:</strong> atualizamos <code>web/build_feed.py</code> para incluir automaticamente <code>web/solucoes/*.html</code> no <code>sitemap.xml</code> e validamos o deep-link <code>/#win-contact</code> em <code>web/app.js</code> (abrindo o formulário protegido por RLS no Supabase). Em <code>docs/strategy/SOCIAL_SYNDICATION_PLAYBOOK.md</code>, criamos templates sem tom promocional em Português e Inglês voltados à cultura de <code>r/osdev</code>, <code>r/rust</code>, <em>Show HN</em>, X e LinkedIn.
+          </li>
+        </ul>
+      </section>
+
+      <section class="space-y-5">
+        <h2 class="text-2xl font-bold text-white">2. Evidências Visuais Reais da Arquitetura e das 3 Landing Pages</h2>
+        <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80 not-prose">
+          <img src="../assets/jinn-capture-architecture-funnel.png" alt="Diagrama da arquitetura de captura B2B/Deep Tech Jinn OS com 4 grupos Google Ads, 3 landing pages e saída de piloto" class="w-full h-auto" />
+          <figcaption class="p-3 text-xs text-slate-400 font-mono">
+            Figura 1: Arquitetura completa do funil de captura (4 Grupos de Intenção Exata/Frase + Negativas + Social Playbook → 3 Landing Pages rápidas em <code>/solucoes/</code> → Reprodução de código, Google News e canal RLS <code>/#win-contact</code>).
+          </figcaption>
+        </figure>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 not-prose">
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/landing-jhcs-heterogeneous-compute.png" alt="Screenshot renderizado da landing page Computação Heterogênea jhcs-rs" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 2: <code>/solucoes/computacao-heterogenea-jhcs.html</code> destacando breakeven real Escalar (`639 ns`), AVX2 (`14,76 GF/s`) e <code>wgpu</code> (`105,55 GF/s`).
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/landing-edge-zero-idle.png" alt="Screenshot renderizado da landing page Edge Industrial Zero-Idle" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 3: <code>/solucoes/edge-industrial-zero-idle.html</code> com evidências QEMU (`100.00% HLT` em APs, <code>4096 B</code> SPSC, <code>ARP=0 DNS=0</code>) e Radar Regional.
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/landing-zero-trust-audit.png" alt="Screenshot renderizado da landing page Infraestrutura Auditável Zero-Trust" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 4: <code>/solucoes/infraestrutura-auditavel-zero-trust.html</code> com invariante JAHA 1.2 (`0 B discrepancy`), <code>W^X</code> e verificação <code>.jpkg SHA-256</code>.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">3. Aplicabilidade Prática por Cenário</h2>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-emerald-300 mb-1">Usos Industriais (Edge Computing, Automação &amp; Hardware Fanless)</h3>
+            <p>O Grupo B e a página <code>edge-industrial-zero-idle.html</code> direcionam especificamente engenheiros de PLCs, IHMs zero-GPU e gateways <em>fanless</em> para testes verificáveis em hardware x86 de <code>64–256 MiB</code>, sem misturar buscas industriais com software consumidor.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-cyan-300 mb-1">Usos Domésticos (Eficiência, Navegação Isolada &amp; Reuso Sustentável)</h3>
+            <p>Embora o Google Ads bloqueie tráfego doméstico genérico para preservar orçamento, a trilha orgânica e os artigos do Observatory demonstram como o compositor Ring 3 <code>Aladdin</code> e o navegador leve estendem a vida útil de hardware antigo sem telemetria oculta.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-purple-300 mb-1">Usos em Servidores (Densidade, Zero-Trust &amp; Processamento Heterogêneo JHCS)</h3>
+            <p>Os Grupos A e C conectam arquitetos de backend/HPC e segurança ao crate <code>Apache-2.0</code> <code>jhcs-rs</code> (para evitar gargalos de despacho em micro-lotes GPU) e às provas de isolamento <code>W^X</code>/JAHA 1.2/<code>0 crates.io</code> no microkernel.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-3 border-t border-slate-800 pt-6">
+        <h2 class="text-xl font-bold text-white">4. Melhorias, Métricas Futuras &amp; Limitações</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          As páginas estáticas em <code>/solucoes/</code> dependem atualmente do carregamento de Tailwind CDN em rede aberta e ainda exigem acompanhamento semanal real dos termos de pesquisa no painel Google Ads (após ativação paga) para calibrar lances CPC e registrar eventos customizados de conversão por clique em <code>/#win-contact</code> e cópia do comando <code>cargo run --release -p benchmark-breakeven</code>.
+        </p>
+      </section>
+
+            <!-- Jinn Ecosystem & Open Collaboration Block (Auto-Generated) -->
+      <section aria-labelledby="ecosystems-collaboration-heading" class="not-prose my-10 p-6 rounded-xl bg-slate-900/75 border border-slate-800 space-y-5">
+        <div class="space-y-2">
+          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Engineering Observatory • Open Collaboration</p>
+          <h3 id="ecosystems-collaboration-heading" class="text-lg sm:text-xl font-bold text-white">
+            Applicable Ecosystems &amp; Open Collaboration
+          </h3>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Conexões arquiteturais deste estudo com domínios industriais, pesquisa científica e infraestrutura auditável:
+          </p>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <a href="/artigos/?lab=architecture-rfcs" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400"><span>Architecture &amp; RFCs</span></a>
+          <a href="/artigos/?lab=efficiency-lab" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400"><span>Efficiency Lab</span></a>
+          <a href="/artigos/?eco=zero-idle-efficiency" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400"><span>Zero-Idle &amp; SMP</span><span class="opacity-70">&bull; Energy-Proportional Runtime, SMP Accounting &amp; Low-Overhead Scheduling</span></a>
+        </div>
+
+        <div class="pt-1">
+          <div class="text-[11px] font-mono text-slate-400 mb-2">Ecossistemas de referência pertinentes (Nível B contextual):</div>
+          <div class="flex flex-wrap gap-1.5">
+            <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Arm</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Qualcomm</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">LF Edge</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Industrial Automation</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Green Public Infrastructure</span>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-emerald-300 font-mono">
+            Chamada Aberta: Indústria Local, Academia &amp; Setor Público Eticamente Responsável
+          </h4>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Convidamos <strong>empresas regionais de automação industrial e integradores</strong>, <strong>universidades e grupos de pesquisa em sistemas operacionais</strong> e <strong>projetos públicos/governamentais eticamente responsáveis</strong> (com transparência e código auditável) a reproduzirem estes experimentos em bancada física, propor <em>workloads</em> comparativos ou avaliar pilotos com o <strong>Jinn OS</strong> e o <strong>JHCS</strong>.
+          </p>
+          <div class="flex flex-wrap gap-2.5 text-xs font-mono pt-1">
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-cyan-400 text-slate-200 hover:text-cyan-300 transition-colors">
+              GitHub: Jinn_Project
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/jhcs-rs" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-purple-400 text-slate-200 hover:text-purple-300 transition-colors">
+              GitHub: jhcs-rs
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/ENGINEERING_STATUS_AND_LIMITATIONS.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-amber-400 text-slate-200 hover:text-amber-300 transition-colors">
+              Fronteira Honesta &amp; Evidências
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/strategy/OPPORTUNITY_RADAR_50.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
+              Radar &amp; 6ª Trilha Aberta
+            </a>
+            <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-cyan-950/90 border border-cyan-600/70 hover:bg-cyan-900 text-cyan-200 transition-colors">
+              Contato Técnico &amp; Pilotos
+            </a>
+          </div>
+        </div>
+      </section>
+      <!-- /Jinn Ecosystem & Open Collaboration Block -->
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn Engineering Observatory • Acquisition &amp; Solutions • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/solucoes/computacao-heterogenea-jhcs.html" class="text-purple-400 hover:underline">Soluções JHCS</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-slate-300 hover:text-white">Portal Principal</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>

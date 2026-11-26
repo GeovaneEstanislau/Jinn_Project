@@ -7,16 +7,16 @@
     <language>pt-br</language>
     <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
     <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
-        <item>
-      <title>audit Jinn/Aladdin/jhcs-rs assets, expanded out-of-radar map and Google News report</title>
-      <link>https://jinn-os.dev.br</link>
-      <guid isPermaLink="false">jinn-os-audit-jinn-aladdin-jhcs-rs-assets--expanded-out-of-radar-map-and-google-news-report-202611262126</guid>
-      <pubDate>Thu, 26 Nov 2026 21:26:08 +0000</pubDate>
-      <category>compute-simd</category>
-      <category>microkernel-security</category>
-      <description><![CDATA[
-        <p>Avanço verificado no Jinn Microkernel, compositor Aladdin e computação heterogênea JHCS com foco em isolamento Ring 3 e previsibilidade de recursos. [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas aplicáveis: Heterogeneous Compute, SIMD & Zero-GPU Acceleration (Intel, AMD, Arm, Tenstorrent, SiFive, HPC Research Labs) | Zero-Trust Isolation, W^X Enforcement & Supply-Chain Integrity (Red Hat, Canonical, Google, Siemens, Sovereign & Civic Infrastructure)] [Colaboração aberta — indústria local, academia e setor público responsável: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</p>
-      ]]></description>
+    <item>
+      <title>Arquitetura de Captura Técnica B2B/Deep Tech: Google Ads de Alta Precisão, Landing Pages /solucoes e Playbook Social no Jinn OS</title>
+      <link>https://jinn-os.dev.br/artigos/arquitetura-captura-tecnica-ecossistemas-edge-hpc-jinn.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-arquitetura-captura-tecnica-ecossistemas-edge-hpc-jinn</guid>
+      <pubDate>Thu, 26 Nov 2026 18:55:00 -0300</pubDate>
+      <description>Como estruturamos aquisição orgânica e paga de baixo atrito para computação heterogênea (jhcs-rs), edge industrial Zero-Idle e infraestrutura auditável Zero-Trust: 4 grupos de intenção exata/frase, negativas rigorosas, 3 landing pages (&lt;30s) e playbook para LinkedIn, X, Hacker News e Reddit. [Ganho técnico: Indicadores citados no relatório: 2B] [Ecossistemas aplicáveis: Energy-Proportional Runtime, SMP Accounting &amp; Low-Overhead Scheduling (Arm, Qualcomm, LF Edge, Industrial Automation, Green Public Infrastructure)] [Colaboração aberta — indústria local, academia e setor público responsável: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
+      <category>zero-idle-efficiency</category>
+      <category>architecture-rfcs</category>
+      <category>efficiency-lab</category>
+      <enclosure url="https://jinn-os.dev.br/assets/jinn-capture-architecture-funnel.png" length="61069" type="image/png" />
     </item>
     <item>
       <title>Auditoria Técnica de Ativos do Ecossistema Jinn: Computação Heterogênea, Zero-Idle SMP, SharedRings e Isolamento Ring 3</title>
@@ -336,6 +336,15 @@
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
+      <title>feat(strategy,observatory): audit Jinn/Aladdin/jhcs-rs assets, expanded out-of-radar map and Google News report [announce]</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/a59be13760a9702f05a1a2b784d4210ff63c8752</link>
+      <guid isPermaLink="false">a59be13760a9702f05a1a2b784d4210ff63c8752</guid>
+      <pubDate>Thu, 26 Nov 2026 18:25:55 -0300</pubDate>
+      <description>feat(strategy,observatory): audit Jinn/Aladdin/jhcs-rs assets, expanded out-of-radar map and Google News report [announce] [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas aplicáveis: Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration (Intel, AMD, Arm, Tenstorrent, SiFive, HPC Research Labs)] [Colaboração aberta — indústria local, academia e setor público responsável: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
+      <category>compute-simd</category>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
       <title>feat(observatory,tls,observability): publish 4-part Jinn Browser TLS 1.3, PCAP, fallback audit and observability Google News series [announce]</title>
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/9db737c8dfe46a1029176bb15cc70225e3d21ee4</link>
       <guid isPermaLink="false">9db737c8dfe46a1029176bb15cc70225e3d21ee4</guid>
@@ -436,15 +445,6 @@ Modificacoes e resolucoes:
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/bcac193f198ce14870d0882add5979d926f849b8</link>
       <guid isPermaLink="false">bcac193f198ce14870d0882add5979d926f849b8</guid>
       <pubDate>Thu, 26 Nov 2026 11:23:42 -0300</pubDate>
-      <description>fix(net,browser): fix TLS 1.3 AEAD/reassembly, add HTTPS-&gt;HTTP fallback and populate error telemetry [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas aplicáveis: Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking (Cloudflare, Akamai, Huawei, RISC-V International, Local Edge Gateways)] [Colaboração aberta — indústria local, academia e setor público responsável: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
-      <category>fastpath-ipc-net</category>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>feat(net): add unified HotRouteTable (DNS + L2/L3 Fast-Path), syscalls 97..99, and E2E PCAP suite</title>
-      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/2ff3c802ad275987026d07f903efac06911dacf5</link>
-      <guid isPermaLink="false">2ff3c802ad275987026d07f903efac06911dacf5</guid>
-      <pubDate>Thu, 26 Nov 2026 02:02:36 -0300</pubDate>
       <description>---END--- [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas aplicáveis: Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking (Cloudflare, Akamai, Huawei, RISC-V International, Local Edge Gateways)] [Colaboração aberta — indústria local, academia e setor público responsável: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
       <category>fastpath-ipc-net</category>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
