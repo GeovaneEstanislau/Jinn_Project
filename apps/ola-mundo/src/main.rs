@@ -1980,13 +1980,17 @@ unsafe fn fetch_http_document(
     initial_url: &[u8],
     out_buf: &mut [u8],
 ) -> Result<usize, FetchError> {
-    fetch_http_document_inner(initial_url, out_buf, false)
+    let mut dummy_url = [0u8; 128];
+    let mut dummy_len = 0usize;
+    fetch_http_document_inner(initial_url, out_buf, false, &mut dummy_url, &mut dummy_len)
 }
 
 unsafe fn fetch_http_document_inner(
     initial_url: &[u8],
     out_buf: &mut [u8],
     reject_http_errors: bool,
+    final_url_out: &mut [u8; 128],
+    final_url_len: &mut usize,
 ) -> Result<usize, FetchError> {
     let mut current_target = [0u8; 128];
     let len = initial_url.len().min(127);
@@ -1995,6 +1999,10 @@ unsafe fn fetch_http_document_inner(
 
     for _redirect_hop in 0..5 {
         let target_slice = &current_target[..current_target_len];
+        final_url_out[..current_target_len].copy_from_slice(target_slice);
+        final_url_out[current_target_len] = 0;
+        *final_url_len = current_target_len;
+
         let parsed = match browser::parse_http_url(target_slice) {
             Some(p) => p,
             None => return Err(FetchError::InvalidHttp),
@@ -2304,7 +2312,26 @@ unsafe fn fetch_http_document_inner(
                                 break;
                             }
                             Err(()) => {
-                                print_str(b"[TLS-HTTP-RX] Falha AEAD ao decifrar registro TLS!\n");
+                                print_str(b"[TLS-HTTP-RX] Falha AEAD ao decifrar registro TLS! suite=");
+                                print_u64(sess.cipher_suite as u64);
+                                print_str(b" seq=");
+                                print_u64(sess.server_seq.saturating_sub(1));
+                                print_str(b" pos=");
+                                print_u64(pos as u64);
+                                print_str(b" rec_len=");
+                                print_u64(rec_len as u64);
+                                print_str(b" plain=");
+                                print_u64(plain_total as u64);
+                                print_str(b" tag=");
+                                if rec_slice.len() >= 16 {
+                                    let t = &rec_slice[rec_slice.len() - 16..];
+                                    const HEX: &[u8; 16] = b"0123456789abcdef";
+                                    for &b in t {
+                                        let h = [HEX[(b >> 4) as usize], HEX[(b & 0xF) as usize]];
+                                        print_str(&h);
+                                    }
+                                }
+                                print_str(b"\n");
                                 let _ = sys_close(sockfd);
                                 return Err(FetchError::TlsDecryptFailed);
                             }
@@ -2476,18 +2503,20 @@ unsafe fn fetch_http_document_inner(
         }
         print_str(b"\n");
 
-        // 301 / 302 Redirection
-        if (hdr.status_code == 301 || hdr.status_code == 302) && hdr.location_len > 0 {
-            print_str(b"[BROWSER-NET] Redirecionamento (Location: ");
+        // 301 / 302 / 303 / 307 / 308 Redirection
+        if (hdr.status_code == 301
+            || hdr.status_code == 302
+            || hdr.status_code == 303
+            || hdr.status_code == 307
+            || hdr.status_code == 308)
+            && hdr.location_len > 0
+        {
+            print_str(b"[BROWSER-NET] Redirecionamento HTTP ");
+            print_u64(hdr.status_code as u64);
+            print_str(b" (Location: ");
             print_str(&hdr.location[..hdr.location_len]);
             print_str(b")\n");
             let loc = &hdr.location[..hdr.location_len];
-            if loc.starts_with(b"http://") || loc.starts_with(b"https://") {
-                let rlen = loc.len().min(127);
-                current_target[..rlen].copy_from_slice(&loc[..rlen]);
-                current_target_len = rlen;
-                continue;
-            }
             let mut resolved_loc = [0u8; 128];
             let res_len = browser::resolve_relative_url(target_slice, loc, &mut resolved_loc);
             current_target[..res_len].copy_from_slice(&resolved_loc[..res_len]);
@@ -2591,6 +2620,66 @@ unsafe fn fetch_http_document_inner(
     Err(FetchError::TooManyRedirects)
 }
 
+unsafe fn prefetch_page_images(
+    session: &mut browser::BrowserSession,
+    base_url: &[u8],
+    scratch_buf: &mut [u8],
+) {
+    let mut fetched = 0usize;
+    let mut updated = false;
+    let node_count = session.dom.node_count;
+
+    for idx in 0..node_count {
+        if fetched >= 6 {
+            break;
+        }
+        let node = &session.dom.nodes[idx];
+        if node.tag_len != 3 || &node.tag[..3] != b"img" || node.src_len == 0 {
+            continue;
+        }
+        let mut raw_src_buf = [0u8; 128];
+        let slen = node.src_len.min(127);
+        raw_src_buf[..slen].copy_from_slice(&node.src_attr[..slen]);
+        let raw_src = &raw_src_buf[..slen];
+
+        if raw_src.starts_with(b"/disk/") || raw_src.starts_with(b"/ext2/") || raw_src.starts_with(b"data:") {
+            continue;
+        }
+        if browser::cache_lookup_remote_image(raw_src).is_some() {
+            updated = true;
+            continue;
+        }
+
+        let mut resolved_buf = [0u8; 128];
+        let res_len = browser::resolve_relative_url(base_url, raw_src, &mut resolved_buf);
+        let img_url = &resolved_buf[..res_len];
+        if !img_url.starts_with(b"http://") && !img_url.starts_with(b"https://") {
+            continue;
+        }
+
+        print_str(b"[BROWSER-IMG] Baixando imagem remota: ");
+        print_str(img_url);
+        print_str(b"\n");
+
+        let mut img_final_url = [0u8; 128];
+        let mut img_final_len = 0usize;
+        if let Ok(img_bytes) = fetch_http_document_inner(img_url, scratch_buf, true, &mut img_final_url, &mut img_final_len) {
+            if img_bytes > 0 && img_bytes <= 65536 {
+                let _ = browser::cache_store_remote_image(raw_src, img_url, &scratch_buf[..img_bytes]);
+                print_str(b"[BROWSER-IMG] Imagem armazenada em cache (");
+                print_u64(img_bytes as u64);
+                print_str(b" bytes)\n");
+                updated = true;
+            }
+        }
+        fetched += 1;
+    }
+
+    if updated {
+        session.recompute_layout();
+    }
+}
+
 unsafe fn browser_load_and_display(
     session: &mut browser::BrowserSession,
     target: &[u8],
@@ -2668,8 +2757,14 @@ unsafe fn browser_load_and_display(
         active_url_buf[..p_len].copy_from_slice(&path[..p_len]);
         let mut active_url_len = p_len;
 
-        let mut fetch_res = fetch_http_document_inner(path, out_buf, allow_http_fallback);
-        if fetch_res.is_err() && allow_http_fallback && path.starts_with(b"https://") {
+        let mut final_url_buf = [0u8; 128];
+        let mut final_url_len = 0usize;
+        let mut fetch_res = fetch_http_document_inner(path, out_buf, allow_http_fallback, &mut final_url_buf, &mut final_url_len);
+        if fetch_res.is_ok() && final_url_len > 0 {
+            let flen = final_url_len.min(127);
+            active_url_buf[..flen].copy_from_slice(&final_url_buf[..flen]);
+            active_url_len = flen;
+        } else if fetch_res.is_err() && allow_http_fallback && path.starts_with(b"https://") {
             let rest = &path[8..];
             let fb_prefix = b"http://";
             let mut fb_buf = [0u8; 128];
@@ -2689,8 +2784,51 @@ unsafe fn browser_load_and_display(
             if let Some(cached_len) = browser::storage::BrowserCacheStore::retrieve(fb_url, out_buf) {
                 fetch_res = Ok(cached_len);
             } else {
-                fetch_res = fetch_http_document_inner(fb_url, out_buf, false);
+                let mut fb_final = [0u8; 128];
+                let mut fb_final_len = 0usize;
+                fetch_res = fetch_http_document_inner(fb_url, out_buf, false, &mut fb_final, &mut fb_final_len);
+                if fetch_res.is_ok() && fb_final_len > 0 {
+                    let flen = fb_final_len.min(127);
+                    active_url_buf[..flen].copy_from_slice(&fb_final[..flen]);
+                    active_url_len = flen;
+                }
             }
+        }
+
+        // Suporte a `<meta http-equiv="refresh" content="...;url=...">` (ate 2 saltos)
+        let mut meta_hops = 0usize;
+        while let Ok(curr_len) = fetch_res {
+            if meta_hops >= 2 {
+                break;
+            }
+            let mut meta_raw = [0u8; 128];
+            if let Some(m_len) = browser::extract_meta_refresh_url(&out_buf[..curr_len], &mut meta_raw) {
+                let mut next_url = [0u8; 128];
+                let n_len = browser::resolve_relative_url(&active_url_buf[..active_url_len], &meta_raw[..m_len], &mut next_url);
+                if n_len > 0 && &next_url[..n_len] != &active_url_buf[..active_url_len] {
+                    print_str(b"[BROWSER-NET] Meta-refresh para: ");
+                    print_str(&next_url[..n_len]);
+                    print_str(b"\n");
+                    let mut m_final = [0u8; 128];
+                    let mut m_flen = 0usize;
+                    let r = fetch_http_document_inner(&next_url[..n_len], out_buf, false, &mut m_final, &mut m_flen);
+                    if r.is_ok() && m_flen > 0 {
+                        let flen = m_flen.min(127);
+                        active_url_buf[..flen].copy_from_slice(&m_final[..flen]);
+                        active_url_len = flen;
+                        fetch_res = r;
+                        meta_hops += 1;
+                        continue;
+                    } else {
+                        let flen = n_len.min(127);
+                        active_url_buf[..flen].copy_from_slice(&next_url[..flen]);
+                        active_url_len = flen;
+                        fetch_res = r;
+                        break;
+                    }
+                }
+            }
+            break;
         }
 
         let active_url = &active_url_buf[..active_url_len];
@@ -2711,6 +2849,8 @@ unsafe fn browser_load_and_display(
                 session.record_navigation_current(active_url);
                 // Armazena copia transacional no cache local (/disk/browser/cache/)
                 browser::storage::BrowserCacheStore::store(active_url, doc_slice);
+                // Faz prefetch de imagens remotas (<img src=...>) antes da pintura final
+                prefetch_page_images(session, active_url, out_buf);
 
                 print_str(b"[DIAG-FLOW] RENDER: Desenhando documento na janela do Aladdin...\n");
                 session.render(buf_slice);

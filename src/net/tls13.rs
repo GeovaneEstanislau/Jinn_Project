@@ -1456,6 +1456,9 @@ impl Poly1305 {
         c = self.h0 >> 44;
         self.h0 &= (1u64 << 44) - 1;
         self.h1 += c;
+        c = self.h1 >> 44;
+        self.h1 &= (1u64 << 44) - 1;
+        self.h2 += c;
 
         let mut g0 = self.h0.wrapping_add(5);
         c = g0 >> 44;
@@ -1472,7 +1475,9 @@ impl Poly1305 {
         self.h1 = (self.h1 & !mask) | (g1 & mask);
         self.h2 = (self.h2 & !mask) | (g2 & mask);
 
-        let h_bits = (self.h0 as u128) | ((self.h1 as u128) << 44) | ((self.h2 as u128) << 88);
+        let h_bits = (self.h0 as u128)
+            .wrapping_add((self.h1 as u128) << 44)
+            .wrapping_add((self.h2 as u128) << 88);
         let pad_val = u128::from_le_bytes(self.pad);
         let tag_val = h_bits.wrapping_add(pad_val);
 

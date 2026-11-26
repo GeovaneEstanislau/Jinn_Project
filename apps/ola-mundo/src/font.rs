@@ -24,7 +24,7 @@ pub fn draw_char(
     draw_char_clipped(buf, w, h, ch, x, y, fg, bg, 0, h);
 }
 
-pub fn draw_char_clipped(
+pub fn draw_char_clipped_rect(
     buf: &mut [u32],
     w: usize,
     h: usize,
@@ -33,15 +33,16 @@ pub fn draw_char_clipped(
     y: usize,
     fg: u32,
     bg: Option<u32>,
+    max_x: usize,
     min_y: usize,
     max_y: usize,
 ) {
-    if x >= w || y >= h {
+    if x >= w || x >= max_x || y >= h {
         return;
     }
     let glyph = get_glyph(ch);
     let limit_y = (y + FONT_HEIGHT).min(h).min(max_y);
-    let limit_x = (x + FONT_WIDTH).min(w);
+    let limit_x = (x + FONT_WIDTH).min(w).min(max_x);
 
     for (y_offset, row_byte) in glyph.iter().enumerate() {
         let cy = y + y_offset;
@@ -65,7 +66,35 @@ pub fn draw_char_clipped(
     }
 }
 
+pub fn draw_char_clipped(
+    buf: &mut [u32],
+    w: usize,
+    h: usize,
+    ch: u8,
+    x: usize,
+    y: usize,
+    fg: u32,
+    bg: Option<u32>,
+    min_y: usize,
+    max_y: usize,
+) {
+    draw_char_clipped_rect(buf, w, h, ch, x, y, fg, bg, w, min_y, max_y);
+}
+
 pub fn draw_text(
+    buf: &mut [u32],
+    w: usize,
+    h: usize,
+    x: usize,
+    y: usize,
+    text: &[u8],
+    fg: u32,
+    bg: Option<u32>,
+) {
+    draw_text_clipped_rect(buf, w, h, x, y, text, fg, bg, w, 0, h);
+}
+
+pub fn draw_text_clipped_rect(
     buf: &mut [u32],
     w: usize,
     h: usize,
@@ -74,13 +103,17 @@ pub fn draw_text(
     text: &[u8],
     fg: u32,
     bg: Option<u32>,
+    max_x: usize,
+    min_y: usize,
+    max_y: usize,
 ) {
+    let x_cap = w.min(max_x);
     for &ch in text {
-        draw_char(buf, w, h, ch, x, y, fg, bg);
-        x += FONT_WIDTH;
-        if x >= w {
+        if x >= x_cap {
             break;
         }
+        draw_char_clipped_rect(buf, w, h, ch, x, y, fg, bg, x_cap, min_y, max_y);
+        x += FONT_WIDTH;
     }
 }
 
@@ -88,7 +121,7 @@ pub fn draw_text_clipped(
     buf: &mut [u32],
     w: usize,
     h: usize,
-    mut x: usize,
+    x: usize,
     y: usize,
     text: &[u8],
     fg: u32,
@@ -96,13 +129,7 @@ pub fn draw_text_clipped(
     min_y: usize,
     max_y: usize,
 ) {
-    for &ch in text {
-        draw_char_clipped(buf, w, h, ch, x, y, fg, bg, min_y, max_y);
-        x += FONT_WIDTH;
-        if x >= w {
-            break;
-        }
-    }
+    draw_text_clipped_rect(buf, w, h, x, y, text, fg, bg, w, min_y, max_y);
 }
 
 pub static FONT_8X8: [[u8; 8]; 95] = [

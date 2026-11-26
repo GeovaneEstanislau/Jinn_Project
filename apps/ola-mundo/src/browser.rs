@@ -13,6 +13,11 @@ use crate::font;
 pub const WIN_W: usize = 300;
 pub const WIN_H: usize = 180;
 pub const CLIP_TOP: usize = 27;
+
+#[inline(always)]
+pub const fn content_clip_bottom(h: usize) -> usize {
+    if h >= 100 { h.saturating_sub(15) } else { h.saturating_sub(1) }
+}
 #[allow(dead_code)]
 pub const CLIP_BOTTOM: usize = WIN_H - 1;
 
@@ -157,7 +162,7 @@ pub struct DomNode {
     pub style_len: usize,
     pub href_attr: [u8; 128],
     pub href_len: usize,
-    pub src_attr: [u8; 64],
+    pub src_attr: [u8; 128],
     pub src_len: usize,
     pub width_attr: u16,
     pub height_attr: u16,
@@ -188,7 +193,7 @@ impl DomNode {
             style_len: 0,
             href_attr: [0; 128],
             href_len: 0,
-            src_attr: [0; 64],
+            src_attr: [0; 128],
             src_len: 0,
             width_attr: 0,
             height_attr: 0,
@@ -2341,7 +2346,7 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                         i += 1;
                     }
                     let a_val = &html[a_start..if quote.is_some() { i - 1 } else { i }];
-                    let cpy = a_val.len().min(63);
+                    let cpy = a_val.len().min(127);
                     dom.nodes[node_id].src_attr[..cpy].copy_from_slice(&a_val[..cpy]);
                     dom.nodes[node_id].src_len = cpy;
                 } else if i + 4 < len && html[i..i + 4].eq_ignore_ascii_case(b"alt=") {
@@ -2800,7 +2805,7 @@ pub fn parse_html(html: &[u8], page: &mut ParsedPage) {
 
 // ── Motor de Layout e Quebra de Linhas ────────────────────────────────────────
 
-pub const MAX_RENDER_LINES: usize = 256;
+pub const MAX_RENDER_LINES: usize = 512;
 pub const MAX_RENDER_BOXES: usize = 64;
 pub const MAX_RENDER_IMAGES: usize = 32;
 pub const MAX_CLICK_REGIONS: usize = 256;
@@ -2811,7 +2816,7 @@ pub struct RenderImage {
     pub y: usize,
     pub w: usize,
     pub h: usize,
-    pub src: [u8; 64],
+    pub src: [u8; 128],
     pub src_len: usize,
     pub alt: [u8; 32],
     pub alt_len: usize,
@@ -2860,7 +2865,7 @@ impl DocumentLayout {
                 y: 0,
                 w: 0,
                 h: 0,
-                src: [0; 64],
+                src: [0; 128],
                 src_len: 0,
                 alt: [0; 32],
                 alt_len: 0,
@@ -2998,15 +3003,51 @@ impl DocumentLayout {
             let pad_top = node.computed_style.padding_top;
             let pad_bottom = node.computed_style.padding_bottom;
 
-            let img_w = if node.width_attr > 0 {
-                (node.width_attr as usize).min(avail_width.saturating_sub(mar_left + mar_right))
+            let max_img_w = avail_width.saturating_sub(mar_left + mar_right + pad_left).max(16);
+            let probed_dims = if (node.width_attr == 0 || node.height_attr == 0) && node.src_len > 0 {
+                unsafe { lookup_image_dimensions(&node.src_attr[..node.src_len]) }
             } else {
-                48.min(avail_width.saturating_sub(mar_left + mar_right))
+                None
             };
-            let img_h = if node.height_attr > 0 {
-                node.height_attr as usize
-            } else {
-                36
+
+            let (img_w, img_h) = match (node.width_attr as usize, node.height_attr as usize, probed_dims) {
+                (w_attr, h_attr, _) if w_attr > 0 && h_attr > 0 => {
+                    let clamped_w = w_attr.min(max_img_w);
+                    let clamped_h = if clamped_w < w_attr {
+                        (h_attr * clamped_w / w_attr).max(8)
+                    } else {
+                        h_attr
+                    };
+                    (clamped_w, clamped_h.min(260))
+                }
+                (w_attr, 0, Some((ow, oh))) if w_attr > 0 && ow > 0 && oh > 0 => {
+                    let cw = w_attr.min(max_img_w);
+                    let ch = (oh * cw / ow).clamp(12, 260);
+                    (cw, ch)
+                }
+                (0, h_attr, Some((ow, oh))) if h_attr > 0 && ow > 0 && oh > 0 => {
+                    let mut cw = (ow * h_attr / oh).max(16);
+                    let mut ch = h_attr;
+                    if cw > max_img_w {
+                        ch = (ch * max_img_w / cw).max(12);
+                        cw = max_img_w;
+                    }
+                    (cw, ch.min(260))
+                }
+                (0, 0, Some((ow, oh))) if ow > 0 && oh > 0 => {
+                    let mut cw = ow.min(max_img_w);
+                    let mut ch = (oh * cw / ow).max(12);
+                    if ch > 180 {
+                        cw = (cw * 180 / ch).max(16);
+                        ch = 180;
+                    }
+                    (cw, ch)
+                }
+                (w_attr, h_attr, _) => {
+                    let cw = if w_attr > 0 { w_attr } else { 48 }.min(max_img_w);
+                    let ch = if h_attr > 0 { h_attr } else { 36 };
+                    (cw, ch)
+                }
             };
 
             if self.image_count < MAX_RENDER_IMAGES {
@@ -3043,7 +3084,7 @@ impl DocumentLayout {
                         reg.y = *curr_y + pad_top;
                         reg.w = img_w;
                         reg.h = img_h;
-                        let cpy_h = href.len().min(63);
+                        let cpy_h = href.len().min(127);
                         reg.target[..cpy_h].copy_from_slice(&href[..cpy_h]);
                         reg.target_len = cpy_h;
                         self.click_regions[self.click_count] = reg;
@@ -3104,11 +3145,17 @@ impl DocumentLayout {
             let mut child_x = base_x + mar_left + pad_left;
             let mut max_y = *curr_y;
 
+            let max_flex_right = base_x + mar_left + pad_left + inner_w;
             for c in 0..node.child_count {
                 let cid = node.children[c];
                 if cid < dom.node_count && dom.nodes[cid].computed_style.display != DisplayMode::None {
+                    let rem_w = max_flex_right.saturating_sub(child_x);
+                    if rem_w < font::FONT_WIDTH {
+                        Self::mark_subtree_laid_out(dom, cid, laid_out);
+                        continue;
+                    }
                     let mut child_y = *curr_y;
-                    let target_w = dom.nodes[cid].computed_style.width.unwrap_or(child_w).min(inner_w);
+                    let target_w = dom.nodes[cid].computed_style.width.unwrap_or(child_w).min(rem_w);
                     self.layout_subtree(dom, cid, child_x, &mut child_y, target_w, laid_out);
                     child_x += target_w;
                     if child_y > max_y {
@@ -3803,14 +3850,14 @@ impl BrowserSession {
     }
 
     pub fn recompute_layout(&mut self) {
-        let content_w = self.viewport_w.saturating_sub(24);
+        let content_w = self.viewport_w.saturating_sub(24).max(40);
         if self.dom.node_count > 0 {
             self.layout.compute_from_dom(&self.dom, content_w);
         } else {
             self.layout.compute(&self.page, content_w);
         }
         let clip_top = CLIP_TOP;
-        let clip_bottom = self.viewport_h.saturating_sub(1);
+        let clip_bottom = content_clip_bottom(self.viewport_h);
         let v_h = clip_bottom.saturating_sub(clip_top);
         if self.layout.total_height > v_h {
             self.max_scroll = self.layout.total_height - v_h;
@@ -4011,10 +4058,10 @@ impl BrowserSession {
         parse_html_into_dom(html, &mut self.dom, &mut self.css, &mut self.js_runtime);
         self.recompute_layout();
         if self.layout.line_count == 0 && !html.is_empty() {
-            let content_w = self.viewport_w.saturating_sub(24);
+            let content_w = self.viewport_w.saturating_sub(24).max(40);
             self.layout.compute_fallback_text(html, content_w);
             let clip_top = CLIP_TOP;
-            let clip_bottom = self.viewport_h.saturating_sub(1);
+            let clip_bottom = content_clip_bottom(self.viewport_h);
             let v_h = clip_bottom.saturating_sub(clip_top);
             if self.layout.total_height > v_h {
                 self.max_scroll = self.layout.total_height - v_h;
@@ -4063,7 +4110,7 @@ impl BrowserSession {
         let w = self.viewport_w;
         let h = self.viewport_h;
         let clip_top = CLIP_TOP;
-        let clip_bottom = h.saturating_sub(1);
+        let clip_bottom = content_clip_bottom(h);
 
         // 1. Barra de ferramentas / Chrome (y: 3..24)
         if click_y >= 3 && click_y <= 24 {
@@ -4113,7 +4160,7 @@ impl BrowserSession {
             // Barra de rolagem (track_x = w - 14 .. w)
             if click_x >= w.saturating_sub(14) {
                 let track_y = clip_top;
-                let track_h = h.saturating_sub(clip_top + 1);
+                let track_h = clip_bottom.saturating_sub(clip_top);
                 if self.max_scroll > 0 {
                     let thumb_h = 24usize.max(track_h * (clip_bottom - clip_top) / self.layout.total_height.max(1));
                     let thumb_travel = track_h.saturating_sub(thumb_h);
@@ -4183,7 +4230,8 @@ impl BrowserSession {
         let w = self.viewport_w;
         let h = self.viewport_h;
         let clip_top = CLIP_TOP;
-        let clip_bottom = h.saturating_sub(1);
+        let clip_bottom = content_clip_bottom(h);
+        let max_content_x = w.saturating_sub(16);
 
         // 1. Fundo Geral
         fill_rect(buf, w, h, 0, 0, w, h, COLOR_BG);
@@ -4231,29 +4279,44 @@ impl BrowserSession {
         fill_rounded_rect(buf, w, h, badge_x, 3, badge_w.saturating_sub(6), 20, 4, badge_bg);
         font::draw_text(buf, w, h, badge_x + 6, 9, badge_txt, badge_fg, None);
 
+        let url_max_x = url_x + url_w.saturating_sub(4);
+        let vis_chars = (url_w.saturating_sub(14) / font::FONT_WIDTH).max(1);
         if self.is_address_focused {
             if self.address_selected && self.address_edit_len > 0 {
-                let sel_w = (self.address_edit_len * font::FONT_WIDTH).min(url_w.saturating_sub(8));
+                let edit_slice = &self.address_edit[..self.address_edit_len];
+                let shown = edit_slice.len().min(vis_chars);
+                let sel_w = shown * font::FONT_WIDTH;
                 fill_rect(buf, w, h, url_x + 6, 5, sel_w + 2, 16, 0x0045_475A);
-                let edit_slice = &self.address_edit[..self.address_edit_len];
-                font::draw_text_clipped(buf, w, h, url_x + 8, 9, edit_slice, 0x00CD_D6F4, None, 3, 23);
+                font::draw_text_clipped_rect(buf, w, h, url_x + 8, 9, edit_slice, 0x00CD_D6F4, None, url_max_x, 3, 23);
             } else {
-                let edit_slice = &self.address_edit[..self.address_edit_len];
-                font::draw_text_clipped(buf, w, h, url_x + 8, 9, edit_slice, 0x0038_BDF8, None, 3, 23);
-                // Cursor '_'
-                let cursor_x = url_x + 8 + self.address_edit_len * font::FONT_WIDTH;
-                if cursor_x + font::FONT_WIDTH <= url_x + url_w {
-                    font::draw_text_clipped(buf, w, h, cursor_x, 9, b"_", 0x0038_BDF8, None, 3, 23);
+                let start_ch = if self.address_edit_len + 1 > vis_chars {
+                    (self.address_edit_len + 1) - vis_chars
+                } else {
+                    0
+                };
+                let edit_slice = &self.address_edit[start_ch..self.address_edit_len];
+                font::draw_text_clipped_rect(buf, w, h, url_x + 8, 9, edit_slice, 0x0038_BDF8, None, url_max_x, 3, 23);
+                // Cursor '_' sempre dentro da pilula
+                let cursor_x = url_x + 8 + edit_slice.len() * font::FONT_WIDTH;
+                if cursor_x + font::FONT_WIDTH <= url_max_x {
+                    font::draw_text_clipped_rect(buf, w, h, cursor_x, 9, b"_", 0x0038_BDF8, None, url_max_x, 3, 23);
                 }
             }
         } else {
             let url_slice = &self.current_url[..self.current_url_len];
-            font::draw_text_clipped(buf, w, h, url_x + 8, 9, url_slice, 0x00CD_D6F4, None, 3, 23);
+            font::draw_text_clipped_rect(buf, w, h, url_x + 8, 9, url_slice, 0x00CD_D6F4, None, url_max_x, 3, 23);
         }
 
-        // 2.5. Renderiza caixas estilizadas (backgrounds de .card, buttons, etc.)
+        // 2.5. Renderiza caixas estilizadas (backgrounds de .card, buttons, etc.) limitadas ao viewport horizontal
         for i in 0..self.layout.box_count {
             let bx = &self.layout.boxes[i];
+            if bx.x >= max_content_x {
+                continue;
+            }
+            let bx_w = bx.w.min(max_content_x.saturating_sub(bx.x));
+            if bx_w == 0 {
+                continue;
+            }
             if bx.y + bx.h > self.scroll_y {
                 let box_top = if bx.y >= self.scroll_y {
                     (bx.y - self.scroll_y) + clip_top
@@ -4267,17 +4330,17 @@ impl BrowserSession {
                     if draw_h > 0 {
                         if bx.border_radius > 0 {
                             if bx.bg_color != 0 {
-                                fill_rounded_rect(buf, w, h, bx.x, draw_y, bx.w, draw_h, bx.border_radius, bx.bg_color);
+                                fill_rounded_rect(buf, w, h, bx.x, draw_y, bx_w, draw_h, bx.border_radius, bx.bg_color);
                             }
                             if let Some(bc) = bx.border_color {
-                                draw_rounded_border(buf, w, h, bx.x, draw_y, bx.w, draw_h, bx.border_radius, bx.border_width, bc);
+                                draw_rounded_border(buf, w, h, bx.x, draw_y, bx_w, draw_h, bx.border_radius, bx.border_width, bc);
                             }
                         } else {
                             if bx.bg_color != 0 {
-                                fill_rect(buf, w, h, bx.x, draw_y, bx.w, draw_h, bx.bg_color);
+                                fill_rect(buf, w, h, bx.x, draw_y, bx_w, draw_h, bx.bg_color);
                             }
                             if let Some(bc) = bx.border_color {
-                                draw_rect_border(buf, w, h, bx.x, draw_y, bx.w, draw_h, bc);
+                                draw_rect_border(buf, w, h, bx.x, draw_y, bx_w, draw_h, bc);
                             }
                         }
                     }
@@ -4288,6 +4351,9 @@ impl BrowserSession {
         // 2.7. Renderiza imagens (<img>) com clipping e scroll
         for i in 0..self.layout.image_count {
             let img = &self.layout.images[i];
+            if img.x >= max_content_x {
+                continue;
+            }
             if img.y + img.h > self.scroll_y {
                 let img_top = if img.y >= self.scroll_y {
                     (img.y - self.scroll_y) + clip_top
@@ -4299,21 +4365,26 @@ impl BrowserSession {
                     let draw_y = img_top.max(clip_top);
                     let draw_h = img_bottom.min(clip_bottom).saturating_sub(draw_y);
                     if draw_h > 0 {
-                        render_image_element(buf, w, h, img, draw_y, draw_h, clip_top, clip_bottom);
+                        let src_y_off = self.scroll_y.saturating_sub(img.y);
+                        render_image_element(buf, w, h, img, draw_y, draw_h, src_y_off, clip_top, clip_bottom);
                     }
                 }
             }
         }
 
-        // 3. Documento no Viewport (com scroll_y aplicado e clipping)
+        // 3. Documento no Viewport (com scroll_y aplicado e clipping horizontal/vertical)
         for i in 0..self.layout.line_count {
             let line = &self.layout.lines[i];
+            if line.x >= max_content_x {
+                continue;
+            }
 
             if line.is_hr {
                 if line.y >= self.scroll_y {
                     let actual_y = (line.y - self.scroll_y) + clip_top;
                     if actual_y >= clip_top && actual_y <= clip_bottom {
-                        fill_rect(buf, w, h, line.x, actual_y, w.saturating_sub(24), 1, COLOR_HR);
+                        let hr_w = max_content_x.saturating_sub(line.x).min(w.saturating_sub(24));
+                        fill_rect(buf, w, h, line.x, actual_y, hr_w, 1, COLOR_HR);
                     }
                 }
             } else {
@@ -4321,7 +4392,7 @@ impl BrowserSession {
                     let actual_y = (line.y - self.scroll_y) + clip_top;
                     if actual_y + font::FONT_HEIGHT <= clip_bottom {
                         let text_slice = &line.text[..line.text_len];
-                        font::draw_text_clipped(
+                        font::draw_text_clipped_rect(
                             buf,
                             w,
                             h,
@@ -4330,14 +4401,15 @@ impl BrowserSession {
                             text_slice,
                             line.color,
                             None,
+                            max_content_x,
                             clip_top,
                             clip_bottom,
                         );
 
                         if line.is_link {
                             let underline_y = actual_y + font::FONT_HEIGHT;
-                            if underline_y <= clip_bottom {
-                                let link_w = line.text_len * font::FONT_WIDTH;
+                            if underline_y < clip_bottom {
+                                let link_w = (line.text_len * font::FONT_WIDTH).min(max_content_x.saturating_sub(line.x));
                                 fill_rect(buf, w, h, line.x, underline_y, link_w, 1, line.color);
                             }
                         }
@@ -4346,16 +4418,16 @@ impl BrowserSession {
             }
         }
 
-        // 4. Barra de Rolagem Vertical (Scrollbar Track & Thumb)
+        // 4. Barra de Rolagem Vertical (Scrollbar Track & Thumb estritamente acima da barra BRCR)
         let track_x = w.saturating_sub(14);
         let track_w = 8;
         let track_y = clip_top;
-        let track_h = h.saturating_sub(clip_top + 1);
+        let track_h = clip_bottom.saturating_sub(clip_top);
         fill_rect(buf, w, h, track_x, track_y, track_w, track_h, COLOR_SCROLL_TRACK);
         draw_rect_border(buf, w, h, track_x, track_y, track_w, track_h, COLOR_BORDER);
 
-        if self.max_scroll > 0 {
-            let thumb_h = 24usize.max(track_h * (clip_bottom - clip_top) / self.layout.total_height.max(1));
+        if self.max_scroll > 0 && track_h > 0 {
+            let thumb_h = 24usize.min(track_h).max(track_h * (clip_bottom - clip_top) / self.layout.total_height.max(1));
             let thumb_travel = track_h.saturating_sub(thumb_h);
             let thumb_y = track_y + (self.scroll_y * thumb_travel / self.max_scroll.max(1));
             fill_rect(buf, w, h, track_x + 1, thumb_y, track_w - 2, thumb_h, COLOR_SCROLL_THUMB);
@@ -4366,8 +4438,25 @@ impl BrowserSession {
         if h >= 100 {
             let status_y = h.saturating_sub(14);
             fill_rect(buf, w, h, 0, status_y, w, 14, COLOR_CHROME);
+            let status_txt: &[u8] = if w >= 460 {
+                b"BRCR: 0.134% [HIBERNATED] (Mem 0.336% | Gfx 0% | CPU 0)"
+            } else {
+                b"BRCR: 0.13% | Mem 0.34% | CPU 0"
+            };
+            font::draw_text_clipped_rect(
+                buf,
+                w,
+                h,
+                6,
+                status_y + 3,
+                status_txt,
+                COLOR_URL_TEXT,
+                None,
+                w.saturating_sub(6),
+                status_y + 1,
+                h.saturating_sub(1),
+            );
             draw_rect_border(buf, w, h, 0, status_y, w, 14, COLOR_BORDER);
-            font::draw_text(buf, w, h, 6, status_y + 3, b"BRCR: 0.134% [HIBERNATED] (Mem 0.336% | Gfx 0% | CPU 0)", COLOR_URL_TEXT, None);
         }
     }
 }
@@ -4532,6 +4621,339 @@ pub const MAX_IMAGE_SCRATCH_PIXELS: usize = MAX_IMAGE_SCRATCH_W * MAX_IMAGE_SCRA
 static mut IMG_FILE_SCRATCH: [u8; 65536] = [0u8; 65536];
 static mut IMG_DECODED_PIXELS: [u32; MAX_IMAGE_SCRATCH_PIXELS] = [0u32; MAX_IMAGE_SCRATCH_PIXELS];
 static mut IMG_SCALED_PIXELS: [u32; MAX_IMAGE_SCRATCH_PIXELS] = [0u32; MAX_IMAGE_SCRATCH_PIXELS];
+static mut IMG_PNG_IDAT_BUF: [u8; 65536] = [0u8; 65536];
+static mut IMG_PNG_ZLIB_OUT: [u8; 524288] = [0u8; 524288];
+
+const MAX_REMOTE_IMG_SLOTS: usize = 8;
+
+#[derive(Clone, Copy)]
+struct RemoteImgEntry {
+    hash_a: u64,
+    hash_b: u64,
+    len: usize,
+    orig_w: u16,
+    orig_h: u16,
+    valid: bool,
+    data: [u8; 65536],
+}
+
+impl RemoteImgEntry {
+    const fn empty() -> Self {
+        Self {
+            hash_a: 0,
+            hash_b: 0,
+            len: 0,
+            orig_w: 0,
+            orig_h: 0,
+            valid: false,
+            data: [0; 65536],
+        }
+    }
+}
+
+static mut REMOTE_IMG_CACHE: [RemoteImgEntry; MAX_REMOTE_IMG_SLOTS] = [RemoteImgEntry::empty(); MAX_REMOTE_IMG_SLOTS];
+static mut REMOTE_IMG_NEXT_SLOT: usize = 0;
+
+fn img_fnv1a_hash(s: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in s {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+pub unsafe fn cache_store_remote_image(key_a: &[u8], key_b: &[u8], raw: &[u8]) -> Option<(usize, usize)> {
+    if raw.is_empty() || raw.len() > 65536 {
+        return None;
+    }
+    let ha = img_fnv1a_hash(key_a);
+    let hb = img_fnv1a_hash(key_b);
+    let probe = probe_image(raw);
+    let (ow, oh) = probe.map(|p| (p.width, p.height)).unwrap_or((0, 0));
+
+    let mut target_slot = None;
+    for idx in 0..MAX_REMOTE_IMG_SLOTS {
+        if REMOTE_IMG_CACHE[idx].valid && (REMOTE_IMG_CACHE[idx].hash_a == ha || REMOTE_IMG_CACHE[idx].hash_b == hb) {
+            target_slot = Some(idx);
+            break;
+        }
+    }
+    let slot = match target_slot {
+        Some(s) => s,
+        None => {
+            let s = REMOTE_IMG_NEXT_SLOT % MAX_REMOTE_IMG_SLOTS;
+            REMOTE_IMG_NEXT_SLOT = (REMOTE_IMG_NEXT_SLOT + 1) % MAX_REMOTE_IMG_SLOTS;
+            s
+        }
+    };
+
+    REMOTE_IMG_CACHE[slot].hash_a = ha;
+    REMOTE_IMG_CACHE[slot].hash_b = hb;
+    REMOTE_IMG_CACHE[slot].data[..raw.len()].copy_from_slice(raw);
+    REMOTE_IMG_CACHE[slot].len = raw.len();
+    REMOTE_IMG_CACHE[slot].orig_w = ow.min(u16::MAX as usize) as u16;
+    REMOTE_IMG_CACHE[slot].orig_h = oh.min(u16::MAX as usize) as u16;
+    REMOTE_IMG_CACHE[slot].valid = true;
+
+    if ow > 0 && oh > 0 { Some((ow, oh)) } else { None }
+}
+
+pub unsafe fn cache_lookup_remote_image(key: &[u8]) -> Option<&'static [u8]> {
+    if key.is_empty() {
+        return None;
+    }
+    let h = img_fnv1a_hash(key);
+    for idx in 0..MAX_REMOTE_IMG_SLOTS {
+        let e = &REMOTE_IMG_CACHE[idx];
+        if e.valid && (e.hash_a == h || e.hash_b == h) {
+            return Some(&e.data[..e.len]);
+        }
+    }
+    None
+}
+
+pub unsafe fn lookup_image_dimensions(src: &[u8]) -> Option<(usize, usize)> {
+    if let Some(cached) = cache_lookup_remote_image(src) {
+        if let Some(p) = probe_image(cached) {
+            if p.width > 0 && p.height > 0 {
+                return Some((p.width, p.height));
+            }
+        }
+    }
+    let mut path_buf = [0u8; 128];
+    let path_len = if src.starts_with(b"/") {
+        let l = src.len().min(127);
+        path_buf[..l].copy_from_slice(&src[..l]);
+        l
+    } else {
+        let prefix = b"/disk/";
+        path_buf[..prefix.len()].copy_from_slice(prefix);
+        let l = src.len().min(127 - prefix.len());
+        path_buf[prefix.len()..prefix.len() + l].copy_from_slice(&src[..l]);
+        prefix.len() + l
+    };
+    let mut fd = storage::sys_open(&path_buf[..path_len], storage::O_RDONLY);
+    if fd < 0 && !src.starts_with(b"/") {
+        let wp_prefix = b"/disk/wallpapers/";
+        path_buf[..wp_prefix.len()].copy_from_slice(wp_prefix);
+        let l = src.len().min(127 - wp_prefix.len());
+        path_buf[wp_prefix.len()..wp_prefix.len() + l].copy_from_slice(&src[..l]);
+        let plen = wp_prefix.len() + l;
+        fd = storage::sys_open(&path_buf[..plen], storage::O_RDONLY);
+    }
+    if fd >= 0 {
+        let n = storage::sys_read(fd as u64, IMG_FILE_SCRATCH.as_mut_ptr(), 4096);
+        let _ = storage::sys_close(fd as u64);
+        if n > 0 {
+            if let Some(p) = probe_image(&IMG_FILE_SCRATCH[..n as usize]) {
+                if p.width > 0 && p.height > 0 {
+                    return Some((p.width, p.height));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Decodificador PNG puro `#![no_std]` (color types 0, 2, 3, 4, 6; bit depth 8)
+pub fn decode_png(
+    data: &[u8],
+    out_pixels: &mut [u32],
+    max_w: usize,
+    max_h: usize,
+) -> Option<(usize, usize)> {
+    if data.len() < 33 || !data.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return None;
+    }
+
+    let mut pos = 8usize;
+    let mut width = 0usize;
+    let mut height = 0usize;
+    let mut bit_depth = 0u8;
+    let mut color_type = 255u8;
+    let mut palette = [[0u8; 4]; 256];
+    let mut pal_count = 0usize;
+    let mut idat_len = 0usize;
+    let idat_buf = unsafe { &mut *core::ptr::addr_of_mut!(IMG_PNG_IDAT_BUF) };
+
+    for idx in 0..256 {
+        palette[idx][3] = 0xFF;
+    }
+
+    while pos + 12 <= data.len() {
+        let clen = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let ctype = &data[pos + 4..pos + 8];
+        let dstart = pos + 8;
+        let dend = dstart.checked_add(clen)?;
+        if dend + 4 > data.len() {
+            break;
+        }
+        let chunk = &data[dstart..dend];
+
+        if ctype == b"IHDR" {
+            if clen < 13 { return None; }
+            width = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as usize;
+            height = u32::from_be_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]) as usize;
+            bit_depth = chunk[8];
+            color_type = chunk[9];
+            let compression = chunk[10];
+            let filter_m = chunk[11];
+            let interlace = chunk[12];
+            if width == 0 || height == 0 || width > 2048 || height > 2048 {
+                return None;
+            }
+            if bit_depth != 8 || compression != 0 || filter_m != 0 || interlace != 0 {
+                return None;
+            }
+        } else if ctype == b"PLTE" {
+            let entries = (clen / 3).min(256);
+            for idx in 0..entries {
+                palette[idx][0] = chunk[idx * 3];
+                palette[idx][1] = chunk[idx * 3 + 1];
+                palette[idx][2] = chunk[idx * 3 + 2];
+            }
+            pal_count = entries;
+        } else if ctype == b"tRNS" && color_type == 3 {
+            let entries = clen.min(pal_count.max(256));
+            for idx in 0..entries {
+                palette[idx][3] = chunk[idx];
+            }
+        } else if ctype == b"IDAT" {
+            if idat_len + clen > idat_buf.len() {
+                return None;
+            }
+            idat_buf[idat_len..idat_len + clen].copy_from_slice(chunk);
+            idat_len += clen;
+        } else if ctype == b"IEND" {
+            break;
+        }
+
+        pos = dend + 4;
+    }
+
+    if width == 0 || height == 0 || idat_len == 0 {
+        return None;
+    }
+
+    let bpp = match color_type {
+        0 => 1usize, // Grayscale
+        2 => 3usize, // RGB
+        3 => 1usize, // Indexed
+        4 => 2usize, // Gray + Alpha
+        6 => 4usize, // RGBA
+        _ => return None,
+    };
+
+    let row_bytes = width.checked_mul(bpp)?;
+    let scanline_stride = row_bytes.checked_add(1)?;
+    let expected_raw = scanline_stride.checked_mul(height)?;
+    let zlib_out = unsafe { &mut *core::ptr::addr_of_mut!(IMG_PNG_ZLIB_OUT) };
+    if expected_raw > zlib_out.len() {
+        return None;
+    }
+
+    let raw_len = crate::gzip::decompress_deflate(&idat_buf[..idat_len], zlib_out).ok()?;
+    if raw_len < expected_raw {
+        return None;
+    }
+
+    // Desfaz os filtros de cada scanline in-place dentro de zlib_out
+    #[inline(always)]
+    fn paeth_predictor(a: i32, b: i32, c: i32) -> u8 {
+        let p = a + b - c;
+        let pa = (p - a).abs();
+        let pb = (p - b).abs();
+        let pc = (p - c).abs();
+        if pa <= pb && pa <= pc { a as u8 } else if pb <= pc { b as u8 } else { c as u8 }
+    }
+
+    for y in 0..height {
+        let cur_off = y * scanline_stride;
+        let filter_type = zlib_out[cur_off];
+        let prev_off = cur_off.saturating_sub(scanline_stride);
+        let data_off = cur_off + 1;
+        match filter_type {
+            0 => {}
+            1 => {
+                for x in bpp..row_bytes {
+                    zlib_out[data_off + x] = zlib_out[data_off + x].wrapping_add(zlib_out[data_off + x - bpp]);
+                }
+            }
+            2 => {
+                if y > 0 {
+                    for x in 0..row_bytes {
+                        zlib_out[data_off + x] = zlib_out[data_off + x].wrapping_add(zlib_out[prev_off + 1 + x]);
+                    }
+                }
+            }
+            3 => {
+                for x in 0..row_bytes {
+                    let left = if x >= bpp { zlib_out[data_off + x - bpp] as u16 } else { 0 };
+                    let up = if y > 0 { zlib_out[prev_off + 1 + x] as u16 } else { 0 };
+                    zlib_out[data_off + x] = zlib_out[data_off + x].wrapping_add(((left + up) >> 1) as u8);
+                }
+            }
+            4 => {
+                for x in 0..row_bytes {
+                    let left = if x >= bpp { zlib_out[data_off + x - bpp] as i32 } else { 0 };
+                    let up = if y > 0 { zlib_out[prev_off + 1 + x] as i32 } else { 0 };
+                    let up_left = if y > 0 && x >= bpp { zlib_out[prev_off + 1 + x - bpp] as i32 } else { 0 };
+                    zlib_out[data_off + x] = zlib_out[data_off + x].wrapping_add(paeth_predictor(left, up, up_left));
+                }
+            }
+            _ => return None,
+        }
+    }
+
+    let dec_w = width.min(max_w);
+    let dec_h = height.min(max_h);
+    if dec_w * dec_h > out_pixels.len() {
+        return None;
+    }
+
+    for dy in 0..dec_h {
+        let sy = dy * height / dec_h;
+        let row_start = sy * scanline_stride + 1;
+        let dst_row = dy * dec_w;
+        for dx in 0..dec_w {
+            let sx = dx * width / dec_w;
+            let px_off = row_start + sx * bpp;
+            let (r, g, b, a): (u32, u32, u32, u32) = match color_type {
+                0 => {
+                    let gval = zlib_out[px_off] as u32;
+                    (gval, gval, gval, 0xFF)
+                }
+                2 => (
+                    zlib_out[px_off] as u32,
+                    zlib_out[px_off + 1] as u32,
+                    zlib_out[px_off + 2] as u32,
+                    0xFF,
+                ),
+                3 => {
+                    let idx = zlib_out[px_off] as usize;
+                    let pal = palette[idx];
+                    (pal[0] as u32, pal[1] as u32, pal[2] as u32, pal[3] as u32)
+                }
+                4 => {
+                    let gval = zlib_out[px_off] as u32;
+                    let alpha = zlib_out[px_off + 1] as u32;
+                    (gval, gval, gval, alpha)
+                }
+                6 => (
+                    zlib_out[px_off] as u32,
+                    zlib_out[px_off + 1] as u32,
+                    zlib_out[px_off + 2] as u32,
+                    zlib_out[px_off + 3] as u32,
+                ),
+                _ => (0, 0, 0, 0xFF),
+            };
+            out_pixels[dst_row + dx] = (a << 24) | (r << 16) | (g << 8) | b;
+        }
+    }
+
+    Some((dec_w, dec_h))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImageFormat {
@@ -4872,114 +5294,129 @@ pub fn render_image_element(
     img: &RenderImage,
     draw_y: usize,
     draw_h: usize,
+    src_y_off: usize,
     clip_top: usize,
     clip_bottom: usize,
 ) {
-    if img.w == 0 || draw_h == 0 { return; }
+    let max_x = w.saturating_sub(16);
+    if img.w == 0 || draw_h == 0 || img.x >= max_x { return; }
+    let vis_img_w = img.w.min(max_x.saturating_sub(img.x));
+    if vis_img_w == 0 { return; }
 
     // Fundo padrão da imagem (Catppuccin Surface)
-    fill_rect(buf, w, h, img.x, draw_y, img.w, draw_h, 0x0031_3244);
-    draw_rect_border(buf, w, h, img.x, draw_y, img.w, draw_h, 0x0045_475A);
+    fill_rect(buf, w, h, img.x, draw_y, vis_img_w, draw_h, 0x0031_3244);
+    draw_rect_border(buf, w, h, img.x, draw_y, vis_img_w, draw_h, 0x0045_475A);
 
     let mut decoded_ok = false;
     let mut probe_res: Option<ImageProbeInfo> = None;
 
     if img.src_len > 0 {
         let src_slice = &img.src[..img.src_len];
-        let mut path_buf = [0u8; 128];
-        let mut path_len;
-
-        if src_slice.starts_with(b"/") {
-            let l = src_slice.len().min(127);
-            path_buf[..l].copy_from_slice(&src_slice[..l]);
-            path_len = l;
-        } else {
-            let prefix = b"/disk/";
-            path_buf[..prefix.len()].copy_from_slice(prefix);
-            let l = src_slice.len().min(127 - prefix.len());
-            path_buf[prefix.len()..prefix.len() + l].copy_from_slice(&src_slice[..l]);
-            path_len = prefix.len() + l;
-        }
-
         unsafe {
-            let fd = storage::sys_open(&path_buf[..path_len], storage::O_RDONLY);
-            let mut read_fd = fd;
-            if read_fd < 0 && !src_slice.starts_with(b"/") {
-                let wp_prefix = b"/disk/wallpapers/";
-                path_buf[..wp_prefix.len()].copy_from_slice(wp_prefix);
-                let l = src_slice.len().min(127 - wp_prefix.len());
-                path_buf[wp_prefix.len()..wp_prefix.len() + l].copy_from_slice(&src_slice[..l]);
-                path_len = wp_prefix.len() + l;
-                read_fd = storage::sys_open(&path_buf[..path_len], storage::O_RDONLY);
-            }
+            let remote_raw = cache_lookup_remote_image(src_slice);
+            let raw_opt: Option<&[u8]> = if let Some(cached) = remote_raw {
+                Some(cached)
+            } else {
+                let mut path_buf = [0u8; 128];
+                let mut path_len;
+                if src_slice.starts_with(b"/") {
+                    let l = src_slice.len().min(127);
+                    path_buf[..l].copy_from_slice(&src_slice[..l]);
+                    path_len = l;
+                } else {
+                    let prefix = b"/disk/";
+                    path_buf[..prefix.len()].copy_from_slice(prefix);
+                    let l = src_slice.len().min(127 - prefix.len());
+                    path_buf[prefix.len()..prefix.len() + l].copy_from_slice(&src_slice[..l]);
+                    path_len = prefix.len() + l;
+                }
 
-            if read_fd >= 0 {
-                let bytes_read = storage::sys_read(read_fd as u64, IMG_FILE_SCRATCH.as_mut_ptr(), IMG_FILE_SCRATCH.len() as u64);
-                let _ = storage::sys_close(read_fd as u64);
-
-                if bytes_read > 0 {
-                    let raw_slice = &IMG_FILE_SCRATCH[..bytes_read as usize];
-                    probe_res = probe_image(raw_slice);
-
-                    let dec_res = if raw_slice.starts_with(b"P6") || raw_slice.starts_with(b"P3") {
-                        decode_ppm(raw_slice, &mut IMG_DECODED_PIXELS, MAX_IMAGE_SCRATCH_W, MAX_IMAGE_SCRATCH_H)
-                    } else if raw_slice.starts_with(b"BM") {
-                        decode_bmp(raw_slice, &mut IMG_DECODED_PIXELS, MAX_IMAGE_SCRATCH_W, MAX_IMAGE_SCRATCH_H)
+                let mut read_fd = storage::sys_open(&path_buf[..path_len], storage::O_RDONLY);
+                if read_fd < 0 && !src_slice.starts_with(b"/") {
+                    let wp_prefix = b"/disk/wallpapers/";
+                    path_buf[..wp_prefix.len()].copy_from_slice(wp_prefix);
+                    let l = src_slice.len().min(127 - wp_prefix.len());
+                    path_buf[wp_prefix.len()..wp_prefix.len() + l].copy_from_slice(&src_slice[..l]);
+                    path_len = wp_prefix.len() + l;
+                    read_fd = storage::sys_open(&path_buf[..path_len], storage::O_RDONLY);
+                }
+                if read_fd >= 0 {
+                    let bytes_read = storage::sys_read(read_fd as u64, IMG_FILE_SCRATCH.as_mut_ptr(), IMG_FILE_SCRATCH.len() as u64);
+                    let _ = storage::sys_close(read_fd as u64);
+                    if bytes_read > 0 {
+                        Some(&IMG_FILE_SCRATCH[..bytes_read as usize])
                     } else {
                         None
-                    };
+                    }
+                } else {
+                    None
+                }
+            };
 
-                    if let Some((dec_w, dec_h)) = dec_res {
-                        let target_w = img.w.min(MAX_IMAGE_SCRATCH_W);
-                        let target_h = img.h.min(MAX_IMAGE_SCRATCH_H);
+            if let Some(raw_slice) = raw_opt {
+                probe_res = probe_image(raw_slice);
 
-                        scale_image_rgba_simd(
-                            &IMG_DECODED_PIXELS[..dec_w * dec_h],
-                            dec_w,
-                            dec_h,
-                            &mut IMG_SCALED_PIXELS[..target_w * target_h],
-                            target_w,
-                            target_h,
-                        );
+                let dec_res = if raw_slice.starts_with(b"P6") || raw_slice.starts_with(b"P3") {
+                    decode_ppm(raw_slice, &mut IMG_DECODED_PIXELS, MAX_IMAGE_SCRATCH_W, MAX_IMAGE_SCRATCH_H)
+                } else if raw_slice.starts_with(b"BM") {
+                    decode_bmp(raw_slice, &mut IMG_DECODED_PIXELS, MAX_IMAGE_SCRATCH_W, MAX_IMAGE_SCRATCH_H)
+                } else if raw_slice.starts_with(b"\x89PNG\r\n\x1a\n") {
+                    decode_png(raw_slice, &mut IMG_DECODED_PIXELS, MAX_IMAGE_SCRATCH_W, MAX_IMAGE_SCRATCH_H)
+                } else {
+                    None
+                };
 
-                        for y in 0..draw_h {
-                            let screen_y = draw_y + y;
-                            if screen_y >= clip_top && screen_y < clip_bottom && screen_y < h {
-                                let scaled_y = y.min(target_h.saturating_sub(1));
-                                let src_row = scaled_y * target_w;
-                                let dst_row = screen_y * w;
+                if let Some((dec_w, dec_h)) = dec_res {
+                    let target_w = img.w.min(MAX_IMAGE_SCRATCH_W);
+                    let target_h = img.h.min(MAX_IMAGE_SCRATCH_H);
 
-                                for x in 0..target_w.min(img.w) {
-                                    let screen_x = img.x + x;
-                                    if screen_x < w {
-                                        let p = IMG_SCALED_PIXELS[src_row + x];
-                                        let alpha = (p >> 24) & 0xFF;
-                                        if alpha >= 250 {
-                                            buf[dst_row + screen_x] = p & 0x00FF_FFFF;
-                                        } else if alpha > 10 {
-                                            let bg = buf[dst_row + screen_x];
-                                            let inv_a = 255 - alpha;
-                                            let r = ((((p >> 16) & 0xFF) * alpha + ((bg >> 16) & 0xFF) * inv_a) >> 8) & 0xFF;
-                                            let g = ((((p >> 8) & 0xFF) * alpha + ((bg >> 8) & 0xFF) * inv_a) >> 8) & 0xFF;
-                                            let b = (((p & 0xFF) * alpha + (bg & 0xFF) * inv_a) >> 8) & 0xFF;
-                                            buf[dst_row + screen_x] = (r << 16) | (g << 8) | b;
-                                        }
+                    scale_image_rgba_simd(
+                        &IMG_DECODED_PIXELS[..dec_w * dec_h],
+                        dec_w,
+                        dec_h,
+                        &mut IMG_SCALED_PIXELS[..target_w * target_h],
+                        target_w,
+                        target_h,
+                    );
+
+                    for y in 0..draw_h {
+                        let screen_y = draw_y + y;
+                        if screen_y >= clip_top && screen_y < clip_bottom && screen_y < h {
+                            let scaled_y = (src_y_off + y).min(target_h.saturating_sub(1));
+                            let src_row = scaled_y * target_w;
+                            let dst_row = screen_y * w;
+
+                            for x in 0..target_w.min(vis_img_w) {
+                                let screen_x = img.x + x;
+                                if screen_x < max_x && screen_x < w {
+                                    let p = IMG_SCALED_PIXELS[src_row + x];
+                                    let alpha = (p >> 24) & 0xFF;
+                                    if alpha >= 250 {
+                                        buf[dst_row + screen_x] = p & 0x00FF_FFFF;
+                                    } else if alpha > 10 {
+                                        let bg = buf[dst_row + screen_x];
+                                        let inv_a = 255 - alpha;
+                                        let r = ((((p >> 16) & 0xFF) * alpha + ((bg >> 16) & 0xFF) * inv_a) >> 8) & 0xFF;
+                                        let g = ((((p >> 8) & 0xFF) * alpha + ((bg >> 8) & 0xFF) * inv_a) >> 8) & 0xFF;
+                                        let b = (((p & 0xFF) * alpha + (bg & 0xFF) * inv_a) >> 8) & 0xFF;
+                                        buf[dst_row + screen_x] = (r << 16) | (g << 8) | b;
                                     }
                                 }
                             }
                         }
-
-                        draw_rect_border(buf, w, h, img.x, draw_y, img.w, draw_h, COLOR_BORDER);
-                        decoded_ok = true;
                     }
+
+                    draw_rect_border(buf, w, h, img.x, draw_y, vis_img_w, draw_h, COLOR_BORDER);
+                    decoded_ok = true;
                 }
             }
         }
     }
 
     if !decoded_ok {
-        if draw_h >= 14 && img.w >= 28 {
+        if draw_h >= 14 && vis_img_w >= 28 {
             let text_y = draw_y + 2;
+            let text_max_x = img.x + vis_img_w.saturating_sub(2);
             if text_y + font::FONT_HEIGHT <= clip_bottom {
                 let (tag, tag_color) = if let Some(probe) = probe_res {
                     match probe.format {
@@ -4993,22 +5430,60 @@ pub fn render_image_element(
                     (b"[IMG]" as &[u8], COLOR_H1)
                 };
 
-                font::draw_text_clipped(buf, w, h, img.x + 3, text_y, tag, tag_color, None, clip_top, clip_bottom);
+                font::draw_text_clipped_rect(buf, w, h, img.x + 3, text_y, tag, tag_color, None, text_max_x, clip_top, clip_bottom);
 
                 let alt_x = img.x + 3 + tag.len() * font::FONT_WIDTH + 4;
-                let max_text_w = (img.x + img.w).saturating_sub(alt_x + 2);
-                if max_text_w >= font::FONT_WIDTH {
+                if alt_x + font::FONT_WIDTH <= text_max_x {
                     if img.alt_len > 0 {
                         let alt_slice = &img.alt[..img.alt_len];
-                        font::draw_text_clipped(buf, w, h, alt_x, text_y, alt_slice, COLOR_TEXT, None, clip_top, clip_bottom);
+                        font::draw_text_clipped_rect(buf, w, h, alt_x, text_y, alt_slice, COLOR_TEXT, None, text_max_x, clip_top, clip_bottom);
                     } else if img.src_len > 0 {
                         let src_slice = &img.src[..img.src_len];
-                        font::draw_text_clipped(buf, w, h, alt_x, text_y, src_slice, 0x00A6_ADC8, None, clip_top, clip_bottom);
+                        font::draw_text_clipped_rect(buf, w, h, alt_x, text_y, src_slice, 0x00A6_ADC8, None, text_max_x, clip_top, clip_bottom);
                     }
                 }
             }
         }
     }
+}
+
+/// Extrai URL de redirecionamento `<meta http-equiv="refresh" content="N;url=...">`
+pub fn extract_meta_refresh_url(html: &[u8], out: &mut [u8; 128]) -> Option<usize> {
+    let scan_len = html.len().min(4096);
+    let head = &html[..scan_len];
+    let mut i = 0usize;
+    while i + 5 < head.len() {
+        if head[i..].starts_with(b"<meta") || head[i..].starts_with(b"<META") {
+            let mut end = i + 5;
+            while end < head.len() && head[end] != b'>' {
+                end += 1;
+            }
+            let tag = &head[i..end];
+            if tag.contains_ignore_ascii_case(b"refresh") {
+                if let Some(content) = extract_attr_val(tag, b"content=") {
+                    if let Some(upos) = content.windows(4).position(|w| w.eq_ignore_ascii_case(b"url=")) {
+                        let mut url = &content[upos + 4..];
+                        url = url.trim_ascii();
+                        if !url.is_empty() && (url[0] == b'\'' || url[0] == b'"') {
+                            url = &url[1..];
+                        }
+                        if !url.is_empty() && (url[url.len() - 1] == b'\'' || url[url.len() - 1] == b'"') {
+                            url = &url[..url.len() - 1];
+                        }
+                        let cpy = url.len().min(127);
+                        if cpy > 0 {
+                            out[..cpy].copy_from_slice(&url[..cpy]);
+                            out[cpy] = 0;
+                            return Some(cpy);
+                        }
+                    }
+                }
+            }
+            i = end;
+        }
+        i += 1;
+    }
+    None
 }
 
 
@@ -5110,6 +5585,19 @@ pub fn is_web_domain(s: &[u8]) -> bool {
         || host_part.ends_with(b".txt")
         || host_part.ends_with(b".elf")
         || host_part.ends_with(b".ppm")
+        || host_part.ends_with(b".png")
+        || host_part.ends_with(b".jpg")
+        || host_part.ends_with(b".jpeg")
+        || host_part.ends_with(b".bmp")
+        || host_part.ends_with(b".gif")
+        || host_part.ends_with(b".svg")
+        || host_part.ends_with(b".webp")
+        || host_part.ends_with(b".ico")
+        || host_part.ends_with(b".css")
+        || host_part.ends_with(b".js")
+        || host_part.ends_with(b".json")
+        || host_part.ends_with(b".xml")
+        || host_part.ends_with(b".pdf")
     {
         return false;
     }
