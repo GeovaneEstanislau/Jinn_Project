@@ -7,6 +7,15 @@
     <language>pt-br</language>
     <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
     <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
+        <item>
+      <title>docs(web,net): publish TLS 1.3 post-mortem, fallback HTTP and telemetry to GitHu</title>
+      <link>https://jinn-os.dev.br</link>
+      <guid isPermaLink="false">jinn-os-docs-web-net---publish-tls-1-3-post-mortem--fallback-http-and-telemetry-to-githu-202611261429</guid>
+      <pubDate>Thu, 26 Nov 2026 14:29:04 +0000</pubDate>
+      <description><![CDATA[
+        <p>Consolidamos o suporte a resolucao DNS cascateada (Cloudflare/Google), decodificacao de imagens bare-metal no Jinn Browser, aceleracao SIMD AVX2 no JHCS e persistencia estrita em disco FAT32 com zero-idle.</p>
+      ]]></description>
+    </item>
     <item>
       <title>Post-Mortem TLS 1.3 no Jinn Browser: Limbs Poly1305 RFC 8439, Alertas close_notify, Fallback HTTPS→HTTP e Telemetria Real</title>
       <link>https://jinn-os.dev.br/artigos/post-mortem-tls13-poly1305-fallback-http-telemetria-jinn-browser.html</link>
