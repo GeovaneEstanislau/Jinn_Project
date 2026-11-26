@@ -13,6 +13,20 @@
     <priority>0.9</priority>
   </url>
   <url>
+    <loc>https://jinn-os.dev.br/artigos/post-mortem-tls13-poly1305-fallback-http-telemetria-jinn-browser.html</loc>
+    <lastmod>2026-11-26</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn OS Devlog</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-26</news:publication_date>
+      <news:title>Post-Mortem TLS 1.3 no Jinn Browser: Limbs Poly1305 RFC 8439, Alertas close_notify, Fallback HTTPS→HTTP e Telemetria Real</news:title>
+    </news:news>
+  </url>
+  <url>
     <loc>https://jinn-os.dev.br/artigos/tabela-rotas-quentes-dns-l2-fast-path-jinn-os.html</loc>
     <lastmod>2026-11-26</lastmod>
     <changefreq>weekly</changefreq>

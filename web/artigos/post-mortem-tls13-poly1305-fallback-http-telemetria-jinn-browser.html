@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Post-Mortem TLS 1.3 no Jinn Browser: Limbs Poly1305 RFC 8439, Alertas close_notify, Fallback HTTPS→HTTP e Telemetria Real — Jinn OS</title>
+  <meta name="description"
+    content="Análise de causa raiz e resolução completa do handshake TLS 1.3 com domínios reais (jinn-os.dev.br, example.com, 68k.news) no Jinn OS e Jinn Browser: correção de máscaras 44/44/42 bits em Poly1305, AES-128-GCM, reassembly multi-record, alertas close_notify cifrados, fallback HTTPS→HTTP e renderização real da telemetria de rede.">
+  <link rel="canonical"
+    href="https://jinn-os.dev.br/artigos/post-mortem-tls13-poly1305-fallback-http-telemetria-jinn-browser.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url"
+    content="https://jinn-os.dev.br/artigos/post-mortem-tls13-poly1305-fallback-http-telemetria-jinn-browser.html">
+  <meta property="og:title"
+    content="Post-Mortem TLS 1.3 no Jinn Browser: Poly1305 RFC 8439, Fallback HTTPS→HTTP e Telemetria Real">
+  <meta property="og:description"
+    content="Como depuramos via PCAP no QEMU e corrigimos falhas de autenticação ChaCha20-Poly1305, AES-128-GCM, registros multi-record TLS 1.3, alertas close_notify, perda de texto inline no parser DOM e telemetria real de rede no Jinn Browser.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/tls13-jinn-os-browser.png">
+
+  <!-- Artigo Meta (Indexação Google News / RSS / Feed) -->
+  <meta name="article:tag" content="POST-MORTEM, CRIPTOGRAFIA, JINN BROWSER, REDES &amp; DRIVERS">
+  <meta name="article:published_time" content="2026-11-26T14:25:00Z">
+
+  <!-- Schema.org NewsArticle -->
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "NewsArticle",
+      "headline": "Post-Mortem TLS 1.3 no Jinn Browser: Limbs Poly1305 RFC 8439, Alertas close_notify, Fallback HTTPS->HTTP e Telemetria Real",
+      "datePublished": "2026-11-26T14:25:00Z",
+      "dateModified": "2026-11-26T14:25:00Z",
+      "image": [
+        "https://jinn-os.dev.br/assets/tls13-jinn-os-browser.png",
+        "https://jinn-os.dev.br/assets/tls13-telemetria-erro-browser.png"
+      ],
+      "author": {
+        "@type": "Organization",
+        "name": "Jinn OS Sovereign Systems",
+        "url": "https://jinn-os.dev.br/"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Jinn OS Devlog",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://jinn-os.dev.br/assets/wallpaper.jpg"
+        }
+      },
+      "mainEntityOfPage": {
+        "@type": "WebPage",
+        "@id": "https://jinn-os.dev.br/artigos/post-mortem-tls13-poly1305-fallback-http-telemetria-jinn-browser.html"
+      }
+    }
+  </script>
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans selection:bg-cyan-500 selection:text-black">
+
+  <!-- Cabeçalho de Navegação -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 hover:text-cyan-400 transition-colors">
+        <i data-lucide="terminal" class="w-5 h-5 text-cyan-400"></i>
+        <span class="font-bold tracking-wider font-mono text-sm">JINN OS // DEVLOG</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="/artigos/" class="text-slate-400 hover:text-white transition-colors">Artigos</a>
+        <a href="/rss.xml" class="text-emerald-400 hover:underline">RSS 2.0</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Feed</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Conteúdo do Artigo -->
+  <main class="max-w-4xl mx-auto px-6 py-12">
+    <div class="mb-8">
+      <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400 mb-3">
+        <span class="bg-cyan-950/80 border border-cyan-800/60 px-2.5 py-0.5 rounded-full">POST-MORTEM</span>
+        <span>•</span>
+        <span class="bg-emerald-950/80 border border-emerald-800/60 px-2.5 py-0.5 rounded-full">CRIPTOGRAFIA TLS 1.3</span>
+        <span>•</span>
+        <time datetime="2026-11-26">26 de Novembro de 2026</time>
+      </div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight">
+        Post-Mortem TLS 1.3 no Jinn Browser: Limbs <code>Poly1305</code>, Alertas <code>close_notify</code>, Fallback HTTPS&rarr;HTTP e Telemetria Real
+      </h1>
+      <p class="text-slate-400 text-base sm:text-lg mt-3 leading-relaxed">
+        Diagnóstico empírico em QEMU com captura PCAP sobre falhas reais no handshake TLS 1.3 (RFC 8446) com domínios externos e na renderização de diagnóstico do Jinn Browser — detalhando cada bug encontrado no espaço de usuário (<code>apps/ola-mundo</code>) e no kernel (<code>src/net/tls13.rs</code>), as modificações aplicadas no commit <a href="https://github.com/GeovaneEstanislau/Jinn_Project/commit/bcac193" class="text-cyan-400 hover:underline font-mono">bcac193</a> e as provas de validação pós-correção.
+      </p>
+    </div>
+
+    <article class="prose prose-invert prose-cyan max-w-none text-slate-300 space-y-6 text-sm sm:text-base leading-relaxed">
+      <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2">
+        1. Sintomas Observados e Diagnóstico Inicial
+      </h2>
+      <p>
+        Em testes anteriores com placa <code>e1000</code> (paridade com VirtualBox), a navegação direta via IP em texto claro (<code>http://185.199.108.153</code>) já renderizava páginas normalmente, confirmando a integridade de ARP, IPv4 e TCP. Contudo, duas falhas críticas impediam o uso prático na web moderna:
+      </p>
+      <ul class="space-y-2 my-4">
+        <li><strong>Rejeição de domínios HTTPS reais:</strong> navegar para <code>https://jinn-os.dev.br</code> ou <code>https://frogfind.com</code> resultava em <em>"Falha de Negociacao TLS 1.3"</em> logo após o recebimento dos primeiros registros cifrados após o <code>ServerHello</code>.</li>
+        <li><strong>Telemetria em branco na tela de erro:</strong> na seção <em>Diagnostico de Fluxo e Pilha de Rede</em>, os rótulos <code>Estagio da Falha</code>, <code>IP Externo/DNS Resolvido</code>, <code>Interface de Rede</code> e <code>Contador de Pacotes</code> exibiam apenas o texto em negrito e deixavam os valores visivelmente vazios.</li>
+      </ul>
+
+      <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-8">
+        2. Problemas Identificados na Auditoria Técnica
+      </h2>
+      <ol class="space-y-3 my-4 list-decimal pl-5">
+        <li>
+          <strong>Bug aritmético de limbs em <code>Poly1305</code> (<code>apps/ola-mundo/src/tls.rs</code> e <code>src/net/tls13.rs</code>):</strong>
+          Ao capturar o tráfego na porta 443 com QEMU <code>filter-dump</code> (PCAP), confirmou-se que <code>jinn-os.dev.br:443</code> negociava <code>TLS_CHACHA20_POLY1305_SHA256</code> (<code>0x1303</code>) e aceitava o <code>ServerHello</code>, porém o primeiro registro de handshake cifrado (<code>EncryptedExtensions</code>, <code>ct=0x17</code>, 27 bytes) falhava na verificação da tag Poly1305. A auditoria identificou máscaras de 60 e 50 bits (<code>0x0ffffffc0fffffff</code> / <code>0x3ffffffffffff</code>) combinadas com deslocamentos incompatíveis (<code>&gt;&gt; 6</code>, <code>&gt;&gt; 12</code>, <code>&gt;&gt; 2</code>, <code>&gt;&gt; 4</code>) dentro de acumulador em base <code>44/44/42</code> bits. Como cliente e servidor internos no autoteste usavam a mesma rotina simétrica defeituosa, o teste local passava enquanto todos os servidores reais na Internet divergiam.
+        </li>
+        <li>
+          <strong>Falta de <code>TLS_AES_128_GCM_SHA256</code> e fragmentação multi-record:</strong>
+          O cliente TLS anunciava <code>0x1301</code> no <code>ClientHello</code> sem implementá-lo em software; além disso, servidores modernos (GitHub Pages / Cloudflare / nginx) dividem <code>EncryptedExtensions</code>, cadeias <code>Certificate</code> (~3,4 a 4,1 KiB), <code>CertificateVerify</code> e <code>Finished</code> em múltiplos registros TLS separados e em vários segmentos TCP. O buffer anterior (<code>8 KiB</code>) e o parser sem acumulador contínuo de handshake não suportavam mensagens cruzando fronteiras de registro.
+        </li>
+        <li>
+          <strong>Aborto em alertas <code>close_notify</code> cifrados pós-resposta:</strong>
+          Mesmo após corrigir Poly1305 e AES-128-GCM, servidores com <code>Connection: close</code> (como <code>68k.news:443</code> e proxies TLS 1.3) enviam um alerta cifrado <code>close_notify</code> (24 bytes, <code>ContentType</code> externo <code>0x17</code>, interno <code>CONTENT_ALERT = 21</code>) concatenado logo após os bytes da resposta HTTP. Como <code>decrypt_application_data</code> retornava <code>None</code> para <code>inner_type == 21</code>, o navegador descartava o payload HTTP já decifrado e reportava erro <code>TlsDecryptFailed</code>.
+        </li>
+        <li>
+          <strong>Capacidade de buffer para páginas reais &gt; 64 KiB e ausência de fallback:</strong>
+          A página inicial de <code>https://jinn-os.dev.br</code> entrega <strong>54.762 bytes</strong> de HTML (que somados aos cabeçalhos e registros cifrados saturavam buffers de <code>64 KiB</code>), e o portal <code>68k.news</code> entrega <code>70–71 KiB</code>. Em paralelo, <code>resolve_target_path</code> enviava quase todos os domínios sem esquema direto para HTTP, sem sondar HTTPS nem oferecer fallback transparente para HTTP quando a porta 443 recusa ou bloqueia.
+        </li>
+        <li>
+          <strong>Descarte de texto após tags de fechamento inline no parser DOM (<code>browser.rs</code>):</strong>
+          Na tela de erro formatada como <code>&lt;p&gt;&lt;b&gt;Estagio da Falha: &lt;/b&gt;Valor&lt;/p&gt;</code>, a função <code>parse_html_into_dom</code> lia texto apenas imediatamente após uma tag de <em>abertura</em>. Qualquer texto posicionado após <code>&lt;/b&gt;</code>, <code>&lt;/i&gt;</code> ou <code>&lt;/span&gt;</code> caía no ramo <code>else { i += 1; }</code> e era silenciosamente descartado caractere a caractere; adicionalmente, <code>main.rs</code> e <code>browser.rs</code> ainda imprimiam strings estáticas em vez de consultar o estado do kernel.
+        </li>
+      </ol>
+
+      <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-8">
+        3. Modificações e Resoluções Implementadas
+      </h2>
+      <ul class="space-y-2 my-4">
+        <li><strong>Criptografia RFC 8439 e TLS 1.3 (<code>src/net/tls13.rs</code> e <code>apps/ola-mundo/src/tls.rs</code>):</strong> reimplementado <code>Poly1305</code> com divisão exata <code>44/44/42</code> via <code>u128::from_le_bytes</code> (validado contra vetores de referência em Python) e implementado <code>Aes128Gcm</code> completo em software (S-Box FIPS 197, key schedule AES-128 e multiplicação GHASH em <code>GF(2^128)</code>).</li>
+        <li><strong>Reassembly multi-record e alertas cifrados (<code>tls.rs</code> e <code>main.rs</code>):</strong> adicionados buffers estáticos em <code>.bss</code> (<code>HS_DECRYPT_BUF</code> de 18 KiB, <code>HS_REASM_BUF</code> de 32 KiB, <code>HTTP_BUF_SIZE</code> elevado de <code>64 KiB</code> para <code>128 KiB</code> e <code>MAX_DOM_NODES</code> de 256 para 512, sem onerar a stack de Ring 3) e introduzido <code>AppRecord</code> em <code>decrypt_application_record</code> para distinguir dados de aplicação, <code>NewSessionTicket</code> (<code>Handshake</code>) e <code>Alert(level, desc)</code> (<code>close_notify</code> encerrando o fluxo com preservação do corpo já recebido).</li>
+        <li><strong>Roteamento inteligente e fallback HTTPS&rarr;HTTP (<code>apps/ola-mundo/src/main.rs</code>):</strong> <code>resolve_target_with_mode</code> agora direciona qualquer domínio ou IP sem esquema para <code>https://</code> com <code>allow_http_fallback = true</code>; em caso de falha na porta 443, handshake TLS ou erro HTTP &ge; 400 na sondagem automática, <code>browser_load_and_display</code> realiza fallback transparente para <code>http://</code>. Quando o usuário digita explicitamente <code>https://...</code>, o fallback é bloqueado e o erro TLS é exibido com fidelidade.</li>
+        <li><strong>Parser DOM inline e telemetria real do kernel (<code>apps/ola-mundo/src/browser.rs</code> e <code>main.rs</code>):</strong> <code>parse_html_into_dom</code> cria nós <code>DomNodeType::Text</code> (<code>#text</code>) para todo texto pós-fechamento dentro do elemento pai e ignora fechamentos de tags estruturais não empilhadas (<code>html</code>, <code>head</code>, <code>body</code>, <code>meta</code>); <code>layout_subtree</code> coalesca filhos inline simples na mesma linha. A nova estrutura <code>FetchDiagInfo</code>, combinada às syscalls <code>sys_get_system_stats (88)</code> e <code>sys_net_hot_route_list (97)</code>, preenche os campos reais de estágio e código numérico, IP/origem (<code>HotRoute</code> / <code>DNS Resolvido</code> / <code>NAT Gateway</code>), nome e IP da interface de rede do kernel e contadores <code>TX | RX | ARP Gateway MAC</code>.</li>
+      </ul>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 my-6">
+        <div class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/70">
+          <img src="/assets/tls13-jinn-os-browser.png" alt="Jinn Browser exibindo https://jinn-os.dev.br via TLS 1.3 após decifrar 54762 bytes" class="w-full h-auto">
+          <p class="text-xs font-mono text-slate-400 px-4 py-2 border-t border-slate-800">
+            <strong>https://jinn-os.dev.br</strong> carregado no QEMU (<code>e1000</code>, 4 vCPUs): badge verde <code>TLS1.3</code> ativo após handshake ChaCha20-Poly1305 multi-record e decifragem de <code>54.762 bytes</code>.
+          </p>
+        </div>
+        <div class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/70">
+          <img src="/assets/tls13-telemetria-erro-browser.png" alt="Tela de erro do Jinn Browser com Estagio da Falha, IP Externo, Interface de Rede Intel 82540EM e contadores TX/RX preenchidos" class="w-full h-auto">
+          <p class="text-xs font-mono text-slate-400 px-4 py-2 border-t border-slate-800">
+            Tela de diagnóstico em <strong>https://10.0.2.2:59999</strong>: <code>Estagio da Falha</code>, <code>IP Externo/DNS Resolvido</code>, <code>Interface de Rede</code> (<code>Intel 82540EM (10.0.2.15)</code>) e <code>Contador de Pacotes</code> preenchidos pelo kernel.
+          </p>
+        </div>
+      </div>
+
+      <h2 class="text-xl sm:text-2xl font-bold text-white border-b border-slate-800 pb-2 mt-8">
+        4. Resultados Empíricos em QEMU (<code>e1000</code>, <code>virtio-net-pci</code>, 4 vCPUs)
+      </h2>
+
+      <div class="overflow-x-auto my-4">
+        <table class="w-full text-left border-collapse border border-slate-800 text-xs sm:text-sm font-mono">
+          <thead>
+            <tr class="bg-slate-900 text-cyan-400 border-b border-slate-800">
+              <th class="p-3">Cenário / Suíte Executada</th>
+              <th class="p-3">Comportamento Observado</th>
+              <th class="p-3">Métrica / Evidência</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800/80">
+            <tr>
+              <td class="p-3 font-semibold text-white"><code>68k.news</code> (sem esquema)</td>
+              <td class="p-3">Tentou <code>https://68k.news</code> via TLS 1.3 + <code>301</code> &rarr; <code>http://frogfind.com/news</code></td>
+              <td class="p-3 text-emerald-400"><code>PAGE_LOADED</code> (70.299 bytes / 256 linhas)</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-white"><code>10.0.2.2:18080</code> (HTTP-only, sem esquema)</td>
+              <td class="p-3">Handshake TLS rejeitado &rarr; fallback automático para <code>http://10.0.2.2:18080</code></td>
+              <td class="p-3 text-emerald-400"><code>PAGE_LOADED</code> (282 bytes) com rótulos inline</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-white"><code>https://example.com</code></td>
+              <td class="p-3">TLS 1.3 + decodificação HTTP <code>Transfer-Encoding: chunked</code></td>
+              <td class="p-3 text-emerald-400"><code>PAGE_LOADED</code> (577 bytes decodificados)</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-white"><code>https://jinn-os.dev.br</code></td>
+              <td class="p-3">Handshake TLS 1.3 multi-record + ChaCha20-Poly1305</td>
+              <td class="p-3 text-emerald-400"><code>PAGE_LOADED</code> (54.762 bytes HTML)</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-white"><code>https://10.0.2.2:59999</code> (porta fechada)</td>
+              <td class="p-3">Tela <code>PAGE_NET_ERROR</code> com todos os rótulos preenchidos</td>
+              <td class="p-3 text-cyan-300"><code>TCP_CONNECT (-110 ETIMEDOUT)</code>, <code>Intel 82540EM</code>, <code>TX: 167 | RX: 146</code></td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-white"><code>https://10.0.2.2:18080</code> (HTTPS explícito)</td>
+              <td class="p-3">Falha de handshake TLS exibida sem fallback para HTTP</td>
+              <td class="p-3 text-cyan-300"><code>TLS_HANDSHAKE (RFC 8446)</code></td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-white">Regressão E2E (<code>HotRoutes</code>, <code>DNS</code>, <code>PCAP</code>, <code>JAHA 1.2</code>)</td>
+              <td class="p-3">Aprovadas em cadeia após as edições finais em <code>e1000</code> e <code>virtio-net-pci</code></td>
+              <td class="p-3 text-emerald-400"><code>ARP=0 DNS=0</code> (Fast-Path), <code>0 bytes discrepancy</code>, APs em 100% <code>HLT</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <!-- Rodapé do Artigo -->
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn OS Sovereign Systems • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/artigos/" class="text-cyan-400 hover:underline">Voltar aos Artigos</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-slate-300 hover:text-white">Portal Principal</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>

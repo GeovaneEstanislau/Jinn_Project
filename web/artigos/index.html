@@ -59,7 +59,7 @@
         <span class="text-xs font-mono bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded border border-cyan-800">Artigos</span>
       </a>
       <div class="flex items-center gap-3 sm:gap-4 text-xs font-mono overflow-x-auto">
-        <span id="articles-counter" class="hidden sm:inline-block text-slate-400">17 publicações</span>
+        <span id="articles-counter" class="hidden sm:inline-block text-slate-400">18 publicações</span>
         <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml" class="hidden md:inline-block shrink-0"><img src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
         <a href="/feed.xml" target="_blank" class="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors shrink-0">
           <i data-lucide="rss" class="w-3.5 h-3.5"></i>
@@ -104,12 +104,39 @@
         </p>
       </div>
       <div class="text-xs font-mono text-slate-400 shrink-0">
-        Mostrando <span id="visible-count" class="text-cyan-400 font-bold">17</span> de 17 artigos
+        Mostrando <span id="visible-count" class="text-cyan-400 font-bold">18</span> de 18 artigos
       </div>
     </div>
 
     <!-- Container Escalável de Artigos -->
     <div id="articles-grid" class="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
+      <!-- Card: post-mortem-tls13-poly1305-fallback-http-telemetria-jinn-browser -->
+      <a href="/artigos/post-mortem-tls13-poly1305-fallback-http-telemetria-jinn-browser.html" data-article-card data-categories="microkernel redes homologacao" data-search="post-mortem tls 1.3 no jinn browser: limbs poly1305 rfc 8439, alertas close_notify, fallback https→http e telemetria real análise de causa raiz e resolução completa do handshake tls 1.3 com domínios reais (jinn-os.dev.br, example.com, 68k.news) no jinn os e jinn browser: correção de máscaras 44/44/42 bits em poly1305, aes-128-gcm, reassembly multi-record, alertas close_notify cifrados, fallback https→http e renderização real da telemetria de rede. post-mortem criptografia jinn browser redes &amp; drivers" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-cyan-400 mb-3">
+            <span class="bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 rounded-full font-semibold">POST-MORTEM</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-26">26 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>6 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-cyan-300 transition-colors leading-snug">
+            Post-Mortem TLS 1.3 no Jinn Browser: Limbs Poly1305 RFC 8439, Alertas close_notify, Fallback HTTPS→HTTP e Telemetria Real
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Análise de causa raiz e resolução completa do handshake TLS 1.3 com domínios reais (jinn-os.dev.br, example.com, 68k.news) no Jinn OS e Jinn Browser: correção de máscaras 44/44/42 bits em Poly1305, AES-128-GCM, reassembly multi-record, alertas close_notify cifrados, fallback HTTPS→HTTP e renderização real da telemetria de rede.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">CRIPTOGRAFIA</span><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">JINN BROWSER</span><span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">REDES &amp; DRIVERS</span></div>
+          <div class="flex items-center gap-1 text-xs font-semibold text-cyan-400 ml-auto">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </div>
+        </div>
+      </a>
+
       <!-- Card: tabela-rotas-quentes-dns-l2-fast-path-jinn-os -->
       <a href="/artigos/tabela-rotas-quentes-dns-l2-fast-path-jinn-os.html" data-article-card data-categories="microkernel redes simd homologacao" data-search="tabela de rotas mais usadas (`hotroutetable`): fast-path unificado dns + l2/l3 no jinn os como o jinn os unifica resolução de nomes dns, next-hop ipv4 e endereço mac l2 na hotroutetable alinhada a 64 bytes em .bss estático com /disk/hot_routes.db, envio direto de tcp syn (0 pacotes dns/arp na 2ª conexão e pós-cold-reboot), ui rotas mais acessadas no aladdin desktop e 0,00% cpu ociosa. redes &amp; drivers zero-idle microkernel aladdin ui jinn browser" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
         <div>
