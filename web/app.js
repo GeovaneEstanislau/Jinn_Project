@@ -560,9 +560,14 @@ document.addEventListener('DOMContentLoaded', () => {
     window.lucide.createIcons();
   }
 
-  // Abre janela de boas-vindas / História automaticamente após 600ms
+  // Deep-link de janelas via URL hash (ex: /#win-contact) ou janela inicial
+  const hashWin = (window.location.hash || '').replace(/^#/, '');
+  const paramWin = new URLSearchParams(window.location.search).get('window') || '';
+  const initialWin = (hashWin && document.getElementById(hashWin))
+    ? hashWin
+    : (paramWin && document.getElementById(paramWin) ? paramWin : 'win-history');
   setTimeout(() => {
-    openWindow('win-history');
+    openWindow(initialWin);
   }, 600);
 });
 

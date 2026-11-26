@@ -1,25 +1,34 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only OR Jinn-Commercial-1.0
 """
 scripts/syndicate_broadcast.py
 
-Pipeline de Sindicação e Difusão Automatizada para o Jinn OS (jinn-os.dev.br)
-Implementa Engenharia como Marketing com Zero Custo Manual:
-1. Gera 3 formatos a partir do git diff / release:
+Pipeline de Sindicação e Difusão Automatizada para o Jinn Engineering Observatory (jinn-os.dev.br)
+Implementa Engenharia como Marketing + Jinn Open Engineering Outreach com Zero Custo Manual:
+1. Gera formatos enriquecidos com ganho técnico mensurável e ecossistemas aplicáveis:
    - Formato 1: Microblogging (Bluesky, Mastodon, X)
    - Formato 2: Comunidade / Chat (Discord, Telegram via Webhooks)
-   - Formato 3: RSS Feed Estático (web/feed.xml e web/rss.xml)
+   - Formato 3: RSS Feed Estático (web/feed.xml e web/rss.xml) + Release Notes GitHub
 2. Despacha automaticamente via HTTP (APIs e Webhooks nativos sem dependências externas)
 """
 
 import os
 import sys
 import argparse
+import html as html_lib
 import json
 import urllib.request
 import urllib.error
 import datetime
 import subprocess
 import re
+from pathlib import Path
+
+WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+if str(WEB_DIR) not in sys.path:
+    sys.path.insert(0, str(WEB_DIR))
+
+from build_feed import ECOSYSTEM_DOMAINS, classify_ecosystems, extract_measurable_gain, format_ecosystem_summary_text
 
 DEFAULT_PORTAL_URL = "https://jinn-os.dev.br"
 DEFAULT_REPO_URL = "https://github.com/GeovaneEstanislau/Jinn_Project"
@@ -54,48 +63,94 @@ def get_git_info(commit_ref="HEAD"):
 
     return info
 
-def format_microblog(title, version, summary, link):
-    """Gera texto para Bluesky, Mastodon e X (Thread técnica concisa <= 300 chars)."""
-    text = (
-        f"🚀 Jinn OS {version}: {title}\n\n"
-        f"{summary}\n\n"
-        f"🦀 Microkernel x86_64 em Rust (#![no_std])\n"
-        f"⚡ 0.00% CPU em repouso (Zero-Idle)\n"
-        f"🔗 {link}\n\n"
-        f"#RustLang #OSDev #Microkernel #SystemsProgramming"
+def format_ecosystem_labels(eco_ids):
+    """Retorna rótulos concisos de domínios e ecossistemas de referência."""
+    labels = []
+    for eco_id in eco_ids:
+        cfg = ECOSYSTEM_DOMAINS.get(eco_id)
+        if cfg:
+            labels.append(f"{cfg['short_label']} ({', '.join(cfg['ecosystems'][:4])})")
+    return labels
+
+
+def format_release_notes(title, version, summary, gain, eco_ids, link, commit):
+    """Gera template estruturado de Release Notes para GitHub Releases com ganho mensurável e ecossistemas."""
+    eco_bullets = "\n".join(
+        f"- **{ECOSYSTEM_DOMAINS[e]['title']}** (`{e}`): {', '.join(ECOSYSTEM_DOMAINS[e]['ecosystems'])}"
+        for e in eco_ids if e in ECOSYSTEM_DOMAINS
     )
+    return (
+        f"## Jinn OS {version} — {title}\n\n"
+        f"{summary}\n\n"
+        f"### Ganho Técnico Mensurável\n"
+        f"- {gain}\n"
+        f"- Commit de referência: `{commit}`\n\n"
+        f"### Ecossistemas & Setores Aplicáveis\n"
+        f"{eco_bullets}\n\n"
+        f"### Canal Aberto de Colaboração & Pilotos\n"
+        f"Empresas de automação locais, universidades/grupos de pesquisa em SO e projetos públicos responsáveis podem reproduzir este build ou propor pilotos via:\n"
+        f"- Relatório & Telemetria: {link}\n"
+        f"- Contato Técnico: {DEFAULT_PORTAL_URL}/#win-contact\n"
+        f"- Feed RSS / Google News: {DEFAULT_PORTAL_URL}/feed.xml\n"
+    )
+
+
+def format_microblog(title, version, summary, gain, eco_ids, link):
+    """Gera texto técnico conciso para Bluesky (<=300 chars), Mastodon e X."""
+    eco_short = " · ".join(ECOSYSTEM_DOMAINS[e]["short_label"] for e in eco_ids if e in ECOSYSTEM_DOMAINS)
+    t = title[:68].rstrip()
+    g = gain.replace("Indicadores citados no relatório: ", "")[:64].rstrip()
+    text = (
+        f"Jinn OS {version}: {t}\n\n"
+        f"Metricas: {g}\n"
+        f"Ecossistemas: {eco_short[:65]}\n"
+        f"{link}\n"
+        f"#RustLang #OSDev #Microkernel #NoStd"
+    )
+    if len(text) > 295:
+        avail = max(20, len(t) - (len(text) - 295))
+        t = t[:avail].rstrip()
+        text = (
+            f"Jinn OS {version}: {t}\n\n"
+            f"Metricas: {g}\n"
+            f"Ecossistemas: {eco_short[:65]}\n"
+            f"{link}\n"
+            f"#RustLang #OSDev #Microkernel #NoStd"
+        )
     return text
 
-def format_discord_embed(title, version, summary, link, commit):
-    """Gera payload JSON para Webhook do Discord com Rich Embed."""
+
+def format_discord_embed(title, version, summary, gain, eco_ids, link, commit):
+    """Gera payload JSON para Webhook do Discord com Rich Embed incluindo ganho e ecossistemas."""
+    eco_text = "\n".join(f"• {lbl}" for lbl in format_ecosystem_labels(eco_ids)) or "• Microkernel & Open Hardware"
     payload = {
-        "username": "Jinn OS Release Bot",
+        "username": "Jinn Engineering Observatory Bot",
         "avatar_url": f"{DEFAULT_PORTAL_URL}/assets/wallpaper.jpg",
         "embeds": [
             {
-                "title": f"🚀 Jinn OS {version}: {title}",
+                "title": f"Jinn OS {version}: {title}",
                 "url": link,
                 "description": summary,
-                "color": 0x00E5FF, # Cyan/Emerald
+                "color": 0x00E5FF,
                 "fields": [
                     {
-                        "name": "🏛️ Arquitetura",
-                        "value": "Microkernel `x86_64` (`#![no_std]`) com Ring 3 Isolado & IPC Zero-Copy",
+                        "name": "Ganho Técnico Mensurável",
+                        "value": gain,
                         "inline": False
                     },
                     {
-                        "name": "⚡ Destaques de Engenharia",
-                        "value": "• Zero-GPU 60 FPS no Aladdin Desktop\n• Resolução DNS Cloudflare/Google cascateada\n• Zero-Idle Resource Consumption (0.00% CPU)",
+                        "name": "Ecossistemas & Setores Aplicáveis",
+                        "value": eco_text,
                         "inline": False
                     },
                     {
-                        "name": "🔗 Links & Recursos",
-                        "value": f"[Portal Oficial]({DEFAULT_PORTAL_URL}) | [Código-Fonte ({commit})]({DEFAULT_REPO_URL}) | [RSS Feed]({DEFAULT_PORTAL_URL}/feed.xml)",
+                        "name": "Colaboração Aberta (Indústria Local, Academia & Setor Público)",
+                        "value": f"[Observatory]({DEFAULT_PORTAL_URL}) | [GitHub ({commit})]({DEFAULT_REPO_URL}) | [Contato/Pilotos]({DEFAULT_PORTAL_URL}/#win-contact) | [RSS Feed]({DEFAULT_PORTAL_URL}/feed.xml)",
                         "inline": False
                     }
                 ],
                 "footer": {
-                    "text": "Jinn OS — Sovereign Foundation Systems",
+                    "text": "Jinn Engineering Observatory — Research. Engineering. Outreach. Collaboration.",
                     "icon_url": f"{DEFAULT_PORTAL_URL}/assets/wallpaper.jpg"
                 },
                 "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -104,20 +159,24 @@ def format_discord_embed(title, version, summary, link, commit):
     }
     return payload
 
-def format_telegram_message(title, version, summary, link):
-    """Gera mensagem formatada em HTML para Bot do Telegram."""
+
+def format_telegram_message(title, version, summary, gain, eco_ids, link):
+    """Gera mensagem formatada em HTML para Bot do Telegram com ganhos e ecossistemas."""
+    eco_str = html_lib.escape(", ".join(ECOSYSTEM_DOMAINS[e]["short_label"] for e in eco_ids if e in ECOSYSTEM_DOMAINS))
     text = (
-        f"<b>🚀 Jinn OS {version}: {title}</b>\n\n"
-        f"{summary}\n\n"
-        f"⚙️ <i>Microkernel x86_64 em Rust (#![no_std]) | Zero-GPU | Zero-Idle</i>\n\n"
-        f"🌐 <a href=\"{DEFAULT_PORTAL_URL}\">Portal Oficial</a> | "
-        f"<a href=\"{link}\">Ver Atualização</a> | "
-        f"<a href=\"{DEFAULT_PORTAL_URL}/feed.xml\">RSS Feed</a>"
+        f"<b>Jinn OS {html_lib.escape(version)}: {html_lib.escape(title)}</b>\n\n"
+        f"{html_lib.escape(summary)}\n\n"
+        f"<b>Ganho Mensurável:</b> {html_lib.escape(gain)}\n"
+        f"<b>Ecossistemas:</b> {eco_str}\n\n"
+        f"<a href=\"{DEFAULT_PORTAL_URL}\">Observatory</a> | "
+        f"<a href=\"{link}\">Relatório</a> | "
+        f"<a href=\"{DEFAULT_PORTAL_URL}/#win-contact\">Pilotos &amp; Colaboração</a>"
     )
     return text
 
-def update_rss_feed(feed_path, title, summary, link):
-    """Insere o novo item no topo do arquivo RSS/Atom (web/feed.xml e web/rss.xml)."""
+
+def update_rss_feed(feed_path, title, summary, link, gain="", eco_ids=None):
+    """Insere o novo item no topo do arquivo RSS/Atom (web/feed.xml e web/rss.xml) com ganhos e ecossistemas."""
     if not os.path.exists(feed_path):
         print(f"[WARN] Arquivo RSS nao encontrado em: {feed_path}")
         return False
@@ -125,24 +184,27 @@ def update_rss_feed(feed_path, title, summary, link):
     with open(feed_path, "r", encoding="utf-8") as f:
         content = f.read()
 
+    eco_ids = eco_ids or ["microkernel-security"]
+    rich_desc = format_ecosystem_summary_text(summary, gain or "Evidência empírica reproduzível em QEMU/PCAP", eco_ids)
+    categories_xml = "\n".join(f"      <category>{html_lib.escape(e)}</category>" for e in eco_ids)
+
     now_rfc822 = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
     guid = "jinn-os-" + re.sub(r'[^a-zA-Z0-9]', '-', title.lower()).strip('-') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M")
 
     new_item = f"""    <item>
-      <title>{title}</title>
-      <link>{link}</link>
+      <title>{html_lib.escape(title)}</title>
+      <link>{html_lib.escape(link)}</link>
       <guid isPermaLink="false">{guid}</guid>
       <pubDate>{now_rfc822}</pubDate>
+{categories_xml}
       <description><![CDATA[
-        <p>{summary}</p>
+        <p>{rich_desc}</p>
       ]]></description>
     </item>
 """
 
-    # Atualiza lastBuildDate
     content = re.sub(r'<lastBuildDate>[^<]+</lastBuildDate>', f'<lastBuildDate>{now_rfc822}</lastBuildDate>', content)
 
-    # Insere antes do primeiro <item>
     if "<item>" in content:
         content = content.replace("<item>", new_item + "    <item>", 1)
     else:
@@ -306,10 +368,11 @@ def dispatch_websub(feed_urls=None, hub_url="https://pubsubhubbub.appspot.com/",
             print(f"  [FAIL] Falha no WebSub Hub Ping ({feed_url}): {e}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Pipeline de Sindicação e Difusão de Engenharia do Jinn OS")
+    parser = argparse.ArgumentParser(description="Pipeline de Sindicação e Difusão de Engenharia do Jinn Engineering Observatory")
     parser.add_argument("--title", type=str, help="Titulo tecnico do release / devlog")
     parser.add_argument("--version", type=str, help="Versao do release (ex: v0.4.3-alpha)")
     parser.add_argument("--summary", type=str, help="Sumario executivo de engenharia")
+    parser.add_argument("--gain", type=str, help="Ganho tecnico mensuravel (ex: 0.00%% CPU idle, 54 KB TLS 1.3)")
     parser.add_argument("--link", type=str, help="URL de destino para o post completo / release")
     parser.add_argument("--commit", type=str, default="HEAD", help="Hash ou referencia do commit a inspecionar")
     parser.add_argument("--update-feed", action="store_true", help="Atualiza web/feed.xml e web/rss.xml com a nova entrada")
@@ -318,53 +381,56 @@ def main():
     args = parser.parse_args()
     git_info = get_git_info(args.commit)
 
-    # Limpeza e formatacao automatica de titulo se nao fornecido
     if args.title:
         title = args.title
     elif git_info["message"]:
         raw_msg = git_info["message"]
-        cleaned = re.sub(r'^(feat|fix|release|chore|refactor)(\([^)]+\))?:\s*', '', raw_msg, flags=re.I)
+        cleaned = re.sub(r'^(feat|fix|perf|docs|release|chore|refactor)(\([^)]+\))?:\s*', '', raw_msg, flags=re.I)
         cleaned = re.sub(r'\[announce\]', '', cleaned, flags=re.I).strip()
-        # Se for o commit de release, gera titulo técnico atraente
-        if "configurable google/cloudflare dns" in cleaned.lower():
-            title = "Native SIMD image decoding in Ring 3, SMP spawn race fix, and forensic VFS cold-reboot tests"
-        else:
-            title = cleaned[:80] if cleaned else "Hardening de Microkernel e Pipeline SIMD Zero-GPU"
+        title = cleaned[:96] if cleaned else "Hardening de Microkernel e Arquitetura Zero-Idle"
     else:
-        title = "Native SIMD image decoding in Ring 3, SMP spawn race fix, and forensic VFS cold-reboot tests"
+        title = "Hardening de Microkernel, Pilha TLS 1.3 e Arquitetura Zero-Idle"
 
     version = args.version or git_info["tag"]
     summary = args.summary or (
-        "Consolidamos o suporte a resolucao DNS cascateada (Cloudflare/Google), decodificacao de imagens "
-        "bare-metal no Jinn Browser, aceleracao SIMD AVX2 no JHCS e persistencia estrita em disco FAT32 com zero-idle."
+        git_info["body"][:260].replace("\n", " ").strip()
+        if git_info["body"]
+        else "Avanço verificado no Jinn Microkernel, compositor Aladdin e computação heterogênea JHCS com foco em isolamento Ring 3 e previsibilidade de recursos."
     )
     link = args.link or DEFAULT_PORTAL_URL
+    eco_ids = classify_ecosystems("RELEASE", [], title.lower(), title, f"{summary} {git_info['body']}")
+    gain = args.gain or extract_measurable_gain(title, f"{summary} {git_info['body']}")
 
     print("================================================================================")
-    print("  JINN OS — PIPELINE DE SINDICAÇÃO AUTOMATIZADA DE ENGENHARIA")
+    print("  JINN ENGINEERING OBSERVATORY — SINDICAÇÃO DE ENGENHARIA & OUTREACH")
     print("================================================================================")
-    print(f"Título  : {title}")
-    print(f"Versão  : {version}")
-    print(f"Link    : {link}")
-    print(f"Dry-Run : {args.dry_run}")
+    print(f"Título      : {title}")
+    print(f"Versão      : {version}")
+    print(f"Ecossistemas: {', '.join(eco_ids)}")
+    print(f"Ganho       : {gain}")
+    print(f"Link        : {link}")
+    print(f"Dry-Run     : {args.dry_run}")
     print("================================================================================\n")
 
     # 1. Gerar Formatos
-    microblog_text = format_microblog(title, version, summary, link)
-    discord_payload = format_discord_embed(title, version, summary, link, git_info["commit"])
-    telegram_text = format_telegram_message(title, version, summary, link)
+    microblog_text = format_microblog(title, version, summary, gain, eco_ids, link)
+    discord_payload = format_discord_embed(title, version, summary, gain, eco_ids, link, git_info["commit"])
+    telegram_text = format_telegram_message(title, version, summary, gain, eco_ids, link)
+    release_notes = format_release_notes(title, version, summary, gain, eco_ids, link, git_info["commit"])
 
     print("--- Formato 1: Microblogging (Bluesky / Mastodon / X) ---")
     print(microblog_text)
     print("\n--- Formato 2: Comunidades (Telegram HTML Preview) ---")
     print(telegram_text)
+    print("\n--- Formato 3: Template GitHub Release Notes ---")
+    print(release_notes)
     print("\n--------------------------------------------------------------------------------")
 
     # 2. Atualizar Feed RSS se solicitado
     if args.update_feed:
         print("\n[+] Atualizando Feeds RSS estáticos...")
-        update_rss_feed("web/feed.xml", title, summary, link)
-        update_rss_feed("web/rss.xml", title, summary, link)
+        update_rss_feed("web/feed.xml", title, summary, link, gain=gain, eco_ids=eco_ids)
+        update_rss_feed("web/rss.xml", title, summary, link, gain=gain, eco_ids=eco_ids)
 
     # 3. Despacho Multicanal
     print("\n[+] Executando difusão nos canais configurados...")

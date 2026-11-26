@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only OR Jinn-Commercial-1.0
 """
 web/build_feed.py
 
-Gerador automático de:
-  - web/artigos/index.html (Listagem visual moderna de todos os artigos)
-  - web/feed.xml          (Feed RSS 2.0 / Atom)
-  - web/rss.xml           (Feed RSS 2.0 oficial W3C / WebSub)
-  - web/sitemap.xml       (Sitemap XML com Google News e SEO)
-
-Escaneia dinamicamente todos os artigos presentes em 'web/artigos/*.html',
-permitindo adicionar centenas ou milhares de novos artigos sem manutenção manual!
+Gerador automático e enriquecedor semântico do Jinn Engineering Observatory:
+  - Injeta metadados Schema.org TechArticle (JSON-LD) e bloco de Ecossistemas &
+    Colaboração Aberta em cada artigo em 'web/artigos/*.html' (de forma idempotente)
+  - web/artigos/index.html (Central visual com busca e filtro por ecossistema)
+  - web/feed.xml & web/rss.xml (RSS 2.0 + WebSub com ganhos mensuráveis e ecossistemas)
+  - web/sitemap.xml (Google News Sitemap & SEO)
 """
 
 import html as html_lib
+import json
 import os
 import re
 import subprocess
@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 
 SITE_URL = "https://jinn-os.dev.br"
 REPO_URL = "https://github.com/GeovaneEstanislau/Jinn_Project"
+JHCS_REPO_URL = "https://github.com/GeovaneEstanislau/jhcs-rs"
 WEB_DIR = Path(__file__).resolve().parent
 ARTIGOS_DIR = WEB_DIR / "artigos"
 INDEX_PATH = ARTIGOS_DIR / "index.html"
@@ -30,6 +31,13 @@ RSS_PATH = WEB_DIR / "rss.xml"
 SITEMAP_PATH = WEB_DIR / "sitemap.xml"
 
 DEFAULT_IMAGE_URL = f"{SITE_URL}/assets/wallpaper.jpg"
+AUTHOR_NAME = "Geovane da Conceição Estanislau"
+PUBLISHER_NAME = "Jinn Engineering Observatory"
+
+TECHARTICLE_START = "<!-- Jinn Engineering Observatory: Schema.org TechArticle (Auto-Generated) -->"
+TECHARTICLE_END = "<!-- /Jinn Engineering Observatory: Schema.org TechArticle -->"
+ECO_BLOCK_START = "<!-- Jinn Ecosystem & Open Collaboration Block (Auto-Generated) -->"
+ECO_BLOCK_END = "<!-- /Jinn Ecosystem & Open Collaboration Block -->"
 
 MONTHS_PT = {
     "01": "Jan", "02": "Fev", "03": "Mar", "04": "Abr",
@@ -56,22 +64,169 @@ CATEGORY_COLORS = {
 
 DEFAULT_COLOR = ("text-cyan-400", "bg-cyan-950", "border-cyan-800", "group-hover:text-cyan-300")
 
+# Taxonomia canônica de Ecossistemas-Alvo conectando engenharia Jinn a problemas reais
+ECOSYSTEM_DOMAINS = {
+    "compute-simd": {
+        "id": "compute-simd",
+        "short_label": "Compute & SIMD",
+        "title": "Heterogeneous Compute, SIMD & Zero-GPU Acceleration",
+        "badge_class": "bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400",
+        "ecosystems": ["Intel", "AMD", "Arm", "Tenstorrent", "SiFive", "HPC Research Labs"],
+        "about": [
+            "workload efficiency",
+            "heterogeneous compute scheduling",
+            "SIMD vectorization AVX2 FMA",
+            "zero-GPU 2D compositing",
+        ],
+        "keywords": [
+            "JHCS", "SIMD", "AVX2", "FMA", "Zero-GPU", "Heterogeneous Compute",
+            "Aladdin Compositor", "Vector Acceleration",
+        ],
+        "match_terms": (
+            "simd", "avx", "avx2", "fma", "neon", "jhcs", "zero-gpu", "acrílico", "acrilico",
+            "glassmorphism", "frosted", "blur", "compositor", "aladdin", "gráfica", "grafica",
+        ),
+    },
+    "zero-idle-efficiency": {
+        "id": "zero-idle-efficiency",
+        "short_label": "Zero-Idle & SMP",
+        "title": "Energy-Proportional Runtime, SMP Accounting & Low-Overhead Scheduling",
+        "badge_class": "bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400",
+        "ecosystems": ["Arm", "Qualcomm", "LF Edge", "Industrial Automation", "Green Public Infrastructure"],
+        "about": [
+            "deterministic scheduling",
+            "power reduction",
+            "energy-proportional computing",
+            "SMP per-CPU accounting",
+            "lazy TTL cache evaluation",
+        ],
+        "keywords": [
+            "Zero-Idle", "HLT", "SMP", "APIC Timer Gating", "Per-CPU Accounting",
+            "Lazy TTL", "Preemptive Scheduler", "Energy-Proportional Runtime",
+        ],
+        "match_terms": (
+            "zero-idle", "hlt", "smp", "per-cpu", "percpu", "apic", "tickless", "escalonador",
+            "scheduler", "lazy", "prefetch", "prefet", "pic", "eoi", "0.00%", "0,00%", "ociosa",
+        ),
+    },
+    "microkernel-security": {
+        "id": "microkernel-security",
+        "short_label": "Microkernel & Segurança",
+        "title": "Zero-Trust Isolation, W^X Enforcement & Supply-Chain Integrity",
+        "badge_class": "bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400",
+        "ecosystems": ["Red Hat", "Canonical", "Google", "Siemens", "Sovereign & Civic Infrastructure"],
+        "about": [
+            "process isolation",
+            "W^X memory enforcement",
+            "driver fault containment in Ring 3",
+            "supply-chain integrity",
+            "bare-metal TLS 1.3 security",
+        ],
+        "keywords": [
+            "Microkernel", "Ring 3 Drivers", "W^X", "Zero-Trust Syscalls", "JAHA 1.2",
+            "JinnWall SPI", "Supply-Chain Integrity", "TLS 1.3 no_std",
+        ],
+        "match_terms": (
+            "microkernel", "isolamento", "supervisor", "ring 3", "ring3", "w^x", "efault",
+            "zero-trust", "segurança", "seguranca", "auditoria", "homolog", "jaha",
+            "criptografia", "poly1305", "sha-256", "sha256", "jpkg", "pacote", "fat32",
+            "ext2", "vfs", "jinnwall", "auto-recupera",
+        ),
+    },
+    "fastpath-ipc-net": {
+        "id": "fastpath-ipc-net",
+        "short_label": "IPC & Redes Fast-Path",
+        "title": "Zero-Copy Ring Buffers & L2/L3 Fast-Path Networking",
+        "badge_class": "bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400",
+        "ecosystems": ["Cloudflare", "Akamai", "Huawei", "RISC-V International", "Local Edge Gateways"],
+        "about": [
+            "zero-copy IPC ring buffers",
+            "L2/L3 fast-path networking",
+            "workload efficiency",
+            "three-tier DNS resolution",
+            "sovereign bare-metal TCP/IP",
+        ],
+        "keywords": [
+            "SPSC Ring Buffer", "Zero-Copy IPC", "io_uring", "HotRouteTable",
+            "3-Tier DNS", "e1000", "VirtIO-Net", "Jinn Browser", "TLS 1.3",
+        ],
+        "match_terms": (
+            "spsc", "shared-rings", "io_uring", "zero-copy", "ipc", "rede", "redes", "dns",
+            "arp", "e1000", "virtio", "hotroute", "fast-path", "tcp", "http", "tls",
+            "browser", "navegador", "pcap",
+        ),
+    },
+}
+
+CORPORATE_ORGS = {
+    "Intel", "AMD", "Arm", "Tenstorrent", "SiFive", "Qualcomm", "LF Edge",
+    "Red Hat", "Canonical", "Google", "Siemens", "Cloudflare", "Akamai",
+    "Huawei", "RISC-V International",
+}
+
+
+def classify_ecosystems(tag: str, all_tags: list[str], slug: str, title: str, body_text: str = "") -> list[str]:
+    """Mapeia os 1..3 domínios técnicos mais pertinentes ao artigo/commit, evitando marcação em massa."""
+    primary_haystack = " ".join([tag, *all_tags, slug, title]).lower()
+    body_sample = body_text[:2500].lower()
+
+    scored: list[tuple[int, int, str]] = []
+    for idx, (dom_id, cfg) in enumerate(ECOSYSTEM_DOMAINS.items()):
+        p_hits = sum(1 for kw in cfg["match_terms"] if kw in primary_haystack)
+        b_hits = min(3, sum(1 for kw in cfg["match_terms"] if kw in body_sample))
+        score = p_hits * 3 + b_hits
+        scored.append((score, -idx, dom_id))
+
+    scored.sort(reverse=True)
+    selected = [dom_id for score, _, dom_id in scored if score >= 3][:3]
+    if not selected and scored:
+        selected = [scored[0][2]]
+    return selected
+
 
 def classify_buckets(tag: str, all_tags: list[str], slug: str, title: str) -> list[str]:
-    """Classifica um artigo nos filtros oficiais da central para navegação escalável."""
-    haystack = " ".join([tag, *all_tags, slug, title]).lower()
-    buckets = []
-    if any(k in haystack for k in ("microkernel", "ipc", "spsc", "io_uring", "zero-copy", "fat32", "ext2", "vfs", "driver", "jpkg", "pacote", "armazenamento", "pic", "eoi")):
-        buckets.append("microkernel")
-    if any(k in haystack for k in ("rede", "dns", "arp", "e1000", "virtio", "browser", "navegador", "http", "tcp")):
-        buckets.append("redes")
-    if any(k in haystack for k in ("simd", "zero-gpu", "blur", "glass", "acrílico", "acrilico", "compositor", "jhcs", "aladdin", "gráfica", "grafica", "frosted")):
-        buckets.append("simd")
-    if any(k in haystack for k in ("homolog", "segurança", "seguranca", "auditoria", "zero-idle", "zero-trust", "efault", "sha-256", "sha256", "tls", "jaha", "criptografia", "post-mortem", "estabilidade")):
-        buckets.append("homologacao")
-    if not buckets:
-        buckets.append("microkernel")
-    return buckets
+    """Classifica um artigo nos filtros legados e nos 4 domínios de ecossistema."""
+    eco_ids = classify_ecosystems(tag, all_tags, slug, title)
+    return eco_ids
+
+
+def strip_auto_blocks(content: str) -> str:
+    """Remove blocos autogerados antes de re-extrair métricas ou re-injetar marcação idempotente."""
+    content = re.sub(
+        rf"\n?\s*{re.escape(TECHARTICLE_START)}.*?{re.escape(TECHARTICLE_END)}\s*",
+        "\n",
+        content,
+        flags=re.DOTALL,
+    )
+    content = re.sub(
+        rf"\n?\s*{re.escape(ECO_BLOCK_START)}.*?{re.escape(ECO_BLOCK_END)}\s*",
+        "\n",
+        content,
+        flags=re.DOTALL,
+    )
+    return content
+
+
+def extract_measurable_gain(description: str, plain_text: str) -> str:
+    """Extrai métricas técnicas verificáveis presentes no texto/descrição para feeds e release notes."""
+    text = f"{description} {plain_text[:2500]}"
+    candidates = re.findall(
+        r"(?:\d+(?:[.,]\d+)?\s*(?:%|bytes|B\b|KiB|MB|GB|ms|µs|us|ns|Hz|FPS|pkts|pacotes|ciclos|vCPUs?|cores|HLT|discrepancy)|\b0[.,]00%\b|\b0 bytes\b|\b0 pacotes\b)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    unique = []
+    seen = set()
+    for c in candidates:
+        norm = " ".join(c.split())
+        if norm.lower() not in seen:
+            seen.add(norm.lower())
+            unique.append(norm)
+        if len(unique) >= 4:
+            break
+    if unique:
+        return "Indicadores citados no relatório: " + ", ".join(unique)
+    return "Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável"
 
 
 def format_date_pt(date_iso: str) -> str:
@@ -83,13 +238,183 @@ def format_date_pt(date_iso: str) -> str:
     return date_iso
 
 
-def extract_article_meta(html_path: Path):
-    """Extrai metadados estruturados (title, description, canonical, date, tag, reading_min, categories) de um arquivo HTML."""
+def build_techarticle_jsonld(meta: dict) -> str:
+    """Constrói bloco JSON-LD Schema.org TechArticle válido e determinístico."""
+    about_terms = []
+    seen_about = set()
+    mentions_list = []
+    seen_mentions = set()
+    keywords = ["Jinn OS", "Microkernel", "Rust no_std", "x86_64", *meta["all_tags"]]
+    seen_kw = set(k.lower() for k in keywords)
+
+    for eco_id in meta["ecosystems"]:
+        cfg = ECOSYSTEM_DOMAINS[eco_id]
+        for topic in cfg["about"]:
+            if topic.lower() not in seen_about:
+                seen_about.add(topic.lower())
+                about_terms.append({"@type": "Thing", "name": topic})
+        for org in cfg["ecosystems"]:
+            if org.lower() not in seen_mentions:
+                seen_mentions.add(org.lower())
+                schema_type = "Organization" if org in CORPORATE_ORGS else "Thing"
+                mentions_list.append({"@type": schema_type, "name": org})
+        for kw in cfg["keywords"]:
+            if kw.lower() not in seen_kw:
+                seen_kw.add(kw.lower())
+                keywords.append(kw)
+
+    payload = {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": meta["title"],
+        "description": meta["description"],
+        "datePublished": meta["pub_iso_full"],
+        "dateModified": meta["pub_iso_full"],
+        "inLanguage": "pt-BR",
+        "author": {
+            "@type": "Person",
+            "name": AUTHOR_NAME,
+            "url": "https://github.com/GeovaneEstanislau",
+        },
+        "publisher": {
+            "@type": "Organization",
+            "name": PUBLISHER_NAME,
+            "url": f"{SITE_URL}/",
+            "logo": {
+                "@type": "ImageObject",
+                "url": DEFAULT_IMAGE_URL,
+            },
+        },
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": meta["url"],
+        },
+        "about": about_terms,
+        "mentions": mentions_list,
+        "keywords": ", ".join(keywords),
+    }
+
+    raw_json = json.dumps(payload, ensure_ascii=False, indent=2).replace("</", "<\\/")
+    return (
+        f"  {TECHARTICLE_START}\n"
+        f'  <script type="application/ld+json" id="jinn-techarticle-jsonld">\n'
+        f"{raw_json}\n"
+        f"  </script>\n"
+        f"  {TECHARTICLE_END}"
+    )
+
+
+def build_collaboration_section_html(meta: dict) -> str:
+    """Gera bloco visual 'Applicable Ecosystems & Open Collaboration' para o rodapé técnico do artigo."""
+    domain_badges = []
+    ref_ecosystems = []
+    seen_eco = set()
+
+    for eco_id in meta["ecosystems"]:
+        cfg = ECOSYSTEM_DOMAINS[eco_id]
+        domain_badges.append(
+            f'<a href="/artigos/?eco={eco_id}" '
+            f'class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors {cfg["badge_class"]}">'
+            f'<span>{html_lib.escape(cfg["short_label"])}</span>'
+            f'<span class="opacity-70">&bull; {html_lib.escape(cfg["title"])}</span>'
+            f"</a>"
+        )
+        for eco_name in cfg["ecosystems"]:
+            if eco_name not in seen_eco:
+                seen_eco.add(eco_name)
+                ref_ecosystems.append(
+                    f'<span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">'
+                    f'{html_lib.escape(eco_name)}</span>'
+                )
+
+    badges_html = "\n          ".join(domain_badges)
+    ecos_html = "\n          ".join(ref_ecosystems)
+
+    return f"""      {ECO_BLOCK_START}
+      <section aria-labelledby="ecosystems-collaboration-heading" class="not-prose my-10 p-6 rounded-xl bg-slate-900/75 border border-slate-800 space-y-5">
+        <div class="space-y-2">
+          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Open Engineering Outreach</p>
+          <h3 id="ecosystems-collaboration-heading" class="text-lg sm:text-xl font-bold text-white">
+            Applicable Ecosystems &amp; Open Collaboration
+          </h3>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Conexões arquiteturais deste estudo com domínios industriais, pesquisa científica e infraestrutura auditável:
+          </p>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          {badges_html}
+        </div>
+
+        <div class="pt-1">
+          <div class="text-[11px] font-mono text-slate-400 mb-2">Ecossistemas de referência pertinentes (Nível B contextual):</div>
+          <div class="flex flex-wrap gap-1.5">
+            {ecos_html}
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-emerald-300 font-mono">
+            Chamada Aberta: Indústria Local, Academia &amp; Setor Público Eticamente Responsável
+          </h4>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Convidamos <strong>empresas regionais de automação industrial e integradores</strong>, <strong>universidades e grupos de pesquisa em sistemas operacionais</strong> e <strong>projetos públicos/governamentais eticamente responsáveis</strong> (com transparência e código auditável) a reproduzirem estes experimentos em bancada física, propor <em>workloads</em> comparativos ou avaliar pilotos com o <strong>Jinn OS</strong> e o <strong>JHCS</strong>.
+          </p>
+          <div class="flex flex-wrap gap-2.5 text-xs font-mono pt-1">
+            <a href="{REPO_URL}" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-cyan-400 text-slate-200 hover:text-cyan-300 transition-colors">
+              GitHub: Jinn_Project
+            </a>
+            <a href="{JHCS_REPO_URL}" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-purple-400 text-slate-200 hover:text-purple-300 transition-colors">
+              GitHub: jhcs-rs
+            </a>
+            <a href="{REPO_URL}/issues/new/choose" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
+              Propor Benchmark / Issue
+            </a>
+            <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-cyan-950/90 border border-cyan-600/70 hover:bg-cyan-900 text-cyan-200 transition-colors">
+              Contato Técnico &amp; Pilotos
+            </a>
+          </div>
+        </div>
+      </section>
+      {ECO_BLOCK_END}"""
+
+
+def enrich_article_html(html_path: Path, clean_content: str, meta: dict) -> None:
+    """Injeta JSON-LD TechArticle no <head> e bloco de Ecossistemas & Colaboração no corpo."""
+    jsonld_block = build_techarticle_jsonld(meta)
+    collab_block = build_collaboration_section_html(meta)
+
+    updated = clean_content
+
+    if "</head>" in updated:
+        updated = re.sub(r"</head>", f"{jsonld_block}\n</head>", updated, count=1, flags=re.IGNORECASE)
+
+    rrm_marker = "<!-- Google News Reader Revenue Manager (CTA Inline Final) -->"
+    if rrm_marker in updated:
+        updated = updated.replace(rrm_marker, f"{collab_block}\n\n      {rrm_marker}", 1)
+    elif '<div class="my-8 not-prose">' in updated and "rrm-inline-cta" in updated:
+        updated = re.sub(
+            r'(<div\s+class=["\'][^"\']*not-prose[^"\']*["\']>\s*<div\s+rrm-inline-cta)',
+            f"{collab_block}\n\n      \\1",
+            updated,
+            count=1,
+        )
+    elif "</article>" in updated:
+        updated = updated.replace("</article>", f"{collab_block}\n    </article>", 1)
+
+    if updated != html_path.read_text(encoding="utf-8", errors="ignore"):
+        html_path.write_text(updated, encoding="utf-8")
+
+
+def extract_article_meta(html_path: Path, enrich: bool = True):
+    """Extrai metadados estruturados de um artigo HTML e opcionalmente enriquece seu HTML."""
     try:
-        content = html_path.read_text(encoding="utf-8", errors="ignore")
+        raw_content = html_path.read_text(encoding="utf-8", errors="ignore")
     except Exception as e:
         print(f"[WARN] Erro ao ler {html_path}: {e}")
         return None
+
+    content = strip_auto_blocks(raw_content)
 
     # Título
     title_match = re.search(r"<title>(.*?)</title>", content, re.IGNORECASE | re.DOTALL)
@@ -97,8 +422,8 @@ def extract_article_meta(html_path: Path):
     title = re.sub(r"\s*[—–-]\s*Jinn\s*OS.*$", "", title).strip()
 
     # Descrição
-    desc_match = re.search(r'<meta\s+name=["\']description["\']\s+content=["\'](.*?)["\']', content, re.IGNORECASE)
-    description = html_lib.unescape(desc_match.group(1).strip()) if desc_match else title
+    desc_match = re.search(r'<meta\s+name=["\']description["\']\s+content=["\'](.*?)["\']', content, re.IGNORECASE | re.DOTALL)
+    description = html_lib.unescape(" ".join(desc_match.group(1).split())) if desc_match else title
 
     # Canonical URL
     canon_match = re.search(r'<link\s+rel=["\']canonical["\']\s+href=["\'](.*?)["\']', content, re.IGNORECASE)
@@ -131,23 +456,25 @@ def extract_article_meta(html_path: Path):
             tag = "ARTIGO TÉCNICO"
         all_tags = [tag]
 
-    # Tempo estimado de leitura (~200 palavras/min)
+    # Tempo estimado de leitura (~180 palavras/min) e texto limpo
     article_body = re.search(r"<article[^>]*>(.*?)</article>", content, re.IGNORECASE | re.DOTALL)
     body_src = article_body.group(1) if article_body else content
     plain_text = re.sub(r"<script[^>]*>.*?</script>", " ", body_src, flags=re.IGNORECASE | re.DOTALL)
     plain_text = re.sub(r"<style[^>]*>.*?</style>", " ", plain_text, flags=re.IGNORECASE | re.DOTALL)
-    plain_text = re.sub(r"<[^>]+>", " ", plain_text)
+    plain_text = html_lib.unescape(re.sub(r"<[^>]+>", " ", plain_text))
     words = len(re.findall(r"\w+", plain_text))
     read_minutes = max(2, round(words / 180))
 
     # Data de modificação / publicação
     pub_date_rfc2822 = "Tue, 24 Nov 2026 18:00:00 -0300"
     pub_date_iso = "2026-11-24"
+    pub_iso_full = "2026-11-24T18:00:00-03:00"
     sort_ts = "2026-11-24T18:00:00"
 
     pub_match = re.search(r'<meta\s+name=["\']article:published_time["\']\s+content=["\'](.*?)["\']', content, re.IGNORECASE)
     if pub_match:
         raw_time = pub_match.group(1).strip()
+        pub_iso_full = raw_time
         try:
             dt = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
             pub_date_rfc2822 = dt.strftime("%a, %d %b %Y %H:%M:%S %z")
@@ -166,37 +493,48 @@ def extract_article_meta(html_path: Path):
                 pub_date_rfc2822 = git_date
                 dt = datetime.strptime(git_date[:25].strip(), "%a, %d %b %Y %H:%M:%S")
                 pub_date_iso = dt.strftime("%Y-%m-%d")
+                pub_iso_full = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
                 sort_ts = dt.strftime("%Y-%m-%dT%H:%M:%S")
         except Exception:
             stat = html_path.stat()
             mtime = datetime.fromtimestamp(stat.st_mtime, timezone.utc)
             pub_date_rfc2822 = mtime.strftime("%a, %d %b %Y %H:%M:%S +0000")
             pub_date_iso = mtime.strftime("%Y-%m-%d")
+            pub_iso_full = mtime.strftime("%Y-%m-%dT%H:%M:%SZ")
             sort_ts = mtime.strftime("%Y-%m-%dT%H:%M:%S")
 
+    ecosystems = classify_ecosystems(tag, all_tags, html_path.stem, title, plain_text)
+    measurable_gain = extract_measurable_gain(description, plain_text)
     guid = f"jinn-os-artigo-{html_path.stem}"
-    buckets = classify_buckets(tag, all_tags, html_path.stem, title)
 
-    return {
+    meta = {
         "slug": html_path.stem,
         "filename": html_path.name,
         "title": title,
         "description": description,
         "tag": tag,
         "all_tags": all_tags,
-        "buckets": buckets,
+        "ecosystems": ecosystems,
+        "buckets": ecosystems,
+        "measurable_gain": measurable_gain,
         "read_minutes": read_minutes,
         "date_human": format_date_pt(pub_date_iso),
         "sort_ts": sort_ts,
+        "pub_iso_full": pub_iso_full,
         "url": url,
         "guid": guid,
         "date_rfc2822": pub_date_rfc2822,
         "date_iso": pub_date_iso,
     }
 
+    if enrich:
+        enrich_article_html(html_path, content, meta)
 
-def get_all_articles():
-    """Descobre e ordena todos os artigos técnicos em web/artigos/."""
+    return meta
+
+
+def get_all_articles(enrich: bool = True):
+    """Descobre, enriquece e ordena todos os artigos técnicos em web/artigos/."""
     articles = []
     if not ARTIGOS_DIR.exists():
         return articles
@@ -204,13 +542,13 @@ def get_all_articles():
     for f in sorted(ARTIGOS_DIR.glob("*.html")):
         if f.name == "index.html":
             continue
-        meta = extract_article_meta(f)
+        meta = extract_article_meta(f, enrich=enrich)
         if meta:
             articles.append(meta)
 
-    # Ordena com os mais recentes primeiro (timestamp + slug)
     articles.sort(key=lambda a: (a["sort_ts"], a["slug"]), reverse=True)
     return articles
+
 
 def get_announced_commits(limit=10):
     """Extrai commits técnicos recentes com mensagens semânticas relevantes."""
@@ -244,27 +582,51 @@ def get_announced_commits(limit=10):
             })
     return entries
 
+
 def build_artigos_index(articles):
-    """Gera web/artigos/index.html escalável com scroll fluido, barra de progresso, busca instantânea e filtros."""
+    """Gera web/artigos/index.html com filtros por ecossistema, badges clicáveis e bloco de colaboração aberta."""
     print(f"[+] Gerando Índice Visual em {INDEX_PATH} ({len(articles)} artigos)...")
 
     cards_html = []
     for a in articles:
         colors = CATEGORY_COLORS.get(a["tag"], DEFAULT_COLOR)
         tag_color, tag_bg, tag_border, hover_title = colors
+        eco_terms = " ".join(
+            [ECOSYSTEM_DOMAINS[e]["title"] + " " + " ".join(ECOSYSTEM_DOMAINS[e]["ecosystems"]) for e in a["ecosystems"]]
+        )
         tags_text = " ".join(a["all_tags"])
-        search_blob = html_lib.escape(f"{a['title']} {a['description']} {tags_text}".lower(), quote=True)
-        categories_attr = html_lib.escape(" ".join(a["buckets"]), quote=True)
+        search_blob = html_lib.escape(
+            f"{a['title']} {a['description']} {tags_text} {eco_terms}".lower(),
+            quote=True,
+        )
+        categories_attr = html_lib.escape(" ".join(a["ecosystems"]), quote=True)
         title_esc = html_lib.escape(a["title"])
         desc_esc = html_lib.escape(a["description"])
         tag_esc = html_lib.escape(a["tag"])
-        extra_tags = "".join(
-            f'<span class="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/70 text-[10px] font-mono text-slate-300">{html_lib.escape(t)}</span>'
-            for t in a["all_tags"][1:4]
-        )
+        gain_esc = html_lib.escape(a["measurable_gain"])
+
+        eco_buttons = []
+        for eco_id in a["ecosystems"]:
+            cfg = ECOSYSTEM_DOMAINS[eco_id]
+            eco_buttons.append(
+                f'<button type="button" data-eco-badge="{eco_id}" '
+                f'title="Filtrar por {html_lib.escape(cfg["title"], quote=True)}" '
+                f'class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors {cfg["badge_class"]}">'
+                f'{html_lib.escape(cfg["short_label"])}</button>'
+            )
+        eco_badges_html = "".join(eco_buttons)
+
+        ref_ecos = []
+        seen_ref = set()
+        for eco_id in a["ecosystems"]:
+            for name in ECOSYSTEM_DOMAINS[eco_id]["ecosystems"]:
+                if name not in seen_ref:
+                    seen_ref.add(name)
+                    ref_ecos.append(name)
+        ref_line = html_lib.escape(", ".join(ref_ecos[:6]))
 
         card = f"""      <!-- Card: {a['slug']} -->
-      <a href="/artigos/{a['filename']}" data-article-card data-categories="{categories_attr}" data-search="{search_blob}" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+      <article data-article-card data-categories="{categories_attr}" data-search="{search_blob}" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
         <div>
           <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono {tag_color} mb-3">
             <span class="{tag_bg} border {tag_border} px-2.5 py-0.5 rounded-full font-semibold">{tag_esc}</span>
@@ -275,20 +637,26 @@ def build_artigos_index(articles):
             </div>
           </div>
           <h2 class="text-lg sm:text-xl font-bold text-white {hover_title} transition-colors leading-snug">
-            {title_esc}
+            <a href="/artigos/{a['filename']}" class="hover:underline decoration-cyan-500/60 underline-offset-4">{title_esc}</a>
           </h2>
           <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
             {desc_esc}
           </p>
+          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="{gain_esc}">
+            {gain_esc}
+          </p>
+          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: {ref_line}">
+            Ecossistemas: <span class="text-slate-300">{ref_line}</span>
+          </p>
         </div>
         <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5">{extra_tags}</div>
-          <div class="flex items-center gap-1 text-xs font-semibold text-cyan-400 ml-auto">
+          <div class="flex flex-wrap items-center gap-1.5">{eco_badges_html}</div>
+          <a href="/artigos/{a['filename']}" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
             <span>Ler artigo</span>
             <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-          </div>
+          </a>
         </div>
-      </a>"""
+      </article>"""
         cards_html.append(card)
 
     cards_block = "\n\n".join(cards_html)
@@ -299,8 +667,8 @@ def build_artigos_index(articles):
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Artigos Técnicos &amp; Devlogs — Jinn OS</title>
-  <meta name="description" content="Arquivo central de artigos técnicos, post-mortems, arquitetura de sistemas e auditorias de engenharia do microkernel Jinn OS e ecossistema Aladdin.">
+  <title>Artigos Técnicos &amp; Devlogs — Jinn Engineering Observatory</title>
+  <meta name="description" content="Arquivo central de artigos técnicos, TechArticle Schema.org, post-mortems, arquitetura de sistemas e auditorias de engenharia do microkernel Jinn OS, JHCS e Aladdin.">
   <link rel="canonical" href="https://jinn-os.dev.br/artigos/">
   <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases" href="https://jinn-os.dev.br/feed.xml">
   <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
@@ -308,8 +676,8 @@ def build_artigos_index(articles):
   <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://jinn-os.dev.br/artigos/">
-  <meta property="og:title" content="Artigos Técnicos &amp; Devlogs — Jinn OS">
-  <meta property="og:description" content="Engenharia de sistemas operacionais em Rust bare-metal: post-mortems, microkernels, criptografia e computação heterogênea.">
+  <meta property="og:title" content="Artigos Técnicos &amp; Devlogs — Jinn Engineering Observatory">
+  <meta property="og:description" content="Engenharia de sistemas operacionais em Rust bare-metal: post-mortems, microkernels, eficiência Zero-Idle, criptografia e computação heterogênea.">
   <meta property="og:image" content="https://jinn-os.dev.br/assets/wallpaper.jpg">
 
   <!-- Google tag (gtag.js) - Google Ads -->
@@ -346,12 +714,12 @@ def build_artigos_index(articles):
     <div id="scroll-progress" class="h-full w-0 bg-gradient-to-r from-cyan-400 via-sky-400 to-emerald-400 transition-[width] duration-75"></div>
   </div>
 
-  <!-- Cabeçalho Fixo Compacto (Sticky Header) com Busca e Filtros -->
+  <!-- Cabeçalho Fixo Compacto (Sticky Header) com Busca e Filtros por Ecossistema -->
   <header class="border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md sticky top-0 z-50">
     <div class="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
       <a href="/" class="flex items-center gap-2 hover:text-cyan-400 transition-colors shrink-0">
         <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
-        <span class="font-bold tracking-wide">Jinn OS</span>
+        <span class="font-bold tracking-wide">Jinn Observatory</span>
         <span class="text-xs font-mono bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded border border-cyan-800">Artigos</span>
       </a>
       <div class="flex items-center gap-3 sm:gap-4 text-xs font-mono overflow-x-auto">
@@ -362,27 +730,27 @@ def build_artigos_index(articles):
           <span>RSS</span>
         </a>
         <span class="text-slate-700">|</span>
-        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="flex items-center gap-1 text-slate-400 hover:text-white transition-colors shrink-0">
+        <a href="{REPO_URL}" target="_blank" rel="noopener noreferrer" class="flex items-center gap-1 text-slate-400 hover:text-white transition-colors shrink-0">
           <i data-lucide="github" class="w-3.5 h-3.5"></i>
           <span>GitHub</span>
         </a>
       </div>
     </div>
 
-    <!-- Barra de Busca Instantânea + Filtros por Categoria -->
+    <!-- Barra de Busca Instantânea + Filtros por Ecossistema Técnico -->
     <div class="border-t border-slate-800/60 bg-slate-900/75">
       <div class="max-w-6xl mx-auto px-4 sm:px-6 py-2.5 flex flex-col lg:flex-row lg:items-center gap-2.5 justify-between">
         <div class="relative flex-1 max-w-md">
           <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
-          <input id="article-search" type="search" placeholder="Buscar por título, syscall, subsistema ou tag..."
+          <input id="article-search" type="search" placeholder="Buscar por título, ecossistema, syscall ou métrica..."
             class="w-full pl-9 pr-3 py-1.5 text-xs sm:text-sm rounded-lg bg-slate-950/90 border border-slate-700/80 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400 transition-colors" />
         </div>
-        <nav aria-label="Filtros por categoria" class="flex flex-wrap items-center gap-1.5 text-xs font-mono">
+        <nav aria-label="Filtros por ecossistema" class="flex flex-wrap items-center gap-1.5 text-xs font-mono">
           <button type="button" data-filter="all" class="filter-pill px-3 py-1 rounded-full border border-cyan-500/70 bg-cyan-950/90 text-cyan-300 font-semibold transition-colors">Todos</button>
-          <button type="button" data-filter="microkernel" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500 transition-colors">Microkernel &amp; IPC</button>
-          <button type="button" data-filter="redes" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500 transition-colors">Redes &amp; DNS</button>
-          <button type="button" data-filter="simd" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500 transition-colors">SIMD &amp; Zero-GPU</button>
-          <button type="button" data-filter="homologacao" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500 transition-colors">Homologação &amp; Segurança</button>
+          <button type="button" data-filter="compute-simd" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-purple-400 transition-colors">Compute &amp; SIMD</button>
+          <button type="button" data-filter="zero-idle-efficiency" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-emerald-400 transition-colors">Zero-Idle &amp; SMP</button>
+          <button type="button" data-filter="microkernel-security" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-400 transition-colors">Microkernel &amp; Segurança</button>
+          <button type="button" data-filter="fastpath-ipc-net" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-cyan-400 transition-colors">IPC &amp; Redes Fast-Path</button>
         </nav>
       </div>
     </div>
@@ -393,10 +761,10 @@ def build_artigos_index(articles):
     <div class="mb-8 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
       <div>
         <h1 class="text-2xl sm:text-4xl font-extrabold text-white tracking-tight">
-          Acervo Técnico de Engenharia &amp; Devlogs
+          Acervo Técnico de Engenharia &amp; Observatory
         </h1>
         <p class="text-slate-400 mt-2 max-w-2xl leading-relaxed text-sm">
-          Relatórios de homologação, benchmarks bare-metal, post-mortems e arquitetura do <strong>Jinn Microkernel</strong>, <strong>JHCS</strong> e compositor <strong>Aladdin</strong>.
+          Relatórios reproduzíveis, <em>post-mortems</em> com PCAP, benchmarks bare-metal e arquitetura do <strong>Jinn Microkernel</strong>, <strong>JHCS</strong> e compositor <strong>Aladdin</strong>.
         </p>
       </div>
       <div class="text-xs font-mono text-slate-400 shrink-0">
@@ -417,13 +785,54 @@ def build_artigos_index(articles):
         Limpar filtros
       </button>
     </div>
+
+    <!-- Canal Aberto: Indústria Local, Academia & Setor Público Eticamente Responsável -->
+    <section aria-labelledby="central-collaboration-heading" class="mt-14 p-6 sm:p-8 rounded-2xl bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-cyan-950/30 border border-slate-800 space-y-5">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div class="space-y-2 max-w-3xl">
+          <p class="text-xs font-mono uppercase tracking-wider text-cyan-400">Jinn Open Engineering Outreach • Research &amp; Collaboration</p>
+          <h2 id="central-collaboration-heading" class="text-xl sm:text-2xl font-bold text-white">
+            Applicable Ecosystems &amp; Open Collaboration
+          </h2>
+          <p class="text-sm text-slate-300 leading-relaxed">
+            Cada publicação deste portal conecta engenharia verificável a desafios concretos de sistemas embarcados, edge computing, densidade de memória e aceleração heterogênea. Mantemos um canal aberto para diálogo técnico, validação em silício real e projetos-piloto com:
+          </p>
+        </div>
+        <a href="/#win-contact" class="shrink-0 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-500/15 border border-cyan-400/60 hover:bg-cyan-500/25 text-cyan-200 font-mono text-xs font-semibold transition-colors">
+          <i data-lucide="mail" class="w-4 h-4"></i>
+          <span>Propor Piloto ou Benchmark</span>
+        </a>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs sm:text-sm">
+        <div class="p-4 rounded-xl bg-slate-950/75 border border-slate-800/90 space-y-1.5">
+          <div class="font-mono text-emerald-300 font-semibold">Empresas Locais &amp; Automação</div>
+          <p class="text-slate-400 leading-relaxed">Integradores, fabricantes de equipamentos, IHM/SCADA e gateways restritos buscando isolamento de falhas em Ring 3, baixo footprint de RAM e operação sem dependência de GPU.</p>
+        </div>
+        <div class="p-4 rounded-xl bg-slate-950/75 border border-slate-800/90 space-y-1.5">
+          <div class="font-mono text-purple-300 font-semibold">Universidades &amp; Pesquisadores</div>
+          <p class="text-slate-400 leading-relaxed">Grupos de sistemas operacionais, arquitetura, segurança e eficiência energética interessados em reproduzir testes em hardware físico real (potência elétrica vs QEMU <code>HLT</code>) ou co-orientar P&amp;D.</p>
+        </div>
+        <div class="p-4 rounded-xl bg-slate-950/75 border border-slate-800/90 space-y-1.5">
+          <div class="font-mono text-amber-300 font-semibold">Setor Público Eticamente Responsável</div>
+          <p class="text-slate-400 leading-relaxed">Instituições públicas, laboratórios didáticos e infraestrutura cívica que demandam software auditável, segurança defensiva e reaproveitamento responsável de hardware com transparência total.</p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3 text-xs font-mono pt-1">
+        <a href="{REPO_URL}" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-cyan-400 text-slate-200 transition-colors">Repositório Jinn_Project</a>
+        <a href="{JHCS_REPO_URL}" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-purple-400 text-slate-200 transition-colors">Workspace JHCS (jhcs-rs)</a>
+        <a href="{REPO_URL}/tree/main/docs/outreach" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 transition-colors">Documento-Mãe &amp; Radar de Oportunidades</a>
+        <a href="{REPO_URL}/issues/new/choose" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-amber-400 text-slate-200 transition-colors">Abrir Issue Técnica</a>
+      </div>
+    </section>
   </main>
 
   <!-- Rodapé -->
   <footer class="border-t border-slate-800 mt-12 py-8 text-xs text-slate-400 font-mono">
     <div class="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
       <div class="flex items-center gap-3">
-        <span>Jinn OS Sovereign Systems • 2026</span>
+        <span>{PUBLISHER_NAME} • {AUTHOR_NAME} • 2026</span>
         <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
       </div>
       <div class="flex items-center gap-4">
@@ -451,6 +860,7 @@ def build_artigos_index(articles):
       const backToTop = document.getElementById('back-to-top');
       const searchInput = document.getElementById('article-search');
       const pills = Array.from(document.querySelectorAll('.filter-pill'));
+      const ecoBadges = Array.from(document.querySelectorAll('[data-eco-badge]'));
       const cards = Array.from(document.querySelectorAll('[data-article-card]'));
       const visibleCount = document.getElementById('visible-count');
       const articlesCounter = document.getElementById('articles-counter');
@@ -503,20 +913,42 @@ def build_artigos_index(articles):
         if (emptyState) emptyState.classList.toggle('hidden', shown > 0);
       }}
 
+      function selectEcoFilter(filterId, updateUrl) {{
+        activeFilter = filterId || 'all';
+        pills.forEach(function (p) {{
+          const selected = p.getAttribute('data-filter') === activeFilter;
+          p.classList.toggle('border-cyan-500/70', selected);
+          p.classList.toggle('bg-cyan-950/90', selected);
+          p.classList.toggle('text-cyan-300', selected);
+          p.classList.toggle('font-semibold', selected);
+          p.classList.toggle('border-slate-700', !selected);
+          p.classList.toggle('bg-slate-900', !selected);
+          p.classList.toggle('text-slate-300', !selected);
+        }});
+        if (updateUrl && window.history && window.history.replaceState) {{
+          const url = new URL(window.location.href);
+          if (activeFilter === 'all') {{
+            url.searchParams.delete('eco');
+          }} else {{
+            url.searchParams.set('eco', activeFilter);
+          }}
+          window.history.replaceState({{}}, '', url.toString());
+        }}
+        applyFilters();
+      }}
+
       pills.forEach(function (btn) {{
         btn.addEventListener('click', function () {{
-          activeFilter = btn.getAttribute('data-filter') || 'all';
-          pills.forEach(function (p) {{
-            const selected = p === btn;
-            p.classList.toggle('border-cyan-500/70', selected);
-            p.classList.toggle('bg-cyan-950/90', selected);
-            p.classList.toggle('text-cyan-300', selected);
-            p.classList.toggle('font-semibold', selected);
-            p.classList.toggle('border-slate-700', !selected);
-            p.classList.toggle('bg-slate-900', !selected);
-            p.classList.toggle('text-slate-300', !selected);
-          }});
-          applyFilters();
+          selectEcoFilter(btn.getAttribute('data-filter') || 'all', true);
+        }});
+      }});
+
+      ecoBadges.forEach(function (badge) {{
+        badge.addEventListener('click', function (ev) {{
+          ev.preventDefault();
+          ev.stopPropagation();
+          selectEcoFilter(badge.getAttribute('data-eco-badge') || 'all', true);
+          window.scrollTo({{ top: 0, behavior: 'smooth' }});
         }});
       }});
 
@@ -524,9 +956,13 @@ def build_artigos_index(articles):
       if (resetBtn) {{
         resetBtn.addEventListener('click', function () {{
           if (searchInput) searchInput.value = '';
-          const allBtn = pills.find(function (p) {{ return p.getAttribute('data-filter') === 'all'; }});
-          if (allBtn) allBtn.click();
+          selectEcoFilter('all', true);
         }});
+      }}
+
+      const initialEco = new URLSearchParams(window.location.search).get('eco');
+      if (initialEco && pills.some(function (p) {{ return p.getAttribute('data-filter') === initialEco; }})) {{
+        selectEcoFilter(initialEco, false);
       }}
     }})();
   </script>
@@ -536,23 +972,38 @@ def build_artigos_index(articles):
     INDEX_PATH.write_text(html_content, encoding="utf-8")
     print(f"  [PASS] {INDEX_PATH} gerado com sucesso!")
 
+
+def format_ecosystem_summary_text(base_summary: str, gain: str, eco_ids: list[str]) -> str:
+    """Formata descrição enriquecida com ganho técnico mensurável e ecossistemas aplicáveis para RSS/Atom."""
+    eco_lines = []
+    for eco_id in eco_ids:
+        cfg = ECOSYSTEM_DOMAINS[eco_id]
+        eco_lines.append(f"{cfg['title']} ({', '.join(cfg['ecosystems'])})")
+    eco_str = " | ".join(eco_lines) if eco_lines else "Systems Engineering & Open Hardware"
+    return (
+        f"{base_summary} "
+        f"[Ganho técnico: {gain}] "
+        f"[Ecossistemas aplicáveis: {eco_str}] "
+        f"[Colaboração aberta — indústria local, academia e setor público responsável: {SITE_URL}/#win-contact | {REPO_URL}]"
+    )
+
+
 def build_rss_feeds(articles, commits):
-    """Gera feed.xml e rss.xml com total compatibilidade W3C e WebSub."""
+    """Gera feed.xml e rss.xml com ganhos técnicos mensuráveis, categorias de ecossistema e WebSub."""
     print(f"[+] Gerando RSS 2.0 e WebSub Feeds em {FEED_PATH} e {RSS_PATH}...")
     ET.register_namespace('atom', 'http://www.w3.org/2005/Atom')
     ET.register_namespace('media', 'http://search.yahoo.com/mrss/')
 
     rss = ET.Element("rss", version="2.0")
     channel = ET.SubElement(rss, "channel")
-    ET.SubElement(channel, "title").text = "Jinn OS — Devlog & Microkernel Releases"
+    ET.SubElement(channel, "title").text = f"{PUBLISHER_NAME} — Devlog & Microkernel Releases"
     ET.SubElement(channel, "link").text = SITE_URL
     ET.SubElement(channel, "description").text = (
-        "Artigos de engenharia, arquitetura de microkernel, benchmarks de computação vetorial Zero-GPU, "
-        "relatórios de isolamento de falhas e auditorias do sistema operacional Jinn OS."
+        "Artigos de engenharia (Schema.org TechArticle), benchmarks bare-metal, computação heterogênea (JHCS), "
+        "Zero-Idle em SMP, isolamento Ring 3 e canal de colaboração aberta com indústria local, universidades e setor público."
     )
     ET.SubElement(channel, "language").text = "pt-br"
 
-    # WebSub Hub oficial Google / PubSubHubbub
     hub_link = ET.SubElement(channel, "{http://www.w3.org/2005/Atom}link")
     hub_link.set("href", "https://pubsubhubbub.appspot.com/")
     hub_link.set("rel", "hub")
@@ -571,7 +1022,11 @@ def build_rss_feeds(articles, commits):
         guid_el.text = art["guid"]
         guid_el.set("isPermaLink", "false")
         ET.SubElement(item, "pubDate").text = art["date_rfc2822"]
-        ET.SubElement(item, "description").text = art["description"]
+        ET.SubElement(item, "description").text = format_ecosystem_summary_text(
+            art["description"], art["measurable_gain"], art["ecosystems"]
+        )
+        for eco_id in art["ecosystems"]:
+            ET.SubElement(item, "category").text = eco_id
 
         enc = ET.SubElement(item, "enclosure")
         enc.set("url", DEFAULT_IMAGE_URL)
@@ -580,6 +1035,8 @@ def build_rss_feeds(articles, commits):
 
     # 2. Commits Técnicos Recentes
     for c in commits:
+        eco_ids = classify_ecosystems("COMMIT", [], "", c["title"], c["body"])
+        gain = extract_measurable_gain(c["title"], c["body"])
         item = ET.SubElement(channel, "item")
         ET.SubElement(item, "title").text = c["title"]
         commit_url = f"{REPO_URL}/commit/{c['hash']}"
@@ -588,7 +1045,11 @@ def build_rss_feeds(articles, commits):
         guid_el.text = c["hash"]
         guid_el.set("isPermaLink", "false")
         ET.SubElement(item, "pubDate").text = c["date"]
-        ET.SubElement(item, "description").text = c["body"]
+        ET.SubElement(item, "description").text = format_ecosystem_summary_text(
+            c["body"], gain, eco_ids
+        )
+        for eco_id in eco_ids:
+            ET.SubElement(item, "category").text = eco_id
 
         enc = ET.SubElement(item, "enclosure")
         enc.set("url", DEFAULT_IMAGE_URL)
@@ -600,6 +1061,7 @@ def build_rss_feeds(articles, commits):
     tree.write(FEED_PATH, encoding="utf-8", xml_declaration=True)
     tree.write(RSS_PATH, encoding="utf-8", xml_declaration=True)
     print(f"  [PASS] {len(articles)} artigos e {len(commits)} commits gravados em feed.xml e rss.xml!")
+
 
 def build_sitemap(articles):
     """Gera sitemap.xml com suporte a Google News e indexação completa de artigos."""
@@ -631,10 +1093,9 @@ def build_sitemap(articles):
         ET.SubElement(url_art, "{http://www.sitemaps.org/schemas/sitemap/0.9}changefreq").text = "weekly"
         ET.SubElement(url_art, "{http://www.sitemaps.org/schemas/sitemap/0.9}priority").text = "0.8"
 
-        # Tag Google News
         news = ET.SubElement(url_art, "{http://www.google.com/schemas/sitemap-news/0.9}news")
         pub = ET.SubElement(news, "{http://www.google.com/schemas/sitemap-news/0.9}publication")
-        ET.SubElement(pub, "{http://www.google.com/schemas/sitemap-news/0.9}name").text = "Jinn OS Devlog"
+        ET.SubElement(pub, "{http://www.google.com/schemas/sitemap-news/0.9}name").text = PUBLISHER_NAME
         ET.SubElement(pub, "{http://www.google.com/schemas/sitemap-news/0.9}language").text = "pt-BR"
         ET.SubElement(news, "{http://www.google.com/schemas/sitemap-news/0.9}publication_date").text = art["date_iso"]
         ET.SubElement(news, "{http://www.google.com/schemas/sitemap-news/0.9}title").text = art["title"]
@@ -644,20 +1105,22 @@ def build_sitemap(articles):
     tree.write(SITEMAP_PATH, encoding="utf-8", xml_declaration=True)
     print(f"  [PASS] {len(articles) + 2} URLs catalogadas com sucesso em sitemap.xml!")
 
+
 def main():
     print("==================================================================")
-    print("  JINN OS — GERADOR DINÂMICO DE FEEDS & SITEMAP MULTI-ARTIGOS")
+    print("  JINN OBSERVATORY — TECHARTICLE JSON-LD, ECOSSISTEMAS & FEEDS")
     print("==================================================================")
-    articles = get_all_articles()
-    print(f"[+] Artigos identificados em {ARTIGOS_DIR}: {len(articles)}")
+    articles = get_all_articles(enrich=True)
+    print(f"[+] Artigos identificados e enriquecidos em {ARTIGOS_DIR}: {len(articles)}")
     for a in articles:
-        print(f"  - [{a['date_iso']}] [{a['tag']}] {a['title']} -> {a['url']}")
+        print(f"  - [{a['date_iso']}] [{','.join(a['ecosystems'])}] {a['title']}")
 
     commits = get_announced_commits(10)
     build_artigos_index(articles)
     build_rss_feeds(articles, commits)
     build_sitemap(articles)
     print("[+] Concluído com sucesso!")
+
 
 if __name__ == "__main__":
     main()
