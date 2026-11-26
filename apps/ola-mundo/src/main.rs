@@ -1840,6 +1840,7 @@ pub const HTTP_BUF_SIZE: usize = 131072;
 static mut HTML_FILE_BUF: [u8; HTTP_BUF_SIZE] = [0; HTTP_BUF_SIZE];
 static mut HTTP_RX_BUF: [u8; HTTP_BUF_SIZE] = [0; HTTP_BUF_SIZE];
 static mut HTTP_PLAIN_BUF: [u8; HTTP_BUF_SIZE] = [0; HTTP_BUF_SIZE];
+static mut HTTP_FORMAT_BUF: [u8; HTTP_BUF_SIZE] = [0; HTTP_BUF_SIZE];
 static mut BROWSER_SESSION: browser::BrowserSession = browser::BrowserSession::new();
 static mut HOT_ROUTE_TMP: [HotRouteEntryUser; 16] = [HotRouteEntryUser::empty(); 16];
 
@@ -1996,9 +1997,25 @@ unsafe fn fetch_http_document_inner(
     let len = initial_url.len().min(127);
     current_target[..len].copy_from_slice(&initial_url[..len]);
     let mut current_target_len = len;
+    let mut visited_hashes = [0u64; 8];
+    let mut visited_count = 0usize;
 
-    for _redirect_hop in 0..5 {
+    let fnv1a_url = |u: &[u8]| -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for &b in u {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+        h
+    };
+
+    for _redirect_hop in 0..=6 {
         let target_slice = &current_target[..current_target_len];
+        let target_hash = fnv1a_url(target_slice);
+        if visited_count < visited_hashes.len() {
+            visited_hashes[visited_count] = target_hash;
+            visited_count += 1;
+        }
         final_url_out[..current_target_len].copy_from_slice(target_slice);
         final_url_out[current_target_len] = 0;
         *final_url_len = current_target_len;
@@ -2519,6 +2536,11 @@ unsafe fn fetch_http_document_inner(
             let loc = &hdr.location[..hdr.location_len];
             let mut resolved_loc = [0u8; 128];
             let res_len = browser::resolve_relative_url(target_slice, loc, &mut resolved_loc);
+            let next_hash = fnv1a_url(&resolved_loc[..res_len]);
+            if visited_hashes[..visited_count].contains(&next_hash) {
+                print_str(b"[BROWSER-NET] Loop de redirecionamento HTTP detectado!\n");
+                return Err(FetchError::TooManyRedirects);
+            }
             current_target[..res_len].copy_from_slice(&resolved_loc[..res_len]);
             current_target_len = res_len;
             continue;
@@ -2795,7 +2817,18 @@ unsafe fn browser_load_and_display(
             }
         }
 
-        // Suporte a `<meta http-equiv="refresh" content="...;url=...">` (ate 2 saltos)
+        // Suporte a `<meta http-equiv="refresh" content="...;url=...">` (ate 2 saltos, com guarda de loop)
+        let hash_meta_url = |u: &[u8]| -> u64 {
+            let mut h: u64 = 0xcbf29ce484222325;
+            for &b in u {
+                h ^= b.to_ascii_lowercase() as u64;
+                h = h.wrapping_mul(0x100000001b3);
+            }
+            h
+        };
+        let mut meta_visited = [0u64; 4];
+        meta_visited[0] = hash_meta_url(&active_url_buf[..active_url_len]);
+        let mut meta_vis_count = 1usize;
         let mut meta_hops = 0usize;
         while let Ok(curr_len) = fetch_res {
             if meta_hops >= 2 {
@@ -2805,7 +2838,13 @@ unsafe fn browser_load_and_display(
             if let Some(m_len) = browser::extract_meta_refresh_url(&out_buf[..curr_len], &mut meta_raw) {
                 let mut next_url = [0u8; 128];
                 let n_len = browser::resolve_relative_url(&active_url_buf[..active_url_len], &meta_raw[..m_len], &mut next_url);
-                if n_len > 0 && &next_url[..n_len] != &active_url_buf[..active_url_len] {
+                let next_hash = hash_meta_url(&next_url[..n_len]);
+                let already_seen = meta_visited[..meta_vis_count].iter().any(|&h| h == next_hash);
+                if n_len > 0 && !already_seen {
+                    if meta_vis_count < meta_visited.len() {
+                        meta_visited[meta_vis_count] = next_hash;
+                        meta_vis_count += 1;
+                    }
                     print_str(b"[BROWSER-NET] Meta-refresh para: ");
                     print_str(&next_url[..n_len]);
                     print_str(b"\n");
@@ -2826,6 +2865,10 @@ unsafe fn browser_load_and_display(
                         fetch_res = r;
                         break;
                     }
+                } else if already_seen {
+                    print_str(b"[BROWSER-NET] Loop de meta-refresh bloqueado: ");
+                    print_str(&next_url[..n_len]);
+                    print_str(b"\n");
                 }
             }
             break;
@@ -2838,17 +2881,39 @@ unsafe fn browser_load_and_display(
                 print_str(b"[DIAG-FLOW] HTML: Extraindo corpo do documento HTML (bytes=");
                 print_u64(body_len as u64);
                 print_str(b")\n");
-                let has_html_tag = doc_slice.windows(5).any(|w| w.eq_ignore_ascii_case(b"<html") || w.eq_ignore_ascii_case(b"<body"));
-                if has_html_tag {
-                    print_str(b"[HTML-INTEGRITY] Validacao de integridade OK: tags HTML detectadas no payload.\n");
-                } else {
-                    print_str(b"[HTML-INTEGRITY] AVISO: Documento sem tags HTML estruturais padrao (renderizando como texto/bloco).\n");
-                }
+                let fmt_buf = unsafe {
+                    core::slice::from_raw_parts_mut(
+                        core::ptr::addr_of_mut!(HTTP_FORMAT_BUF) as *mut u8,
+                        HTTP_BUF_SIZE,
+                    )
+                };
+                let formatted_len = browser::format_structured_response_html(doc_slice, active_url, fmt_buf);
+                let mut use_fmt_buf = formatted_len.is_some();
+                let mut active_len = formatted_len.unwrap_or(body_len);
                 print_str(b"[DIAG-FLOW] DOM: Convertendo HTML para arvore de elementos DOM...\n");
-                session.load_document_bytes(doc_slice, active_url);
+                if let Some(flen) = formatted_len {
+                    print_str(b"[HTML-INTEGRITY] Payload estruturado (RSS/Atom/JSON) formatado automaticamente.\n");
+                    session.load_document_bytes(&fmt_buf[..flen], active_url);
+                } else {
+                    let has_html_tag = doc_slice.windows(5).any(|w| w.eq_ignore_ascii_case(b"<html") || w.eq_ignore_ascii_case(b"<body"));
+                    if has_html_tag {
+                        print_str(b"[HTML-INTEGRITY] Validacao de integridade OK: tags HTML detectadas no payload.\n");
+                    } else {
+                        print_str(b"[HTML-INTEGRITY] AVISO: Documento sem tags HTML estruturais padrao (renderizando como texto/bloco).\n");
+                    }
+                    session.load_document_bytes(doc_slice, active_url);
+                    if browser::detect_heavy_js_spa(doc_slice, session.layout.line_count) {
+                        let spa_len = browser::format_spa_notice_html(active_url, fmt_buf);
+                        print_str(b"[BROWSER-SPA] Shell SPA JS pesado detectado -> exibindo aviso amigavel.\n");
+                        session.load_document_bytes(&fmt_buf[..spa_len], active_url);
+                        use_fmt_buf = true;
+                        active_len = spa_len;
+                    }
+                }
+                let final_slice: &[u8] = if use_fmt_buf { &fmt_buf[..active_len] } else { doc_slice };
                 session.record_navigation_current(active_url);
                 // Armazena copia transacional no cache local (/disk/browser/cache/)
-                browser::storage::BrowserCacheStore::store(active_url, doc_slice);
+                browser::storage::BrowserCacheStore::store(active_url, final_slice);
                 // Faz prefetch de imagens remotas (<img src=...>) antes da pintura final
                 prefetch_page_images(session, active_url, out_buf);
 
@@ -3772,10 +3837,11 @@ unsafe fn run_browser_interactive(initial_url: Option<&[u8]>) -> ! {
                         }
                     }
                 }
-                EVENT_MOUSE_DOWN | EVENT_MOUSE_UP => {
+                EVENT_MOUSE_DOWN => {
                     if ev.x < 0 || ev.y < 0 {
                         continue;
                     }
+                    session.dragging_scrollbar = false;
                     let click_x = ev.x as usize;
                     let click_y = ev.y as usize;
                     print_str(b"[BROWSER-INTERACTION] MOUSE_DOWN x=");
@@ -3881,6 +3947,25 @@ unsafe fn run_browser_interactive(initial_url: Option<&[u8]>) -> ! {
                             session.render(buf_cur);
                             let _ = sys_window_update(win_id, buf_cur);
                         }
+                    }
+                }
+                EVENT_MOUSE_MOVE => {
+                    if session.dragging_scrollbar && ev.y >= 0 {
+                        session.scroll_to_track_y(ev.y as usize);
+                        let buf_cur = surface.slice_mut();
+                        session.render(buf_cur);
+                        let _ = sys_window_update(win_id, buf_cur);
+                    }
+                }
+                EVENT_MOUSE_UP => {
+                    session.dragging_scrollbar = false;
+                }
+                EVENT_SCROLL => {
+                    if ev.y != 0 {
+                        session.scroll_by(ev.y * 24);
+                        let buf_cur = surface.slice_mut();
+                        session.render(buf_cur);
+                        let _ = sys_window_update(win_id, buf_cur);
                     }
                 }
                 EVENT_KEY_DOWN => {
