@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Auditoria Técnica de Ativos do Ecossistema Jinn: Computação Heterogênea, Zero-Idle SMP, SharedRings e Isolamento Ring 3 — Jinn OS</title>
+  <meta name="description"
+    content="Inventário técnico auditado nos códigos de Jinn, Aladdin e jhcs-rs: heterogeneidade Scalar/SIMD/wgpu sem lock-in, Zero-Idle HLT com contabilidade SMP per-CPU, AladdinSharedRings 4 KiB SPSC, HotRouteTable 64B, W^X/JAHA 1.2/.jpkg SHA-256 e aderência a ecossistemas Deep Tech e fora do radar.">
+  <link rel="canonical"
+    href="https://jinn-os.dev.br/artigos/auditoria-ativos-jinn-arquitetura-eficiencia-isolamento.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url"
+    content="https://jinn-os.dev.br/artigos/auditoria-ativos-jinn-arquitetura-eficiencia-isolamento.html">
+  <meta property="og:title"
+    content="Auditoria de Ativos Jinn: Eficiência Zero-Idle, Computação Heterogênea e Isolamento Ring 3">
+  <meta property="og:description"
+    content="Mapeamento código-a-dor dos 5 pilares de engenharia de Jinn, Aladdin e jhcs-rs: evidências reais QEMU/benchmark, limites da Tabela B e aplicabilidade industrial, doméstica e em servidores.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/assets-audit-jaha-smp-rings.png">
+
+  <!-- Artigo Meta (Indexação Google News / RSS / Feed) -->
+  <meta name="article:tag" content="ARCHITECTURE, MICROKERNEL, ZERO-IDLE, COMPUTE LAB, SECURITY LAB">
+  <meta name="article:published_time" content="2026-11-26T18:45:00-03:00">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Jinn Engineering Observatory: Schema.org TechArticle (Auto-Generated) -->
+  <script type="application/ld+json" id="jinn-techarticle-jsonld">
+{
+  "@context": "https://schema.org",
+  "@type": [
+    "TechArticle",
+    "NewsArticle"
+  ],
+  "headline": "Auditoria Técnica de Ativos do Ecossistema Jinn: Computação Heterogênea, Zero-Idle SMP, SharedRings e Isolamento Ring 3",
+  "description": "Inventário técnico auditado nos códigos de Jinn, Aladdin e jhcs-rs: heterogeneidade Scalar/SIMD/wgpu sem lock-in, Zero-Idle HLT com contabilidade SMP per-CPU, AladdinSharedRings 4 KiB SPSC, HotRouteTable 64B, W^X/JAHA 1.2/.jpkg SHA-256 e aderência a ecossistemas Deep Tech e fora do radar.",
+  "image": [
+    "https://jinn-os.dev.br/assets/assets-audit-jaha-smp-rings.png"
+  ],
+  "datePublished": "2026-11-26T18:45:00-03:00",
+  "dateModified": "2026-11-26T18:45:00-03:00",
+  "inLanguage": "pt-BR",
+  "articleSection": [
+    "Security Lab",
+    "Efficiency Lab"
+  ],
+  "author": {
+    "@type": "Person",
+    "name": "Geovane da Conceição Estanislau",
+    "url": "https://github.com/GeovaneEstanislau"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Jinn Engineering Observatory",
+    "url": "https://jinn-os.dev.br/",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://jinn-os.dev.br/assets/wallpaper.jpg"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://jinn-os.dev.br/artigos/auditoria-ativos-jinn-arquitetura-eficiencia-isolamento.html"
+  },
+  "about": [
+    {
+      "@type": "Thing",
+      "name": "process isolation"
+    },
+    {
+      "@type": "Thing",
+      "name": "W^X memory enforcement"
+    },
+    {
+      "@type": "Thing",
+      "name": "driver fault containment in Ring 3"
+    },
+    {
+      "@type": "Thing",
+      "name": "supply-chain integrity"
+    },
+    {
+      "@type": "Thing",
+      "name": "bare-metal TLS 1.3 security"
+    },
+    {
+      "@type": "Thing",
+      "name": "deterministic scheduling"
+    },
+    {
+      "@type": "Thing",
+      "name": "power reduction"
+    },
+    {
+      "@type": "Thing",
+      "name": "energy-proportional computing"
+    },
+    {
+      "@type": "Thing",
+      "name": "SMP per-CPU accounting"
+    },
+    {
+      "@type": "Thing",
+      "name": "lazy TTL cache evaluation"
+    },
+    {
+      "@type": "Thing",
+      "name": "workload efficiency"
+    },
+    {
+      "@type": "Thing",
+      "name": "heterogeneous compute scheduling"
+    },
+    {
+      "@type": "Thing",
+      "name": "SIMD vectorization AVX2 FMA"
+    },
+    {
+      "@type": "Thing",
+      "name": "zero-GPU 2D compositing"
+    }
+  ],
+  "mentions": [
+    {
+      "@type": "Organization",
+      "name": "Red Hat"
+    },
+    {
+      "@type": "Organization",
+      "name": "Canonical"
+    },
+    {
+      "@type": "Organization",
+      "name": "Google"
+    },
+    {
+      "@type": "Organization",
+      "name": "Siemens"
+    },
+    {
+      "@type": "Thing",
+      "name": "Sovereign & Civic Infrastructure"
+    },
+    {
+      "@type": "Organization",
+      "name": "Arm"
+    },
+    {
+      "@type": "Organization",
+      "name": "Qualcomm"
+    },
+    {
+      "@type": "Organization",
+      "name": "LF Edge"
+    },
+    {
+      "@type": "Thing",
+      "name": "Industrial Automation"
+    },
+    {
+      "@type": "Thing",
+      "name": "Green Public Infrastructure"
+    },
+    {
+      "@type": "Organization",
+      "name": "Intel"
+    },
+    {
+      "@type": "Organization",
+      "name": "AMD"
+    },
+    {
+      "@type": "Organization",
+      "name": "Tenstorrent"
+    },
+    {
+      "@type": "Organization",
+      "name": "SiFive"
+    },
+    {
+      "@type": "Thing",
+      "name": "HPC Research Labs"
+    }
+  ],
+  "keywords": "Jinn OS, Microkernel, Rust no_std, x86_64, ARCHITECTURE, MICROKERNEL, ZERO-IDLE, COMPUTE LAB, SECURITY LAB, Ring 3 Drivers, W^X, Zero-Trust Syscalls, JAHA 1.2, JinnWall SPI, Supply-Chain Integrity, TLS 1.3 no_std, HLT, SMP, APIC Timer Gating, Per-CPU Accounting, Lazy TTL, Preemptive Scheduler, Energy-Proportional Runtime, JHCS, SIMD, AVX2, FMA, Zero-GPU, Heterogeneous Compute, Aladdin Compositor, Vector Acceleration"
+}
+  </script>
+  <!-- /Jinn Engineering Observatory: Schema.org TechArticle -->
+</head>
+
+<body class="bg-slate-950 text-slate-200 min-h-screen antialiased selection:bg-cyan-500/30">
+  <header class="border-b border-slate-800 bg-slate-900/70 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-4xl mx-auto px-6 h-14 flex items-center justify-between">
+      <a href="/artigos/?lab=architecture-rfcs" class="flex items-center gap-2 hover:text-cyan-400 transition-colors text-xs font-mono">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span>Observatory • Auditoria de Ativos</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="/feed.xml" target="_blank" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS</span>
+        </a>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="text-cyan-300 hover:text-white">Jinn_Project GitHub</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-6 py-10 space-y-8">
+    <article class="prose prose-invert prose-slate max-w-none space-y-6">
+      <div class="space-y-3 border-b border-slate-800 pb-6">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400">
+          <span class="bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 rounded-full">ASSET AUDIT</span>
+          <span class="bg-emerald-950 border border-emerald-800 text-emerald-300 px-2.5 py-0.5 rounded-full">JINN • ALADDIN • JHCS-RS</span>
+          <span class="text-slate-500">•</span>
+          <time datetime="2026-11-26">26 Nov 2026</time>
+          <span class="text-slate-500">•</span>
+          <span class="text-slate-400">Geovane da Conceição Estanislau</span>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white leading-tight">
+          Auditoria de Ativos do Ecossistema Jinn: Computação Heterogênea, Zero-Idle SMP, <code>AladdinSharedRings</code> e Isolamento Ring 3
+        </h1>
+        <p class="text-base sm:text-lg text-slate-300 leading-relaxed">
+          Em vez de tratar um sistema operacional experimental apenas como peça de vitrine monolítica, realizamos uma auditoria direta do código nos três workspaces do projeto (<code>Jinn</code>, <code>Aladdin</code> e <code>jhcs-rs</code>) para isolar cinco ativos de engenharia concretos, vincular cada um a dores reais de custo/operação e mapear ecossistemas industriais, acadêmicos e públicos tradicionalmente fora do radar.
+        </p>
+      </div>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">1. Diagnóstico Detalhado: Os 5 Pilares Auditados no Código</h2>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+          <div class="p-4 rounded-xl bg-slate-900/80 border border-purple-500/30">
+            <h3 class="font-bold text-purple-300 font-mono mb-1">1. Computação Heterogênea sem Lock-in (<code>jhcs-rs</code> + <code>jhcs-daemon</code> + Syscall <code>88</code>)</h3>
+            <p>
+              <code>ComputeBroker</code> e <code>ComputeGraph</code> orquestram execução determinística entre <code>CpuBackend</code>, <code>SimdBackend</code> (<code>#[target_feature(enable = "avx2,fma")]</code> e SSE2, mais buffers <code>#[repr(C, align(64))]</code>) e <code>WgpuBackend</code> (no host <code>std</code>). No Jinn OS, o serviço Ring 3 <code>jhcs-daemon</code> opera com heap de <code>4 MiB</code> em <code>.bss</code>, espera passiva <code>ipc_recv_blocking</code> e memória compartilhada zero-copy via JDA (<code>shm_get_vaddr</code>), enquanto a Syscall <code>88</code> expõe estatísticas reais ao desktop. Medições reproduzíveis no host Windows (`AVX2+FMA + GTX 1650`) comprovam que CPU escalar vence em <code>8x8</code> MatMul (<code>639 ns</code> vs. <code>6,71 ms</code> GPU) e fluxos <code>vector_add</code> limitados por RAM, AVX2/FMA lidera entre <code>16x16..256x256</code> (<code>14,76 GFLOP/s</code>) e a GPU <code>wgpu</code> domina a partir de <code>512x512</code> (<code>59,86</code> até <code>105,55 GFLOP/s</code>).
+            </p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/80 border border-emerald-500/30">
+            <h3 class="font-bold text-emerald-300 font-mono mb-1">2. Eficiência Operacional Zero-Idle &amp; Contabilidade SMP Per-CPU</h3>
+            <p>
+              <code>src/scheduler.rs</code> suspende tarefas ociosas em <code>TaskState::Blocked</code> (zero ticks em espera) e coloca núcleos sem fila <code>Ready</code> em <code>sti; hlt</code> após <code>account_enter_hlt(cpu_id)</code>. Em <code>src/smp.rs</code>, <code>PER_CPU_ACCT: [PerCpuAccounting; MAX_CPUS]</code> usa alinhamento <code>#[repr(align(64))]</code> por núcleo para evitar <em>false sharing</em> ao contabilizar <code>hlt_cycles</code>, <code>task_cycles</code> e <code>irq_cycles</code>, expostos pelas Syscalls <code>88</code> e <code>92</code>. Em testes QEMU (<code>-smp 4</code>), os núcleos APs (<code>cpu1..cpu3</code>) mediram <code>d_task = 0</code> e <code>100.00%</code> em <code>HLT</code> durante janela ociosa. Limitação transparente: o timer principal ainda usa PIT <code>100 Hz</code> (não LAPIC <em>one-shot</em> tickless) e emulação QEMU não mede Watts físicos em silício.
+            </p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/80 border border-cyan-500/30">
+            <h3 class="font-bold text-cyan-300 font-mono mb-1">3. Comunicação Zero-Copy <code>AladdinSharedRings</code> (<code>4096 B</code> SPSC)</h3>
+            <p>
+              Definido em <code>Aladdin/src/contracts/shared_rings.rs</code>, o bloco <code>#[repr(C, align(4096))]</code> de exatos 4 KiB separa <code>rx_header</code> e <code>tx_header</code> em cache lines de <code>64 B</code> (<code>RingHeader</code>), transportando 64 slots <code>SharedInputEvent</code> (`16 B`) das ISRs para o compositor e 64 comandos <code>SharedGfxCmd</code> (`32 B`) no retorno — eliminando syscalls por evento de mouse/frame enquanto ativo e acordando o processo via bit <code>CONSUMER_SLEEPING</code> + Syscall <code>90</code> apenas após dormência real.
+            </p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/80 border border-amber-500/30">
+            <h3 class="font-bold text-amber-300 font-mono mb-1">4. Rede Determinística (<code>HotRouteTable</code> 64B + DNS 3 Camadas + TLS 1.3 <code>#![no_std]</code>)</h3>
+            <p>
+              <code>HotRouteTable</code> (<code>src/net/hot_routes.rs</code>, <code>#[repr(align(64))]</code>, 64 entradas e persistência <code>/disk/hot_routes.db</code>) unifica DNS e next-hop L2/L3 com expiração <em>lazy-on-lookup</em> (zero varredura em background), zerando consultas repetidas (<code>ARP=0 DNS=0</code> em reboots E2E nos drivers <code>Intel e1000</code> e <code>VirtIO-Net</code>). A pilha TLS 1.3 (<code>X25519</code>, <code>ChaCha20-Poly1305</code>, <code>AES-128-GCM</code>) opera no navegador Ring 3 com auditoria transparente de que a validação X.509/SAN/`CertificateVerify` já existe em Ring 0 (<code>src/net/{x509, pki}.rs</code>) mas ainda precisa ser conectada ao cliente do browser.
+            </p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/80 border border-rose-500/30">
+            <h3 class="font-bold text-rose-300 font-mono mb-1">5. Isolamento Ring 3 &amp; Integridade (<code>W^X</code>, JAHA 1.2, <code>.jpkg</code> SHA-256)</h3>
+            <p>
+              O carregador ELF (<code>src/elf.rs#L322-L355</code>) impõe <code>W^X</code> com bit <code>NO_EXEC</code> (<code>1 &lt;&lt; 63</code> via <code>EFER.NXE</code>), <code>validate_user_buffer</code> (<code>src/syscall.rs#L287-L323</code>) barra com <code>-EFAULT</code> ponteiros inválidos ou de kernel página a página no PML4, JAHA 1.2 garante contabilidade física sem overcommit (<code>Discrepancy: 0 bytes</code> em <code>255.090.688 B</code> utilizáveis no QEMU) e contêineres <code>.jpkg</code> passam por verificador <code>Sha256Hasher</code> zero-alloc antes da execução — com fronteira clara quanto à ausência futura ainda pendente de IOMMU e assinatura assimétrica de pacotes.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">2. Evidências Visuais Reais (QEMU &amp; Compute Lab)</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 not-prose">
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/assets-audit-jaha-smp-rings.png" alt="Monitor de Recursos JAHA 1.2, CPU Zero-Idle HLT, Rings, JinnWall e Terminal Ring 3 no QEMU" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 1 (QEMU): Monitor <em>Recursos (JAHA)</em> mostrando <code>CPU Zero-Idle (HLT)</code>, <code>Rings</code>, <code>Frames Físicos (7428/124582)</code>, 2 volumes montados (FAT32+Ext2), perfil <code>JinnWall PublicSecure</code> e Terminal Ring 3 em <code>29 MB / 486 MB</code> de RAM.
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/jhcs-breakeven-chart.png" alt="Gráfico logarítmico de breakeven Scalar CPU vs AVX2 SIMD vs GPU wgpu no jhcs-rs" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 2 (<code>jhcs-rs</code>): Cruzamentos exatos Escalar → AVX2/FMA → GPU <code>wgpu</code> em <code>OP_MATMUL</code> (<code>8x8</code> até <code>1024x1024</code>) medidos em host Windows <code>x86_64</code> com GTX 1650.
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/hot-routes-aladdin.png" alt="Painel Rotas Quentes L2+L3 Fast-Path no Aladdin Desktop" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 3 (<code>HotRouteTable</code>): Tabela unificada DNS + gateway MAC via Syscall <code>97</code> com persistência em <code>/disk/hot_routes.db</code>.
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/browser-jinn-os-fullscreen.png" alt="Jinn Browser em tela cheia 1024x768 isolado em Ring 3 com TLS 1.3" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 4 (Ring 3 + TLS 1.3): Jinn Browser em <code>1024x768</code> acessando <code>https://jinn-os.dev.br</code> isolado do microkernel com buffer estático e páginas sob demanda.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">3. Ecossistemas Fora do Radar &amp; Dores Silenciosas Atendidas</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          Além dos grandes players de silício, cloud e pesquisa em segurança (<code>docs/strategy/OPPORTUNITY_RADAR_50.md</code>), documentamos em <code>docs/strategy/EXPANDED_ECOSYSTEM_RADAR.md</code> quatro segmentos subatendidos onde bloat de software e opacidade custam caro:
+        </p>
+        <ul class="list-disc list-inside space-y-1.5 text-sm text-slate-300">
+          <li><strong>Fabricantes de PLCs, IHMs SCADA e Terminais PDV/Financeiros:</strong> sofrem com interfaces web modernas vazando RAM e corrupção de disco após queda de energia; beneficiam-se de orçamento <code>64–256 MiB</code> JAHA 1.2, compositor zero-GPU <code>Aladdin</code> e recuperação `.TMP → .BAK`.</li>
+          <li><strong>Integradores de Telemetria Energética &amp; IoT de Campo (*fanless*):</strong> pagam caro por pacotes perdidos/repetidos em links intermitentes e acordadas térmicas; beneficiam-se de <code>HotRouteTable</code> (<code>ARP=0 DNS=0</code>), diagnóstico estruturado Syscall <code>88/97</code> e política Zero-Idle sem timers ociosos.</li>
+          <li><strong>Órgãos Públicos, Universidades e Escolas Técnicas:</strong> demandam código auditável sem caixas pretas, redução de descarte eletrônico (*e-waste*) e bancadas abertas para pesquisa em compiladores, medição física em Watts (RAPL) e verificação formal.</li>
+        </ul>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">4. Aplicabilidade Prática por Cenário</h2>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-emerald-300 mb-1">Usos Industriais (Edge Computing, Automação &amp; Hardware Fanless)</h3>
+            <p>Controladores de chão de fábrica, IHMs x86 seladas sem ventilação ativa e gateways de telemetria executam inspeção matricial leve na própria CPU via <code>jhcs-backend-simd</code> (`16x16..128x128` em microssegundos) sem GPU dedicada, mantendo falhas de driver ou interface isoladas em Ring 3.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-cyan-300 mb-1">Usos Domésticos (Desktop Leve, Navegação Isolada &amp; Eficiência)</h3>
+            <p>Reaproveitamento produtivo de desktops/notebooks modestos com interface acrílica via SIMD em CPU (<code>Aladdin</code>), carregamento determinístico de documentos, feeds RSS e navegação web isolada sem processos consumidores de bateria em repouso.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-purple-300 mb-1">Usos em Servidores (Densidade, Zero-Trust &amp; Processamento Heterogêneo JHCS)</h3>
+            <p>Orquestração racional de lotes mistos via <code>jhcs-rs</code> em hosts Linux/Windows (evitando contenção PCIe em lotes pequenos e atingindo <code>105,55 GFLOP/s</code> em <code>1024x1024</code> via <code>wgpu</code>), aliada no microkernel a isolamento estrito <code>W^X</code>/<code>EFAULT</code>, kernel sem dependências <code>crates.io</code> e rastreabilidade contábil por núcleo SMP.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-3 border-t border-slate-800 pt-6">
+        <h2 class="text-xl font-bold text-white">5. Melhorias &amp; Limitações Remanescentes (Fronteira Honesta)</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          Em total coerência com <code>ENGINEERING_STATUS_AND_LIMITATIONS.md</code>, permanecem como etapas abertas antes de qualquer afirmação de homologação comercial: medição elétrica física (Watts/C-states) em placa real e substituição do PIT <code>100 Hz</code> por LAPIC <em>one-shot</em> tickless, habilitação de driver IOMMU/GPU bare-metal no Jinn OS, conexão completa do validador X.509/PKI no navegador Ring 3 e portabilidade executável ARM64/RISC-V além do núcleo <code>jhcs-rs</code>.
+        </p>
+      </section>
+
+            <!-- Jinn Ecosystem & Open Collaboration Block (Auto-Generated) -->
+      <section aria-labelledby="ecosystems-collaboration-heading" class="not-prose my-10 p-6 rounded-xl bg-slate-900/75 border border-slate-800 space-y-5">
+        <div class="space-y-2">
+          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Engineering Observatory • Open Collaboration</p>
+          <h3 id="ecosystems-collaboration-heading" class="text-lg sm:text-xl font-bold text-white">
+            Applicable Ecosystems &amp; Open Collaboration
+          </h3>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Conexões arquiteturais deste estudo com domínios industriais, pesquisa científica e infraestrutura auditável:
+          </p>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <a href="/artigos/?lab=security-lab" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400"><span>Security Lab</span></a>
+          <a href="/artigos/?lab=efficiency-lab" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400"><span>Efficiency Lab</span></a>
+          <a href="/artigos/?eco=microkernel-security" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400"><span>Microkernel &amp; Segurança</span><span class="opacity-70">&bull; Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity</span></a>
+          <a href="/artigos/?eco=zero-idle-efficiency" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400"><span>Zero-Idle &amp; SMP</span><span class="opacity-70">&bull; Energy-Proportional Runtime, SMP Accounting &amp; Low-Overhead Scheduling</span></a>
+          <a href="/artigos/?eco=compute-simd" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400"><span>Compute &amp; SIMD</span><span class="opacity-70">&bull; Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration</span></a>
+        </div>
+
+        <div class="pt-1">
+          <div class="text-[11px] font-mono text-slate-400 mb-2">Ecossistemas de referência pertinentes (Nível B contextual):</div>
+          <div class="flex flex-wrap gap-1.5">
+            <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Red Hat</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Canonical</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Google</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Siemens</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Sovereign &amp; Civic Infrastructure</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Arm</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Qualcomm</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">LF Edge</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Industrial Automation</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Green Public Infrastructure</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Intel</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">AMD</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">Tenstorrent</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">SiFive</span>
+          <span class="px-2.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300">HPC Research Labs</span>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-emerald-300 font-mono">
+            Chamada Aberta: Indústria Local, Academia &amp; Setor Público Eticamente Responsável
+          </h4>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Convidamos <strong>empresas regionais de automação industrial e integradores</strong>, <strong>universidades e grupos de pesquisa em sistemas operacionais</strong> e <strong>projetos públicos/governamentais eticamente responsáveis</strong> (com transparência e código auditável) a reproduzirem estes experimentos em bancada física, propor <em>workloads</em> comparativos ou avaliar pilotos com o <strong>Jinn OS</strong> e o <strong>JHCS</strong>.
+          </p>
+          <div class="flex flex-wrap gap-2.5 text-xs font-mono pt-1">
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-cyan-400 text-slate-200 hover:text-cyan-300 transition-colors">
+              GitHub: Jinn_Project
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/jhcs-rs" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-purple-400 text-slate-200 hover:text-purple-300 transition-colors">
+              GitHub: jhcs-rs
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/ENGINEERING_STATUS_AND_LIMITATIONS.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-amber-400 text-slate-200 hover:text-amber-300 transition-colors">
+              Fronteira Honesta &amp; Evidências
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/strategy/OPPORTUNITY_RADAR_50.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
+              Radar &amp; 6ª Trilha Aberta
+            </a>
+            <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-cyan-950/90 border border-cyan-600/70 hover:bg-cyan-900 text-cyan-200 transition-colors">
+              Contato Técnico &amp; Pilotos
+            </a>
+          </div>
+        </div>
+      </section>
+      <!-- /Jinn Ecosystem & Open Collaboration Block -->
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn Engineering Observatory • Asset &amp; Ecosystem Audit • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/artigos/?lab=architecture-rfcs" class="text-cyan-400 hover:underline">Architecture &amp; RFCs</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-slate-300 hover:text-white">Portal Principal</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>

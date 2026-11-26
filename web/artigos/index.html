@@ -59,7 +59,7 @@
         <span class="text-xs font-mono bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded border border-cyan-800">Artigos</span>
       </a>
       <div class="flex items-center gap-3 sm:gap-4 text-xs font-mono overflow-x-auto">
-        <span id="articles-counter" class="hidden sm:inline-block text-slate-400">25 publicações</span>
+        <span id="articles-counter" class="hidden sm:inline-block text-slate-400">26 publicações</span>
         <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml" class="hidden md:inline-block shrink-0"><img src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
         <a href="/feed.xml" target="_blank" class="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors shrink-0">
           <i data-lucide="rss" class="w-3.5 h-3.5"></i>
@@ -116,12 +116,45 @@
         </p>
       </div>
       <div class="text-xs font-mono text-slate-400 shrink-0">
-        Mostrando <span id="visible-count" class="text-cyan-400 font-bold">25</span> de 25 artigos
+        Mostrando <span id="visible-count" class="text-cyan-400 font-bold">26</span> de 26 artigos
       </div>
     </div>
 
     <!-- Container Escalável de Artigos -->
     <div id="articles-grid" class="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
+      <!-- Card: auditoria-ativos-jinn-arquitetura-eficiencia-isolamento -->
+      <article data-article-card data-labs="security-lab efficiency-lab" data-categories="microkernel-security zero-idle-efficiency compute-simd" data-search="auditoria técnica de ativos do ecossistema jinn: computação heterogênea, zero-idle smp, sharedrings e isolamento ring 3 inventário técnico auditado nos códigos de jinn, aladdin e jhcs-rs: heterogeneidade scalar/simd/wgpu sem lock-in, zero-idle hlt com contabilidade smp per-cpu, aladdinsharedrings 4 kib spsc, hotroutetable 64b, w^x/jaha 1.2/.jpkg sha-256 e aderência a ecossistemas deep tech e fora do radar. architecture microkernel zero-idle compute lab security lab security lab ring 3 driver isolation, w^x pml4, tls 1.3 no_std &amp; jinnwall efficiency lab zero-idle hlt, smp per-cpu accounting, lazy ttl &amp; 64m ram zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure energy-proportional runtime, smp accounting &amp; low-overhead scheduling arm qualcomm lf edge industrial automation green public infrastructure heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-cyan-400 mb-3">
+            <span class="bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 rounded-full font-semibold">ARCHITECTURE</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-26">26 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>6 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-cyan-300 transition-colors leading-snug">
+            <a href="/artigos/auditoria-ativos-jinn-arquitetura-eficiencia-isolamento.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Auditoria Técnica de Ativos do Ecossistema Jinn: Computação Heterogênea, Zero-Idle SMP, SharedRings e Isolamento Ring 3</a>
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Inventário técnico auditado nos códigos de Jinn, Aladdin e jhcs-rs: heterogeneidade Scalar/SIMD/wgpu sem lock-in, Zero-Idle HLT com contabilidade SMP per-CPU, AladdinSharedRings 4 KiB SPSC, HotRouteTable 64B, W^X/JAHA 1.2/.jpkg SHA-256 e aderência a ecossistemas Deep Tech e fora do radar.
+          </p>
+          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 4 KiB, 64B, 639 ns, 6,71 ms">
+            Indicadores citados no relatório: 4 KiB, 64B, 639 ns, 6,71 ms
+          </p>
+          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure, Arm">
+            Ecossistemas: <span class="text-slate-300">Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure, Arm</span>
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="security-lab" title="Filtrar por Security Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Security Lab</button><button type="button" data-lab-badge="efficiency-lab" title="Filtrar por Efficiency Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400">Efficiency Lab</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
+          <a href="/artigos/auditoria-ativos-jinn-arquitetura-eficiencia-isolamento.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </a>
+        </div>
+      </article>
+
       <!-- Card: network-failure-observability-kernel-userspace-jinn-os -->
       <article data-article-card data-labs="architecture-rfcs post-mortems" data-categories="microkernel-security zero-idle-efficiency fastpath-ipc-net" data-search="network failure observability in jinn os: diagnóstico estruturado na fronteira kernel–user space observabilidade na fronteira do microkernel jinn os: como o jinn browser e o aladdin desktop combinam fetchdiaginfo em ring 3 com as syscalls 88 e 97 (hotroutetable) para expor estágio da falha, ip/dns, driver nic, mac arp e contadores tx/rx com 0% de overhead em idle. fastpath zero-idle architecture observability microkernel architecture &amp; rfcs especificações de microkernel, vfs fat32/ext2, .jpkg &amp; profiles post-mortems &amp; failure logs análises de causa raiz, pcap traces &amp; hardware/irq incidents zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure energy-proportional runtime, smp accounting &amp; low-overhead scheduling arm qualcomm lf edge industrial automation green public infrastructure zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
         <div>

@@ -13,6 +13,20 @@
     <priority>0.9</priority>
   </url>
   <url>
+    <loc>https://jinn-os.dev.br/artigos/auditoria-ativos-jinn-arquitetura-eficiencia-isolamento.html</loc>
+    <lastmod>2026-11-26</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn Engineering Observatory</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-26</news:publication_date>
+      <news:title>Auditoria Técnica de Ativos do Ecossistema Jinn: Computação Heterogênea, Zero-Idle SMP, SharedRings e Isolamento Ring 3</news:title>
+    </news:news>
+  </url>
+  <url>
     <loc>https://jinn-os.dev.br/artigos/network-failure-observability-kernel-userspace-jinn-os.html</loc>
     <lastmod>2026-11-26</lastmod>
     <changefreq>weekly</changefreq>
