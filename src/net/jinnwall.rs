@@ -156,9 +156,16 @@ impl JinnWall {
             }
         }
 
-        // 5. Se perfil for Development e porta for autorizada explicitamente (8080 ou 3000):
-        if self.profile() == FirewallProfile::Development || crate::profile::get_system_profile().is_headless() {
+        // 5. Se perfil for Development, autoriza portas 80, 8080 e 3000;
+        // em modo headless (SimbadServer) com httpd ativo, autoriza somente a porta configurada no daemon HTTP.
+        if self.profile() == FirewallProfile::Development {
             if dst_port == 80 || dst_port == 8080 || dst_port == 3000 {
+                self.packets_accepted.fetch_add(1, Ordering::Relaxed);
+                return FilterVerdict::Accept;
+            }
+        } else if crate::profile::get_system_profile().is_headless() {
+            let httpd = crate::httpd::get_httpd();
+            if httpd.is_running && dst_port == httpd.port {
                 self.packets_accepted.fetch_add(1, Ordering::Relaxed);
                 return FilterVerdict::Accept;
             }

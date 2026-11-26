@@ -37,8 +37,7 @@ pub static MAX_SCHED_CYCLES: AtomicU64 = AtomicU64::new(0);
 pub static TOTAL_SCHED_CYCLES: AtomicU64 = AtomicU64::new(0);
 pub static SCHED_SAMPLE_COUNT: AtomicU64 = AtomicU64::new(0);
 
-/// Ciclos totais de CPU consumidos pela thread Idle em estado HLT (Zero-Idle).
-pub static IDLE_HLT_CYCLES: AtomicU64 = AtomicU64::new(0);
+/// Contadores por CPU alinhados a 64 bytes residem em `crate::smp::PerCpuAccounting`.
 
 /// Rastreia APs estacionados em `HLT` sem trabalho `Ready` e se seu timer LAPIC foi mascarado em hardware.
 static AP_PARKED: [core::sync::atomic::AtomicBool; crate::gdt::MAX_CPUS] = [

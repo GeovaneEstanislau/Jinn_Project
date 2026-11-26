@@ -71,9 +71,8 @@ pub fn init() {
 
     unsafe {
         arp::ARP_CACHE.init_defaults();
-        dns::DNS_CACHE.init_defaults();
     }
-    dns::load_dns_config_from_vfs();
+    dns::init_tables();
 
     // Dispara requisição ARP proativa para o default gateway
     arp::send_arp_request([10, 0, 2, 2]);
@@ -81,25 +80,103 @@ pub fn init() {
 
 static NET_POLL_LOCK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 static LAST_NET_POLL_TICK: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static NET_WAITERS: [core::sync::atomic::AtomicUsize; 8] = [
+    core::sync::atomic::AtomicUsize::new(0), core::sync::atomic::AtomicUsize::new(0),
+    core::sync::atomic::AtomicUsize::new(0), core::sync::atomic::AtomicUsize::new(0),
+    core::sync::atomic::AtomicUsize::new(0), core::sync::atomic::AtomicUsize::new(0),
+    core::sync::atomic::AtomicUsize::new(0), core::sync::atomic::AtomicUsize::new(0),
+];
+static NET_WAITER_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
-/// Informa se a ISR de rede sinalizou pacotes pendentes para processamento imediato.
+#[inline]
+pub fn register_net_waiter(pid: usize) {
+    if pid == 0 { return; }
+    for slot in NET_WAITERS.iter() {
+        let cur = slot.load(core::sync::atomic::Ordering::Relaxed);
+        if cur == pid {
+            return;
+        }
+    }
+    for slot in NET_WAITERS.iter() {
+        if slot.compare_exchange(0, pid, core::sync::atomic::Ordering::AcqRel, core::sync::atomic::Ordering::Relaxed).is_ok() {
+            NET_WAITER_COUNT.fetch_add(1, core::sync::atomic::Ordering::Release);
+            return;
+        }
+    }
+}
+
+#[inline]
+pub fn unregister_net_waiter(pid: usize) {
+    if pid == 0 { return; }
+    for slot in NET_WAITERS.iter() {
+        if slot.compare_exchange(pid, 0, core::sync::atomic::Ordering::AcqRel, core::sync::atomic::Ordering::Relaxed).is_ok() {
+            NET_WAITER_COUNT.fetch_sub(1, core::sync::atomic::Ordering::Release);
+        }
+    }
+}
+
+/// Acorda tarefas dormentes/bloqueadas aguardando RX de rede (seguro fora ou dentro de ISR via IrqSafeSpinLock).
+pub fn wake_net_waiters() {
+    if NET_WAITER_COUNT.load(core::sync::atomic::Ordering::Acquire) == 0 {
+        return;
+    }
+    for slot in NET_WAITERS.iter() {
+        let pid = slot.load(core::sync::atomic::Ordering::Acquire);
+        if pid != 0 {
+            crate::scheduler::wake_task(pid);
+        }
+    }
+}
+
+/// Bloqueia/dorme a tarefa atual até chegada de IRQ de rede ou expiração de `timeout_ticks` (Zero-Idle).
+pub fn wait_for_rx_or_tick(timeout_ticks: u64) {
+    let pid = crate::scheduler::current_pid();
+    register_net_waiter(pid);
+    if !has_pending_work() {
+        let wake_tick = crate::timer::ticks().saturating_add(timeout_ticks.max(1));
+        crate::scheduler::get().sleep_task(pid, wake_tick);
+        crate::scheduler::yield_now();
+    }
+    unregister_net_waiter(pid);
+    poll_if_needed();
+}
+
+/// Informa se a ISR de rede ou a fila loopback sinalizou pacotes pendentes para processamento imediato.
 #[inline]
 pub fn has_pending_work() -> bool {
     crate::drivers::net::NET_IRQ_PENDING.load(core::sync::atomic::Ordering::Acquire)
+        || tcp::has_loopback_pending()
 }
 
-/// Processa rede sob demanda via IRQ (Zero-Idle) com fallback lento de segurança se nenhuma IRQ foi observada ainda.
+#[inline]
+fn dhcp_is_bound() -> bool {
+    unsafe { matches!(dhcp::DHCP_CLIENT.state, dhcp::DhcpState::Bound(_)) }
+}
+
+/// Processa rede sob demanda via IRQ (Zero-Idle), restringindo fallback apenas à janela inicial ou waiters ativos.
 pub fn poll_if_needed() {
     let pending = crate::drivers::net::NET_IRQ_PENDING.swap(false, core::sync::atomic::Ordering::AcqRel);
+    let loopback = tcp::has_loopback_pending();
     let ticks = crate::timer::ticks();
-    if pending {
+    if pending || loopback {
         LAST_NET_POLL_TICK.store(ticks, core::sync::atomic::Ordering::Relaxed);
         poll();
         return;
     }
-    let last = LAST_NET_POLL_TICK.load(core::sync::atomic::Ordering::Relaxed);
     let verified = crate::drivers::net::NET_IRQ_VERIFIED.load(core::sync::atomic::Ordering::Acquire);
-    let fallback_interval = if verified { 100 } else { 5 };
+    let active_waiters = NET_WAITER_COUNT.load(core::sync::atomic::Ordering::Acquire) > 0;
+    let bound = dhcp_is_bound();
+    if verified && bound && !active_waiters {
+        return;
+    }
+    let last = LAST_NET_POLL_TICK.load(core::sync::atomic::Ordering::Relaxed);
+    let fallback_interval = if !verified {
+        5
+    } else if !bound {
+        25
+    } else {
+        50
+    };
     if ticks.saturating_sub(last) >= fallback_interval {
         LAST_NET_POLL_TICK.store(ticks, core::sync::atomic::Ordering::Relaxed);
         poll();
@@ -133,8 +210,10 @@ pub fn poll() {
 
     let our_mac = dev.mac_address();
     let mut rx_buf = [0u8; 1536];
+    let mut drained_any = false;
 
     while let Some(len) = dev.receive(&mut rx_buf) {
+        drained_any = true;
         if len < 14 { continue; }
 
         NET_DIAGNOSTICS.record_rx_ethernet(len);
@@ -275,4 +354,8 @@ pub fn poll() {
     // Gerencia temporizadores de retransmissão e persistência TCP em background
     let ticks = crate::timer::ticks();
     tcp::poll_tcp_retransmissions(ticks);
+
+    if drained_any {
+        wake_net_waiters();
+    }
 }

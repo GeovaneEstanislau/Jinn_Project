@@ -513,31 +513,43 @@ impl ServiceSupervisor {
 // ── Tarefas Canônicas dos Daemons de Infraestrutura Simbad ────────────────────
 
 pub fn service_logd_task() {
+    let pid = crate::scheduler::current_pid();
+    let mut ipc_buf = [0u8; 64];
     loop {
-        crate::scheduler::yield_now();
+        // Bloqueia até chegar mensagem IPC ou dorme 5s para evitar spin em 100% CPU
+        if crate::ipc::recv(pid).is_none() {
+            let wake_tick = crate::timer::ticks().saturating_add(500);
+            crate::scheduler::get().sleep_task(pid, wake_tick);
+            crate::scheduler::yield_now();
+        }
+        let _ = &mut ipc_buf;
     }
 }
 
 pub fn service_flusher_task() {
+    let pid = crate::scheduler::current_pid();
     loop {
         let ticks = crate::timer::ticks();
         crate::flusher::get_flusher().poll(ticks, 500); // 500 ticks = 5s
+        crate::scheduler::get().sleep_task(pid, ticks.saturating_add(500));
         crate::scheduler::yield_now();
     }
 }
 
 pub fn service_netmgr_task() {
+    // Zero-Idle: processa rede apenas sob demanda via IRQ (NET_IRQ_PENDING) ou timeout seguro.
     loop {
-        crate::net::poll();
-        crate::scheduler::yield_now();
+        crate::net::poll_if_needed();
+        crate::net::wait_for_rx_or_tick(100);
     }
 }
 
 pub fn service_httpd_task() {
     crate::httpd::get_httpd().start();
     loop {
-        crate::httpd::get_httpd().poll_server();
-        crate::scheduler::yield_now();
+        if !crate::httpd::get_httpd().poll_server() {
+            crate::net::wait_for_rx_or_tick(20);
+        }
     }
 }
 

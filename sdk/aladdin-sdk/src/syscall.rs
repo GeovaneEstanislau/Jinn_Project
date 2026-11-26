@@ -43,6 +43,38 @@ pub const SYS_REGISTER_SHARED_RINGS:         u64 = 89;
 pub const SYS_RING_DOORBELL:                 u64 = 90;
 pub const SYS_READDIR:                       u64 = 91;
 pub const SYS_GET_PERCPU_STATS:              u64 = 92;
+pub const SYS_NET_DNS_CACHE_LIST:            u64 = 93;
+pub const SYS_NET_DNS_HOST_ADD:              u64 = 94;
+pub const SYS_NET_DNS_CACHE_FLUSH:           u64 = 95;
+pub const SYS_NET_DNS_CONFIG:                u64 = 96;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct DnsEntryUser {
+    pub hostname: [u8; 128],
+    pub hostname_len: u32,
+    pub ipv4: [u8; 4],
+    pub source_upstream: [u8; 4],
+    pub ttl_remaining_secs: u32,
+    pub hits: u32,
+    pub is_static_host: u32,
+    pub is_stale: u32,
+}
+
+impl Default for DnsEntryUser {
+    fn default() -> Self {
+        Self {
+            hostname: [0u8; 128],
+            hostname_len: 0,
+            ipv4: [0u8; 4],
+            source_upstream: [0u8; 4],
+            ttl_remaining_secs: 0,
+            hits: 0,
+            is_static_host: 0,
+            is_stale: 0,
+        }
+    }
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -98,6 +130,8 @@ pub struct SystemStatsUser {
     pub memory_idle_bytes: u64,
     pub ring_events_processed: u64,
     pub ring_cmds_flushed: u64,
+    pub cpu_count: u64,
+    pub per_cpu: [PerCpuCoreStat; 8],
 }
 
 /// Syscall sem argumentos
@@ -232,6 +266,54 @@ pub unsafe fn sys_net_set_dns(primary: &[u8; 4], secondary: &[u8; 4]) -> i64 {
 #[inline(always)]
 pub unsafe fn sys_net_get_dns(primary_out: &mut [u8; 4], secondary_out: &mut [u8; 4]) -> i64 {
     syscall2(SYS_NET_GET_DNS, primary_out.as_mut_ptr() as u64, secondary_out.as_mut_ptr() as u64)
+}
+
+/// Lista entradas ativas da Tabela Local DNS (`/disk/hosts` + Cache LRU) (Syscall 93)
+#[inline(always)]
+pub unsafe fn sys_net_dns_cache_list(out: &mut [DnsEntryUser]) -> i64 {
+    syscall2(SYS_NET_DNS_CACHE_LIST, out.as_mut_ptr() as u64, out.len() as u64)
+}
+
+/// Adiciona/atualiza host estático em `/disk/hosts` (Syscall 94, flags=0)
+#[inline(always)]
+pub unsafe fn sys_net_dns_host_add(host: &[u8], ip: &[u8; 4]) -> i64 {
+    syscall4(SYS_NET_DNS_HOST_ADD, host.as_ptr() as u64, host.len() as u64, ip.as_ptr() as u64, 0)
+}
+
+/// Remove host estático de `/disk/hosts` (Syscall 94, flags=1)
+#[inline(always)]
+pub unsafe fn sys_net_dns_host_remove(host: &[u8]) -> i64 {
+    syscall4(SYS_NET_DNS_HOST_ADD, host.as_ptr() as u64, host.len() as u64, 0, 1)
+}
+
+/// Limpa entradas dinâmicas do cache DNS em RAM e disco (Syscall 95)
+#[inline(always)]
+pub unsafe fn sys_net_dns_cache_flush() -> i64 {
+    syscall0(SYS_NET_DNS_CACHE_FLUSH)
+}
+
+/// Lê os 3 servidores DNS (primário, secundário e fallback) (Syscall 96, set=0)
+#[inline(always)]
+pub unsafe fn sys_net_dns_get_servers3(primary_out: &mut [u8; 4], secondary_out: &mut [u8; 4], fallback_out: &mut [u8; 4]) -> i64 {
+    syscall4(
+        SYS_NET_DNS_CONFIG,
+        0,
+        primary_out.as_mut_ptr() as u64,
+        secondary_out.as_mut_ptr() as u64,
+        fallback_out.as_mut_ptr() as u64,
+    )
+}
+
+/// Define os 3 servidores DNS e salva `/disk/net.cfg` (Syscall 96, set=1)
+#[inline(always)]
+pub unsafe fn sys_net_dns_set_servers3(primary: &[u8; 4], secondary: &[u8; 4], fallback: &[u8; 4]) -> i64 {
+    syscall4(
+        SYS_NET_DNS_CONFIG,
+        1,
+        primary.as_ptr() as u64,
+        secondary.as_ptr() as u64,
+        fallback.as_ptr() as u64,
+    )
 }
 
 /// Registra o anel de buffers compartilhado SPSC Ring 3 / Ring 0 (Syscall 89)

@@ -1427,6 +1427,13 @@ impl FileSystem for Fat32Fs {
         let mut cur_cluster = if parent_cluster == 0 { self.root_cluster } else { parent_cluster };
         let mut dir_buf = [0u8; 512];
 
+        let mut lfn_buf = [0u8; 64];
+        let mut lfn_len = 0usize;
+        let mut lfn_active = false;
+        let mut lfn_chk = 0u8;
+        let mut lfn_slots: [(u32, usize); 16] = [(0, 0); 16];
+        let mut lfn_slot_count = 0usize;
+
         while cur_cluster >= 2 && cur_cluster < FAT32_EOF {
             let start_lba = self.cluster_to_lba(cur_cluster);
 
@@ -1444,43 +1451,109 @@ impl FileSystem for Fat32Fs {
                         return Err(VfsError::NotFound); // Fim do diretório
                     }
                     if first == 0xE5 {
+                        lfn_active = false;
+                        lfn_len = 0;
+                        lfn_slot_count = 0;
                         continue; // Entrada excluída
                     }
 
                     let attr = dir_buf[offset + 11];
-                    if attr == 0x0F || (attr & 0x08) != 0 {
+                    if attr == 0x0F {
+                        let chk = dir_buf[offset + 13];
+                        if (first & 0x40) != 0 {
+                            lfn_active = true;
+                            lfn_len = 0;
+                            lfn_chk = chk;
+                            lfn_buf = [0u8; 64];
+                            lfn_slot_count = 0;
+                        } else if !lfn_active || chk != lfn_chk {
+                            lfn_active = false;
+                            lfn_len = 0;
+                            lfn_slot_count = 0;
+                            continue;
+                        }
+                        if lfn_slot_count < lfn_slots.len() {
+                            lfn_slots[lfn_slot_count] = (sec_lba, offset);
+                            lfn_slot_count += 1;
+                        }
+                        let seq_num = (first & 0x1F) as usize;
+                        if seq_num > 0 {
+                            let base_char_idx = (seq_num - 1) * 13;
+                            let char_offsets = [(1, 11), (14, 26), (28, 32)];
+                            let mut c_idx = 0;
+                            for &(s_off, e_off) in &char_offsets {
+                                let mut p = s_off;
+                                while p + 1 < e_off {
+                                    let ch = (dir_buf[offset + p] as u16) | ((dir_buf[offset + p + 1] as u16) << 8);
+                                    if ch == 0x0000 || ch == 0xFFFF {
+                                        break;
+                                    }
+                                    let target_idx = base_char_idx + c_idx;
+                                    if target_idx < 63 {
+                                        lfn_buf[target_idx] = if ch < 128 { ch as u8 } else { b'?' };
+                                        if target_idx + 1 > lfn_len {
+                                            lfn_len = target_idx + 1;
+                                        }
+                                    }
+                                    c_idx += 1;
+                                    p += 2;
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
+                    if (attr & 0x08) != 0 {
+                        lfn_active = false;
+                        lfn_len = 0;
+                        lfn_slot_count = 0;
                         continue;
                     }
 
                     let mut raw_83 = [b' '; 11];
                     raw_83.copy_from_slice(&dir_buf[offset..offset + 11]);
 
-                    // Extrai nome formatado 8.3
-                    let mut name = [0u8; 13];
+                    let lfn_valid = lfn_active && lfn_len > 0 && lfn_chk == lfn_checksum(&raw_83);
+                    let mut name = [0u8; 64];
                     let mut len = 0;
-                    for i in 0..8 {
-                        let c = dir_buf[offset + i];
-                        if c != b' ' { name[len] = c.to_ascii_lowercase(); len += 1; }
-                    }
-                    let is_dir = (attr & 0x10) != 0;
-                    let ext1 = dir_buf[offset + 8];
-                    let ext2 = dir_buf[offset + 9];
-                    let ext3 = dir_buf[offset + 10];
-                    if ext1 != b' ' || ext2 != b' ' || ext3 != b' ' {
-                        name[len] = b'.'; len += 1;
-                        for &c in &[ext1, ext2, ext3] {
+                    if lfn_valid {
+                        name[..lfn_len].copy_from_slice(&lfn_buf[..lfn_len]);
+                        len = lfn_len;
+                    } else {
+                        for i in 0..8 {
+                            let c = dir_buf[offset + i];
                             if c != b' ' { name[len] = c.to_ascii_lowercase(); len += 1; }
                         }
+                        let ext1 = dir_buf[offset + 8];
+                        let ext2 = dir_buf[offset + 9];
+                        let ext3 = dir_buf[offset + 10];
+                        if ext1 != b' ' || ext2 != b' ' || ext3 != b' ' {
+                            name[len] = b'.'; len += 1;
+                            for &c in &[ext1, ext2, ext3] {
+                                if c != b' ' { name[len] = c.to_ascii_lowercase(); len += 1; }
+                            }
+                        }
                     }
+
+                    let lfn_slots_to_erase = if lfn_valid { lfn_slot_count } else { 0 };
+                    lfn_active = false;
+                    lfn_len = 0;
+                    lfn_slot_count = 0;
+
+                    let is_dir = (attr & 0x10) != 0;
 
                     let name_match = if let Ok(entry_str) = core::str::from_utf8(&name[..len]) {
                         entry_str.eq_ignore_ascii_case(leaf_name)
                     } else {
                         false
                     };
-                    let raw_match = match leaf_83 {
-                        Some(l83) => raw_83 == l83,
-                        None => false,
+                    let raw_match = if !lfn_valid {
+                        match leaf_83 {
+                            Some(l83) => raw_83 == l83,
+                            None => false,
+                        }
+                    } else {
+                        false
                     };
 
                     if name_match || raw_match {
@@ -1505,8 +1578,20 @@ impl FileSystem for Fat32Fs {
                             }
                         }
 
-                        // Marca a entrada como excluída com 0xE5
+                        // Marca a entrada 8.3 e suas entradas LFN associadas como excluídas (0xE5)
                         dir_buf[offset] = 0xE5;
+                        for k in 0..lfn_slots_to_erase {
+                            let (l_lba, l_off) = lfn_slots[k];
+                            if l_lba == sec_lba {
+                                dir_buf[l_off] = 0xE5;
+                            } else {
+                                let mut prev_buf = [0u8; 512];
+                                if self.read_sec(l_lba, &mut prev_buf).is_ok() {
+                                    prev_buf[l_off] = 0xE5;
+                                    let _ = self.write_sec(l_lba, &prev_buf);
+                                }
+                            }
+                        }
                         if self.write_sec(sec_lba, &dir_buf).is_err() {
                             return Err(VfsError::IoError);
                         }

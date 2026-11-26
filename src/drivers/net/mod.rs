@@ -59,6 +59,7 @@ pub fn handle_irq_top_half() -> bool {
         NET_IRQ_COUNT.fetch_add(1, Ordering::Relaxed);
         NET_IRQ_VERIFIED.store(true, Ordering::Release);
         NET_IRQ_PENDING.store(true, Ordering::Release);
+        crate::net::wake_net_waiters();
     }
     asserted
 }

@@ -356,12 +356,12 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
         }
     }
 
-    // Loop de espera ativa com polling de rede e retransmissões automáticas (RTO)
+    // Loop de espera orientado a IRQ de rede e retransmissões automáticas (RTO)
     let start_tick = crate::timer::ticks();
     let timeout_ticks = 1500u64; // 6,0s exatos pelo timer APIC (100 Hz)
     while crate::timer::ticks().saturating_sub(start_tick) < timeout_ticks {
 
-        crate::net::poll();
+        crate::net::poll_if_needed();
 
         unsafe {
             if let Some(Some(ref s)) = SOCKET_TABLE.get(sockfd) {
@@ -376,8 +376,13 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
 
         // Retransmissão de SYN em caso de perda
         let now = crate::timer::ticks();
+        let mut rto_wait = 10u64;
         unsafe {
             if let Some(Some(ref mut s)) = SOCKET_TABLE.get_mut(sockfd) {
+                if s.tcb.state == crate::net::tcp::TcpState::SynSent {
+                    let rem = s.tcb.rto_ticks.saturating_sub(now.saturating_sub(s.tcb.last_tx_tick));
+                    rto_wait = rem.clamp(1, 20);
+                }
                 if s.tcb.state == crate::net::tcp::TcpState::SynSent
                     && now.saturating_sub(s.tcb.last_tx_tick) >= s.tcb.rto_ticks
                 {
@@ -401,7 +406,7 @@ pub fn connect_socket(pid: usize, sockfd: usize, remote_ip: [u8; 4], remote_port
                 }
             }
         }
-        crate::scheduler::yield_now();
+        crate::net::wait_for_rx_or_tick(rto_wait);
     }
 
     // Timeout atingido sem resposta do peer
@@ -454,7 +459,7 @@ pub fn listen_socket(pid: usize, sockfd: usize, backlog: usize) -> Result<(), is
 
 /// Aceita uma conexão TCP estabelecida a partir da fila de accept FIFO do listener.
 pub fn accept_socket(pid: usize, sockfd: usize) -> Result<usize, isize> {
-    crate::net::poll();
+    crate::net::poll_if_needed();
     unsafe {
         let listening_sock = match SOCKET_TABLE.get_mut(sockfd).and_then(|s| s.as_mut()) {
             Some(s) => {
@@ -775,7 +780,7 @@ pub fn recv_socket(pid: usize, sockfd: usize, dest: &mut [u8]) -> Result<usize, 
     if dest.is_empty() {
         return Ok(0);
     }
-    crate::net::poll();
+    crate::net::poll_if_needed();
     unsafe {
         let sock = match SOCKET_TABLE.get_mut(sockfd).and_then(|s| s.as_mut()) {
             Some(s) => s,

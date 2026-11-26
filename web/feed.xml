@@ -7,14 +7,13 @@
     <language>pt-br</language>
     <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
     <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
-        <item>
-      <title>per-CPU accounting, PCI NIC IRQs, AP LAPIC timer gating, CR3 lifetime fix and Si</title>
-      <link>https://jinn-os.dev.br</link>
-      <guid isPermaLink="false">jinn-os-per-cpu-accounting--pci-nic-irqs--ap-lapic-timer-gating--cr3-lifetime-fix-and-si-202611252342</guid>
-      <pubDate>Wed, 25 Nov 2026 23:42:17 +0000</pubDate>
-      <description><![CDATA[
-        <p>Consolidamos o suporte a resolucao DNS cascateada (Cloudflare/Google), decodificacao de imagens bare-metal no Jinn Browser, aceleracao SIMD AVX2 no JHCS e persistencia estrita em disco FAT32 com zero-idle.</p>
-      ]]></description>
+    <item>
+      <title>Tabela Local de DNS em 3 Camadas: Hosts Estáticos, Cache LRU Persistente com TTL e Painel Aladdin</title>
+      <link>https://jinn-os.dev.br/artigos/tabela-local-dns-hosts-cache-persistente-ttl-aladdin.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-tabela-local-dns-hosts-cache-persistente-ttl-aladdin</guid>
+      <pubDate>Thu, 26 Nov 2026 01:25:00 +0000</pubDate>
+      <description>Arquitetura Zero-Idle da Tabela Local de DNS no Jinn OS e Aladdin Desktop: resolução em 3 estágios (/disk/hosts, Cache LRU de 128 registros A alinhado a 64 bytes com /disk/dns_cache.db via RTC UNIX e cascata upstream com Stale-If-Error), syscalls 93–96 Zero-Trust e prova PCAP em Cold-Reboot com 0 pacotes UDP.</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
       <title>Zero-Idle em SMP: Contabilidade Per-CPU, IRQ de Hardware NIC, Gating AP LAPIC e Hardening SimbadServer</title>
@@ -137,6 +136,14 @@
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
+      <title>feat(zero-idle,smp): per-CPU accounting, PCI NIC IRQs, AP LAPIC timer gating, CR3 lifetime fix and SimbadServer audit [announce]</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/81461b045cbf01cc8dd92a18746767007a0be86b</link>
+      <guid isPermaLink="false">81461b045cbf01cc8dd92a18746767007a0be86b</guid>
+      <pubDate>Wed, 25 Nov 2026 20:41:09 -0300</pubDate>
+      <description>feat(zero-idle,smp): per-CPU accounting, PCI NIC IRQs, AP LAPIC timer gating, CR3 lifetime fix and SimbadServer audit [announce]</description>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
       <title>docs(qa,web): publish performance, stability, integration, security audit and scrollable articles hub [announce]</title>
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/f6439da9fc061f05122705dcb3b0ec0dd04ea3ee</link>
       <guid isPermaLink="false">f6439da9fc061f05122705dcb3b0ec0dd04ea3ee</guid>
@@ -205,14 +212,6 @@
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/6508b00473d17b28f2ef2b49277f5b047004dc62</link>
       <guid isPermaLink="false">6508b00473d17b28f2ef2b49277f5b047004dc62</guid>
       <pubDate>Tue, 24 Nov 2026 12:19:56 -0300</pubDate>
-      <description>feat(net,browser,web): harden Intel e1000 driver &amp; VirtualBox ARP fallback, modernize Jinn Browser UI, add technical article and publish RSS/sitemap feeds</description>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>feat(web): organize articles in dedicated web/artigos directory, add technical articles from project history, disable RRM autoPrompt, and automate feeds/sitemap</title>
-      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/2e76b6e55e30ab1dd5d2a99688f1a8b85caf9198</link>
-      <guid isPermaLink="false">2e76b6e55e30ab1dd5d2a99688f1a8b85caf9198</guid>
-      <pubDate>Tue, 24 Nov 2026 11:31:54 -0300</pubDate>
       <description>---END---</description>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>

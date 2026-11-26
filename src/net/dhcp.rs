@@ -195,7 +195,7 @@ pub fn handle_dhcp_reply(payload: &[u8]) {
             }
             if dns_ip != [0, 0, 0, 0] {
                 DHCP_CLIENT.dns = dns_ip;
-                crate::net::dns::DNS_CONFIG.fallback = dns_ip;
+                crate::net::dns::set_fallback_runtime(dns_ip);
                 crate::net::arp::send_arp_request(dns_ip);
             }
             if msg_type == 5 {

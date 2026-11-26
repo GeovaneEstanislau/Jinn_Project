@@ -13,7 +13,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::Ordering;
 use aladdin_sdk::console::{print, print_num, println};
 use aladdin::contracts::framebuffer::{DirtyRect, FramebufferDevice};
-use aladdin::contracts::system::{JinnWallProfile, SystemHost, SystemStats};
+use aladdin::contracts::system::{DnsServersConfig, DnsTableEntry, JinnWallProfile, SystemHost, SystemStats};
 use aladdin::contracts::vfs::VfsHost;
 use aladdin::contracts::process::ProcessHost;
 use aladdin::contracts::input::ClientWindowEvent;
@@ -524,7 +524,7 @@ impl SystemHost for UserSystem {
     }
 
     fn yield_cpu(&self) {
-        self.yield_idle_ticks(100);
+        self.yield_idle_ticks(0);
     }
 
     fn yield_idle_ticks(&self, wait_ticks: u16) {
@@ -751,6 +751,111 @@ notes:v1.0.1:Produtividade / Texto:installed:11\n";
     fn storage_mount_volume(&self, _volume_id: usize, _mount_point: &str) -> Result<(), &'static str> { Ok(()) }
     fn storage_unmount_volume(&self, _volume_id: usize) -> Result<(), &'static str> { Ok(()) }
     fn storage_format_volume(&self, _volume_id: usize, _fs_type: &str) -> Result<(), &'static str> { Ok(()) }
+
+    fn dns_get_servers(&self) -> DnsServersConfig {
+        let mut p = [1u8, 1, 1, 1];
+        let mut s = [8u8, 8, 8, 8];
+        let mut f = [10u8, 0, 2, 3];
+        unsafe {
+            let _ = aladdin_sdk::syscall::sys_net_dns_get_servers3(&mut p, &mut s, &mut f);
+        }
+        DnsServersConfig { primary: p, secondary: s, fallback: f }
+    }
+
+    fn dns_set_servers(&self, cfg: DnsServersConfig) -> Result<(), &'static str> {
+        let ret = unsafe {
+            aladdin_sdk::syscall::sys_net_dns_set_servers3(&cfg.primary, &cfg.secondary, &cfg.fallback)
+        };
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err("Falha ao gravar /disk/net.cfg")
+        }
+    }
+
+    fn dns_list_entries(&self, out: &mut [DnsTableEntry]) -> usize {
+        if out.is_empty() {
+            return 0;
+        }
+        // Buffer alinhado em .bss estático: evita alocar [DnsEntryUser; 64] (~10 KiB) na stack Ring 3
+        static mut DNS_SYSCALL_LIST_BUF: [aladdin_sdk::syscall::DnsEntryUser; 64] =
+            [aladdin_sdk::syscall::DnsEntryUser {
+                hostname: [0u8; 128],
+                hostname_len: 0,
+                ipv4: [0u8; 4],
+                source_upstream: [0u8; 4],
+                ttl_remaining_secs: 0,
+                hits: 0,
+                is_static_host: 0,
+                is_stale: 0,
+            }; 64];
+        let kbuf = unsafe { &mut *core::ptr::addr_of_mut!(DNS_SYSCALL_LIST_BUF) };
+        let req_len = out.len().min(64);
+        let ret = unsafe { aladdin_sdk::syscall::sys_net_dns_cache_list(&mut kbuf[..req_len]) };
+        if ret <= 0 {
+            return 0;
+        }
+        let n = (ret as usize).min(out.len()).min(64);
+        for i in 0..n {
+            out[i] = DnsTableEntry {
+                hostname: kbuf[i].hostname,
+                hostname_len: (kbuf[i].hostname_len as usize).min(128) as u8,
+                ipv4: kbuf[i].ipv4,
+                source_upstream: kbuf[i].source_upstream,
+                ttl_remaining_secs: kbuf[i].ttl_remaining_secs,
+                hits: kbuf[i].hits,
+                is_static_host: kbuf[i].is_static_host != 0,
+            };
+        }
+        n
+    }
+
+    fn dns_add_host(&self, hostname: &str, ip: [u8; 4]) -> Result<(), &'static str> {
+        let ret = unsafe { aladdin_sdk::syscall::sys_net_dns_host_add(hostname.as_bytes(), &ip) };
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err("Host invalido ou tabela cheia")
+        }
+    }
+
+    fn dns_remove_host(&self, hostname: &str) -> Result<(), &'static str> {
+        let ret = unsafe { aladdin_sdk::syscall::sys_net_dns_host_remove(hostname.as_bytes()) };
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err("Host nao encontrado")
+        }
+    }
+
+    fn dns_flush_cache(&self) -> usize {
+        let ret = unsafe { aladdin_sdk::syscall::sys_net_dns_cache_flush() };
+        if ret > 0 { ret as usize } else { 0 }
+    }
+
+    fn dns_resolve_timed_ms(&self, hostname: &str) -> Result<([u8; 4], u64), &'static str> {
+        let mut ip = [0u8; 4];
+        let mut t0 = Timespec::default();
+        let mut t1 = Timespec::default();
+        unsafe { let _ = sys_clock_gettime(1, &mut t0); }
+        let ret = unsafe { aladdin_sdk::syscall::sys_net_resolve(hostname.as_bytes(), &mut ip) };
+        unsafe { let _ = sys_clock_gettime(1, &mut t1); }
+
+        if ret != 0 {
+            return match ret {
+                -2 => Err("Dominio inexistente (NXDOMAIN)"),
+                -110 => Err("Timeout DNS upstream"),
+                -100 => Err("Interface de rede inativa"),
+                -22 => Err("Nome de dominio invalido"),
+                _ => Err("Erro na resolucao DNS"),
+            };
+        }
+
+        let ns0 = t0.tv_sec.saturating_mul(1_000_000_000).saturating_add(t0.tv_nsec);
+        let ns1 = t1.tv_sec.saturating_mul(1_000_000_000).saturating_add(t1.tv_nsec);
+        let ms = ns1.saturating_sub(ns0) / 1_000_000;
+        Ok((ip, ms))
+    }
 }
 
 // ── Adaptador de VFS em Ring 3 ────────────────────────────────────────────────
@@ -967,8 +1072,160 @@ impl ProcessHost for UserProcess {
                 }
             }
             output("Telemetria Zero-Idle & Syscall 88/92 registrada na serial.", 0x0022_C55E);
+        } else if trimmed.eq_ignore_ascii_case("dnstest") {
+            let sys_h = UserSystem { start_tick: core::sync::atomic::AtomicU64::new(0) };
+            // 1. Seguranca Zero-Trust das novas Syscalls 93/94/96
+            let tmp_entry = aladdin_sdk::syscall::DnsEntryUser::default();
+            let r_null_list = unsafe { aladdin_sdk::syscall::syscall2(aladdin_sdk::syscall::SYS_NET_DNS_CACHE_LIST, 0, 4) };
+            let r_kern_list = unsafe { aladdin_sdk::syscall::syscall2(aladdin_sdk::syscall::SYS_NET_DNS_CACHE_LIST, 0xFFFF_8000_0000_0000, 4) };
+            let r_kern_host = unsafe { aladdin_sdk::syscall::syscall4(aladdin_sdk::syscall::SYS_NET_DNS_HOST_ADD, 0xFFFF_8000_0000_0000, 5, &tmp_entry.ipv4 as *const _ as u64, 0) };
+            aladdin_sdk::console::print("[DNS-BENCH] sec null_list=");
+            aladdin_sdk::console::print_num((-r_null_list).max(0) as u64);
+            aladdin_sdk::console::print(" kern_list=");
+            aladdin_sdk::console::print_num((-r_kern_list).max(0) as u64);
+            aladdin_sdk::console::print(" kern_host=");
+            aladdin_sdk::console::print_num((-r_kern_host).max(0) as u64);
+            aladdin_sdk::console::println("");
+
+            // 2. Host estatico em /disk/hosts
+            let _ = sys_h.dns_add_host("demo.local", [10, 10, 20, 30]);
+            let static_res = sys_h.dns_resolve_timed_ms("demo.local");
+            let _ = sys_h.dns_flush_cache();
+
+            // 3. 1a e 2a consulta real (example.com e jinn-os.dev.br)
+            static mut BENCH_LIST: [DnsTableEntry; 64] = [DnsTableEntry::empty(); 64];
+            let list_buf = unsafe { &mut *core::ptr::addr_of_mut!(BENCH_LIST) };
+
+            let r1_ex = sys_h.dns_resolve_timed_ms("example.com");
+            let n1 = sys_h.dns_list_entries(list_buf);
+            let mut h1_ex = 999u32;
+            for item in &list_buf[..n1] {
+                if item.hostname_str() == "example.com" && !item.is_static_host {
+                    h1_ex = item.hits;
+                }
+            }
+            let r2_ex = sys_h.dns_resolve_timed_ms("example.com");
+            let n2 = sys_h.dns_list_entries(list_buf);
+            let mut h2_ex = 0u32;
+            let mut ttl_ex = 0u32;
+            for item in &list_buf[..n2] {
+                if item.hostname_str() == "example.com" && !item.is_static_host {
+                    h2_ex = item.hits;
+                    ttl_ex = item.ttl_remaining_secs;
+                }
+            }
+
+            let r1_jn = sys_h.dns_resolve_timed_ms("jinn-os.dev.br");
+            let r2_jn = sys_h.dns_resolve_timed_ms("jinn-os.dev.br");
+            let n3 = sys_h.dns_list_entries(list_buf);
+            let mut h2_jn = 0u32;
+            for item in &list_buf[..n3] {
+                if item.hostname_str() == "jinn-os.dev.br" && !item.is_static_host {
+                    h2_jn = item.hits;
+                }
+            }
+
+            let sec_ok = r_null_list == -22 && r_kern_list == -14 && r_kern_host == -14;
+            let static_ok = match static_res {
+                Ok(([10, 10, 20, 30], ms)) => {
+                    aladdin_sdk::console::print("[DNS-BENCH] demo.local static_ms=");
+                    aladdin_sdk::console::print_num(ms);
+                    aladdin_sdk::console::println("");
+                    ms <= 10
+                }
+                _ => false,
+            };
+            let ex_ok = match (r1_ex, r2_ex) {
+                (Ok((ip1, ms1)), Ok((ip2, ms2))) => {
+                    aladdin_sdk::console::print("[DNS-BENCH] example.com 1st_ms=");
+                    aladdin_sdk::console::print_num(ms1);
+                    aladdin_sdk::console::print(" hits1=");
+                    aladdin_sdk::console::print_num(h1_ex as u64);
+                    aladdin_sdk::console::print(" 2nd_ms=");
+                    aladdin_sdk::console::print_num(ms2);
+                    aladdin_sdk::console::print(" hits2=");
+                    aladdin_sdk::console::print_num(h2_ex as u64);
+                    aladdin_sdk::console::print(" ttl=");
+                    aladdin_sdk::console::print_num(ttl_ex as u64);
+                    aladdin_sdk::console::println("");
+                    ip1 == ip2 && ms2 <= 10 && h1_ex == 0 && h2_ex == 1
+                }
+                _ => false,
+            };
+            let jn_ok = match (r1_jn, r2_jn) {
+                (Ok((ip1, ms1)), Ok((ip2, ms2))) => {
+                    aladdin_sdk::console::print("[DNS-BENCH] jinn-os.dev.br 1st_ms=");
+                    aladdin_sdk::console::print_num(ms1);
+                    aladdin_sdk::console::print(" 2nd_ms=");
+                    aladdin_sdk::console::print_num(ms2);
+                    aladdin_sdk::console::print(" hits2=");
+                    aladdin_sdk::console::print_num(h2_jn as u64);
+                    aladdin_sdk::console::println("");
+                    ip1 == ip2 && ms2 <= 10 && h2_jn == 1
+                }
+                _ => false,
+            };
+            if sec_ok && static_ok && ex_ok && jn_ok {
+                aladdin_sdk::console::println("[DNS-BENCH] PASS");
+                output("DNS 3-Layer Benchmark: PASS (0 ms hit, hits=1)", 0x0010_B981);
+            } else {
+                aladdin_sdk::console::println("[DNS-BENCH] FAIL");
+                output("DNS 3-Layer Benchmark: FAIL", 0x00EF_4444);
+            }
+        } else if trimmed.eq_ignore_ascii_case("dnsreboot") {
+            let sys_h = UserSystem { start_tick: core::sync::atomic::AtomicU64::new(0) };
+            static mut REBOOT_LIST: [DnsTableEntry; 64] = [DnsTableEntry::empty(); 64];
+            let list_buf = unsafe { &mut *core::ptr::addr_of_mut!(REBOOT_LIST) };
+            let n0 = sys_h.dns_list_entries(list_buf);
+            aladdin_sdk::console::print("[DNS-REBOOT] initial_entries=");
+            aladdin_sdk::console::print_num(n0 as u64);
+            aladdin_sdk::console::println("");
+            for item in &list_buf[..n0] {
+                aladdin_sdk::console::print("  [DNS-ENTRY] ");
+                aladdin_sdk::console::print(item.hostname_str());
+                aladdin_sdk::console::print(if item.is_static_host { " HOSTS ttl=" } else { " CACHE ttl=" });
+                aladdin_sdk::console::print_num(item.ttl_remaining_secs as u64);
+                aladdin_sdk::console::print(" hits=");
+                aladdin_sdk::console::print_num(item.hits as u64);
+                aladdin_sdk::console::println("");
+            }
+            let r_demo = sys_h.dns_resolve_timed_ms("demo.local");
+            let r_ex = sys_h.dns_resolve_timed_ms("example.com");
+            let r_jn = sys_h.dns_resolve_timed_ms("jinn-os.dev.br");
+            let n1 = sys_h.dns_list_entries(list_buf);
+            let mut ex_hits = 0u32;
+            let mut jn_hits = 0u32;
+            for item in &list_buf[..n1] {
+                if item.hostname_str() == "example.com" && !item.is_static_host { ex_hits = item.hits; }
+                if item.hostname_str() == "jinn-os.dev.br" && !item.is_static_host { jn_hits = item.hits; }
+            }
+            if let (Ok((_, d_ms)), Ok((_, e_ms)), Ok((_, j_ms))) = (r_demo, r_ex, r_jn) {
+                aladdin_sdk::console::print("[DNS-REBOOT] timings demo_ms=");
+                aladdin_sdk::console::print_num(d_ms);
+                aladdin_sdk::console::print(" ex_ms=");
+                aladdin_sdk::console::print_num(e_ms);
+                aladdin_sdk::console::print(" ex_hits=");
+                aladdin_sdk::console::print_num(ex_hits as u64);
+                aladdin_sdk::console::print(" jn_ms=");
+                aladdin_sdk::console::print_num(j_ms);
+                aladdin_sdk::console::print(" jn_hits=");
+                aladdin_sdk::console::print_num(jn_hits as u64);
+                aladdin_sdk::console::println("");
+            }
+            let ok = matches!(r_demo, Ok(([10, 10, 20, 30], ms)) if ms <= 10)
+                && matches!(r_ex, Ok((_, ms)) if ms <= 10)
+                && matches!(r_jn, Ok((_, ms)) if ms <= 10)
+                && ex_hits >= 2
+                && jn_hits >= 1;
+            if ok {
+                aladdin_sdk::console::println("[DNS-REBOOT] PASS");
+                output("Cold-Reboot DNS Cache/Hosts: PASS (0 ms)", 0x0010_B981);
+            } else {
+                aladdin_sdk::console::println("[DNS-REBOOT] FAIL");
+                output("Cold-Reboot DNS Cache/Hosts: FAIL", 0x00EF_4444);
+            }
         } else if trimmed.eq_ignore_ascii_case("help") {
-            output("Comandos: browser, spawn <path>, stats, uptime, reboot, clear", 0x0093_C5FD);
+            output("Comandos: browser, spawn <path>, stats, dnstest, dnsreboot, reboot, clear", 0x0093_C5FD);
         } else if trimmed.eq_ignore_ascii_case("reboot") {
             output("Reiniciando o sistema...", 0x00EF_4444);
             unsafe { aladdin_sdk::syscall::syscall0(aladdin_sdk::syscall::SYS_REBOOT); }

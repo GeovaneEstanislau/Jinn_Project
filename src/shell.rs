@@ -2944,53 +2944,61 @@ fn cmd_dns(w: &mut Writer, args: &str) {
     }
 }
 
-/// `dnscache` — Exibe entradas ativas no cache local DNS.
+/// `dnscache` — Exibe entradas ativas na Tabela Local DNS (Hosts + Cache LRU).
 fn cmd_dnscache(w: &mut Writer) {
     w.set_color(Color::Yellow, Color::Black);
-    w.write_line("=== Cache Local DNS (RFC 1035) ===");
+    w.write_line("=== Tabela Local DNS (Hosts + Cache LRU RFC 1035) ===");
     w.set_color(Color::LightGray, Color::Black);
 
-    let current_tick = crate::timer::ticks();
-    unsafe {
-        let mut count = 0;
-        for (idx, slot) in crate::net::dns::DNS_CACHE.entries.iter().enumerate() {
-            if let Some(entry) = slot {
-                count += 1;
-                w.write_string("  [");
-                w.write_decimal(idx);
-                w.write_string("] ");
-                if let Ok(name_str) = core::str::from_utf8(&entry.name[..entry.name_len as usize]) {
-                    w.set_color(Color::LightCyan, Color::Black);
-                    w.write_string(name_str);
-                }
-                w.set_color(Color::LightGray, Color::Black);
-                w.write_string(" -> ");
-                w.set_color(Color::LightGreen, Color::Black);
-                w.write_decimal(entry.ip[0] as usize);
-                w.write_string(".");
-                w.write_decimal(entry.ip[1] as usize);
-                w.write_string(".");
-                w.write_decimal(entry.ip[2] as usize);
-                w.write_string(".");
-                w.write_decimal(entry.ip[3] as usize);
+    static mut SHELL_DNS_BUF: [crate::net::dns::DnsEntryUser; 64] = [crate::net::dns::DnsEntryUser {
+        hostname: [0u8; crate::net::dns::MAX_NAME_LEN],
+        hostname_len: 0,
+        ipv4: [0u8; 4],
+        source_upstream: [0u8; 4],
+        ttl_remaining_secs: 0,
+        hits: 0,
+        is_static_host: 0,
+        is_stale: 0,
+    }; 64];
+    let entries = unsafe { &mut *core::ptr::addr_of_mut!(SHELL_DNS_BUF) };
+    let count = crate::net::dns::snapshot_active_entries(entries);
+    for idx in 0..count {
+        let entry = &entries[idx];
+        let nlen = (entry.hostname_len as usize).min(crate::net::dns::MAX_NAME_LEN);
+        w.write_string("  [");
+        w.write_decimal(idx);
+        w.write_string("] ");
+        if let Ok(name_str) = core::str::from_utf8(&entry.hostname[..nlen]) {
+            w.set_color(Color::LightCyan, Color::Black);
+            w.write_string(name_str);
+        }
+        w.set_color(Color::LightGray, Color::Black);
+        w.write_string(" -> ");
+        w.set_color(Color::LightGreen, Color::Black);
+        w.write_decimal(entry.ipv4[0] as usize);
+        w.write_string(".");
+        w.write_decimal(entry.ipv4[1] as usize);
+        w.write_string(".");
+        w.write_decimal(entry.ipv4[2] as usize);
+        w.write_string(".");
+        w.write_decimal(entry.ipv4[3] as usize);
 
-                w.set_color(Color::DarkGray, Color::Black);
-                if entry.expire_tick == 0 {
-                    w.write_line(" (estatico)");
-                } else if current_tick > entry.expire_tick {
-                    w.write_line(" (expirado)");
-                } else {
-                    let rem_sec = (entry.expire_tick - current_tick) / 100;
-                    w.write_string(" (ttl: ");
-                    w.write_decimal(rem_sec as usize);
-                    w.write_line("s)");
-                }
-                w.set_color(Color::LightGray, Color::Black);
-            }
+        w.set_color(Color::DarkGray, Color::Black);
+        if entry.is_static_host != 0 {
+            w.write_string(" (HOSTS, hits=");
+            w.write_decimal(entry.hits as usize);
+            w.write_line(")");
+        } else {
+            w.write_string(" (CACHE ttl=");
+            w.write_decimal(entry.ttl_remaining_secs as usize);
+            w.write_string("s, hits=");
+            w.write_decimal(entry.hits as usize);
+            w.write_line(")");
         }
-        if count == 0 {
-            w.write_line("  (nenhuma entrada no cache)");
-        }
+        w.set_color(Color::LightGray, Color::Black);
+    }
+    if count == 0 {
+        w.write_line("  (nenhuma entrada na tabela)");
     }
 }
 
@@ -3593,14 +3601,23 @@ where
             }
         }
         "dnscache" => {
-            output("=== Cache Local DNS ===", 0x00F5_9E0B);
-            unsafe {
-                for slot in crate::net::dns::DNS_CACHE.entries.iter() {
-                    if let Some(entry) = slot {
-                        if let Ok(name_str) = core::str::from_utf8(&entry.name[..entry.name_len as usize]) {
-                            output(name_str, 0x0038_BDF8);
-                        }
-                    }
+            output("=== Tabela Local DNS (Hosts + Cache) ===", 0x00F5_9E0B);
+            static mut GUI_DNS_BUF: [crate::net::dns::DnsEntryUser; 32] = [crate::net::dns::DnsEntryUser {
+                hostname: [0u8; crate::net::dns::MAX_NAME_LEN],
+                hostname_len: 0,
+                ipv4: [0u8; 4],
+                source_upstream: [0u8; 4],
+                ttl_remaining_secs: 0,
+                hits: 0,
+                is_static_host: 0,
+                is_stale: 0,
+            }; 32];
+            let entries = unsafe { &mut *core::ptr::addr_of_mut!(GUI_DNS_BUF) };
+            let count = crate::net::dns::snapshot_active_entries(entries);
+            for i in 0..count {
+                let nlen = (entries[i].hostname_len as usize).min(crate::net::dns::MAX_NAME_LEN);
+                if let Ok(name_str) = core::str::from_utf8(&entries[i].hostname[..nlen]) {
+                    output(name_str, 0x0038_BDF8);
                 }
             }
         }

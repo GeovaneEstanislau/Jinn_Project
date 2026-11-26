@@ -387,11 +387,23 @@ pub fn ring_doorbell(caller_pid: usize, flags: u32) -> Result<isize, isize> {
                 return Ok(total_flushed);
             }
 
-            // Coloca a tarefa em repouso até o próximo evento de hardware ou deadline solicitado pelo compositor (bits [31:16], padrão 100 ticks = 1s)
+            // Coloca a tarefa em repouso até o próximo evento de hardware/cliente ou deadline solicitado (bits [31:16]):
+            // - 0xFFFF = bloqueio indefinido real (`TaskState::Blocked`, Zero-Idle sem animações ativas)
+            // - 0      = alinha ao próximo segundo real do relógio (100 - (ticks % 100))
+            // - N      = espera limitada a N ticks (clamp 1..6000)
             let req_ticks = (flags >> 16) as u64;
-            let timeout_ticks = if req_ticks == 0 { 100 } else { req_ticks.clamp(1, 6000) };
-            let wake_tick = crate::timer::ticks().wrapping_add(timeout_ticks);
-            crate::scheduler::get().sleep_task(caller_pid, wake_tick);
+            if req_ticks == 0xFFFF {
+                crate::scheduler::get().block_task(caller_pid);
+            } else {
+                let now = crate::timer::ticks();
+                let timeout_ticks = if req_ticks == 0 {
+                    100u64.saturating_sub(now % 100).max(1)
+                } else {
+                    req_ticks.clamp(1, 6000)
+                };
+                let wake_tick = now.wrapping_add(timeout_ticks);
+                crate::scheduler::get().sleep_task(caller_pid, wake_tick);
+            }
             crate::scheduler::yield_now();
 
             // Ao acordar (por interrupção de mouse/teclado ou timeout), limpa a flag de sleeping

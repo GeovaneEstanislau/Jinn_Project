@@ -607,6 +607,10 @@ pub extern "C" fn syscall_dispatch(
         90 => sys_ring_doorbell(arg0 as u32),
         91 => sys_readdir(arg0 as *const u8, arg1, arg2 as *mut DirEntryUser, arg3),
         92 => sys_get_percpu_stats(arg0 as *mut PerCpuStatsUser),
+        93 => sys_net_dns_cache_list(arg0 as *mut crate::net::dns::DnsEntryUser, arg1),
+        94 => sys_net_dns_host_add(arg0 as *const u8, arg1, arg2 as *const u8, arg3),
+        95 => sys_net_dns_cache_flush(),
+        96 => sys_net_dns_config(arg0 as u32, arg1 as *mut u8, arg2 as *mut u8, arg3 as *mut u8),
         102 => sys_getuid(),
         104 => sys_getgid(),
         107 => sys_geteuid(),
@@ -2203,21 +2207,15 @@ fn sys_window_poll_event(win_id: usize, event_ptr: *mut crate::gui::ClientWindow
                         if (rflags & (1 << 9)) != 0 {
                             unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
                         }
-                        if err == EBADF {
-                            return EAGAIN;
-                        }
                         return err;
                     }
                 }
             }
             Err(err) => {
-                if err == EBADF {
-                    // Janela ainda não registrada no compositor ou em fase de transição: yield cooperativo e retorna EAGAIN
-                    crate::scheduler::yield_now();
-                    return EAGAIN;
-                } else {
+                if err != EBADF {
                     return err;
                 }
+                return EBADF;
             }
         }
     }
@@ -2377,6 +2375,7 @@ fn sys_poweroff() -> isize {
         crate::serial_write(&p_buf[..p_i]);
     }
     crate::serial_write(b"\n");
+    crate::net::dns::save_dns_cache_to_vfs();
     crate::benchmark::sys_poweroff_machine();
 }
 
@@ -2424,8 +2423,9 @@ fn sys_hardware_probe(out_ptr: *mut crate::benchmark::HardwareReportUser) -> isi
     0
 }
 
-/// `sys_sync()` — Sincroniza todos os sistemas de arquivos montados e descarrega a cache de blocos primária para a mídia não volátil.
+/// `sys_sync()` — Sincroniza cache DNS e todos os sistemas de arquivos montados com a mídia não volátil.
 fn sys_sync() -> isize {
+    crate::net::dns::save_dns_cache_to_vfs();
     match crate::vfs::sync_all() {
         Ok(()) => 0,
         Err(_) => EIO,
@@ -2960,7 +2960,7 @@ fn sys_net_http_get(url_ptr: *const u8, url_len: usize, out_path_ptr: *const u8,
 
     let start_ticks = crate::timer::ticks();
     while crate::timer::ticks().saturating_sub(start_ticks) < 1500 {
-        crate::net::poll();
+        crate::net::poll_if_needed();
         match crate::net::socket::recv_socket(pid, sock_idx, &mut rx_buf) {
             Ok(n) if n > 0 => {
                 accum.extend_from_slice(&rx_buf[..n]);
@@ -2976,7 +2976,7 @@ fn sys_net_http_get(url_ptr: *const u8, url_len: usize, out_path_ptr: *const u8,
         if total_received > 0 && body_start.is_some() {
             break;
         }
-        crate::scheduler::yield_now();
+        crate::net::wait_for_rx_or_tick(10);
     }
 
     let _ = crate::net::socket::close_socket(pid, sock_idx);
@@ -3032,19 +3032,21 @@ fn sys_net_set_dns(primary_ptr: *const u8, secondary_ptr: *const u8) -> isize {
             }
         }
     }
+    let mut p_opt = None;
+    let mut s_opt = None;
     unsafe {
         if !primary_ptr.is_null() {
             let mut p = [0u8; 4];
             core::ptr::copy_nonoverlapping(primary_ptr, p.as_mut_ptr(), 4);
-            crate::net::dns::DNS_CONFIG.primary = p;
+            p_opt = Some(p);
         }
         if !secondary_ptr.is_null() {
             let mut s = [0u8; 4];
             core::ptr::copy_nonoverlapping(secondary_ptr, s.as_mut_ptr(), 4);
-            crate::net::dns::DNS_CONFIG.secondary = s;
+            s_opt = Some(s);
         }
-        crate::net::dns::save_dns_config_to_vfs();
     }
+    crate::net::dns::set_dns_servers(p_opt, s_opt, None);
     0
 }
 
@@ -3065,8 +3067,8 @@ fn sys_net_get_dns(primary_out: *mut u8, secondary_out: *mut u8) -> isize {
             }
         }
     }
+    let (p, s, _) = crate::net::dns::get_dns_servers();
     unsafe {
-        let (p, s) = (crate::net::dns::DNS_CONFIG.primary, crate::net::dns::DNS_CONFIG.secondary);
         if !primary_out.is_null() {
             core::ptr::copy_nonoverlapping(p.as_ptr(), primary_out, 4);
         }
@@ -3075,6 +3077,146 @@ fn sys_net_get_dns(primary_out: *mut u8, secondary_out: *mut u8) -> isize {
         }
     }
     0
+}
+
+/// `sys_net_dns_cache_list(out_ptr, max_entries)` — Copia entradas ativas da Tabela Local DNS para Ring 3 (Syscall 93).
+fn sys_net_dns_cache_list(out_ptr: *mut crate::net::dns::DnsEntryUser, max_entries: usize) -> isize {
+    if out_ptr.is_null() || max_entries == 0 || max_entries > 256 {
+        return EINVAL;
+    }
+    let byte_len = match max_entries.checked_mul(core::mem::size_of::<crate::net::dns::DnsEntryUser>()) {
+        Some(b) if b > 0 => b,
+        _ => return EINVAL,
+    };
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(out_ptr as *const u8, byte_len, true) {
+            return e;
+        }
+    }
+    let cap = max_entries.min(crate::net::dns::DNS_HOSTS_CAPACITY + crate::net::dns::DNS_CACHE_CAPACITY);
+    let mut kbuf = alloc::vec![crate::net::dns::DnsEntryUser::default(); cap];
+    let copied = crate::net::dns::snapshot_active_entries(&mut kbuf[..cap]);
+    unsafe {
+        if copied > 0 {
+            core::ptr::copy_nonoverlapping(kbuf.as_ptr(), out_ptr, copied);
+        }
+    }
+    copied as isize
+}
+
+/// `sys_net_dns_host_add(host_ptr, host_len, ip_ptr, flags)` — Adiciona/atualiza (`flags=0`) ou remove (`flags=1`) host em `/disk/hosts` (Syscall 94).
+fn sys_net_dns_host_add(host_ptr: *const u8, host_len: usize, ip_ptr: *const u8, flags: usize) -> isize {
+    if host_ptr.is_null() || host_len == 0 || host_len > crate::net::dns::MAX_NAME_LEN {
+        return EINVAL;
+    }
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(host_ptr, host_len, false) {
+            return e;
+        }
+    }
+    let host_bytes = unsafe { core::slice::from_raw_parts(host_ptr, host_len) };
+    let host_str = match core::str::from_utf8(host_bytes) {
+        Ok(s) => s.trim(),
+        Err(_) => return EINVAL,
+    };
+    if !crate::net::dns::is_valid_hostname(host_str) {
+        return EINVAL;
+    }
+
+    if (flags & 1) != 0 || ip_ptr.is_null() {
+        return if crate::net::dns::remove_static_host(host_str) { 0 } else { -2 }; // -ENOENT
+    }
+
+    if is_current_task_user() {
+        if let Err(e) = validate_user_buffer(ip_ptr, 4, false) {
+            return e;
+        }
+    }
+    let mut ip = [0u8; 4];
+    unsafe {
+        core::ptr::copy_nonoverlapping(ip_ptr, ip.as_mut_ptr(), 4);
+    }
+    if ip == [0, 0, 0, 0] {
+        return EINVAL;
+    }
+    if crate::net::dns::add_static_host(host_str, ip) {
+        0
+    } else {
+        ENOSPC
+    }
+}
+
+/// `sys_net_dns_cache_flush()` — Limpa entradas dinâmicas do cache DNS mantendo `/disk/hosts` intacto (Syscall 95).
+fn sys_net_dns_cache_flush() -> isize {
+    crate::net::dns::flush_dynamic_cache() as isize
+}
+
+/// `sys_net_dns_config(set_flag, primary_ptr, secondary_ptr, fallback_ptr)` — Lê (`set=0`) ou define (`set=1`) os 3 servidores DNS (Syscall 96).
+fn sys_net_dns_config(set_flag: u32, primary_ptr: *mut u8, secondary_ptr: *mut u8, fallback_ptr: *mut u8) -> isize {
+    if primary_ptr.is_null() && secondary_ptr.is_null() && fallback_ptr.is_null() {
+        return EINVAL;
+    }
+    let is_write = set_flag == 0;
+    if is_current_task_user() {
+        for ptr in [primary_ptr, secondary_ptr, fallback_ptr] {
+            if !ptr.is_null() {
+                if let Err(e) = validate_user_buffer(ptr as *const u8, 4, is_write) {
+                    return e;
+                }
+            }
+        }
+    }
+    if set_flag != 0 {
+        let mut p_opt = None;
+        let mut s_opt = None;
+        let mut f_opt = None;
+        unsafe {
+            if !primary_ptr.is_null() {
+                let mut ip = [0u8; 4];
+                core::ptr::copy_nonoverlapping(primary_ptr as *const u8, ip.as_mut_ptr(), 4);
+                p_opt = Some(ip);
+            }
+            if !secondary_ptr.is_null() {
+                let mut ip = [0u8; 4];
+                core::ptr::copy_nonoverlapping(secondary_ptr as *const u8, ip.as_mut_ptr(), 4);
+                s_opt = Some(ip);
+            }
+            if !fallback_ptr.is_null() {
+                let mut ip = [0u8; 4];
+                core::ptr::copy_nonoverlapping(fallback_ptr as *const u8, ip.as_mut_ptr(), 4);
+                f_opt = Some(ip);
+            }
+        }
+        crate::net::dns::set_dns_servers(p_opt, s_opt, f_opt);
+        0
+    } else {
+        let (p, s, f) = crate::net::dns::get_dns_servers();
+        unsafe {
+            if !primary_ptr.is_null() {
+                core::ptr::copy_nonoverlapping(p.as_ptr(), primary_ptr, 4);
+            }
+            if !secondary_ptr.is_null() {
+                core::ptr::copy_nonoverlapping(s.as_ptr(), secondary_ptr, 4);
+            }
+            if !fallback_ptr.is_null() {
+                core::ptr::copy_nonoverlapping(f.as_ptr(), fallback_ptr, 4);
+            }
+        }
+        0
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PerCpuCoreStat {
+    pub cpu_id: u32,
+    pub online: u32,
+    pub total_cycles: u64,
+    pub hlt_cycles: u64,
+    pub task_cycles: u64,
+    pub irq_cycles: u64,
+    pub idle_transitions: u64,
+    pub wakeups: u64,
 }
 
 #[repr(C)]
@@ -3109,6 +3251,8 @@ pub struct SystemStatsUser {
     pub memory_idle_bytes: u64,
     pub ring_events_processed: u64,
     pub ring_cmds_flushed: u64,
+    pub cpu_count: u64,
+    pub per_cpu: [PerCpuCoreStat; 8],
 }
 
 /// `sys_get_system_stats(out_ptr)` — Retorna telemetria e estatísticas do kernel para Ring 3 (Syscall 88).
@@ -3167,23 +3311,26 @@ fn sys_get_system_stats(out_ptr: *mut SystemStatsUser) -> isize {
     u.ring_events_processed = stats.ring_events_processed;
     u.ring_cmds_flushed = stats.ring_cmds_flushed;
 
+    let n = crate::smp::online_cpus().clamp(1, crate::smp::MAX_CPUS);
+    u.cpu_count = n as u64;
+    for i in 0..8 {
+        let s = crate::smp::snapshot_percpu_core(i);
+        u.per_cpu[i] = PerCpuCoreStat {
+            cpu_id: s.cpu_id,
+            online: if s.online { 1 } else { 0 },
+            total_cycles: s.total_cycles,
+            hlt_cycles: s.hlt_cycles,
+            task_cycles: s.task_cycles,
+            irq_cycles: s.irq_cycles,
+            idle_transitions: s.idle_transitions,
+            wakeups: s.wakeups,
+        };
+    }
+
     unsafe {
         core::ptr::copy_nonoverlapping(&u as *const SystemStatsUser, out_ptr, 1);
     }
     0
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct PerCpuCoreStat {
-    pub cpu_id: u32,
-    pub online: u32,
-    pub total_cycles: u64,
-    pub hlt_cycles: u64,
-    pub task_cycles: u64,
-    pub irq_cycles: u64,
-    pub idle_transitions: u64,
-    pub wakeups: u64,
 }
 
 #[repr(C)]

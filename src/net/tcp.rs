@@ -276,6 +276,12 @@ pub static mut LOOPBACK_TAIL: usize = 0;
 pub static mut LOOPBACK_COUNT: usize = 0;
 static LOOPBACK_DRAINING: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// Informa se há segmentos TCP aguardando drenagem na fila interna de loopback.
+#[inline]
+pub fn has_loopback_pending() -> bool {
+    unsafe { core::ptr::read_volatile(&raw const LOOPBACK_COUNT) > 0 }
+}
+
 pub fn enqueue_loopback(sender_ip: [u8; 4], dst_ip: [u8; 4], data: &[u8]) -> bool {
     unsafe {
         if LOOPBACK_COUNT >= LOOPBACK_QUEUE_SIZE {

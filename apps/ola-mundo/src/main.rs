@@ -18,6 +18,7 @@ const EFAULT:  i64 = -14;
 const EINVAL:  i64 = -22;
 const EMFILE:  i64 = -24;
 const ENOBUFS: i64 = -105;
+const EDQUOT:  i64 = -122;
 
 // ── Syscall Helpers ──────────────────────────────────────────────────────────
 
@@ -367,6 +368,19 @@ unsafe fn sys_dns_resolve(name: *const u8, len: usize, out_ip: *mut u8) -> i64 {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
+pub struct PerCpuCoreStat {
+    pub cpu_id: u32,
+    pub online: u32,
+    pub total_cycles: u64,
+    pub hlt_cycles: u64,
+    pub task_cycles: u64,
+    pub irq_cycles: u64,
+    pub idle_transitions: u64,
+    pub wakeups: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct SystemStatsUser {
     pub uptime_secs: u64,
     pub task_count: u64,
@@ -390,6 +404,15 @@ pub struct SystemStatsUser {
     pub vfs_mounted_volumes: u64,
     pub net_tx_packets: u64,
     pub net_rx_packets: u64,
+    pub cpu_active_cycles: u64,
+    pub cpu_idle_cycles: u64,
+    pub syscalls_total: u64,
+    pub memory_active_bytes: u64,
+    pub memory_idle_bytes: u64,
+    pub ring_events_processed: u64,
+    pub ring_cmds_flushed: u64,
+    pub cpu_count: u64,
+    pub per_cpu: [PerCpuCoreStat; 8],
 }
 
 #[inline(always)]
@@ -1287,25 +1310,27 @@ unsafe fn test_tcp_network_interoperability() {
     print_str(b"==================================================================\n\n");
 }
 
-/// Teste E: Pressão e Limites de Memória (Quota max_frames, -ENOMEM e Restauração)
+static mut PRESSURE_PAGES: [u64; 4096] = [0u64; 4096];
+
+/// Teste E: Pressão e Limites de Memória (Quota max_frames, -EDQUOT/-ENOMEM e Restauração)
 unsafe fn test_memory_pressure() {
     print_str(b"[ADV-TEST 5/5] test_memory_pressure: Alocando paginas ate max_frames...\n");
-    let mut pages = [0u64; 35];
+    let pages = &mut *core::ptr::addr_of_mut!(PRESSURE_PAGES);
     let mut count = 0usize;
     let mut hit_limit = false;
 
-    for i in 0..35 {
+    for i in 0..pages.len() {
         let ret = sys_alloc_page();
         if ret > 0 {
-            if count < pages.len() {
-                pages[count] = ret as u64;
-                count += 1;
-            }
-        } else if ret == ENOMEM {
+            pages[count] = ret as u64;
+            count += 1;
+        } else if ret == ENOMEM || ret == EDQUOT {
             hit_limit = true;
             print_str(b"  Alocacao #");
             print_u64((i + 1) as u64);
-            print_str(b" atingiu max_frames com -ENOMEM (-12)!\n");
+            print_str(b" atingiu limite/quota com codigo ");
+            print_i64(ret);
+            print_str(b"!\n");
             break;
         } else {
             print_str(b"  [WARN] Retorno inesperado de sys_alloc_page: ");
@@ -1315,19 +1340,30 @@ unsafe fn test_memory_pressure() {
         }
     }
 
-    if hit_limit {
-        print_str(b"  Total de paginas alocadas: ");
-        print_u64(count as u64);
-        print_str(b". Desalocando via sys_free_page...\n");
-
-        for i in 0..count {
-            let ret = sys_free_page(pages[i]);
-            if ret != 0 {
-                print_str(b"  [FALHA] sys_free_page falhou no endereco 0x");
-                print_u64(pages[i]);
-                print_str(b"\n");
-            }
+    if !hit_limit && count == pages.len() {
+        // Verifica uma alocacao adicional caso o perfil tenha preenchido todos os 4096 slots dinamicos
+        let extra = sys_alloc_page();
+        if extra == ENOMEM || extra == EDQUOT {
+            hit_limit = true;
+        } else if extra > 0 {
+            let _ = sys_free_page(extra as u64);
         }
+    }
+
+    print_str(b"  Total de paginas alocadas: ");
+    print_u64(count as u64);
+    print_str(b". Desalocando via sys_free_page...\n");
+    for i in 0..count {
+        let ret = sys_free_page(pages[i]);
+        if ret != 0 {
+            print_str(b"  [FALHA] sys_free_page falhou no endereco 0x");
+            print_u64(pages[i]);
+            print_str(b"\n");
+        }
+        pages[i] = 0;
+    }
+
+    if hit_limit {
         print_str(b"  [PASS] test_memory_pressure: Quota aplicada com seguranca e memoria restaurada!\n");
     } else {
         print_str(b"  [FAIL] test_memory_pressure: Limite nao foi atingido.\n");
@@ -1338,11 +1374,11 @@ unsafe fn test_memory_pressure() {
 
 unsafe fn test_fd_stress() {
     print_str(b"[STRESS] test_fd_stress: Abrindo descritores VFS ate atingir max_fds...\n");
-    let mut fds = [0i64; 8];
+    let mut fds = [0i64; 40];
     let mut opened = 0usize;
     let mut hit_limit = false;
 
-    for i in 0..8 {
+    for i in 0..fds.len() {
         let fd = sys_open(b"/disk/README.TXT", 0);
         if fd >= 0 {
             fds[opened] = fd;
@@ -1352,6 +1388,11 @@ unsafe fn test_fd_stress() {
             print_str(b"  Tentativa #");
             print_u64((i + 1) as u64);
             print_str(b" rejeitada com -EMFILE (-24)!\n");
+            break;
+        } else {
+            print_str(b"  [WARN] sys_open retornou: ");
+            print_i64(fd);
+            print_str(b"\n");
             break;
         }
     }
@@ -1377,20 +1418,27 @@ unsafe fn test_fd_stress() {
 
 unsafe fn test_window_stress() {
     print_str(b"[STRESS] test_window_stress: Criando janelas ate o limite max_windows...\n");
-    let mut win_ids = [0i64; 6];
+    let mut win_ids = [0i64; 20];
     let mut created = 0usize;
     let mut hit_limit = false;
 
-    for i in 0..6 {
+    for i in 0..win_ids.len() {
         let win = sys_window_create(b"WinStress", 100, 100);
         if win >= 0 {
             win_ids[created] = win;
             created += 1;
-        } else if win == EMFILE {
+        } else if win == EMFILE || win == EDQUOT {
             hit_limit = true;
             print_str(b"  Janela #");
             print_u64((i + 1) as u64);
-            print_str(b" rejeitada com -EMFILE (-24)!\n");
+            print_str(b" rejeitada por limite com codigo ");
+            print_i64(win);
+            print_str(b"!\n");
+            break;
+        } else {
+            print_str(b"  [WARN] sys_window_create retornou: ");
+            print_i64(win);
+            print_str(b"\n");
             break;
         }
     }
@@ -3403,7 +3451,9 @@ unsafe fn run_browser_interactive() -> ! {
                 _ => {}
             }
         } else {
-            let _ = sys_sleep(25);
+            // Evento com código não reconhecido: cede CPU cooperativamente sem bloquear,
+            // pois o laço retorna imediatamente ao sys_window_wait_event bloqueante.
+            let _ = sys_yield();
         }
     }
 }
@@ -3629,42 +3679,62 @@ unsafe fn run_periodic_task(_pid: u32) -> ! {
 unsafe fn test_sched_preemption_and_cpu_quota() {
     print_str(b"[ADV-TEST 6/6] test_sched_preemption_and_cpu_quota: Validando preempcao por hardware e cotas...\n");
 
-    // Aguarda ticks acumularem sob preempção forçada do CPU-hog
-    sys_sleep(120);
-
+    // Localiza dinamicamente o PID do worker[U3] configurado com cota max_cpu_ticks == 25
+    let mut worker_pid = 0u64;
     let mut stat: ProcessResourceStat = core::mem::zeroed();
-    let ret = sys_res_stat(4, &mut stat);
-    if ret == 0 {
-        print_str(b"  Telemetria da Tarefa CPU-Hog (PID 4) capturada via Syscall 25:\n");
-        print_str(b"    CPU Ticks Consumidos: ");
-        print_u64(stat.cpu_ticks);
-        print_str(b"\n    Trocas de Contexto Totais: ");
-        print_u64(stat.ctx_switches);
-        print_str(b"\n    Preempcoes por Hardware (IRQ0): ");
-        print_u64(stat.irq_preemptions);
-        print_str(b"\n    Yields Voluntarios: ");
-        print_u64(stat.voluntary_yields);
-        print_str(b"\n    Cota Configurada de CPU: ");
-        print_u64(stat.max_cpu_ticks);
-        print_str(b" ticks\n");
-
-        let preemption_proven = stat.irq_preemptions >= 3 && stat.voluntary_yields == 0;
-        if preemption_proven {
-            print_str(b"  [PASS] Preempcao por hardware COMPROVADA: CPU-hog despejado repetidamente sem yield!\n");
-        } else {
-            print_str(b"  [FAIL] Preempcao por hardware nao alcancou os criterios esperados.\n");
+    for cand in 1..=12u64 {
+        let mut s: ProcessResourceStat = core::mem::zeroed();
+        if sys_res_stat(cand, &mut s) == 0 && s.max_cpu_ticks == 25 {
+            worker_pid = cand;
+            stat = s;
+            break;
         }
-    } else {
-        print_str(b"  [WARN] Nao foi possivel consultar PID 3 inicialmente.\n");
     }
 
-    // Aguarda a cota de CPU do CPU-hog (25 ticks = 250ms) ser excedida
-    sys_sleep(180);
+    if worker_pid == 0 {
+        print_str(b"  [WARN] Tarefa CPU-Hog com cota 25 ticks nao localizada.\n");
+        return;
+    }
+
+    // Caso a tarefa ainda esteja executando no inicio do boot, aguarda acumulacao de preempcoes
+    if stat.state != 6 && stat.irq_preemptions < 3 {
+        sys_sleep(120);
+        let _ = sys_res_stat(worker_pid, &mut stat);
+    }
+
+    print_str(b"  Telemetria da Tarefa CPU-Hog (PID ");
+    print_u64(worker_pid);
+    print_str(b") capturada via Syscall 25:\n");
+    print_str(b"    CPU Ticks Consumidos: ");
+    print_u64(stat.cpu_ticks);
+    print_str(b"\n    Trocas de Contexto Totais: ");
+    print_u64(stat.ctx_switches);
+    print_str(b"\n    Preempcoes por Hardware (IRQ0): ");
+    print_u64(stat.irq_preemptions);
+    print_str(b"\n    Yields Voluntarios: ");
+    print_u64(stat.voluntary_yields);
+    print_str(b"\n    Cota Configurada de CPU: ");
+    print_u64(stat.max_cpu_ticks);
+    print_str(b" ticks\n");
+
+    let preemption_proven = stat.irq_preemptions >= 3 && stat.voluntary_yields == 0;
+    if preemption_proven {
+        print_str(b"  [PASS] Preempcao por hardware COMPROVADA: CPU-hog despejado repetidamente sem yield!\n");
+    } else {
+        print_str(b"  [FAIL] Preempcao por hardware nao alcancou os criterios esperados.\n");
+    }
+
+    // Aguarda a cota de CPU do CPU-hog (25 ticks = 250ms) ser excedida caso ainda nao tenha encerrado
+    if stat.state != 6 && stat.last_violation_code != -122 {
+        sys_sleep(200);
+    }
 
     let mut stat_after: ProcessResourceStat = core::mem::zeroed();
-    let ret_after = sys_res_stat(4, &mut stat_after);
+    let ret_after = sys_res_stat(worker_pid, &mut stat_after);
     if ret_after == 0 {
-        print_str(b"  Telemetria pos-cota PID 4: Estado=");
+        print_str(b"  Telemetria pos-cota PID ");
+        print_u64(worker_pid);
+        print_str(b": Estado=");
         print_u64(stat_after.state as u64);
         print_str(b", Violacoes=");
         print_u64(stat_after.limit_violations as u64);
@@ -4844,6 +4914,16 @@ pub extern "C" fn _start(argc: usize, argv: *const *const u8, _envp: *const *con
                 run_worker_task(3);
             } else if streq(arg1, b"periodic") {
                 run_periodic_task(4);
+            } else if streq(arg1, b"simbad_subtests") {
+                print_str(b"\n==================================================================\n");
+                print_str(b"  SIMBAD SERVER HEADLESS - BATERIA ISOLADA DOS 4 SUBTESTES\n");
+                print_str(b"==================================================================\n");
+                test_memory_pressure();
+                test_fd_stress();
+                test_browser_storage_persistence();
+                test_sched_preemption_and_cpu_quota();
+                print_str(b"\n[SIMBAD-SUBTESTS] FIM DA BATERIA ISOLADA DOS 4 SUBTESTES!\n");
+                sys_exit(0);
             }
         }
 
