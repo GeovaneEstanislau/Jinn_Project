@@ -28,7 +28,7 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 if str(WEB_DIR) not in sys.path:
     sys.path.insert(0, str(WEB_DIR))
 
-from build_feed import ECOSYSTEM_DOMAINS, classify_ecosystems, extract_measurable_gain, format_ecosystem_summary_text
+from build_feed import ECOSYSTEM_DOMAINS, OBSERVATORY_LABS, classify_ecosystems, classify_labs, extract_measurable_gain, format_ecosystem_summary_text
 
 DEFAULT_PORTAL_URL = "https://jinn-os.dev.br"
 DEFAULT_REPO_URL = "https://github.com/GeovaneEstanislau/Jinn_Project"
@@ -73,8 +73,9 @@ def format_ecosystem_labels(eco_ids):
     return labels
 
 
-def format_release_notes(title, version, summary, gain, eco_ids, link, commit):
+def format_release_notes(title, version, summary, gain, eco_ids, lab_ids, link, commit):
     """Gera template estruturado de Release Notes para GitHub Releases com ganho mensurável e ecossistemas."""
+    lab_bullets = ", ".join(OBSERVATORY_LABS[l]["title"] for l in lab_ids if l in OBSERVATORY_LABS) or "Architecture & RFCs"
     eco_bullets = "\n".join(
         f"- **{ECOSYSTEM_DOMAINS[e]['title']}** (`{e}`): {', '.join(ECOSYSTEM_DOMAINS[e]['ecosystems'])}"
         for e in eco_ids if e in ECOSYSTEM_DOMAINS
@@ -82,7 +83,8 @@ def format_release_notes(title, version, summary, gain, eco_ids, link, commit):
     return (
         f"## Jinn OS {version} — {title}\n\n"
         f"{summary}\n\n"
-        f"### Ganho Técnico Mensurável\n"
+        f"### Bancada Observatory & Ganho Mensurável\n"
+        f"- Bancada(s): **{lab_bullets}**\n"
         f"- {gain}\n"
         f"- Commit de referência: `{commit}`\n\n"
         f"### Ecossistemas & Setores Aplicáveis\n"
@@ -95,25 +97,26 @@ def format_release_notes(title, version, summary, gain, eco_ids, link, commit):
     )
 
 
-def format_microblog(title, version, summary, gain, eco_ids, link):
+def format_microblog(title, version, summary, gain, eco_ids, lab_ids, link):
     """Gera texto técnico conciso para Bluesky (<=300 chars), Mastodon e X."""
+    lab_short = " / ".join(OBSERVATORY_LABS[l]["title"] for l in lab_ids if l in OBSERVATORY_LABS) or "Observatory"
     eco_short = " · ".join(ECOSYSTEM_DOMAINS[e]["short_label"] for e in eco_ids if e in ECOSYSTEM_DOMAINS)
-    t = title[:68].rstrip()
-    g = gain.replace("Indicadores citados no relatório: ", "")[:64].rstrip()
+    t = title[:64].rstrip()
+    g = gain.replace("Indicadores citados no relatório: ", "")[:58].rstrip()
     text = (
-        f"Jinn OS {version}: {t}\n\n"
+        f"Jinn [{lab_short[:28]}]: {t}\n\n"
         f"Metricas: {g}\n"
-        f"Ecossistemas: {eco_short[:65]}\n"
+        f"Ecossistemas: {eco_short[:58]}\n"
         f"{link}\n"
         f"#RustLang #OSDev #Microkernel #NoStd"
     )
     if len(text) > 295:
-        avail = max(20, len(t) - (len(text) - 295))
+        avail = max(18, len(t) - (len(text) - 295))
         t = t[:avail].rstrip()
         text = (
-            f"Jinn OS {version}: {t}\n\n"
+            f"Jinn [{lab_short[:24]}]: {t}\n\n"
             f"Metricas: {g}\n"
-            f"Ecossistemas: {eco_short[:65]}\n"
+            f"Ecossistemas: {eco_short[:52]}\n"
             f"{link}\n"
             f"#RustLang #OSDev #Microkernel #NoStd"
         )
@@ -399,6 +402,7 @@ def main():
     )
     link = args.link or DEFAULT_PORTAL_URL
     eco_ids = classify_ecosystems("RELEASE", [], title.lower(), title, f"{summary} {git_info['body']}")
+    lab_ids = classify_labs("RELEASE", [], title.lower(), title, f"{summary} {git_info['body']}")
     gain = args.gain or extract_measurable_gain(title, f"{summary} {git_info['body']}")
 
     print("================================================================================")
@@ -406,6 +410,7 @@ def main():
     print("================================================================================")
     print(f"Título      : {title}")
     print(f"Versão      : {version}")
+    print(f"Bancadas    : {', '.join(lab_ids)}")
     print(f"Ecossistemas: {', '.join(eco_ids)}")
     print(f"Ganho       : {gain}")
     print(f"Link        : {link}")
@@ -413,10 +418,10 @@ def main():
     print("================================================================================\n")
 
     # 1. Gerar Formatos
-    microblog_text = format_microblog(title, version, summary, gain, eco_ids, link)
+    microblog_text = format_microblog(title, version, summary, gain, eco_ids, lab_ids, link)
     discord_payload = format_discord_embed(title, version, summary, gain, eco_ids, link, git_info["commit"])
     telegram_text = format_telegram_message(title, version, summary, gain, eco_ids, link)
-    release_notes = format_release_notes(title, version, summary, gain, eco_ids, link, git_info["commit"])
+    release_notes = format_release_notes(title, version, summary, gain, eco_ids, lab_ids, link, git_info["commit"])
 
     print("--- Formato 1: Microblogging (Bluesky / Mastodon / X) ---")
     print(microblog_text)

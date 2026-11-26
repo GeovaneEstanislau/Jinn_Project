@@ -158,6 +158,90 @@ ECOSYSTEM_DOMAINS = {
     },
 }
 
+# 6 Bancadas Canônicas do Jinn Engineering Observatory
+OBSERVATORY_LABS = {
+    "performance-lab": {
+        "id": "performance-lab",
+        "title": "Performance Lab",
+        "subtitle": "Fast-Path IPC, HotRouteTable L2/L3, LRU Cache & Latência",
+        "badge_class": "bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400",
+        "match_terms": (
+            "fast-path", "hotroute", "rotas quentes", "shared-rings", "spsc", "io_uring",
+            "prefetch", "latency", "latencia", "throughput", "benchmark", "homologacao-desempenho",
+        ),
+    },
+    "efficiency-lab": {
+        "id": "efficiency-lab",
+        "title": "Efficiency Lab",
+        "subtitle": "Zero-Idle HLT, SMP Per-CPU Accounting, Lazy TTL & 64M RAM",
+        "badge_class": "bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400",
+        "match_terms": (
+            "zero-idle", "hlt", "smp", "percpu", "per-cpu", "apic", "lazy", "ttl",
+            "ociosa", "0.00%", "consumo", "energia", "64m", "memory", "jaha",
+        ),
+    },
+    "compute-lab": {
+        "id": "compute-lab",
+        "title": "Compute Lab",
+        "subtitle": "JHCS-RS DAG Broker, AVX2/FMA SIMD, Breakeven & wgpu",
+        "badge_class": "bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400",
+        "match_terms": (
+            "jhcs", "simd", "avx2", "fma", "neon", "wgpu", "breakeven", "zero-gpu",
+            "glassmorphism", "blur", "compositor", "compute", "gpu",
+        ),
+    },
+    "security-lab": {
+        "id": "security-lab",
+        "title": "Security Lab",
+        "subtitle": "Ring 3 Driver Isolation, W^X PML4, TLS 1.3 no_std & JinnWall",
+        "badge_class": "bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400",
+        "match_terms": (
+            "security", "seguranca", "segurança", "ring 3", "ring3", "w^x", "tls",
+            "poly1305", "x.509", "x509", "jinnwall", "efault", "isolamento", "criptografia",
+        ),
+    },
+    "architecture-rfcs": {
+        "id": "architecture-rfcs",
+        "title": "Architecture & RFCs",
+        "subtitle": "Especificações de Microkernel, VFS FAT32/Ext2, .jpkg & Profiles",
+        "badge_class": "bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400",
+        "match_terms": (
+            "arquitetura", "architecture", "rfc", "vfs", "fat32", "ext2", "jpkg",
+            "persistencia", "aladdin", "navegador", "browser", "dns", "simbad", "profile",
+        ),
+    },
+    "post-mortems": {
+        "id": "post-mortems",
+        "title": "Post-Mortems & Failure Logs",
+        "subtitle": "Análises de Causa Raiz, PCAP Traces & Hardware/IRQ Incidents",
+        "badge_class": "bg-rose-950/80 border-rose-700/70 text-rose-300 hover:border-rose-400",
+        "match_terms": (
+            "post-mortem", "failure", "falha", "incidente", "bug", "pic", "eoi",
+            "irq", "carry", "fallback", "telemetria", "pcap", "resiliencia",
+        ),
+    },
+}
+
+
+def classify_labs(tag: str, all_tags: list[str], slug: str, title: str, body_text: str = "") -> list[str]:
+    """Classifica um artigo em 1..2 das 6 bancadas do Jinn Engineering Observatory."""
+    primary_haystack = " ".join([tag, *all_tags, slug, title]).lower()
+    body_sample = body_text[:2500].lower()
+
+    scored: list[tuple[int, int, str]] = []
+    for idx, (lab_id, cfg) in enumerate(OBSERVATORY_LABS.items()):
+        p_hits = sum(1 for kw in cfg["match_terms"] if kw in primary_haystack)
+        b_hits = min(3, sum(1 for kw in cfg["match_terms"] if kw in body_sample))
+        bonus = 6 if (lab_id == "post-mortems" and ("post-mortem" in slug or "POST-MORTEM" in tag)) else 0
+        score = p_hits * 3 + b_hits + bonus
+        scored.append((score, -idx, lab_id))
+
+    scored.sort(reverse=True)
+    selected = [lab_id for score, _, lab_id in scored if score >= 3][:2]
+    if not selected and scored:
+        selected = [scored[0][2]]
+    return selected
+
 CORPORATE_ORGS = {
     "Intel", "AMD", "Arm", "Tenstorrent", "SiFive", "Qualcomm", "LF Edge",
     "Red Hat", "Canonical", "Google", "Siemens", "Cloudflare", "Akamai",
@@ -263,14 +347,18 @@ def build_techarticle_jsonld(meta: dict) -> str:
                 seen_kw.add(kw.lower())
                 keywords.append(kw)
 
+    lab_titles = [OBSERVATORY_LABS[l]["title"] for l in meta.get("labs", []) if l in OBSERVATORY_LABS]
+
     payload = {
         "@context": "https://schema.org",
-        "@type": "TechArticle",
+        "@type": ["TechArticle", "NewsArticle"],
         "headline": meta["title"],
         "description": meta["description"],
+        "image": [DEFAULT_IMAGE_URL],
         "datePublished": meta["pub_iso_full"],
         "dateModified": meta["pub_iso_full"],
         "inLanguage": "pt-BR",
+        "articleSection": lab_titles or ["Architecture & RFCs"],
         "author": {
             "@type": "Person",
             "name": AUTHOR_NAME,
@@ -306,6 +394,16 @@ def build_techarticle_jsonld(meta: dict) -> str:
 
 def build_collaboration_section_html(meta: dict) -> str:
     """Gera bloco visual 'Applicable Ecosystems & Open Collaboration' para o rodapé técnico do artigo."""
+    lab_badges = []
+    for lab_id in meta.get("labs", []):
+        lcfg = OBSERVATORY_LABS.get(lab_id)
+        if lcfg:
+            lab_badges.append(
+                f'<a href="/artigos/?lab={lab_id}" '
+                f'class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors {lcfg["badge_class"]}">'
+                f'<span>{html_lib.escape(lcfg["title"])}</span></a>'
+            )
+
     domain_badges = []
     ref_ecosystems = []
     seen_eco = set()
@@ -327,13 +425,14 @@ def build_collaboration_section_html(meta: dict) -> str:
                     f'{html_lib.escape(eco_name)}</span>'
                 )
 
+    labs_html = "\n          ".join(lab_badges)
     badges_html = "\n          ".join(domain_badges)
     ecos_html = "\n          ".join(ref_ecosystems)
 
     return f"""      {ECO_BLOCK_START}
       <section aria-labelledby="ecosystems-collaboration-heading" class="not-prose my-10 p-6 rounded-xl bg-slate-900/75 border border-slate-800 space-y-5">
         <div class="space-y-2">
-          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Open Engineering Outreach</p>
+          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Engineering Observatory • Open Collaboration</p>
           <h3 id="ecosystems-collaboration-heading" class="text-lg sm:text-xl font-bold text-white">
             Applicable Ecosystems &amp; Open Collaboration
           </h3>
@@ -343,6 +442,7 @@ def build_collaboration_section_html(meta: dict) -> str:
         </div>
 
         <div class="flex flex-wrap gap-2">
+          {labs_html}
           {badges_html}
         </div>
 
@@ -367,8 +467,11 @@ def build_collaboration_section_html(meta: dict) -> str:
             <a href="{JHCS_REPO_URL}" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-purple-400 text-slate-200 hover:text-purple-300 transition-colors">
               GitHub: jhcs-rs
             </a>
-            <a href="{REPO_URL}/issues/new/choose" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
-              Propor Benchmark / Issue
+            <a href="{REPO_URL}/blob/main/docs/ENGINEERING_STATUS_AND_LIMITATIONS.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-amber-400 text-slate-200 hover:text-amber-300 transition-colors">
+              Fronteira Honesta &amp; Evidências
+            </a>
+            <a href="{REPO_URL}/blob/main/docs/strategy/OPPORTUNITY_RADAR_50.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
+              Radar &amp; 6ª Trilha Aberta
             </a>
             <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-cyan-950/90 border border-cyan-600/70 hover:bg-cyan-900 text-cyan-200 transition-colors">
               Contato Técnico &amp; Pilotos
@@ -504,6 +607,7 @@ def extract_article_meta(html_path: Path, enrich: bool = True):
             sort_ts = mtime.strftime("%Y-%m-%dT%H:%M:%S")
 
     ecosystems = classify_ecosystems(tag, all_tags, html_path.stem, title, plain_text)
+    labs = classify_labs(tag, all_tags, html_path.stem, title, plain_text)
     measurable_gain = extract_measurable_gain(description, plain_text)
     guid = f"jinn-os-artigo-{html_path.stem}"
 
@@ -515,6 +619,7 @@ def extract_article_meta(html_path: Path, enrich: bool = True):
         "tag": tag,
         "all_tags": all_tags,
         "ecosystems": ecosystems,
+        "labs": labs,
         "buckets": ecosystems,
         "measurable_gain": measurable_gain,
         "read_minutes": read_minutes,
@@ -594,17 +699,30 @@ def build_artigos_index(articles):
         eco_terms = " ".join(
             [ECOSYSTEM_DOMAINS[e]["title"] + " " + " ".join(ECOSYSTEM_DOMAINS[e]["ecosystems"]) for e in a["ecosystems"]]
         )
+        lab_terms = " ".join(
+            [OBSERVATORY_LABS[l]["title"] + " " + OBSERVATORY_LABS[l]["subtitle"] for l in a["labs"]]
+        )
         tags_text = " ".join(a["all_tags"])
         search_blob = html_lib.escape(
-            f"{a['title']} {a['description']} {tags_text} {eco_terms}".lower(),
+            f"{a['title']} {a['description']} {tags_text} {lab_terms} {eco_terms}".lower(),
             quote=True,
         )
         categories_attr = html_lib.escape(" ".join(a["ecosystems"]), quote=True)
+        labs_attr = html_lib.escape(" ".join(a["labs"]), quote=True)
         title_esc = html_lib.escape(a["title"])
         desc_esc = html_lib.escape(a["description"])
         tag_esc = html_lib.escape(a["tag"])
         gain_esc = html_lib.escape(a["measurable_gain"])
 
+        lab_buttons = []
+        for lab_id in a["labs"]:
+            lcfg = OBSERVATORY_LABS[lab_id]
+            lab_buttons.append(
+                f'<button type="button" data-lab-badge="{lab_id}" '
+                f'title="Filtrar por {html_lib.escape(lcfg["title"], quote=True)}" '
+                f'class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors {lcfg["badge_class"]}">'
+                f'{html_lib.escape(lcfg["title"])}</button>'
+            )
         eco_buttons = []
         for eco_id in a["ecosystems"]:
             cfg = ECOSYSTEM_DOMAINS[eco_id]
@@ -614,7 +732,7 @@ def build_artigos_index(articles):
                 f'class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors {cfg["badge_class"]}">'
                 f'{html_lib.escape(cfg["short_label"])}</button>'
             )
-        eco_badges_html = "".join(eco_buttons)
+        eco_badges_html = "".join(lab_buttons + eco_buttons[:1])
 
         ref_ecos = []
         seen_ref = set()
@@ -626,7 +744,7 @@ def build_artigos_index(articles):
         ref_line = html_lib.escape(", ".join(ref_ecos[:6]))
 
         card = f"""      <!-- Card: {a['slug']} -->
-      <article data-article-card data-categories="{categories_attr}" data-search="{search_blob}" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+      <article data-article-card data-labs="{labs_attr}" data-categories="{categories_attr}" data-search="{search_blob}" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
         <div>
           <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono {tag_color} mb-3">
             <span class="{tag_bg} border {tag_border} px-2.5 py-0.5 rounded-full font-semibold">{tag_esc}</span>
@@ -737,20 +855,32 @@ def build_artigos_index(articles):
       </div>
     </div>
 
-    <!-- Barra de Busca Instantânea + Filtros por Ecossistema Técnico -->
+    <!-- Barra de Busca Instantânea + 6 Bancadas do Observatory -->
     <div class="border-t border-slate-800/60 bg-slate-900/75">
-      <div class="max-w-6xl mx-auto px-4 sm:px-6 py-2.5 flex flex-col lg:flex-row lg:items-center gap-2.5 justify-between">
-        <div class="relative flex-1 max-w-md">
-          <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
-          <input id="article-search" type="search" placeholder="Buscar por título, ecossistema, syscall ou métrica..."
-            class="w-full pl-9 pr-3 py-1.5 text-xs sm:text-sm rounded-lg bg-slate-950/90 border border-slate-700/80 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400 transition-colors" />
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 py-2.5 flex flex-col gap-2">
+        <div class="flex flex-col lg:flex-row lg:items-center gap-2.5 justify-between">
+          <div class="relative flex-1 max-w-md">
+            <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+            <input id="article-search" type="search" placeholder="Buscar por título, bancada, ecossistema, syscall ou métrica..."
+              class="w-full pl-9 pr-3 py-1.5 text-xs sm:text-sm rounded-lg bg-slate-950/90 border border-slate-700/80 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400 transition-colors" />
+          </div>
+          <nav aria-label="6 Bancadas do Observatory" class="flex flex-wrap items-center gap-1.5 text-xs font-mono">
+            <button type="button" data-lab-filter="all" class="lab-pill px-3 py-1 rounded-full border border-cyan-500/70 bg-cyan-950/90 text-cyan-300 font-semibold transition-colors">Todas as Bancadas</button>
+            <button type="button" data-lab-filter="performance-lab" class="lab-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-cyan-400 transition-colors">Performance Lab</button>
+            <button type="button" data-lab-filter="efficiency-lab" class="lab-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-emerald-400 transition-colors">Efficiency Lab</button>
+            <button type="button" data-lab-filter="compute-lab" class="lab-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-purple-400 transition-colors">Compute Lab</button>
+            <button type="button" data-lab-filter="security-lab" class="lab-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-400 transition-colors">Security Lab</button>
+            <button type="button" data-lab-filter="architecture-rfcs" class="lab-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-indigo-400 transition-colors">Architecture &amp; RFCs</button>
+            <button type="button" data-lab-filter="post-mortems" class="lab-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-rose-400 transition-colors">Post-Mortems &amp; Failure Logs</button>
+          </nav>
         </div>
-        <nav aria-label="Filtros por ecossistema" class="flex flex-wrap items-center gap-1.5 text-xs font-mono">
-          <button type="button" data-filter="all" class="filter-pill px-3 py-1 rounded-full border border-cyan-500/70 bg-cyan-950/90 text-cyan-300 font-semibold transition-colors">Todos</button>
-          <button type="button" data-filter="compute-simd" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-purple-400 transition-colors">Compute &amp; SIMD</button>
-          <button type="button" data-filter="zero-idle-efficiency" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-emerald-400 transition-colors">Zero-Idle &amp; SMP</button>
-          <button type="button" data-filter="microkernel-security" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-400 transition-colors">Microkernel &amp; Segurança</button>
-          <button type="button" data-filter="fastpath-ipc-net" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-cyan-400 transition-colors">IPC &amp; Redes Fast-Path</button>
+        <nav aria-label="Filtros por ecossistema" class="flex flex-wrap items-center gap-1.5 text-[11px] font-mono">
+          <span class="text-slate-500 mr-1">Ecossistemas:</span>
+          <button type="button" data-filter="all" class="filter-pill px-2.5 py-0.5 rounded-full border border-cyan-500/70 bg-cyan-950/90 text-cyan-300 font-semibold transition-colors">Todos</button>
+          <button type="button" data-filter="compute-simd" class="filter-pill px-2.5 py-0.5 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-purple-400 transition-colors">Compute &amp; SIMD</button>
+          <button type="button" data-filter="zero-idle-efficiency" class="filter-pill px-2.5 py-0.5 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-emerald-400 transition-colors">Zero-Idle &amp; SMP</button>
+          <button type="button" data-filter="microkernel-security" class="filter-pill px-2.5 py-0.5 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-400 transition-colors">Microkernel &amp; Segurança</button>
+          <button type="button" data-filter="fastpath-ipc-net" class="filter-pill px-2.5 py-0.5 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-cyan-400 transition-colors">IPC &amp; Redes Fast-Path</button>
         </nav>
       </div>
     </div>
@@ -859,7 +989,9 @@ def build_artigos_index(articles):
       const progressBar = document.getElementById('scroll-progress');
       const backToTop = document.getElementById('back-to-top');
       const searchInput = document.getElementById('article-search');
+      const labPills = Array.from(document.querySelectorAll('.lab-pill'));
       const pills = Array.from(document.querySelectorAll('.filter-pill'));
+      const labBadges = Array.from(document.querySelectorAll('[data-lab-badge]'));
       const ecoBadges = Array.from(document.querySelectorAll('[data-eco-badge]'));
       const cards = Array.from(document.querySelectorAll('[data-article-card]'));
       const visibleCount = document.getElementById('visible-count');
@@ -867,6 +999,7 @@ def build_artigos_index(articles):
       const emptyState = document.getElementById('empty-state');
       const resetBtn = document.getElementById('reset-filters-btn');
 
+      let activeLab = 'all';
       let activeFilter = 'all';
 
       function updateScrollUI() {{
@@ -897,11 +1030,13 @@ def build_artigos_index(articles):
         const q = (searchInput ? searchInput.value : '').trim().toLowerCase();
         let shown = 0;
         cards.forEach(function (card) {{
+          const labs = (card.getAttribute('data-labs') || '').split(' ');
           const cats = (card.getAttribute('data-categories') || '').split(' ');
           const text = card.getAttribute('data-search') || '';
+          const matchLab = activeLab === 'all' || labs.includes(activeLab);
           const matchCat = activeFilter === 'all' || cats.includes(activeFilter);
           const matchText = !q || text.includes(q);
-          if (matchCat && matchText) {{
+          if (matchLab && matchCat && matchText) {{
             card.classList.remove('hidden');
             shown++;
           }} else {{
@@ -911,6 +1046,31 @@ def build_artigos_index(articles):
         if (visibleCount) visibleCount.textContent = String(shown);
         if (articlesCounter) articlesCounter.textContent = shown + ' de ' + cards.length + ' publicações';
         if (emptyState) emptyState.classList.toggle('hidden', shown > 0);
+      }}
+
+      function syncUrlParams() {{
+        if (window.history && window.history.replaceState) {{
+          const url = new URL(window.location.href);
+          if (activeLab === 'all') url.searchParams.delete('lab'); else url.searchParams.set('lab', activeLab);
+          if (activeFilter === 'all') url.searchParams.delete('eco'); else url.searchParams.set('eco', activeFilter);
+          window.history.replaceState({{}}, '', url.toString());
+        }}
+      }}
+
+      function selectLabFilter(labId, updateUrl) {{
+        activeLab = labId || 'all';
+        labPills.forEach(function (p) {{
+          const selected = p.getAttribute('data-lab-filter') === activeLab;
+          p.classList.toggle('border-cyan-500/70', selected);
+          p.classList.toggle('bg-cyan-950/90', selected);
+          p.classList.toggle('text-cyan-300', selected);
+          p.classList.toggle('font-semibold', selected);
+          p.classList.toggle('border-slate-700', !selected);
+          p.classList.toggle('bg-slate-900', !selected);
+          p.classList.toggle('text-slate-300', !selected);
+        }});
+        if (updateUrl) syncUrlParams();
+        applyFilters();
       }}
 
       function selectEcoFilter(filterId, updateUrl) {{
@@ -925,21 +1085,28 @@ def build_artigos_index(articles):
           p.classList.toggle('bg-slate-900', !selected);
           p.classList.toggle('text-slate-300', !selected);
         }});
-        if (updateUrl && window.history && window.history.replaceState) {{
-          const url = new URL(window.location.href);
-          if (activeFilter === 'all') {{
-            url.searchParams.delete('eco');
-          }} else {{
-            url.searchParams.set('eco', activeFilter);
-          }}
-          window.history.replaceState({{}}, '', url.toString());
-        }}
+        if (updateUrl) syncUrlParams();
         applyFilters();
       }}
+
+      labPills.forEach(function (btn) {{
+        btn.addEventListener('click', function () {{
+          selectLabFilter(btn.getAttribute('data-lab-filter') || 'all', true);
+        }});
+      }});
 
       pills.forEach(function (btn) {{
         btn.addEventListener('click', function () {{
           selectEcoFilter(btn.getAttribute('data-filter') || 'all', true);
+        }});
+      }});
+
+      labBadges.forEach(function (badge) {{
+        badge.addEventListener('click', function (ev) {{
+          ev.preventDefault();
+          ev.stopPropagation();
+          selectLabFilter(badge.getAttribute('data-lab-badge') || 'all', true);
+          window.scrollTo({{ top: 0, behavior: 'smooth' }});
         }});
       }});
 
@@ -956,11 +1123,17 @@ def build_artigos_index(articles):
       if (resetBtn) {{
         resetBtn.addEventListener('click', function () {{
           if (searchInput) searchInput.value = '';
+          selectLabFilter('all', true);
           selectEcoFilter('all', true);
         }});
       }}
 
-      const initialEco = new URLSearchParams(window.location.search).get('eco');
+      const params = new URLSearchParams(window.location.search);
+      const initialLab = params.get('lab');
+      const initialEco = params.get('eco');
+      if (initialLab && labPills.some(function (p) {{ return p.getAttribute('data-lab-filter') === initialLab; }})) {{
+        selectLabFilter(initialLab, false);
+      }}
       if (initialEco && pills.some(function (p) {{ return p.getAttribute('data-filter') === initialEco; }})) {{
         selectEcoFilter(initialEco, false);
       }}
@@ -1027,6 +1200,8 @@ def build_rss_feeds(articles, commits):
         )
         for eco_id in art["ecosystems"]:
             ET.SubElement(item, "category").text = eco_id
+        for lab_id in art.get("labs", []):
+            ET.SubElement(item, "category").text = lab_id
 
         enc = ET.SubElement(item, "enclosure")
         enc.set("url", DEFAULT_IMAGE_URL)

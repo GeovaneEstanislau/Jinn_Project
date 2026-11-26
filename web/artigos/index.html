@@ -59,7 +59,7 @@
         <span class="text-xs font-mono bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded border border-cyan-800">Artigos</span>
       </a>
       <div class="flex items-center gap-3 sm:gap-4 text-xs font-mono overflow-x-auto">
-        <span id="articles-counter" class="hidden sm:inline-block text-slate-400">18 publicações</span>
+        <span id="articles-counter" class="hidden sm:inline-block text-slate-400">19 publicações</span>
         <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml" class="hidden md:inline-block shrink-0"><img src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
         <a href="/feed.xml" target="_blank" class="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors shrink-0">
           <i data-lucide="rss" class="w-3.5 h-3.5"></i>
@@ -73,20 +73,32 @@
       </div>
     </div>
 
-    <!-- Barra de Busca Instantânea + Filtros por Ecossistema Técnico -->
+    <!-- Barra de Busca Instantânea + 6 Bancadas do Observatory -->
     <div class="border-t border-slate-800/60 bg-slate-900/75">
-      <div class="max-w-6xl mx-auto px-4 sm:px-6 py-2.5 flex flex-col lg:flex-row lg:items-center gap-2.5 justify-between">
-        <div class="relative flex-1 max-w-md">
-          <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
-          <input id="article-search" type="search" placeholder="Buscar por título, ecossistema, syscall ou métrica..."
-            class="w-full pl-9 pr-3 py-1.5 text-xs sm:text-sm rounded-lg bg-slate-950/90 border border-slate-700/80 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400 transition-colors" />
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 py-2.5 flex flex-col gap-2">
+        <div class="flex flex-col lg:flex-row lg:items-center gap-2.5 justify-between">
+          <div class="relative flex-1 max-w-md">
+            <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+            <input id="article-search" type="search" placeholder="Buscar por título, bancada, ecossistema, syscall ou métrica..."
+              class="w-full pl-9 pr-3 py-1.5 text-xs sm:text-sm rounded-lg bg-slate-950/90 border border-slate-700/80 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400 transition-colors" />
+          </div>
+          <nav aria-label="6 Bancadas do Observatory" class="flex flex-wrap items-center gap-1.5 text-xs font-mono">
+            <button type="button" data-lab-filter="all" class="lab-pill px-3 py-1 rounded-full border border-cyan-500/70 bg-cyan-950/90 text-cyan-300 font-semibold transition-colors">Todas as Bancadas</button>
+            <button type="button" data-lab-filter="performance-lab" class="lab-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-cyan-400 transition-colors">Performance Lab</button>
+            <button type="button" data-lab-filter="efficiency-lab" class="lab-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-emerald-400 transition-colors">Efficiency Lab</button>
+            <button type="button" data-lab-filter="compute-lab" class="lab-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-purple-400 transition-colors">Compute Lab</button>
+            <button type="button" data-lab-filter="security-lab" class="lab-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-400 transition-colors">Security Lab</button>
+            <button type="button" data-lab-filter="architecture-rfcs" class="lab-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-indigo-400 transition-colors">Architecture &amp; RFCs</button>
+            <button type="button" data-lab-filter="post-mortems" class="lab-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-rose-400 transition-colors">Post-Mortems &amp; Failure Logs</button>
+          </nav>
         </div>
-        <nav aria-label="Filtros por ecossistema" class="flex flex-wrap items-center gap-1.5 text-xs font-mono">
-          <button type="button" data-filter="all" class="filter-pill px-3 py-1 rounded-full border border-cyan-500/70 bg-cyan-950/90 text-cyan-300 font-semibold transition-colors">Todos</button>
-          <button type="button" data-filter="compute-simd" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-purple-400 transition-colors">Compute &amp; SIMD</button>
-          <button type="button" data-filter="zero-idle-efficiency" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-emerald-400 transition-colors">Zero-Idle &amp; SMP</button>
-          <button type="button" data-filter="microkernel-security" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-400 transition-colors">Microkernel &amp; Segurança</button>
-          <button type="button" data-filter="fastpath-ipc-net" class="filter-pill px-3 py-1 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-cyan-400 transition-colors">IPC &amp; Redes Fast-Path</button>
+        <nav aria-label="Filtros por ecossistema" class="flex flex-wrap items-center gap-1.5 text-[11px] font-mono">
+          <span class="text-slate-500 mr-1">Ecossistemas:</span>
+          <button type="button" data-filter="all" class="filter-pill px-2.5 py-0.5 rounded-full border border-cyan-500/70 bg-cyan-950/90 text-cyan-300 font-semibold transition-colors">Todos</button>
+          <button type="button" data-filter="compute-simd" class="filter-pill px-2.5 py-0.5 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-purple-400 transition-colors">Compute &amp; SIMD</button>
+          <button type="button" data-filter="zero-idle-efficiency" class="filter-pill px-2.5 py-0.5 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-emerald-400 transition-colors">Zero-Idle &amp; SMP</button>
+          <button type="button" data-filter="microkernel-security" class="filter-pill px-2.5 py-0.5 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-400 transition-colors">Microkernel &amp; Segurança</button>
+          <button type="button" data-filter="fastpath-ipc-net" class="filter-pill px-2.5 py-0.5 rounded-full border border-slate-700 bg-slate-900 text-slate-300 hover:border-cyan-400 transition-colors">IPC &amp; Redes Fast-Path</button>
         </nav>
       </div>
     </div>
@@ -104,14 +116,47 @@
         </p>
       </div>
       <div class="text-xs font-mono text-slate-400 shrink-0">
-        Mostrando <span id="visible-count" class="text-cyan-400 font-bold">18</span> de 18 artigos
+        Mostrando <span id="visible-count" class="text-cyan-400 font-bold">19</span> de 19 artigos
       </div>
     </div>
 
     <!-- Container Escalável de Artigos -->
     <div id="articles-grid" class="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
+      <!-- Card: arquitetura-observatory-ip-fronteira-honesta-computacao-heterogenea -->
+      <article data-article-card data-labs="architecture-rfcs security-lab" data-categories="microkernel-security zero-idle-efficiency" data-search="jinn engineering observatory: posicionamento modular, matriz de ip, fronteira honesta e aplicações industriais, domésticas e em servidores como o ecossistema jinn (jinn_project, aladdin e jhcs-rs) separou ativos transferíveis de computação eficiente, formalizou matriz de licenciamento cargo, estabeleceu fronteiras experimentais honestas (qemu hlt vs silício físico) e estruturou 6 bancadas públicas no observatory. arquitetura &amp; performance microkernel efficiency lab security lab architecture &amp; rfcs especificações de microkernel, vfs fat32/ext2, .jpkg &amp; profiles security lab ring 3 driver isolation, w^x pml4, tls 1.3 no_std &amp; jinnwall zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure energy-proportional runtime, smp accounting &amp; low-overhead scheduling arm qualcomm lf edge industrial automation green public infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-cyan-400 mb-3">
+            <span class="bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 rounded-full font-semibold">ARQUITETURA &amp; PERFORMANCE</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-26">26 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>4 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-cyan-300 transition-colors leading-snug">
+            <a href="/artigos/arquitetura-observatory-ip-fronteira-honesta-computacao-heterogenea.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Jinn Engineering Observatory: Posicionamento Modular, Matriz de IP, Fronteira Honesta e Aplicações Industriais, Domésticas e em Servidores</a>
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como o ecossistema Jinn (Jinn_Project, Aladdin e jhcs-rs) separou ativos transferíveis de computação eficiente, formalizou matriz de licenciamento Cargo, estabeleceu fronteiras experimentais honestas (QEMU HLT vs silício físico) e estruturou 6 bancadas públicas no Observatory.
+          </p>
+          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 0.00%">
+            Indicadores citados no relatório: 0.00%
+          </p>
+          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure, Arm">
+            Ecossistemas: <span class="text-slate-300">Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure, Arm</span>
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="architecture-rfcs" title="Filtrar por Architecture &amp; RFCs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400">Architecture &amp; RFCs</button><button type="button" data-lab-badge="security-lab" title="Filtrar por Security Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Security Lab</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
+          <a href="/artigos/arquitetura-observatory-ip-fronteira-honesta-computacao-heterogenea.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </a>
+        </div>
+      </article>
+
       <!-- Card: post-mortem-tls13-poly1305-fallback-http-telemetria-jinn-browser -->
-      <article data-article-card data-categories="fastpath-ipc-net microkernel-security" data-search="post-mortem tls 1.3 no jinn browser: limbs poly1305 rfc 8439, alertas close_notify, fallback https→http e telemetria real análise de causa raiz e resolução completa do handshake tls 1.3 com domínios reais (jinn-os.dev.br, example.com, 68k.news) no jinn os e jinn browser: correção de máscaras 44/44/42 bits em poly1305, aes-128-gcm, reassembly multi-record, alertas close_notify cifrados, fallback https→http e renderização real da telemetria de rede. post-mortem criptografia jinn browser redes &amp; drivers zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+      <article data-article-card data-labs="post-mortems security-lab" data-categories="fastpath-ipc-net microkernel-security" data-search="post-mortem tls 1.3 no jinn browser: limbs poly1305 rfc 8439, alertas close_notify, fallback https→http e telemetria real análise de causa raiz e resolução completa do handshake tls 1.3 com domínios reais (jinn-os.dev.br, example.com, 68k.news) no jinn os e jinn browser: correção de máscaras 44/44/42 bits em poly1305, aes-128-gcm, reassembly multi-record, alertas close_notify cifrados, fallback https→http e renderização real da telemetria de rede. post-mortem criptografia jinn browser redes &amp; drivers post-mortems &amp; failure logs análises de causa raiz, pcap traces &amp; hardware/irq incidents security lab ring 3 driver isolation, w^x pml4, tls 1.3 no_std &amp; jinnwall zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
         <div>
           <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-cyan-400 mb-3">
             <span class="bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 rounded-full font-semibold">POST-MORTEM</span>
@@ -135,7 +180,7 @@
           </p>
         </div>
         <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="post-mortems" title="Filtrar por Post-Mortems &amp; Failure Logs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-rose-950/80 border-rose-700/70 text-rose-300 hover:border-rose-400">Post-Mortems &amp; Failure Logs</button><button type="button" data-lab-badge="security-lab" title="Filtrar por Security Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Security Lab</button><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button></div>
           <a href="/artigos/post-mortem-tls13-poly1305-fallback-http-telemetria-jinn-browser.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
             <span>Ler artigo</span>
             <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
@@ -143,8 +188,272 @@
         </div>
       </article>
 
+      <!-- Card: resiliencia-vfs-multiparticao-fat32-ext2 -->
+      <article data-article-card data-labs="architecture-rfcs post-mortems" data-categories="microkernel-security" data-search="vfs resiliente: coexistência fat32 e ext2 no jinn os como o microkernel jinn os implementa um sistema de arquivos virtual (vfs) com suporte simultâneo a partições fat32 e ext2 com cache de blocos lru. armazenamento &amp; kernel architecture &amp; rfcs especificações de microkernel, vfs fat32/ext2, .jpkg &amp; profiles post-mortems &amp; failure logs análises de causa raiz, pcap traces &amp; hardware/irq incidents zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-blue-400 mb-3">
+            <span class="bg-blue-950 border border-blue-800 px-2.5 py-0.5 rounded-full font-semibold">ARMAZENAMENTO &amp; KERNEL</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-26">26 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>2 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-blue-300 transition-colors leading-snug">
+            <a href="/artigos/resiliencia-vfs-multiparticao-fat32-ext2.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">VFS Resiliente: Coexistência FAT32 e Ext2 no Jinn OS</a>
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como o microkernel Jinn OS implementa um sistema de arquivos virtual (VFS) com suporte simultâneo a partições FAT32 e Ext2 com cache de blocos LRU.
+          </p>
+          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável">
+            Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável
+          </p>
+          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure">
+            Ecossistemas: <span class="text-slate-300">Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure</span>
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="architecture-rfcs" title="Filtrar por Architecture &amp; RFCs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400">Architecture &amp; RFCs</button><button type="button" data-lab-badge="post-mortems" title="Filtrar por Post-Mortems &amp; Failure Logs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-rose-950/80 border-rose-700/70 text-rose-300 hover:border-rose-400">Post-Mortems &amp; Failure Logs</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
+          <a href="/artigos/resiliencia-vfs-multiparticao-fat32-ext2.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </a>
+        </div>
+      </article>
+
+      <!-- Card: post-mortem-pic-eoi-zero-gpu -->
+      <article data-article-card data-labs="post-mortems compute-lab" data-categories="compute-simd zero-idle-efficiency microkernel-security" data-search="post-mortem: eoi incondicional no pic 8259a e zero-gpu simd como resolvemos travamentos de interrupção e atingimos 0.00% de cpu em repouso no microkernel rust jinn os através de eoi incondicional no pic 8259a e kernels avx2 no jhcs. post-mortem post-mortems &amp; failure logs análises de causa raiz, pcap traces &amp; hardware/irq incidents compute lab jhcs-rs dag broker, avx2/fma simd, breakeven &amp; wgpu heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs energy-proportional runtime, smp accounting &amp; low-overhead scheduling arm qualcomm lf edge industrial automation green public infrastructure zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-cyan-400 mb-3">
+            <span class="bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 rounded-full font-semibold">POST-MORTEM</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-26">26 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>5 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-cyan-300 transition-colors leading-snug">
+            <a href="/artigos/post-mortem-pic-eoi-zero-gpu.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Post-Mortem: EOI Incondicional no PIC 8259A e Zero-GPU SIMD</a>
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como resolvemos travamentos de interrupção e atingimos 0.00% de CPU em repouso no microkernel Rust Jinn OS através de EOI incondicional no PIC 8259A e kernels AVX2 no JHCS.
+          </p>
+          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 0.00%, 64 bytes, 4 vCPUs">
+            Indicadores citados no relatório: 0.00%, 64 bytes, 4 vCPUs
+          </p>
+          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Intel, AMD, Arm, Tenstorrent, SiFive, HPC Research Labs">
+            Ecossistemas: <span class="text-slate-300">Intel, AMD, Arm, Tenstorrent, SiFive, HPC Research Labs</span>
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="post-mortems" title="Filtrar por Post-Mortems &amp; Failure Logs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-rose-950/80 border-rose-700/70 text-rose-300 hover:border-rose-400">Post-Mortems &amp; Failure Logs</button><button type="button" data-lab-badge="compute-lab" title="Filtrar por Compute Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute Lab</button><button type="button" data-eco-badge="compute-simd" title="Filtrar por Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute &amp; SIMD</button></div>
+          <a href="/artigos/post-mortem-pic-eoi-zero-gpu.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </a>
+        </div>
+      </article>
+
+      <!-- Card: navegador-web-nativo-microkernel-jinn -->
+      <article data-article-card data-labs="architecture-rfcs" data-categories="fastpath-ipc-net microkernel-security" data-search="navegador web nativo no microkernel jinn os — jinn browser como construímos o jinn browser: um navegador web completo em rust no_std executando em ring 3 com suporte a http/1.1, motor css em cascata, layout flexbox e runtime js reativo. jinn browser architecture &amp; rfcs especificações de microkernel, vfs fat32/ext2, .jpkg &amp; profiles zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-rose-400 mb-3">
+            <span class="bg-rose-950 border border-rose-800 px-2.5 py-0.5 rounded-full font-semibold">JINN BROWSER</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-26">26 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>3 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-rose-300 transition-colors leading-snug">
+            <a href="/artigos/navegador-web-nativo-microkernel-jinn.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Navegador Web Nativo no Microkernel Jinn OS — Jinn Browser</a>
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como construímos o Jinn Browser: um navegador web completo em Rust no_std executando em Ring 3 com suporte a HTTP/1.1, motor CSS em cascata, layout flexbox e runtime JS reativo.
+          </p>
+          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 370 KiB, 3 us">
+            Indicadores citados no relatório: 370 KiB, 3 us
+          </p>
+          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Cloudflare, Akamai, Huawei, RISC-V International, Local Edge Gateways, Red Hat">
+            Ecossistemas: <span class="text-slate-300">Cloudflare, Akamai, Huawei, RISC-V International, Local Edge Gateways, Red Hat</span>
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="architecture-rfcs" title="Filtrar por Architecture &amp; RFCs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400">Architecture &amp; RFCs</button><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button></div>
+          <a href="/artigos/navegador-web-nativo-microkernel-jinn.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </a>
+        </div>
+      </article>
+
+      <!-- Card: isolamento-drivers-ring3-supervisor-jaha -->
+      <article data-article-card data-labs="security-lab efficiency-lab" data-categories="microkernel-security" data-search="isolamento de drivers e supervisor jaha 1.2 como o microkernel jinn os isola drivers de dispositivos em ring 3 e utiliza a máquina de estados jaha 1.2 com circuit-breaker para tolerância extrema a falhas. microkernel security lab ring 3 driver isolation, w^x pml4, tls 1.3 no_std &amp; jinnwall efficiency lab zero-idle hlt, smp per-cpu accounting, lazy ttl &amp; 64m ram zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-amber-400 mb-3">
+            <span class="bg-amber-950 border border-amber-800 px-2.5 py-0.5 rounded-full font-semibold">MICROKERNEL</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-26">26 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>2 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-amber-300 transition-colors leading-snug">
+            <a href="/artigos/isolamento-drivers-ring3-supervisor-jaha.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Isolamento de Drivers e Supervisor JAHA 1.2</a>
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como o microkernel Jinn OS isola drivers de dispositivos em Ring 3 e utiliza a máquina de estados JAHA 1.2 com circuit-breaker para tolerância extrema a falhas.
+          </p>
+          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 100%, 70%">
+            Indicadores citados no relatório: 100%, 70%
+          </p>
+          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure">
+            Ecossistemas: <span class="text-slate-300">Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure</span>
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="security-lab" title="Filtrar por Security Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Security Lab</button><button type="button" data-lab-badge="efficiency-lab" title="Filtrar por Efficiency Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400">Efficiency Lab</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
+          <a href="/artigos/isolamento-drivers-ring3-supervisor-jaha.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </a>
+        </div>
+      </article>
+
+      <!-- Card: glassmorphism-simd-e1000-virtualbox -->
+      <article data-article-card data-labs="compute-lab architecture-rfcs" data-categories="compute-simd fastpath-ipc-net microkernel-security" data-search="glassmorphism sem gpu no aladdin e hardening de rede e1000 no virtualbox engenharia de sistemas operacionais: como implementamos glassmorphism e desfoque real em ring 3 no_std sem aceleração por gpu, e eliminamos o timeout de dns no virtualbox através do anel mmio do intel e1000. computação gráfica &amp; ui compute lab jhcs-rs dag broker, avx2/fma simd, breakeven &amp; wgpu architecture &amp; rfcs especificações de microkernel, vfs fat32/ext2, .jpkg &amp; profiles heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-purple-400 mb-3">
+            <span class="bg-purple-950 border border-purple-800 px-2.5 py-0.5 rounded-full font-semibold">COMPUTAÇÃO GRÁFICA &amp; UI</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-26">26 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>5 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-purple-300 transition-colors leading-snug">
+            <a href="/artigos/glassmorphism-simd-e1000-virtualbox.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Glassmorphism Sem GPU no Aladdin e Hardening de Rede e1000 no VirtualBox</a>
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Engenharia de sistemas operacionais: como implementamos Glassmorphism e desfoque real em Ring 3 no_std sem aceleração por GPU, e eliminamos o timeout de DNS no VirtualBox através do anel MMIO do Intel e1000.
+          </p>
+          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 0.00%">
+            Indicadores citados no relatório: 0.00%
+          </p>
+          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Intel, AMD, Arm, Tenstorrent, SiFive, HPC Research Labs">
+            Ecossistemas: <span class="text-slate-300">Intel, AMD, Arm, Tenstorrent, SiFive, HPC Research Labs</span>
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="compute-lab" title="Filtrar por Compute Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute Lab</button><button type="button" data-lab-badge="architecture-rfcs" title="Filtrar por Architecture &amp; RFCs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400">Architecture &amp; RFCs</button><button type="button" data-eco-badge="compute-simd" title="Filtrar por Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute &amp; SIMD</button></div>
+          <a href="/artigos/glassmorphism-simd-e1000-virtualbox.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </a>
+        </div>
+      </article>
+
+      <!-- Card: ecossistema-pacotes-jpkg-offline-shutdown -->
+      <article data-article-card data-labs="architecture-rfcs" data-categories="microkernel-security compute-simd" data-search="ecossistema de pacotes .jpkg e atualização offline-on-shutdown como implementamos contêineres de pacotes .jpkg com hash sha-256, ciclo de atualização offline-on-shutdown com tela apagada e desfoque simd zero-copy no microkernel jinn os. pacotes &amp; atualização architecture &amp; rfcs especificações de microkernel, vfs fat32/ext2, .jpkg &amp; profiles zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-indigo-400 mb-3">
+            <span class="bg-indigo-950 border border-indigo-800 px-2.5 py-0.5 rounded-full font-semibold">PACOTES &amp; ATUALIZAÇÃO</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-26">26 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>3 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-indigo-300 transition-colors leading-snug">
+            <a href="/artigos/ecossistema-pacotes-jpkg-offline-shutdown.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Ecossistema de Pacotes .jpkg e Atualização Offline-on-Shutdown</a>
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como implementamos contêineres de pacotes .jpkg com hash SHA-256, ciclo de atualização Offline-on-Shutdown com tela apagada e desfoque SIMD Zero-Copy no microkernel Jinn OS.
+          </p>
+          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 128 bytes, 0%, 4 bytes, 4B">
+            Indicadores citados no relatório: 128 bytes, 0%, 4 bytes, 4B
+          </p>
+          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure, Intel">
+            Ecossistemas: <span class="text-slate-300">Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure, Intel</span>
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="architecture-rfcs" title="Filtrar por Architecture &amp; RFCs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400">Architecture &amp; RFCs</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
+          <a href="/artigos/ecossistema-pacotes-jpkg-offline-shutdown.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </a>
+        </div>
+      </article>
+
+      <!-- Card: compositor-aladdin-zero-gpu-frosted-glass -->
+      <article data-article-card data-labs="compute-lab architecture-rfcs" data-categories="compute-simd" data-search="compositor aladdin: frosted glass e zero-gpu em rust como construímos o compositor gráfico aladdin desktop com efeitos visuais contemporâneos, sombras e frosted glass sem acelerador 3d e com zero alocações de heap por quadro. computação gráfica &amp; ui compute lab jhcs-rs dag broker, avx2/fma simd, breakeven &amp; wgpu architecture &amp; rfcs especificações de microkernel, vfs fat32/ext2, .jpkg &amp; profiles heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-purple-400 mb-3">
+            <span class="bg-purple-950 border border-purple-800 px-2.5 py-0.5 rounded-full font-semibold">COMPUTAÇÃO GRÁFICA &amp; UI</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-26">26 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>2 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-purple-300 transition-colors leading-snug">
+            <a href="/artigos/compositor-aladdin-zero-gpu-frosted-glass.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Compositor Aladdin: Frosted Glass e Zero-GPU em Rust</a>
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como construímos o compositor gráfico Aladdin Desktop com efeitos visuais contemporâneos, sombras e frosted glass sem acelerador 3D e com zero alocações de heap por quadro.
+          </p>
+          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 98%, 0.00%, 60 FPS">
+            Indicadores citados no relatório: 98%, 0.00%, 60 FPS
+          </p>
+          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Intel, AMD, Arm, Tenstorrent, SiFive, HPC Research Labs">
+            Ecossistemas: <span class="text-slate-300">Intel, AMD, Arm, Tenstorrent, SiFive, HPC Research Labs</span>
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="compute-lab" title="Filtrar por Compute Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute Lab</button><button type="button" data-lab-badge="architecture-rfcs" title="Filtrar por Architecture &amp; RFCs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400">Architecture &amp; RFCs</button><button type="button" data-eco-badge="compute-simd" title="Filtrar por Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute &amp; SIMD</button></div>
+          <a href="/artigos/compositor-aladdin-zero-gpu-frosted-glass.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </a>
+        </div>
+      </article>
+
+      <!-- Card: arquitetura-tls13-nostd-soberana -->
+      <article data-article-card data-labs="security-lab architecture-rfcs" data-categories="microkernel-security fastpath-ipc-net compute-simd" data-search="pilha criptográfica soberana: tls 1.3 e chacha20-poly1305 em bare-metal rust como implementamos tls 1.3 (rfc 8446), key schedule hkdf e chacha20-poly1305 em rust puro sem biblioteca padrão (#![no_std]) para o microkernel jinn os. criptografia security lab ring 3 driver isolation, w^x pml4, tls 1.3 no_std &amp; jinnwall architecture &amp; rfcs especificações de microkernel, vfs fat32/ext2, .jpkg &amp; profiles zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-emerald-400 mb-3">
+            <span class="bg-emerald-950 border border-emerald-800 px-2.5 py-0.5 rounded-full font-semibold">CRIPTOGRAFIA</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-26">26 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>4 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-emerald-300 transition-colors leading-snug">
+            <a href="/artigos/arquitetura-tls13-nostd-soberana.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Pilha Criptográfica Soberana: TLS 1.3 e ChaCha20-Poly1305 em Bare-Metal Rust</a>
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Como implementamos TLS 1.3 (RFC 8446), Key Schedule HKDF e ChaCha20-Poly1305 em Rust puro sem biblioteca padrão (#![no_std]) para o microkernel Jinn OS.
+          </p>
+          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 100%">
+            Indicadores citados no relatório: 100%
+          </p>
+          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure, Cloudflare">
+            Ecossistemas: <span class="text-slate-300">Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure, Cloudflare</span>
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="security-lab" title="Filtrar por Security Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Security Lab</button><button type="button" data-lab-badge="architecture-rfcs" title="Filtrar por Architecture &amp; RFCs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400">Architecture &amp; RFCs</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
+          <a href="/artigos/arquitetura-tls13-nostd-soberana.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </a>
+        </div>
+      </article>
+
       <!-- Card: tabela-rotas-quentes-dns-l2-fast-path-jinn-os -->
-      <article data-article-card data-categories="fastpath-ipc-net zero-idle-efficiency microkernel-security" data-search="tabela de rotas mais usadas (`hotroutetable`): fast-path unificado dns + l2/l3 no jinn os como o jinn os unifica resolução de nomes dns, next-hop ipv4 e endereço mac l2 na hotroutetable alinhada a 64 bytes em .bss estático com /disk/hot_routes.db, envio direto de tcp syn (0 pacotes dns/arp na 2ª conexão e pós-cold-reboot), ui rotas mais acessadas no aladdin desktop e 0,00% cpu ociosa. redes &amp; drivers zero-idle microkernel aladdin ui jinn browser zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways energy-proportional runtime, smp accounting &amp; low-overhead scheduling arm qualcomm lf edge industrial automation green public infrastructure zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+      <article data-article-card data-labs="architecture-rfcs performance-lab" data-categories="fastpath-ipc-net zero-idle-efficiency microkernel-security" data-search="tabela de rotas mais usadas (`hotroutetable`): fast-path unificado dns + l2/l3 no jinn os como o jinn os unifica resolução de nomes dns, next-hop ipv4 e endereço mac l2 na hotroutetable alinhada a 64 bytes em .bss estático com /disk/hot_routes.db, envio direto de tcp syn (0 pacotes dns/arp na 2ª conexão e pós-cold-reboot), ui rotas mais acessadas no aladdin desktop e 0,00% cpu ociosa. redes &amp; drivers zero-idle microkernel aladdin ui jinn browser architecture &amp; rfcs especificações de microkernel, vfs fat32/ext2, .jpkg &amp; profiles performance lab fast-path ipc, hotroutetable l2/l3, lru cache &amp; latência zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways energy-proportional runtime, smp accounting &amp; low-overhead scheduling arm qualcomm lf edge industrial automation green public infrastructure zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
         <div>
           <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-emerald-400 mb-3">
             <span class="bg-emerald-950 border border-emerald-800 px-2.5 py-0.5 rounded-full font-semibold">REDES &amp; DRIVERS</span>
@@ -168,7 +477,7 @@
           </p>
         </div>
         <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button><button type="button" data-eco-badge="zero-idle-efficiency" title="Filtrar por Energy-Proportional Runtime, SMP Accounting &amp; Low-Overhead Scheduling" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400">Zero-Idle &amp; SMP</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="architecture-rfcs" title="Filtrar por Architecture &amp; RFCs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400">Architecture &amp; RFCs</button><button type="button" data-lab-badge="performance-lab" title="Filtrar por Performance Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">Performance Lab</button><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button></div>
           <a href="/artigos/tabela-rotas-quentes-dns-l2-fast-path-jinn-os.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
             <span>Ler artigo</span>
             <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
@@ -177,7 +486,7 @@
       </article>
 
       <!-- Card: tabela-local-dns-hosts-cache-persistente-ttl-aladdin -->
-      <article data-article-card data-categories="fastpath-ipc-net microkernel-security compute-simd" data-search="tabela local de dns em 3 camadas: hosts estáticos, cache lru persistente com ttl e painel aladdin arquitetura zero-idle da tabela local de dns no jinn os e aladdin desktop: resolução em 3 estágios (/disk/hosts, cache lru de 128 registros a alinhado a 64 bytes com /disk/dns_cache.db via rtc unix e cascata upstream com stale-if-error), syscalls 93–96 zero-trust e prova pcap em cold-reboot com 0 pacotes udp. redes &amp; drivers zero-idle microkernel aladdin ui segurança zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+      <article data-article-card data-labs="architecture-rfcs efficiency-lab" data-categories="fastpath-ipc-net microkernel-security compute-simd" data-search="tabela local de dns em 3 camadas: hosts estáticos, cache lru persistente com ttl e painel aladdin arquitetura zero-idle da tabela local de dns no jinn os e aladdin desktop: resolução em 3 estágios (/disk/hosts, cache lru de 128 registros a alinhado a 64 bytes com /disk/dns_cache.db via rtc unix e cascata upstream com stale-if-error), syscalls 93–96 zero-trust e prova pcap em cold-reboot com 0 pacotes udp. redes &amp; drivers zero-idle microkernel aladdin ui segurança architecture &amp; rfcs especificações de microkernel, vfs fat32/ext2, .jpkg &amp; profiles efficiency lab zero-idle hlt, smp per-cpu accounting, lazy ttl &amp; 64m ram zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
         <div>
           <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-emerald-400 mb-3">
             <span class="bg-emerald-950 border border-emerald-800 px-2.5 py-0.5 rounded-full font-semibold">REDES &amp; DRIVERS</span>
@@ -201,7 +510,7 @@
           </p>
         </div>
         <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button><button type="button" data-eco-badge="compute-simd" title="Filtrar por Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute &amp; SIMD</button></div>
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="architecture-rfcs" title="Filtrar por Architecture &amp; RFCs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400">Architecture &amp; RFCs</button><button type="button" data-lab-badge="efficiency-lab" title="Filtrar por Efficiency Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400">Efficiency Lab</button><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button></div>
           <a href="/artigos/tabela-local-dns-hosts-cache-persistente-ttl-aladdin.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
             <span>Ler artigo</span>
             <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
@@ -210,7 +519,7 @@
       </article>
 
       <!-- Card: auditoria-zero-idle-smp-percpu-irq-apic-gating -->
-      <article data-article-card data-categories="zero-idle-efficiency microkernel-security fastpath-ipc-net" data-search="zero-idle em smp: contabilidade per-cpu, irq de hardware nic, gating ap lapic e hardening simbadserver evolução arquitetural do zero-idle no jinn os e aladdin: fim da subtração global tsc-hlt em smp via contadores per-cpu (syscall 92), interrupções reais pci irq 11 em intel e1000 e virtio-net, 100.00% hlt em núcleos ap secundários e ciclo seguro de cr3 em simbadserver. zero-idle smp microkernel redes &amp; drivers homologação &amp; segurança energy-proportional runtime, smp accounting &amp; low-overhead scheduling arm qualcomm lf edge industrial automation green public infrastructure zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+      <article data-article-card data-labs="efficiency-lab post-mortems" data-categories="zero-idle-efficiency microkernel-security fastpath-ipc-net" data-search="zero-idle em smp: contabilidade per-cpu, irq de hardware nic, gating ap lapic e hardening simbadserver evolução arquitetural do zero-idle no jinn os e aladdin: fim da subtração global tsc-hlt em smp via contadores per-cpu (syscall 92), interrupções reais pci irq 11 em intel e1000 e virtio-net, 100.00% hlt em núcleos ap secundários e ciclo seguro de cr3 em simbadserver. zero-idle smp microkernel redes &amp; drivers homologação &amp; segurança efficiency lab zero-idle hlt, smp per-cpu accounting, lazy ttl &amp; 64m ram post-mortems &amp; failure logs análises de causa raiz, pcap traces &amp; hardware/irq incidents energy-proportional runtime, smp accounting &amp; low-overhead scheduling arm qualcomm lf edge industrial automation green public infrastructure zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
         <div>
           <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-cyan-400 mb-3">
             <span class="bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 rounded-full font-semibold">ZERO-IDLE</span>
@@ -234,7 +543,7 @@
           </p>
         </div>
         <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="zero-idle-efficiency" title="Filtrar por Energy-Proportional Runtime, SMP Accounting &amp; Low-Overhead Scheduling" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400">Zero-Idle &amp; SMP</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button></div>
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="efficiency-lab" title="Filtrar por Efficiency Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400">Efficiency Lab</button><button type="button" data-lab-badge="post-mortems" title="Filtrar por Post-Mortems &amp; Failure Logs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-rose-950/80 border-rose-700/70 text-rose-300 hover:border-rose-400">Post-Mortems &amp; Failure Logs</button><button type="button" data-eco-badge="zero-idle-efficiency" title="Filtrar por Energy-Proportional Runtime, SMP Accounting &amp; Low-Overhead Scheduling" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400">Zero-Idle &amp; SMP</button></div>
           <a href="/artigos/auditoria-zero-idle-smp-percpu-irq-apic-gating.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
             <span>Ler artigo</span>
             <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
@@ -243,7 +552,7 @@
       </article>
 
       <!-- Card: homologacao-desempenho-estabilidade-integracao-seguranca-zero-idle -->
-      <article data-article-card data-categories="microkernel-security fastpath-ipc-net zero-idle-efficiency" data-search="homologação completa: desempenho zero-idle, estabilidade fat32/jpkg, rede pcap e segurança zero-trust resultados reais da bateria de homologação do jinn os, aladdin e jhcs em qemu (4 vcpus smp e 1 vcpu com intel e1000 e virtio-net): benchmarks simd em .bss, zero-idle via syscall 88, sha-256 .jpkg no offline-on-shutdown, dns cascata em pcap e rejeição -efault/-einval. homologação &amp; segurança zero-idle simd network qa zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways energy-proportional runtime, smp accounting &amp; low-overhead scheduling arm qualcomm lf edge industrial automation green public infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+      <article data-article-card data-labs="architecture-rfcs security-lab" data-categories="microkernel-security fastpath-ipc-net zero-idle-efficiency" data-search="homologação completa: desempenho zero-idle, estabilidade fat32/jpkg, rede pcap e segurança zero-trust resultados reais da bateria de homologação do jinn os, aladdin e jhcs em qemu (4 vcpus smp e 1 vcpu com intel e1000 e virtio-net): benchmarks simd em .bss, zero-idle via syscall 88, sha-256 .jpkg no offline-on-shutdown, dns cascata em pcap e rejeição -efault/-einval. homologação &amp; segurança zero-idle simd network qa architecture &amp; rfcs especificações de microkernel, vfs fat32/ext2, .jpkg &amp; profiles security lab ring 3 driver isolation, w^x pml4, tls 1.3 no_std &amp; jinnwall zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways energy-proportional runtime, smp accounting &amp; low-overhead scheduling arm qualcomm lf edge industrial automation green public infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
         <div>
           <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-emerald-400 mb-3">
             <span class="bg-emerald-950 border border-emerald-800 px-2.5 py-0.5 rounded-full font-semibold">HOMOLOGAÇÃO &amp; SEGURANÇA</span>
@@ -267,7 +576,7 @@
           </p>
         </div>
         <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button><button type="button" data-eco-badge="zero-idle-efficiency" title="Filtrar por Energy-Proportional Runtime, SMP Accounting &amp; Low-Overhead Scheduling" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400">Zero-Idle &amp; SMP</button></div>
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="architecture-rfcs" title="Filtrar por Architecture &amp; RFCs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400">Architecture &amp; RFCs</button><button type="button" data-lab-badge="security-lab" title="Filtrar por Security Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Security Lab</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
           <a href="/artigos/homologacao-desempenho-estabilidade-integracao-seguranca-zero-idle.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
             <span>Ler artigo</span>
             <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
@@ -276,7 +585,7 @@
       </article>
 
       <!-- Card: aladdin-shared-rings-spsc-lock-free-zero-copy-io-uring -->
-      <article data-article-card data-categories="fastpath-ipc-net microkernel-security compute-simd" data-search="aladdinsharedrings: buffers circulares spsc lock-free ring 3 / ring 0 no jinn os implementação de memória compartilhada baseada em ring buffers spsc (estilo io_uring) para loteamento de eventos de entrada e comandos gráficos entre o aladdin desktop (ring 3) e o microkernel jinn os (ring 0) com garantia zero-idle. microkernel spsc zero-copy io_uring zero-idle zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+      <article data-article-card data-labs="performance-lab efficiency-lab" data-categories="fastpath-ipc-net microkernel-security compute-simd" data-search="aladdinsharedrings: buffers circulares spsc lock-free ring 3 / ring 0 no jinn os implementação de memória compartilhada baseada em ring buffers spsc (estilo io_uring) para loteamento de eventos de entrada e comandos gráficos entre o aladdin desktop (ring 3) e o microkernel jinn os (ring 0) com garantia zero-idle. microkernel spsc zero-copy io_uring zero-idle performance lab fast-path ipc, hotroutetable l2/l3, lru cache &amp; latência efficiency lab zero-idle hlt, smp per-cpu accounting, lazy ttl &amp; 64m ram zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
         <div>
           <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-amber-400 mb-3">
             <span class="bg-amber-950 border border-amber-800 px-2.5 py-0.5 rounded-full font-semibold">MICROKERNEL</span>
@@ -300,7 +609,7 @@
           </p>
         </div>
         <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button><button type="button" data-eco-badge="compute-simd" title="Filtrar por Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute &amp; SIMD</button></div>
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="performance-lab" title="Filtrar por Performance Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">Performance Lab</button><button type="button" data-lab-badge="efficiency-lab" title="Filtrar por Efficiency Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400">Efficiency Lab</button><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button></div>
           <a href="/artigos/aladdin-shared-rings-spsc-lock-free-zero-copy-io-uring.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
             <span>Ler artigo</span>
             <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
@@ -309,7 +618,7 @@
       </article>
 
       <!-- Card: auditoria-zero-idle-cache-prefetch-syscalls-jaha-jhcs -->
-      <article data-article-card data-categories="zero-idle-efficiency microkernel-security compute-simd" data-search="auditoria zero-idle, pré-aquecimento de cache e refinamento de syscalls no jinn os auditoria profunda de consumo próximo a zero (zero-idle), alinhamento de cache de 64 bytes com prefetch simd, escalonamento cooperativo com wakeups instantâneos por interrupção e telemetria jaha 1.2 no jinn os. microkernel performance zero-idle telemetria energy-proportional runtime, smp accounting &amp; low-overhead scheduling arm qualcomm lf edge industrial automation green public infrastructure zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+      <article data-article-card data-labs="efficiency-lab compute-lab" data-categories="zero-idle-efficiency microkernel-security compute-simd" data-search="auditoria zero-idle, pré-aquecimento de cache e refinamento de syscalls no jinn os auditoria profunda de consumo próximo a zero (zero-idle), alinhamento de cache de 64 bytes com prefetch simd, escalonamento cooperativo com wakeups instantâneos por interrupção e telemetria jaha 1.2 no jinn os. microkernel performance zero-idle telemetria efficiency lab zero-idle hlt, smp per-cpu accounting, lazy ttl &amp; 64m ram compute lab jhcs-rs dag broker, avx2/fma simd, breakeven &amp; wgpu energy-proportional runtime, smp accounting &amp; low-overhead scheduling arm qualcomm lf edge industrial automation green public infrastructure zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
         <div>
           <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-amber-400 mb-3">
             <span class="bg-amber-950 border border-amber-800 px-2.5 py-0.5 rounded-full font-semibold">MICROKERNEL</span>
@@ -333,7 +642,7 @@
           </p>
         </div>
         <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="zero-idle-efficiency" title="Filtrar por Energy-Proportional Runtime, SMP Accounting &amp; Low-Overhead Scheduling" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400">Zero-Idle &amp; SMP</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button><button type="button" data-eco-badge="compute-simd" title="Filtrar por Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute &amp; SIMD</button></div>
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="efficiency-lab" title="Filtrar por Efficiency Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400">Efficiency Lab</button><button type="button" data-lab-badge="compute-lab" title="Filtrar por Compute Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute Lab</button><button type="button" data-eco-badge="zero-idle-efficiency" title="Filtrar por Energy-Proportional Runtime, SMP Accounting &amp; Low-Overhead Scheduling" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400">Zero-Idle &amp; SMP</button></div>
           <a href="/artigos/auditoria-zero-idle-cache-prefetch-syscalls-jaha-jhcs.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
             <span>Ler artigo</span>
             <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
@@ -342,7 +651,7 @@
       </article>
 
       <!-- Card: persistencia-fat32-lfn-auto-recuperacao-microkernel -->
-      <article data-article-card data-categories="microkernel-security fastpath-ipc-net" data-search="persistência fat32 lfn, driver dual ata/virtio e auto-recuperação no microkernel como implementamos escrita persistente e criação de diretórios fat32 com long file names (lfn/vfat), driver dual virtio-blk e ide ata, além da arquitetura self-healing contra deadlocks de fila de entrada no jinn os. sistemas de arquivos fat32 lfn virtio ide ata microkernel self-healing rust ring 3 zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+      <article data-article-card data-labs="architecture-rfcs security-lab" data-categories="microkernel-security fastpath-ipc-net" data-search="persistência fat32 lfn, driver dual ata/virtio e auto-recuperação no microkernel como implementamos escrita persistente e criação de diretórios fat32 com long file names (lfn/vfat), driver dual virtio-blk e ide ata, além da arquitetura self-healing contra deadlocks de fila de entrada no jinn os. sistemas de arquivos fat32 lfn virtio ide ata microkernel self-healing rust ring 3 architecture &amp; rfcs especificações de microkernel, vfs fat32/ext2, .jpkg &amp; profiles security lab ring 3 driver isolation, w^x pml4, tls 1.3 no_std &amp; jinnwall zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
         <div>
           <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-blue-400 mb-3">
             <span class="bg-blue-950 border border-blue-800 px-2.5 py-0.5 rounded-full font-semibold">SISTEMAS DE ARQUIVOS</span>
@@ -366,7 +675,7 @@
           </p>
         </div>
         <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button></div>
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="architecture-rfcs" title="Filtrar por Architecture &amp; RFCs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400">Architecture &amp; RFCs</button><button type="button" data-lab-badge="security-lab" title="Filtrar por Security Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Security Lab</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
           <a href="/artigos/persistencia-fat32-lfn-auto-recuperacao-microkernel.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
             <span>Ler artigo</span>
             <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
@@ -375,7 +684,7 @@
       </article>
 
       <!-- Card: glassmorphism-acrilico-simd-compositor-aladdin -->
-      <article data-article-card data-categories="compute-simd microkernel-security" data-search="glassmorphism acrílico, simd e compositor aladdin: zero-gpu em 60 fps no bare-metal como o compositor gráfico aladdin desktop implementa transparências acrílicas com separable box blur em ponto fixo de 24 bits, cantos com antialiasing 4x supersampling e zero-copy via jhcs-daemon sem exigir placa gráfica dedicada. computação gráfica aladdin desktop simd avx2 glassmorphism zero-gpu rust microkernel heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+      <article data-article-card data-labs="compute-lab architecture-rfcs" data-categories="compute-simd microkernel-security" data-search="glassmorphism acrílico, simd e compositor aladdin: zero-gpu em 60 fps no bare-metal como o compositor gráfico aladdin desktop implementa transparências acrílicas com separable box blur em ponto fixo de 24 bits, cantos com antialiasing 4x supersampling e zero-copy via jhcs-daemon sem exigir placa gráfica dedicada. computação gráfica aladdin desktop simd avx2 glassmorphism zero-gpu rust microkernel compute lab jhcs-rs dag broker, avx2/fma simd, breakeven &amp; wgpu architecture &amp; rfcs especificações de microkernel, vfs fat32/ext2, .jpkg &amp; profiles heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
         <div>
           <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-purple-400 mb-3">
             <span class="bg-purple-950 border border-purple-800 px-2.5 py-0.5 rounded-full font-semibold">COMPUTAÇÃO GRÁFICA</span>
@@ -399,7 +708,7 @@
           </p>
         </div>
         <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="compute-simd" title="Filtrar por Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute &amp; SIMD</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="compute-lab" title="Filtrar por Compute Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute Lab</button><button type="button" data-lab-badge="architecture-rfcs" title="Filtrar por Architecture &amp; RFCs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400">Architecture &amp; RFCs</button><button type="button" data-eco-badge="compute-simd" title="Filtrar por Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute &amp; SIMD</button></div>
           <a href="/artigos/glassmorphism-acrilico-simd-compositor-aladdin.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
             <span>Ler artigo</span>
             <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
@@ -408,7 +717,7 @@
       </article>
 
       <!-- Card: resolucao-arp-dinamica-dns-cascata-virtualbox-qemu -->
-      <article data-article-card data-categories="fastpath-ipc-net microkernel-security" data-search="resolução arp dinâmica, dns em cascata e hardening intel e1000: do qemu ao virtualbox bare-metal como diagnosticamos divergências de mac em camada 2 entre qemu slirp e virtualbox nat via pcap, estabilizamos os anéis de descritores do intel 82540em (e1000) e implementamos um resolvedor dns resiliente em cascata. redes intel e1000 virtualbox dns arp bare-metal rust microkernel zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+      <article data-article-card data-labs="architecture-rfcs" data-categories="fastpath-ipc-net microkernel-security" data-search="resolução arp dinâmica, dns em cascata e hardening intel e1000: do qemu ao virtualbox bare-metal como diagnosticamos divergências de mac em camada 2 entre qemu slirp e virtualbox nat via pcap, estabilizamos os anéis de descritores do intel 82540em (e1000) e implementamos um resolvedor dns resiliente em cascata. redes intel e1000 virtualbox dns arp bare-metal rust microkernel architecture &amp; rfcs especificações de microkernel, vfs fat32/ext2, .jpkg &amp; profiles zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
         <div>
           <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-emerald-400 mb-3">
             <span class="bg-emerald-950 border border-emerald-800 px-2.5 py-0.5 rounded-full font-semibold">REDES</span>
@@ -432,272 +741,8 @@
           </p>
         </div>
         <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="architecture-rfcs" title="Filtrar por Architecture &amp; RFCs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400">Architecture &amp; RFCs</button><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button></div>
           <a href="/artigos/resolucao-arp-dinamica-dns-cascata-virtualbox-qemu.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
-            <span>Ler artigo</span>
-            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-          </a>
-        </div>
-      </article>
-
-      <!-- Card: ecossistema-pacotes-jpkg-offline-shutdown -->
-      <article data-article-card data-categories="microkernel-security compute-simd" data-search="ecossistema de pacotes .jpkg e atualização offline-on-shutdown como implementamos contêineres de pacotes .jpkg com hash sha-256, ciclo de atualização offline-on-shutdown com tela apagada e desfoque simd zero-copy no microkernel jinn os. pacotes &amp; atualização zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
-        <div>
-          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-indigo-400 mb-3">
-            <span class="bg-indigo-950 border border-indigo-800 px-2.5 py-0.5 rounded-full font-semibold">PACOTES &amp; ATUALIZAÇÃO</span>
-            <div class="flex items-center gap-2 text-slate-400">
-              <time datetime="2026-11-24">24 Nov 2026</time>
-              <span>•</span>
-              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>3 min</span>
-            </div>
-          </div>
-          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-indigo-300 transition-colors leading-snug">
-            <a href="/artigos/ecossistema-pacotes-jpkg-offline-shutdown.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Ecossistema de Pacotes .jpkg e Atualização Offline-on-Shutdown</a>
-          </h2>
-          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-            Como implementamos contêineres de pacotes .jpkg com hash SHA-256, ciclo de atualização Offline-on-Shutdown com tela apagada e desfoque SIMD Zero-Copy no microkernel Jinn OS.
-          </p>
-          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 128 bytes, 0%, 4 bytes, 4B">
-            Indicadores citados no relatório: 128 bytes, 0%, 4 bytes, 4B
-          </p>
-          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure, Intel">
-            Ecossistemas: <span class="text-slate-300">Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure, Intel</span>
-          </p>
-        </div>
-        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button><button type="button" data-eco-badge="compute-simd" title="Filtrar por Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute &amp; SIMD</button></div>
-          <a href="/artigos/ecossistema-pacotes-jpkg-offline-shutdown.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
-            <span>Ler artigo</span>
-            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-          </a>
-        </div>
-      </article>
-
-      <!-- Card: post-mortem-pic-eoi-zero-gpu -->
-      <article data-article-card data-categories="compute-simd zero-idle-efficiency microkernel-security" data-search="post-mortem: eoi incondicional no pic 8259a e zero-gpu simd como resolvemos travamentos de interrupção e atingimos 0.00% de cpu em repouso no microkernel rust jinn os através de eoi incondicional no pic 8259a e kernels avx2 no jhcs. post-mortem heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs energy-proportional runtime, smp accounting &amp; low-overhead scheduling arm qualcomm lf edge industrial automation green public infrastructure zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
-        <div>
-          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-cyan-400 mb-3">
-            <span class="bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 rounded-full font-semibold">POST-MORTEM</span>
-            <div class="flex items-center gap-2 text-slate-400">
-              <time datetime="2026-11-24">24 Nov 2026</time>
-              <span>•</span>
-              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>5 min</span>
-            </div>
-          </div>
-          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-cyan-300 transition-colors leading-snug">
-            <a href="/artigos/post-mortem-pic-eoi-zero-gpu.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Post-Mortem: EOI Incondicional no PIC 8259A e Zero-GPU SIMD</a>
-          </h2>
-          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-            Como resolvemos travamentos de interrupção e atingimos 0.00% de CPU em repouso no microkernel Rust Jinn OS através de EOI incondicional no PIC 8259A e kernels AVX2 no JHCS.
-          </p>
-          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 0.00%, 64 bytes, 4 vCPUs">
-            Indicadores citados no relatório: 0.00%, 64 bytes, 4 vCPUs
-          </p>
-          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Intel, AMD, Arm, Tenstorrent, SiFive, HPC Research Labs">
-            Ecossistemas: <span class="text-slate-300">Intel, AMD, Arm, Tenstorrent, SiFive, HPC Research Labs</span>
-          </p>
-        </div>
-        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="compute-simd" title="Filtrar por Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute &amp; SIMD</button><button type="button" data-eco-badge="zero-idle-efficiency" title="Filtrar por Energy-Proportional Runtime, SMP Accounting &amp; Low-Overhead Scheduling" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400">Zero-Idle &amp; SMP</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
-          <a href="/artigos/post-mortem-pic-eoi-zero-gpu.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
-            <span>Ler artigo</span>
-            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-          </a>
-        </div>
-      </article>
-
-      <!-- Card: glassmorphism-simd-e1000-virtualbox -->
-      <article data-article-card data-categories="compute-simd fastpath-ipc-net microkernel-security" data-search="glassmorphism sem gpu no aladdin e hardening de rede e1000 no virtualbox engenharia de sistemas operacionais: como implementamos glassmorphism e desfoque real em ring 3 no_std sem aceleração por gpu, e eliminamos o timeout de dns no virtualbox através do anel mmio do intel e1000. computação gráfica &amp; ui heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
-        <div>
-          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-purple-400 mb-3">
-            <span class="bg-purple-950 border border-purple-800 px-2.5 py-0.5 rounded-full font-semibold">COMPUTAÇÃO GRÁFICA &amp; UI</span>
-            <div class="flex items-center gap-2 text-slate-400">
-              <time datetime="2026-11-24">24 Nov 2026</time>
-              <span>•</span>
-              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>5 min</span>
-            </div>
-          </div>
-          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-purple-300 transition-colors leading-snug">
-            <a href="/artigos/glassmorphism-simd-e1000-virtualbox.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Glassmorphism Sem GPU no Aladdin e Hardening de Rede e1000 no VirtualBox</a>
-          </h2>
-          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-            Engenharia de sistemas operacionais: como implementamos Glassmorphism e desfoque real em Ring 3 no_std sem aceleração por GPU, e eliminamos o timeout de DNS no VirtualBox através do anel MMIO do Intel e1000.
-          </p>
-          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 0.00%">
-            Indicadores citados no relatório: 0.00%
-          </p>
-          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Intel, AMD, Arm, Tenstorrent, SiFive, HPC Research Labs">
-            Ecossistemas: <span class="text-slate-300">Intel, AMD, Arm, Tenstorrent, SiFive, HPC Research Labs</span>
-          </p>
-        </div>
-        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="compute-simd" title="Filtrar por Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute &amp; SIMD</button><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
-          <a href="/artigos/glassmorphism-simd-e1000-virtualbox.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
-            <span>Ler artigo</span>
-            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-          </a>
-        </div>
-      </article>
-
-      <!-- Card: resiliencia-vfs-multiparticao-fat32-ext2 -->
-      <article data-article-card data-categories="microkernel-security" data-search="vfs resiliente: coexistência fat32 e ext2 no jinn os como o microkernel jinn os implementa um sistema de arquivos virtual (vfs) com suporte simultâneo a partições fat32 e ext2 com cache de blocos lru. armazenamento &amp; kernel zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
-        <div>
-          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-blue-400 mb-3">
-            <span class="bg-blue-950 border border-blue-800 px-2.5 py-0.5 rounded-full font-semibold">ARMAZENAMENTO &amp; KERNEL</span>
-            <div class="flex items-center gap-2 text-slate-400">
-              <time datetime="2026-11-24">24 Nov 2026</time>
-              <span>•</span>
-              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>2 min</span>
-            </div>
-          </div>
-          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-blue-300 transition-colors leading-snug">
-            <a href="/artigos/resiliencia-vfs-multiparticao-fat32-ext2.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">VFS Resiliente: Coexistência FAT32 e Ext2 no Jinn OS</a>
-          </h2>
-          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-            Como o microkernel Jinn OS implementa um sistema de arquivos virtual (VFS) com suporte simultâneo a partições FAT32 e Ext2 com cache de blocos LRU.
-          </p>
-          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável">
-            Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável
-          </p>
-          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure">
-            Ecossistemas: <span class="text-slate-300">Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure</span>
-          </p>
-        </div>
-        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
-          <a href="/artigos/resiliencia-vfs-multiparticao-fat32-ext2.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
-            <span>Ler artigo</span>
-            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-          </a>
-        </div>
-      </article>
-
-      <!-- Card: navegador-web-nativo-microkernel-jinn -->
-      <article data-article-card data-categories="fastpath-ipc-net microkernel-security" data-search="navegador web nativo no microkernel jinn os — jinn browser como construímos o jinn browser: um navegador web completo em rust no_std executando em ring 3 com suporte a http/1.1, motor css em cascata, layout flexbox e runtime js reativo. jinn browser zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
-        <div>
-          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-rose-400 mb-3">
-            <span class="bg-rose-950 border border-rose-800 px-2.5 py-0.5 rounded-full font-semibold">JINN BROWSER</span>
-            <div class="flex items-center gap-2 text-slate-400">
-              <time datetime="2026-11-24">24 Nov 2026</time>
-              <span>•</span>
-              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>3 min</span>
-            </div>
-          </div>
-          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-rose-300 transition-colors leading-snug">
-            <a href="/artigos/navegador-web-nativo-microkernel-jinn.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Navegador Web Nativo no Microkernel Jinn OS — Jinn Browser</a>
-          </h2>
-          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-            Como construímos o Jinn Browser: um navegador web completo em Rust no_std executando em Ring 3 com suporte a HTTP/1.1, motor CSS em cascata, layout flexbox e runtime JS reativo.
-          </p>
-          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 370 KiB, 3 us">
-            Indicadores citados no relatório: 370 KiB, 3 us
-          </p>
-          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Cloudflare, Akamai, Huawei, RISC-V International, Local Edge Gateways, Red Hat">
-            Ecossistemas: <span class="text-slate-300">Cloudflare, Akamai, Huawei, RISC-V International, Local Edge Gateways, Red Hat</span>
-          </p>
-        </div>
-        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
-          <a href="/artigos/navegador-web-nativo-microkernel-jinn.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
-            <span>Ler artigo</span>
-            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-          </a>
-        </div>
-      </article>
-
-      <!-- Card: isolamento-drivers-ring3-supervisor-jaha -->
-      <article data-article-card data-categories="microkernel-security" data-search="isolamento de drivers e supervisor jaha 1.2 como o microkernel jinn os isola drivers de dispositivos em ring 3 e utiliza a máquina de estados jaha 1.2 com circuit-breaker para tolerância extrema a falhas. microkernel zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
-        <div>
-          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-amber-400 mb-3">
-            <span class="bg-amber-950 border border-amber-800 px-2.5 py-0.5 rounded-full font-semibold">MICROKERNEL</span>
-            <div class="flex items-center gap-2 text-slate-400">
-              <time datetime="2026-11-24">24 Nov 2026</time>
-              <span>•</span>
-              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>2 min</span>
-            </div>
-          </div>
-          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-amber-300 transition-colors leading-snug">
-            <a href="/artigos/isolamento-drivers-ring3-supervisor-jaha.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Isolamento de Drivers e Supervisor JAHA 1.2</a>
-          </h2>
-          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-            Como o microkernel Jinn OS isola drivers de dispositivos em Ring 3 e utiliza a máquina de estados JAHA 1.2 com circuit-breaker para tolerância extrema a falhas.
-          </p>
-          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 100%, 70%">
-            Indicadores citados no relatório: 100%, 70%
-          </p>
-          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure">
-            Ecossistemas: <span class="text-slate-300">Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure</span>
-          </p>
-        </div>
-        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
-          <a href="/artigos/isolamento-drivers-ring3-supervisor-jaha.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
-            <span>Ler artigo</span>
-            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-          </a>
-        </div>
-      </article>
-
-      <!-- Card: compositor-aladdin-zero-gpu-frosted-glass -->
-      <article data-article-card data-categories="compute-simd" data-search="compositor aladdin: frosted glass e zero-gpu em rust como construímos o compositor gráfico aladdin desktop com efeitos visuais contemporâneos, sombras e frosted glass sem acelerador 3d e com zero alocações de heap por quadro. computação gráfica &amp; ui heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
-        <div>
-          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-purple-400 mb-3">
-            <span class="bg-purple-950 border border-purple-800 px-2.5 py-0.5 rounded-full font-semibold">COMPUTAÇÃO GRÁFICA &amp; UI</span>
-            <div class="flex items-center gap-2 text-slate-400">
-              <time datetime="2026-11-24">24 Nov 2026</time>
-              <span>•</span>
-              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>2 min</span>
-            </div>
-          </div>
-          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-purple-300 transition-colors leading-snug">
-            <a href="/artigos/compositor-aladdin-zero-gpu-frosted-glass.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Compositor Aladdin: Frosted Glass e Zero-GPU em Rust</a>
-          </h2>
-          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-            Como construímos o compositor gráfico Aladdin Desktop com efeitos visuais contemporâneos, sombras e frosted glass sem acelerador 3D e com zero alocações de heap por quadro.
-          </p>
-          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 98%, 0.00%, 60 FPS">
-            Indicadores citados no relatório: 98%, 0.00%, 60 FPS
-          </p>
-          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Intel, AMD, Arm, Tenstorrent, SiFive, HPC Research Labs">
-            Ecossistemas: <span class="text-slate-300">Intel, AMD, Arm, Tenstorrent, SiFive, HPC Research Labs</span>
-          </p>
-        </div>
-        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="compute-simd" title="Filtrar por Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute &amp; SIMD</button></div>
-          <a href="/artigos/compositor-aladdin-zero-gpu-frosted-glass.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
-            <span>Ler artigo</span>
-            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
-          </a>
-        </div>
-      </article>
-
-      <!-- Card: arquitetura-tls13-nostd-soberana -->
-      <article data-article-card data-categories="microkernel-security fastpath-ipc-net compute-simd" data-search="pilha criptográfica soberana: tls 1.3 e chacha20-poly1305 em bare-metal rust como implementamos tls 1.3 (rfc 8446), key schedule hkdf e chacha20-poly1305 em rust puro sem biblioteca padrão (#![no_std]) para o microkernel jinn os. criptografia zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens sovereign &amp; civic infrastructure zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai huawei risc-v international local edge gateways heterogeneous compute, simd &amp; zero-gpu acceleration intel amd arm tenstorrent sifive hpc research labs" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
-        <div>
-          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-emerald-400 mb-3">
-            <span class="bg-emerald-950 border border-emerald-800 px-2.5 py-0.5 rounded-full font-semibold">CRIPTOGRAFIA</span>
-            <div class="flex items-center gap-2 text-slate-400">
-              <time datetime="2026-11-24">24 Nov 2026</time>
-              <span>•</span>
-              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>4 min</span>
-            </div>
-          </div>
-          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-emerald-300 transition-colors leading-snug">
-            <a href="/artigos/arquitetura-tls13-nostd-soberana.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Pilha Criptográfica Soberana: TLS 1.3 e ChaCha20-Poly1305 em Bare-Metal Rust</a>
-          </h2>
-          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
-            Como implementamos TLS 1.3 (RFC 8446), Key Schedule HKDF e ChaCha20-Poly1305 em Rust puro sem biblioteca padrão (#![no_std]) para o microkernel Jinn OS.
-          </p>
-          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 100%">
-            Indicadores citados no relatório: 100%
-          </p>
-          <p class="text-[11px] font-mono text-slate-500 mt-1 truncate" title="Ecossistemas relacionados: Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure, Cloudflare">
-            Ecossistemas: <span class="text-slate-300">Red Hat, Canonical, Google, Siemens, Sovereign &amp; Civic Infrastructure, Cloudflare</span>
-          </p>
-        </div>
-        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button><button type="button" data-eco-badge="fastpath-ipc-net" title="Filtrar por Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400">IPC &amp; Redes Fast-Path</button><button type="button" data-eco-badge="compute-simd" title="Filtrar por Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400">Compute &amp; SIMD</button></div>
-          <a href="/artigos/arquitetura-tls13-nostd-soberana.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
             <span>Ler artigo</span>
             <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
           </a>
@@ -787,7 +832,9 @@
       const progressBar = document.getElementById('scroll-progress');
       const backToTop = document.getElementById('back-to-top');
       const searchInput = document.getElementById('article-search');
+      const labPills = Array.from(document.querySelectorAll('.lab-pill'));
       const pills = Array.from(document.querySelectorAll('.filter-pill'));
+      const labBadges = Array.from(document.querySelectorAll('[data-lab-badge]'));
       const ecoBadges = Array.from(document.querySelectorAll('[data-eco-badge]'));
       const cards = Array.from(document.querySelectorAll('[data-article-card]'));
       const visibleCount = document.getElementById('visible-count');
@@ -795,6 +842,7 @@
       const emptyState = document.getElementById('empty-state');
       const resetBtn = document.getElementById('reset-filters-btn');
 
+      let activeLab = 'all';
       let activeFilter = 'all';
 
       function updateScrollUI() {
@@ -825,11 +873,13 @@
         const q = (searchInput ? searchInput.value : '').trim().toLowerCase();
         let shown = 0;
         cards.forEach(function (card) {
+          const labs = (card.getAttribute('data-labs') || '').split(' ');
           const cats = (card.getAttribute('data-categories') || '').split(' ');
           const text = card.getAttribute('data-search') || '';
+          const matchLab = activeLab === 'all' || labs.includes(activeLab);
           const matchCat = activeFilter === 'all' || cats.includes(activeFilter);
           const matchText = !q || text.includes(q);
-          if (matchCat && matchText) {
+          if (matchLab && matchCat && matchText) {
             card.classList.remove('hidden');
             shown++;
           } else {
@@ -839,6 +889,31 @@
         if (visibleCount) visibleCount.textContent = String(shown);
         if (articlesCounter) articlesCounter.textContent = shown + ' de ' + cards.length + ' publicações';
         if (emptyState) emptyState.classList.toggle('hidden', shown > 0);
+      }
+
+      function syncUrlParams() {
+        if (window.history && window.history.replaceState) {
+          const url = new URL(window.location.href);
+          if (activeLab === 'all') url.searchParams.delete('lab'); else url.searchParams.set('lab', activeLab);
+          if (activeFilter === 'all') url.searchParams.delete('eco'); else url.searchParams.set('eco', activeFilter);
+          window.history.replaceState({}, '', url.toString());
+        }
+      }
+
+      function selectLabFilter(labId, updateUrl) {
+        activeLab = labId || 'all';
+        labPills.forEach(function (p) {
+          const selected = p.getAttribute('data-lab-filter') === activeLab;
+          p.classList.toggle('border-cyan-500/70', selected);
+          p.classList.toggle('bg-cyan-950/90', selected);
+          p.classList.toggle('text-cyan-300', selected);
+          p.classList.toggle('font-semibold', selected);
+          p.classList.toggle('border-slate-700', !selected);
+          p.classList.toggle('bg-slate-900', !selected);
+          p.classList.toggle('text-slate-300', !selected);
+        });
+        if (updateUrl) syncUrlParams();
+        applyFilters();
       }
 
       function selectEcoFilter(filterId, updateUrl) {
@@ -853,21 +928,28 @@
           p.classList.toggle('bg-slate-900', !selected);
           p.classList.toggle('text-slate-300', !selected);
         });
-        if (updateUrl && window.history && window.history.replaceState) {
-          const url = new URL(window.location.href);
-          if (activeFilter === 'all') {
-            url.searchParams.delete('eco');
-          } else {
-            url.searchParams.set('eco', activeFilter);
-          }
-          window.history.replaceState({}, '', url.toString());
-        }
+        if (updateUrl) syncUrlParams();
         applyFilters();
       }
+
+      labPills.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          selectLabFilter(btn.getAttribute('data-lab-filter') || 'all', true);
+        });
+      });
 
       pills.forEach(function (btn) {
         btn.addEventListener('click', function () {
           selectEcoFilter(btn.getAttribute('data-filter') || 'all', true);
+        });
+      });
+
+      labBadges.forEach(function (badge) {
+        badge.addEventListener('click', function (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          selectLabFilter(badge.getAttribute('data-lab-badge') || 'all', true);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
         });
       });
 
@@ -884,11 +966,17 @@
       if (resetBtn) {
         resetBtn.addEventListener('click', function () {
           if (searchInput) searchInput.value = '';
+          selectLabFilter('all', true);
           selectEcoFilter('all', true);
         });
       }
 
-      const initialEco = new URLSearchParams(window.location.search).get('eco');
+      const params = new URLSearchParams(window.location.search);
+      const initialLab = params.get('lab');
+      const initialEco = params.get('eco');
+      if (initialLab && labPills.some(function (p) { return p.getAttribute('data-lab-filter') === initialLab; })) {
+        selectLabFilter(initialLab, false);
+      }
       if (initialEco && pills.some(function (p) { return p.getAttribute('data-filter') === initialEco; })) {
         selectEcoFilter(initialEco, false);
       }

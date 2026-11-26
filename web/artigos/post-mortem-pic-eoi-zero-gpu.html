@@ -50,12 +50,22 @@
   <script type="application/ld+json" id="jinn-techarticle-jsonld">
 {
   "@context": "https://schema.org",
-  "@type": "TechArticle",
+  "@type": [
+    "TechArticle",
+    "NewsArticle"
+  ],
   "headline": "Post-Mortem: EOI Incondicional no PIC 8259A e Zero-GPU SIMD",
   "description": "Como resolvemos travamentos de interrupção e atingimos 0.00% de CPU em repouso no microkernel Rust Jinn OS através de EOI incondicional no PIC 8259A e kernels AVX2 no JHCS.",
-  "datePublished": "2026-11-24T12:19:56Z",
-  "dateModified": "2026-11-24T12:19:56Z",
+  "image": [
+    "https://jinn-os.dev.br/assets/wallpaper.jpg"
+  ],
+  "datePublished": "2026-11-26T12:10:22Z",
+  "dateModified": "2026-11-26T12:10:22Z",
   "inLanguage": "pt-BR",
+  "articleSection": [
+    "Post-Mortems & Failure Logs",
+    "Compute Lab"
+  ],
   "author": {
     "@type": "Person",
     "name": "Geovane da Conceição Estanislau",
@@ -415,7 +425,7 @@ pub extern "x86-interrupt" fn ps2_mouse_handler(_stack_frame: InterruptStackFram
       <!-- Jinn Ecosystem & Open Collaboration Block (Auto-Generated) -->
       <section aria-labelledby="ecosystems-collaboration-heading" class="not-prose my-10 p-6 rounded-xl bg-slate-900/75 border border-slate-800 space-y-5">
         <div class="space-y-2">
-          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Open Engineering Outreach</p>
+          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Engineering Observatory • Open Collaboration</p>
           <h3 id="ecosystems-collaboration-heading" class="text-lg sm:text-xl font-bold text-white">
             Applicable Ecosystems &amp; Open Collaboration
           </h3>
@@ -425,6 +435,8 @@ pub extern "x86-interrupt" fn ps2_mouse_handler(_stack_frame: InterruptStackFram
         </div>
 
         <div class="flex flex-wrap gap-2">
+          <a href="/artigos/?lab=post-mortems" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-rose-950/80 border-rose-700/70 text-rose-300 hover:border-rose-400"><span>Post-Mortems &amp; Failure Logs</span></a>
+          <a href="/artigos/?lab=compute-lab" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400"><span>Compute Lab</span></a>
           <a href="/artigos/?eco=compute-simd" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400"><span>Compute &amp; SIMD</span><span class="opacity-70">&bull; Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration</span></a>
           <a href="/artigos/?eco=zero-idle-efficiency" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400"><span>Zero-Idle &amp; SMP</span><span class="opacity-70">&bull; Energy-Proportional Runtime, SMP Accounting &amp; Low-Overhead Scheduling</span></a>
           <a href="/artigos/?eco=microkernel-security" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400"><span>Microkernel &amp; Segurança</span><span class="opacity-70">&bull; Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity</span></a>
@@ -465,8 +477,11 @@ pub extern "x86-interrupt" fn ps2_mouse_handler(_stack_frame: InterruptStackFram
             <a href="https://github.com/GeovaneEstanislau/jhcs-rs" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-purple-400 text-slate-200 hover:text-purple-300 transition-colors">
               GitHub: jhcs-rs
             </a>
-            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/issues/new/choose" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
-              Propor Benchmark / Issue
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/ENGINEERING_STATUS_AND_LIMITATIONS.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-amber-400 text-slate-200 hover:text-amber-300 transition-colors">
+              Fronteira Honesta &amp; Evidências
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/strategy/OPPORTUNITY_RADAR_50.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
+              Radar &amp; 6ª Trilha Aberta
             </a>
             <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-cyan-950/90 border border-cyan-600/70 hover:bg-cyan-900 text-cyan-200 transition-colors">
               Contato Técnico &amp; Pilotos

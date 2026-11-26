@@ -98,10 +98,14 @@
           <span class="text-slate-600">|</span>
           <a href="/artigos/"
             class="hover:text-cyan-300 transition-colors flex items-center gap-1 text-cyan-400 font-medium"
-            title="Artigos Técnicos e Auditorias de Engenharia">
+            title="Jinn Engineering Observatory — 6 Bancadas">
             <i data-lucide="book-open" class="w-3.5 h-3.5"></i>
-            <span>Artigos</span>
+            <span>Observatory (6 Labs)</span>
           </a>
+          <span class="text-slate-600">|</span>
+          <a href="/artigos/?lab=compute-lab" class="hover:text-purple-300 transition-colors text-purple-300">Compute Lab</a>
+          <span class="text-slate-600">|</span>
+          <a href="/artigos/?lab=efficiency-lab" class="hover:text-emerald-300 transition-colors text-emerald-300">Efficiency Lab</a>
           <span class="text-slate-600">|</span>
           <a href="/feed.xml" target="_blank" rel="alternate" type="application/rss+xml"
             class="hover:text-amber-300 transition-colors flex items-center gap-1 text-amber-400 font-medium"
@@ -148,7 +152,15 @@
       <div>VFS Storage : <span class="text-white">FAT32 (/disk) + Ext2</span></div>
       <div>Segurança : <span class="text-emerald-400">Ring 0 / Ring 3 W^X</span></div>
       <div class="mt-2 text-xs text-slate-400 border-t border-slate-700/50 pt-1">
-        Dominio : <span class="text-cyan-300">jinn-os.dev.br</span>
+        Dominio : <a href="/artigos/" class="text-cyan-300 hover:underline">jinn-os.dev.br/artigos/</a>
+      </div>
+      <div class="mt-1.5 flex flex-wrap gap-1.5 text-[10px]">
+        <a href="/artigos/?lab=performance-lab" class="px-1.5 py-0.5 rounded bg-cyan-950/80 border border-cyan-700/50 text-cyan-300 hover:border-cyan-400">Performance</a>
+        <a href="/artigos/?lab=efficiency-lab" class="px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-700/50 text-emerald-300 hover:border-emerald-400">Efficiency</a>
+        <a href="/artigos/?lab=compute-lab" class="px-1.5 py-0.5 rounded bg-purple-950/80 border border-purple-700/50 text-purple-300 hover:border-purple-400">Compute</a>
+        <a href="/artigos/?lab=security-lab" class="px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-700/50 text-amber-300 hover:border-amber-400">Security</a>
+        <a href="/artigos/?lab=architecture-rfcs" class="px-1.5 py-0.5 rounded bg-indigo-950/80 border border-indigo-700/50 text-indigo-300 hover:border-indigo-400">RFCs</a>
+        <a href="/artigos/?lab=post-mortems" class="px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-700/50 text-rose-300 hover:border-rose-400">Post-Mortems</a>
       </div>
     </aside>
 
@@ -488,6 +500,15 @@
         <div class="dock-reflection bg-rose-500"></div>
       </div>
 
+      <!-- Ícone Observatory (6 Bancadas) -->
+      <div class="dock-item" data-open-window="win-observatory" data-target="win-observatory">
+        <div class="dock-tooltip">Observatory (6 Bancadas)</div>
+        <div class="dock-icon bg-gradient-to-tr from-sky-600 to-indigo-500">
+          <i data-lucide="flask-conical" class="w-6 h-6 text-white"></i>
+        </div>
+        <div class="dock-reflection bg-sky-500"></div>
+      </div>
+
       <!-- Ícone GitHub -->
       <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer"
         class="dock-item" title="Repositório Oficial no GitHub">
@@ -502,6 +523,61 @@
     <!-- =========================================================================
          6. Janelas Modais Flutuantes do Sistema Operacional (Window Manager)
          ========================================================================= -->
+
+    <!-- Janela 0: Jinn Engineering Observatory (6 Bancadas Técnicas) -->
+    <div class="os-window hidden" id="win-observatory" style="top: 60px; left: 100px; width: 760px; height: 540px;">
+      <div class="os-window-header">
+        <div class="os-window-title">
+          <i data-lucide="flask-conical" class="w-4 h-4 text-cyan-400"></i>
+          <span>Jinn Engineering Observatory — 6 Bancadas Técnicas &amp; Canal Aberto</span>
+        </div>
+        <div class="os-window-controls">
+          <div class="win-btn min" title="Minimizar"></div>
+          <div class="win-btn max" title="Maximizar"></div>
+          <div class="win-btn close" title="Fechar"></div>
+        </div>
+      </div>
+      <div class="os-window-content space-y-4">
+        <div>
+          <h2 class="text-lg font-bold text-white">Jinn Engineering Observatory</h2>
+          <p class="text-xs text-slate-300 leading-relaxed mt-1">
+            Laboratório público de engenharia verificável em <strong>x86_64 Rust <code>#![no_std]</code></strong>, compositor <strong>Aladdin</strong> em Ring 3 e agendador heterogêneo portátil <strong>jhcs-rs</strong>.
+          </p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          <a href="/artigos/?lab=performance-lab" class="p-3 rounded-lg bg-slate-900 border border-cyan-500/30 hover:border-cyan-400 transition-colors">
+            <div class="font-bold text-cyan-300 font-mono">1. Performance Lab</div>
+            <div class="text-slate-400 mt-1">HotRouteTable L2/L3, anéis SPSC zero-copy e cache LRU.</div>
+          </a>
+          <a href="/artigos/?lab=efficiency-lab" class="p-3 rounded-lg bg-slate-900 border border-emerald-500/30 hover:border-emerald-400 transition-colors">
+            <div class="font-bold text-emerald-300 font-mono">2. Efficiency Lab</div>
+            <div class="text-slate-400 mt-1">Zero-Idle (0.00% AP HLT em QEMU), Lazy TTL e 64M RAM.</div>
+          </a>
+          <a href="/artigos/?lab=compute-lab" class="p-3 rounded-lg bg-slate-900 border border-purple-500/30 hover:border-purple-400 transition-colors">
+            <div class="font-bold text-purple-300 font-mono">3. Compute Lab</div>
+            <div class="text-slate-400 mt-1">jhcs-rs DAG Broker, AVX2 SIMD breakeven e wgpu shaders.</div>
+          </a>
+          <a href="/artigos/?lab=security-lab" class="p-3 rounded-lg bg-slate-900 border border-amber-500/30 hover:border-amber-400 transition-colors">
+            <div class="font-bold text-amber-300 font-mono">4. Security Lab</div>
+            <div class="text-slate-400 mt-1">Isolamento Ring 3, PML4 W^X, TLS 1.3 no_std e JinnWall.</div>
+          </a>
+          <a href="/artigos/?lab=architecture-rfcs" class="p-3 rounded-lg bg-slate-900 border border-indigo-500/30 hover:border-indigo-400 transition-colors">
+            <div class="font-bold text-indigo-300 font-mono">5. Architecture &amp; RFCs</div>
+            <div class="text-slate-400 mt-1">FAT32 .TMP/.BAK, Simbad Profile, .jpkg e Jinn Browser.</div>
+          </a>
+          <a href="/artigos/?lab=post-mortems" class="p-3 rounded-lg bg-slate-900 border border-rose-500/30 hover:border-rose-400 transition-colors">
+            <div class="font-bold text-rose-300 font-mono">6. Post-Mortems &amp; Failure Logs</div>
+            <div class="text-slate-400 mt-1">Causas raiz reais (PIC EOI, Poly1305 carry, PS/2 IRQ12).</div>
+          </a>
+        </div>
+        <div class="pt-2 border-t border-slate-800 flex flex-wrap gap-2 text-xs font-mono">
+          <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/ENGINEERING_STATUS_AND_LIMITATIONS.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded bg-slate-900 border border-slate-700 hover:border-amber-400 text-amber-300">Limitações Honestas</a>
+          <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/STRATEGY_IP_AND_LICENSING.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded bg-slate-900 border border-slate-700 hover:border-cyan-400 text-cyan-300">IP &amp; Licenciamento</a>
+          <a href="https://github.com/GeovaneEstanislau/jhcs-rs" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded bg-slate-900 border border-slate-700 hover:border-purple-400 text-purple-300">jhcs-rs</a>
+          <a href="https://github.com/GeovaneEstanislau/Aladdin" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded bg-slate-900 border border-slate-700 hover:border-emerald-400 text-emerald-300">Aladdin</a>
+        </div>
+      </div>
+    </div>
 
     <!-- Janela 1: A História do Jinn OS -->
     <div class="os-window hidden" id="win-history" style="top: 70px; left: 60px; width: 740px; height: 560px;">

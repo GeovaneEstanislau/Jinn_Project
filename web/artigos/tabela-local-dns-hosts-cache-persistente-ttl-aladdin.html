@@ -57,12 +57,22 @@
   <script type="application/ld+json" id="jinn-techarticle-jsonld">
 {
   "@context": "https://schema.org",
-  "@type": "TechArticle",
+  "@type": [
+    "TechArticle",
+    "NewsArticle"
+  ],
   "headline": "Tabela Local de DNS em 3 Camadas: Hosts Estáticos, Cache LRU Persistente com TTL e Painel Aladdin",
   "description": "Arquitetura Zero-Idle da Tabela Local de DNS no Jinn OS e Aladdin Desktop: resolução em 3 estágios (/disk/hosts, Cache LRU de 128 registros A alinhado a 64 bytes com /disk/dns_cache.db via RTC UNIX e cascata upstream com Stale-If-Error), syscalls 93–96 Zero-Trust e prova PCAP em Cold-Reboot com 0 pacotes UDP.",
+  "image": [
+    "https://jinn-os.dev.br/assets/wallpaper.jpg"
+  ],
   "datePublished": "2026-11-26T01:25:00Z",
   "dateModified": "2026-11-26T01:25:00Z",
   "inLanguage": "pt-BR",
+  "articleSection": [
+    "Architecture & RFCs",
+    "Efficiency Lab"
+  ],
   "author": {
     "@type": "Person",
     "name": "Geovane da Conceição Estanislau",
@@ -337,7 +347,7 @@
       <!-- Jinn Ecosystem & Open Collaboration Block (Auto-Generated) -->
       <section aria-labelledby="ecosystems-collaboration-heading" class="not-prose my-10 p-6 rounded-xl bg-slate-900/75 border border-slate-800 space-y-5">
         <div class="space-y-2">
-          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Open Engineering Outreach</p>
+          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Engineering Observatory • Open Collaboration</p>
           <h3 id="ecosystems-collaboration-heading" class="text-lg sm:text-xl font-bold text-white">
             Applicable Ecosystems &amp; Open Collaboration
           </h3>
@@ -347,6 +357,8 @@
         </div>
 
         <div class="flex flex-wrap gap-2">
+          <a href="/artigos/?lab=architecture-rfcs" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400"><span>Architecture &amp; RFCs</span></a>
+          <a href="/artigos/?lab=efficiency-lab" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400"><span>Efficiency Lab</span></a>
           <a href="/artigos/?eco=fastpath-ipc-net" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400"><span>IPC &amp; Redes Fast-Path</span><span class="opacity-70">&bull; Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking</span></a>
           <a href="/artigos/?eco=microkernel-security" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400"><span>Microkernel &amp; Segurança</span><span class="opacity-70">&bull; Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity</span></a>
           <a href="/artigos/?eco=compute-simd" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400"><span>Compute &amp; SIMD</span><span class="opacity-70">&bull; Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration</span></a>
@@ -388,8 +400,11 @@
             <a href="https://github.com/GeovaneEstanislau/jhcs-rs" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-purple-400 text-slate-200 hover:text-purple-300 transition-colors">
               GitHub: jhcs-rs
             </a>
-            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/issues/new/choose" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
-              Propor Benchmark / Issue
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/ENGINEERING_STATUS_AND_LIMITATIONS.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-amber-400 text-slate-200 hover:text-amber-300 transition-colors">
+              Fronteira Honesta &amp; Evidências
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/strategy/OPPORTUNITY_RADAR_50.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
+              Radar &amp; 6ª Trilha Aberta
             </a>
             <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-cyan-950/90 border border-cyan-600/70 hover:bg-cyan-900 text-cyan-200 transition-colors">
               Contato Técnico &amp; Pilotos
