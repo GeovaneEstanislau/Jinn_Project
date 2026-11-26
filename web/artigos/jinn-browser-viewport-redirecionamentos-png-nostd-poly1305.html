@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jinn Browser: Viewport Scissor, Redirecionamentos 301–308, PNG #![no_std] e Carry Poly1305 em TLS 1.3 — Jinn OS</title>
+  <meta name="description"
+    content="Correções validadas no commit 1b93f0c para o Jinn Browser em Ring 3: recorte retangular de viewport acima da barra BRCR, cadeia HTTP 301/302/303/307/308 e meta refresh, cache .bss 8x64KiB com decodificador PNG #![no_std], e correção do carry h1 >> 44 em Poly1305::finalize() para fluxos TLS 1.3 acima de 35 KiB (54.762 B).">
+  <link rel="canonical"
+    href="https://jinn-os.dev.br/artigos/jinn-browser-viewport-redirecionamentos-png-nostd-poly1305.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url"
+    content="https://jinn-os.dev.br/artigos/jinn-browser-viewport-redirecionamentos-png-nostd-poly1305.html">
+  <meta property="og:title"
+    content="Jinn Browser: Viewport Scissor, Redirecionamentos 301–308, PNG #![no_std] e Poly1305">
+  <meta property="og:description"
+    content="Do bug de carry Poly1305 >35 KiB ao gerenciador de viewport estrito acima da barra BRCR e decodificador PNG bare-metal em .bss sem alocações na stack (commit 1b93f0c).">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/browser-viewport-jinn-os-tls13.png">
+
+  <!-- Artigo Meta (Indexação Google News / RSS / Feed) -->
+  <meta name="article:tag" content="JINN BROWSER, TLS 1.3, POLY1305, VIEWPORT, PNG NO_STD">
+  <meta name="article:published_time" content="2026-11-26T19:15:00-03:00">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Jinn Engineering Observatory: Schema.org TechArticle (Auto-Generated) -->
+  <script type="application/ld+json" id="jinn-techarticle-jsonld">
+{
+  "@context": "https://schema.org",
+  "@type": [
+    "TechArticle",
+    "NewsArticle"
+  ],
+  "headline": "Jinn Browser: Viewport Scissor, Redirecionamentos 301–308, PNG #![no_std] e Carry Poly1305 em TLS 1.3",
+  "description": "Correções validadas no commit 1b93f0c para o Jinn Browser em Ring 3: recorte retangular de viewport acima da barra BRCR, cadeia HTTP 301/302/303/307/308 e meta refresh, cache .bss 8x64KiB com decodificador PNG #![no_std], e correção do carry h1 >> 44 em Poly1305::finalize() para fluxos TLS 1.3 acima de 35 KiB (54.762 B).",
+  "image": [
+    "https://jinn-os.dev.br/assets/browser-viewport-jinn-os-tls13.png"
+  ],
+  "datePublished": "2026-11-26T19:15:00-03:00",
+  "dateModified": "2026-11-26T19:15:00-03:00",
+  "inLanguage": "pt-BR",
+  "articleSection": [
+    "Security Lab",
+    "Architecture & RFCs"
+  ],
+  "author": {
+    "@type": "Person",
+    "name": "Geovane da Conceição Estanislau",
+    "url": "https://github.com/GeovaneEstanislau"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Jinn Engineering Observatory",
+    "url": "https://jinn-os.dev.br/",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://jinn-os.dev.br/assets/wallpaper.jpg"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://jinn-os.dev.br/artigos/jinn-browser-viewport-redirecionamentos-png-nostd-poly1305.html"
+  },
+  "about": [
+    {
+      "@type": "Thing",
+      "name": "Microkernel Architecture"
+    },
+    {
+      "@type": "Thing",
+      "name": "TLS 1.3 Cryptography"
+    },
+    {
+      "@type": "Thing",
+      "name": "Zero-GPU 2D Compositing"
+    },
+    {
+      "@type": "Thing",
+      "name": "L2/L3 Fast-Path Networking"
+    },
+    {
+      "@type": "Thing",
+      "name": "Zero-Copy IPC"
+    },
+    {
+      "@type": "Thing",
+      "name": "Three-Tier DNS Resolution"
+    },
+    {
+      "@type": "Thing",
+      "name": "Bare-Metal TCP/IP Stack"
+    },
+    {
+      "@type": "Thing",
+      "name": "W^X Memory Enforcement"
+    }
+  ],
+  "mentions": [
+    {
+      "@type": "Organization",
+      "name": "Cloudflare"
+    },
+    {
+      "@type": "Thing",
+      "name": "Sovereign Public Infrastructure"
+    },
+    {
+      "@type": "Organization",
+      "name": "Intel"
+    },
+    {
+      "@type": "Organization",
+      "name": "Red Hat"
+    },
+    {
+      "@type": "Organization",
+      "name": "STMicroelectronics"
+    },
+    {
+      "@type": "Organization",
+      "name": "RISC-V International"
+    },
+    {
+      "@type": "Thing",
+      "name": "Academic Systems Research Labs"
+    },
+    {
+      "@type": "Organization",
+      "name": "Akamai"
+    },
+    {
+      "@type": "Organization",
+      "name": "Google"
+    },
+    {
+      "@type": "Organization",
+      "name": "Huawei"
+    },
+    {
+      "@type": "Organization",
+      "name": "LF Edge"
+    },
+    {
+      "@type": "Thing",
+      "name": "Industrial Automation Integrators"
+    }
+  ],
+  "keywords": "Jinn OS, Microkernel, Rust no_std, x86_64, JINN BROWSER, TLS 1.3, POLY1305, VIEWPORT, PNG NO_STD, Microkernel Architecture, TLS 1.3 Cryptography, Zero-GPU 2D Compositing, L2/L3 Fast-Path Networking, Zero-Copy IPC, SPSC Ring Buffer, io_uring, HotRouteTable, 3-Tier DNS"
+}
+  </script>
+  <!-- /Jinn Engineering Observatory: Schema.org TechArticle -->
+</head>
+
+<body class="bg-slate-950 text-slate-200 min-h-screen antialiased selection:bg-cyan-500/30">
+  <header class="border-b border-slate-800 bg-slate-900/70 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-4xl mx-auto px-6 h-14 flex items-center justify-between">
+      <a href="/artigos/?lab=architecture-rfcs" class="flex items-center gap-2 hover:text-cyan-400 transition-colors text-xs font-mono">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span>Observatory • Jinn Browser &amp; TLS 1.3</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="/feed.xml" target="_blank" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS</span>
+        </a>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project/commit/1b93f0c" target="_blank" rel="noopener noreferrer" class="text-cyan-300 hover:text-white">Commit 1b93f0c</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-6 py-10 space-y-8">
+    <article class="prose prose-invert prose-slate max-w-none space-y-6">
+      <div class="space-y-3 border-b border-slate-800 pb-6">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400">
+          <span class="bg-rose-950 border border-rose-800 text-rose-300 px-2.5 py-0.5 rounded-full">JINN BROWSER</span>
+          <span class="bg-emerald-950 border border-emerald-800 text-emerald-300 px-2.5 py-0.5 rounded-full">TLS 1.3 • POLY1305 • PNG #![no_std]</span>
+          <span class="text-slate-500">•</span>
+          <time datetime="2026-11-26">26 Nov 2026</time>
+          <span class="text-slate-500">•</span>
+          <span class="text-slate-400">Commit 1b93f0c</span>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white leading-tight">
+          Gerenciador de Viewport, Cadeias de Redirecionamento, PNG <code>#![no_std]</code> em <code>.bss</code> e Correção de Carry Poly1305 no Jinn Browser
+        </h1>
+        <p class="text-base sm:text-lg text-slate-300 leading-relaxed">
+          O commit <code>1b93f0c</code> (<code>828</code> inserções, <code>163</code> remoções em <code>browser.rs</code>, <code>font.rs</code>, <code>main.rs</code>, <code>apps/ola-mundo/src/tls.rs</code> e <code>src/net/tls13.rs</code>) consolida quatro avanços críticos no navegador nativo Ring 3 do <strong>Jinn OS</strong>: recorte espacial estrito de viewport, seguimento de redirecionamentos HTTP e HTML com atualização de origem, renderização de imagens remotas PNG em buffers estáticos <code>.bss</code> e correção da propagação de <em>carry</em> de 44 bits no autenticador AEAD <code>Poly1305</code> para respostas HTTPS maiores que <code>35 KiB</code>.
+        </p>
+      </div>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">1. Diagnóstico Detalhado do que foi Levantado</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          A inspeção cruzada de renderização no compositor <strong>Aladdin</strong> e capturas de telemetria TLS 1.3 durante navegações reais em ambiente QEMU revelou quatro falhas independentes que degradavam tanto a legibilidade visual quanto a integridade criptográfica:
+        </p>
+        <ul class="list-disc list-inside space-y-2 text-sm text-slate-300 leading-relaxed">
+          <li>
+            <strong>Vazamento visual sobre a barra de rodapé <code>BRCR</code>:</strong> textos, caixas, linhas horizontais (<code>&lt;hr&gt;</code>), imagens e a própria barra de rolagem vertical ultrapassavam o limite inferior da área de conteúdo porque o recorte utilizava apenas uma constante fixa (<code>CLIP_BOTTOM</code>) sem considerar dinamicamente a faixa de <code>14 px</code> da barra de telemetria <code>BRCR</code> nem comprimir o texto em janelas estreitas (<code>&lt; 460 px</code>).
+          </li>
+          <li>
+            <strong>Colisão da barra de endereços com a pílula de status:</strong> sem recorte retangular horizontal (<em>scissor</em> X), URLs longas invadiam visualmente o indicador lateral <code>TLS1.3</code> / <code>e1000</code> no chrome superior. Além disso, a heurística <code>is_web_domain</code> confundia extensões de recursos estáticos (<code>.png</code>, <code>.jpg</code>, <code>.bmp</code>, <code>.css</code>, <code>.js</code>) com domínios web.
+          </li>
+          <li>
+            <strong>Quebra de redirecionamentos e ausência de decodificador PNG remoto:</strong> apenas <code>301</code>/<code>302</code> eram parcialmente tratados em <code>fetch_http_document_inner</code>, deixando <code>303</code>, <code>307</code>, <code>308</code> e <code>&lt;meta http-equiv="refresh"&gt;</code> sem acompanhamento consistente de <code>active_url</code> para links relativos e histórico. Do lado gráfico, faltavam busca antecipada de <code>&lt;img&gt;</code> remotos e decodificação PNG nativa em <code>#![no_std]</code>.
+          </li>
+          <li>
+            <strong>Falha AEAD no <code>Poly1305::finalize()</code> após ~<code>37 KB</code> em TLS 1.3:</strong> tanto em <code>apps/ola-mundo/src/tls.rs</code> quanto em <code>src/net/tls13.rs</code>, após reduzir <code>h0 &gt;&gt; 44</code> para <code>h1</code>, o acumulador não propagava o <em>carry</em> subsequente de <code>h1 &gt;&gt; 44</code> para <code>h2</code> antes da redução condicional módulo <code>2^130 - 5</code>, e empacotava os três limbs usando operador bit-a-bit OR (<code>|</code>) em vez de soma modular (<code>wrapping_add</code>), corrompendo a tag MAC em fluxos multi-registro superiores a ~<code>35 KiB</code> (como a carga de <code>54.762 B</code> de <code>https://jinn-os.dev.br</code>).
+          </li>
+        </ul>
+      </section>
+
+      <section class="space-y-5">
+        <h2 class="text-2xl font-bold text-white">2. Melhorias Implementadas no Código (Commit <code>1b93f0c</code>)</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-slate-300">
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-cyan-300">Viewport Scissor &amp; Layout (<code>font.rs</code> / <code>browser.rs</code>)</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li>Adicionadas <code>draw_char_clipped_rect</code> e <code>draw_text_clipped_rect</code> com limites explícitos <code>max_x</code>, <code>min_y</code> e <code>max_y</code>.</li>
+              <li>Introduzida <code>content_clip_bottom(h)</code> (<code>h.saturating_sub(15)</code> para <code>h &gt;= 100</code>), confinando texto, caixas, <code>&lt;img&gt;</code> e scrollbar acima da barra <code>BRCR</code> de <code>14 px</code>.</li>
+              <li>Panning e recorte da URL antes de <code>url_max_x</code> (estritamente à esquerda da pílula <code>TLS1.3</code>/<code>e1000</code>), versão compacta de <code>BRCR</code> abaixo de <code>460 px</code> e ampliação de <code>MAX_RENDER_LINES</code> para <code>512</code>.</li>
+            </ul>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-emerald-300">Redirecionamentos Multi-Hop (<code>main.rs</code> / <code>browser.rs</code>)</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li><code>fetch_http_document_inner</code> acompanha <code>301</code>, <code>302</code>, <code>303</code>, <code>307</code> e <code>308</code> (até 5 saltos) resolvendo <code>Location</code> relativo via <code>resolve_relative_url</code>.</li>
+              <li>Suporte a <code>&lt;meta http-equiv="refresh" content="N;url=..."&gt;</code> (até 2 saltos via <code>extract_meta_refresh_url</code>).</li>
+              <li>Propagação de <code>active_url</code> final na barra de endereço, links relativos, histórico e <code>BrowserCacheStore</code>.</li>
+            </ul>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-purple-300">PNG <code>#![no_std]</code> &amp; Cache Estático <code>.bss</code></h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li><code>REMOTE_IMG_CACHE</code> estático em <code>.bss</code> com <code>8</code> slots de <code>64 KiB</code> (<code>65.536</code> B), indexados por hash FNV-1a duplo.</li>
+              <li><code>prefetch_page_images</code> busca até <code>6</code> imagens únicas por página antes do <code>recompute_layout</code> com dimensionamento proporcional e recorte por scroll.</li>
+              <li><code>decode_png</code> puro <code>#![no_std]</code> (<code>IHDR</code>, <code>PLTE</code>, <code>tRNS</code>, <code>IDAT</code> via <code>deflate</code>), <code>color_type</code> 0/2/3/4/6 (bit depth 8) e filtros de scanline <code>0..4</code> usando buffers <code>IMG_PNG_IDAT_BUF</code> (<code>64 KiB</code>) e <code>IMG_PNG_ZLIB_OUT</code> (<code>512 KiB</code>) em <code>.bss</code>.</li>
+            </ul>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-amber-300">Carry 44 Bits no <code>Poly1305::finalize()</code></h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li>Propagação explícita de <code>c = self.h1 &gt;&gt; 44</code> para <code>self.h2</code> em <code>apps/ola-mundo/src/tls.rs</code> e <code>src/net/tls13.rs</code>.</li>
+              <li>Substituição do empacotamento por OR binário (<code>|</code>) por <code>wrapping_add</code> nos 130 bits antes da soma do <code>pad</code> de 128 bits.</li>
+              <li>Novo log diagnóstico <code>[TLS-HTTP-RX] Falha AEAD</code> com <code>suite</code>, <code>seq</code>, <code>pos</code>, <code>rec_len</code>, <code>plain</code> e tag em hexadecimal.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-5">
+        <h2 class="text-2xl font-bold text-white">3. Evidências Visuais Reais de Execução no QEMU</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 not-prose">
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/browser-viewport-jinn-os-tls13.png" alt="Jinn Browser em tela cheia carregando https://jinn-os.dev.br sobre TLS 1.3 sem colisão na barra de URL e acima da barra BRCR" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 1 (<code>visual_jinn_os_img.png</code>): Navegação HTTPS/TLS 1.3 para <code>https://jinn-os.dev.br</code> (<code>54.762 B</code> decifrados após correção Poly1305), com pílula <code>TLS1.3</code> intacta e conteúdo estritamente acima de <code>BRCR: 0.134% [HIBERNATED]</code>.
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/browser-viewport-redirect-png-img.png" alt="Janela compacta do Jinn Browser exibindo cadeia 301/302/308, duas imagens decodificadas lado a lado e barra BRCR compacta" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 2 (<code>visual_local_redirect_img.png</code>): Janela compacta com cadeia <code>301/302/308</code>, decodificação e renderização lado a lado de imagens remotas no DOM, URL recortada antes de <code>e1000</code> e <code>BRCR: 0.13% | Mem 0.34% | CPU 0</code>.
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/browser-viewport-68k-redirect-layout.png" alt="Renderização de http://frogfind em janela compacta após redirecionamento sem vazamento sobre BRCR nem sobre o indicador e1000" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 3 (<code>visual_68k_redirect_layout.png</code>): Renderização externa pós-redirecionamento em janela estreita preservando espaçamento inline de links, barra de rolagem acima do rodapé e alinhamento do badge <code>e1000</code>.
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/browser-viewport-error-clipping.png" alt="Tela estruturada Falha de Conexao TCP em https://10.0.2.2:59999 com URL recortada antes do badge TLS1.3 e scrollbar acima do rodapé BRCR" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 4 (<code>visual_error_viewport.png</code>): Tela estruturada <code>Falha de Conexao TCP</code> para <code>https://10.0.2.2:59999</code> demonstrando recorte da URL antes da pílula <code>TLS1.3</code> e rodapé <code>BRCR</code> livre de sobreposição.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">4. Aplicabilidade Prática (Indústria, Uso Doméstico e Servidores)</h2>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-emerald-300 mb-1">Usos Industriais (IHMs Isoladas &amp; Terminais de Chão de Fábrica)</h3>
+            <p>Interfaces de operação em painéis PLC/SCADA frequentemente rodam em janelas estreitas ou resoluções restritas sem GPU dedicada. O recorte determinístico por <code>content_clip_bottom</code> e a decodificação PNG em <code>.bss</code> permitem renderizar plantas, status de sensores e redirecionamentos locais de autenticação sem risco de estouro de stack ou sobreposição sobre barras de telemetria.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-cyan-300 mb-1">Usos Domésticos (Navegação Web Leve sem Bloat em Hardware Legado)</h3>
+            <p>Estações antigas ou dispositivos de baixo custo conseguem abrir portais reais sobre HTTPS/TLS 1.3 com imagens PNG/BMP embutidas mantendo uso previsível de memória física (cache fixo de <code>8 × 64 KiB</code>) e zero overhead de máquinas JavaScript pesadas ou motores 3D.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-purple-300 mb-1">Usos em Servidores (Consoles de Inspeção, Diagnóstico Local &amp; Gateways)</h3>
+            <p>Ambientes enxutos de gerenciamento <em>out-of-band</em> e consoles embutidos se beneficiam de uma pilha HTTPS <code>#![no_std]</code> capaz de validar tags AEAD Poly1305 em transferências acima de <code>35 KiB</code>, acompanhar redirecionamentos de balanceadores (<code>301..308</code>) e expor falhas de socket com diagnóstico legível em janela compacta.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-3 border-t border-slate-800 pt-6">
+        <h2 class="text-xl font-bold text-white">5. Limitações Conhecidas</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          O cache remoto em <code>.bss</code> atualmente comporta até <code>8</code> imagens de no máximo <code>65.536 bytes</code> cada (e até <code>6</code> buscas remotas por carregamento de página), e o decodificador PNG cobre profundidade de 8 bits (sem interlace Adam7 ou JPEG/WebP remoto completo). Conforme a fronteira documentada do projeto, todos os ensaios desta entrega foram validados em emulação QEMU (<code>e1000</code>/<code>VirtIO</code>) antes de homologação em placas de rede físicas reais.
+        </p>
+      </section>
+
+            <!-- Jinn Ecosystem & Open Collaboration Block (Auto-Generated) -->
+      <section aria-labelledby="ecosystems-collaboration-heading" class="not-prose my-10 p-6 rounded-xl bg-slate-900/75 border border-slate-800 space-y-5">
+        <div class="space-y-2">
+          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Engineering Observatory • Semântica &amp; Colaboração Aberta</p>
+          <h3 id="ecosystems-collaboration-heading" class="text-lg sm:text-xl font-bold text-white">
+            Domínios Técnicos &amp; Ecossistemas Relacionados
+          </h3>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Badges clicáveis indexados por bancada, domínio de engenharia e organizações/padrões do Radar Expandido (Nível B contextual, sem endosso implícito):
+          </p>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <a href="/artigos/?lab=security-lab" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400"><span>Security Lab</span></a>
+          <a href="/artigos/?lab=architecture-rfcs" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400"><span>Architecture &amp; RFCs</span></a>
+          <a href="/artigos/?eco=fastpath-ipc-net" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400"><span>IPC &amp; Redes Fast-Path</span><span class="opacity-70">&bull; Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking</span></a>
+          <a href="/artigos/?eco=microkernel-security" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400"><span>Microkernel &amp; Segurança</span><span class="opacity-70">&bull; Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity</span></a>
+          <a href="/artigos/?eco=compute-simd" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400"><span>Compute &amp; SIMD</span><span class="opacity-70">&bull; Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration</span></a>
+        </div>
+
+        <div class="pt-1">
+          <div class="text-[11px] font-mono text-slate-400 mb-2">Ecossistemas, Padrões &amp; Radar Expandido (clique para filtrar o acervo):</div>
+          <div class="flex flex-wrap gap-1.5">
+            <a href="/artigos/?q=Cloudflare" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Cloudflare</a>
+          <a href="/artigos/?q=Sovereign+Public+Infrastructure" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-emerald-950/60 border-emerald-700/70 text-emerald-200 hover:border-emerald-400">Sovereign Public Infrastructure</a>
+          <a href="/artigos/?q=Intel" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Intel</a>
+          <a href="/artigos/?q=Red+Hat" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Red Hat</a>
+          <a href="/artigos/?q=STMicroelectronics" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">STMicroelectronics</a>
+          <a href="/artigos/?q=RISC-V+International" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">RISC-V International</a>
+          <a href="/artigos/?q=Academic+Systems+Research+Labs" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-emerald-950/60 border-emerald-700/70 text-emerald-200 hover:border-emerald-400">Academic Systems Research Labs</a>
+          <a href="/artigos/?q=Akamai" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Akamai</a>
+          <a href="/artigos/?q=Google" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Google</a>
+          <a href="/artigos/?q=Huawei" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Huawei</a>
+          <a href="/artigos/?q=LF+Edge" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">LF Edge</a>
+          <a href="/artigos/?q=Industrial+Automation+Integrators" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-emerald-950/60 border-emerald-700/70 text-emerald-200 hover:border-emerald-400">Industrial Automation Integrators</a>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-cyan-300 font-mono">
+            Aplicabilidade: Indústria, Uso Doméstico e Servidores
+          </h4>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-emerald-300">Indústria &amp; Edge</div>
+              <p class="text-slate-400 leading-relaxed">Gateways industriais, coletores SCADA e frotas com links intermitentes via SharedRings SPSC (4096 B), HotRouteTable e diagnóstico de falha por estágio.</p>
+            </div>
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-cyan-300">Uso Doméstico &amp; Educação</div>
+              <p class="text-slate-400 leading-relaxed">Navegação ágil com DNS 3 camadas (/disk/hosts → LRU → upstream) e fallback resiliente de conectividade.</p>
+            </div>
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-purple-300">Servidores &amp; HPC</div>
+              <p class="text-slate-400 leading-relaxed">Caminhos críticos IPC lock-free e observabilidade de pilha TCP/TLS 1.3 no_std com inspeção direta por syscalls.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-emerald-300 font-mono">
+            Chamada Aberta para Pilotos (Indústria Local, Universidades &amp; Setor Público Ético)
+          </h4>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Convidamos <strong>integradores de automação industrial</strong>, <strong>laboratórios universitários de arquitetura/SO</strong> e <strong>instituições públicas eticamente responsáveis</strong> a reproduzirem estes experimentos em silício real (fechando lacunas emulador vs. hardware da Tabela B) ou propor estudos-piloto com <strong>Jinn OS</strong>, <strong>Aladdin</strong> e <strong>JHCS</strong>.
+          </p>
+          <div class="flex flex-wrap gap-2.5 text-xs font-mono pt-1">
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-cyan-400 text-slate-200 hover:text-cyan-300 transition-colors">
+              GitHub: Jinn_Project
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/jhcs-rs" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-purple-400 text-slate-200 hover:text-purple-300 transition-colors">
+              GitHub: jhcs-rs
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/ENGINEERING_STATUS_AND_LIMITATIONS.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-amber-400 text-slate-200 hover:text-amber-300 transition-colors">
+              Fronteira Honesta &amp; Tabela B
+            </a>
+            <a href="/solucoes/edge-industrial-zero-idle.html" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
+              Soluções &amp; Benchmarks
+            </a>
+            <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-cyan-950/90 border border-cyan-600/70 hover:bg-cyan-900 text-cyan-200 transition-colors">
+              Contato Técnico &amp; Pilotos
+            </a>
+          </div>
+        </div>
+      </section>
+      <!-- /Jinn Ecosystem & Open Collaboration Block -->
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn Engineering Observatory • Browser &amp; Cryptography • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/artigos/" class="text-cyan-400 hover:underline">Central de Artigos</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-slate-300 hover:text-white">Portal Principal</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>
