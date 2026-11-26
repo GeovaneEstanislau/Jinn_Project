@@ -7,6 +7,17 @@
     <language>pt-br</language>
     <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
     <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
+        <item>
+      <title>add Google Ads intent matrix, 3 /solucoes landing pages, social playbook and Google News report</title>
+      <link>https://jinn-os.dev.br</link>
+      <guid isPermaLink="false">jinn-os-add-google-ads-intent-matrix--3--solucoes-landing-pages--social-playbook-and-google-news-report-202611262134</guid>
+      <pubDate>Thu, 26 Nov 2026 21:34:03 +0000</pubDate>
+      <category>compute-simd</category>
+      <category>microkernel-security</category>
+      <description><![CDATA[
+        <p>Avanço verificado no Jinn Microkernel, compositor Aladdin e computação heterogênea JHCS com foco em isolamento Ring 3 e previsibilidade de recursos. [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas aplicáveis: Heterogeneous Compute, SIMD & Zero-GPU Acceleration (Intel, AMD, Arm, Tenstorrent, SiFive, HPC Research Labs) | Zero-Trust Isolation, W^X Enforcement & Supply-Chain Integrity (Red Hat, Canonical, Google, Siemens, Sovereign & Civic Infrastructure)] [Colaboração aberta — indústria local, academia e setor público responsável: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</p>
+      ]]></description>
+    </item>
     <item>
       <title>Arquitetura de Captura Técnica B2B/Deep Tech: Google Ads de Alta Precisão, Landing Pages /solucoes e Playbook Social no Jinn OS</title>
       <link>https://jinn-os.dev.br/artigos/arquitetura-captura-tecnica-ecossistemas-edge-hpc-jinn.html</link>
