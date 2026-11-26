@@ -7,6 +7,19 @@
     <language>pt-br</language>
     <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
     <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
+        <item>
+      <title>automate Schema.org semantic engine, headline/TZ normalization, ecosystem badges and broadcast v</title>
+      <link>https://jinn-os.dev.br</link>
+      <guid isPermaLink="false">jinn-os-automate-schema-org-semantic-engine--headline-tz-normalization--ecosystem-badges-and-broadcast-v-202611262144</guid>
+      <pubDate>Thu, 26 Nov 2026 21:44:38 +0000</pubDate>
+      <category>compute-simd</category>
+      <category>microkernel-security</category>
+      <category>compute-lab</category>
+      <description><![CDATA[
+        <p>Avanço verificado no Jinn Microkernel, compositor Aladdin e computação heterogênea JHCS com foco em isolamento Ring 3 e previsibilidade de recursos. [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas & Menções: Red Hat, Tenstorrent, Academic Systems Research Labs, AMD, Arm, NVIDIA, RISC-V International, Intel] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, compute-lab, Microkernel Architecture, Heterogeneous Compute Scheduling, Zero-GPU 2D Compositing, Semantic Web & News Indexing, SIMD Vectorization] [Evidências visuais: Evidência visual Observatory (landing-jhcs-heterogeneous-compute.png) (https://jinn-os.dev.br/assets/landing-jhcs-heterogeneous-compute.png) ; Evidência visual Observatory (tls13-jinn-os-browser.png) (https://jinn-os.dev.br/assets/tls13-jinn-os-browser.png) ; Evidência visual Observatory (observatory-semantic-index-evidence.png) (https://jinn-os.dev.br/assets/observatory-semantic-index-evidence.png)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</p>
+      ]]></description>
+      <enclosure url="https://jinn-os.dev.br/assets/landing-jhcs-heterogeneous-compute.png" length="70707" type="image/png" />
+    </item>
     <item>
       <title>Indexação Semântica Schema.org, Menções Contextuais e Radar Expandido no Jinn Observatory</title>
       <link>https://jinn-os.dev.br/artigos/indexacao-semantica-observatorio-engenharia-jinn-os.html</link>
