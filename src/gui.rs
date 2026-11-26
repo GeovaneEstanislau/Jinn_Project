@@ -106,6 +106,8 @@ pub struct KernelClientWindow {
     pub owner_pid: usize,
     pub width: usize,
     pub height: usize,
+    pub base_width: usize,
+    pub base_height: usize,
     pub title: [u8; 48],
     pub title_len: usize,
     pub buffer: Vec<u32>,
@@ -554,6 +556,8 @@ pub fn client_window_create(owner_pid: usize, title: &str, width: usize, height:
                 owner_pid,
                 width,
                 height,
+                base_width: width,
+                base_height: height,
                 title: title_buf,
                 title_len: t_len,
                 buffer: buf,
@@ -601,19 +605,37 @@ pub fn client_window_update(owner_pid: usize, win_id: usize, buffer: &[u32]) -> 
                 }
                 let expected = w.width * w.height;
                 if buffer.len() != expected {
-                    return Err(crate::syscall::EINVAL);
+                    if buffer.len() == 1024 * 768 {
+                        if w.width != 1024 || w.height != 768 {
+                            w.base_width = w.width;
+                            w.base_height = w.height;
+                        }
+                        w.width = 1024;
+                        w.height = 768;
+                    } else if w.width == 1024 && w.height == 768 && buffer.len() == w.base_width * w.base_height {
+                        w.width = w.base_width;
+                        w.height = w.base_height;
+                    } else {
+                        return Err(crate::syscall::EINVAL);
+                    }
                 }
+                let target_pixels = w.width * w.height;
                 if w.is_minimized {
                     w.is_minimized = false;
                 }
-                if w.buffer.len() != expected {
-                    w.buffer.resize(expected, 0u32);
+                if w.buffer.len() != target_pixels {
+                    w.buffer = alloc::vec::Vec::new();
+                    if w.buffer.try_reserve_exact(target_pixels).is_err() {
+                        return Err(crate::syscall::ENOMEM);
+                    }
+                    w.buffer.resize(target_pixels, 0u32);
                 }
                 w.buffer.copy_from_slice(buffer);
                 w.damaged = true;
 
                 unsafe {
                     if let Some(session) = (*core::ptr::addr_of_mut!(SESSION)).as_mut() {
+                        let _ = session.sync_client_window_size(owner_pid, win_id, w.width, w.height, 1024, 768);
                         let _ = session.update_client_buffer(owner_pid, win_id, buffer);
                     }
                 }
@@ -773,6 +795,8 @@ pub fn graphics_dispatch_client_event(caller_pid: usize, win_id: usize, event: &
                         if new_w > 0 && new_h > 0 && new_w <= 1024 && new_h <= 768 {
                             w.width = new_w;
                             w.height = new_h;
+                            w.base_width = new_w;
+                            w.base_height = new_h;
                             w.buffer.resize(new_w * new_h, 0u32);
                             w.damaged = true;
                         }

@@ -193,6 +193,20 @@ pub fn process_scancode(sc: u8) {
     match make_code {
         0x2A | 0x36 => { SHIFT_DOWN.store(!is_release, Ordering::Relaxed); } // Shift L/R
         0x3A if !is_release => { CAPS_LOCK.fetch_xor(true, Ordering::Relaxed); }
+        0x57 | 0x58 if !is_release => {
+            // Códigos distintos não-ASCII (>= 0x80) evitam colisão com 'W' (0x57) / 'X' (0x58)
+            let code = if make_code == 0x57 { 0x8Bu8 } else { 0x8Cu8 };
+            let ev = aladdin::contracts::shared_rings::SharedInputEvent {
+                kind: aladdin::contracts::shared_rings::INPUT_KIND_KEY_DOWN,
+                modifiers: mod_bits,
+                x: 0,
+                y: 0,
+                code: code as u32,
+            };
+            if !crate::gui::try_push_shared_input_event(ev) {
+                keyboard_buffer::push(code);
+            }
+        }
         code if !is_release && (code as usize) < SCANCODE_MAP_NORMAL.len() => {
             let shifted = cur_shift ^ (cur_caps && code >= 0x10 && code <= 0x32);
             let ch = if shifted {

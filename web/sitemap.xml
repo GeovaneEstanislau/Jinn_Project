@@ -13,6 +13,20 @@
     <priority>0.9</priority>
   </url>
   <url>
+    <loc>https://jinn-os.dev.br/artigos/jinn-browser-redirecionamentos-srcset-stagegeometry-fullscreen-f11.html</loc>
+    <lastmod>2026-11-26</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn Engineering Observatory</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-26</news:publication_date>
+      <news:title>Jinn Browser em Maturidade: Redirecionamentos Multi-Hop, Picture/Srcset, StageGeometry e Tela Cheia 1024x768 (F11)</news:title>
+    </news:news>
+  </url>
+  <url>
     <loc>https://jinn-os.dev.br/artigos/compute-lab-jhcs-breakeven-escalar-simd-wgpu.html</loc>
     <lastmod>2026-11-26</lastmod>
     <changefreq>weekly</changefreq>

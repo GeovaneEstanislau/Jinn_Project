@@ -3977,7 +3977,21 @@ unsafe fn run_browser_interactive(initial_url: Option<&[u8]>) -> ! {
 
                     let buf_cur = surface.slice_mut();
 
-                    if session.is_address_focused {
+                    if key == 0x8B {
+                        // F11: Alterna Tela Cheia globalmente (independente de foco na barra de URL)
+                        print_str(b"[BROWSER-INTERACTION] KEY F11 -> Toggle Fullscreen\n");
+                        let st = session.toggle_fullscreen();
+                        print_str(b"  Novo estado: ");
+                        match st {
+                            browser::FullscreenState::Fullscreen => print_str(b"FULLSCREEN (1024x768)\n"),
+                            browser::FullscreenState::Windowed => print_str(b"WINDOWED (300x180)\n"),
+                            _ => print_str(b"OUTRO\n"),
+                        }
+                        let _ = unsafe { surface.resize(session.viewport_w, session.viewport_h) };
+                        let buf_cur2 = surface.slice_mut();
+                        session.render(buf_cur2);
+                        let _ = sys_window_update(win_id, buf_cur2);
+                    } else if session.is_address_focused {
                         let action = session.address_key(key);
                         match action {
                             browser::BrowserAction::NavigateTarget(target, len) => {
@@ -3995,20 +4009,6 @@ unsafe fn run_browser_interactive(initial_url: Option<&[u8]>) -> ! {
                         }
                     } else {
                         match key {
-                            0x57 => { // F11: Alternar Tela Cheia
-                                print_str(b"[BROWSER-INTERACTION] KEY F11 -> Toggle Fullscreen\n");
-                                let st = session.toggle_fullscreen();
-                                print_str(b"  Novo estado: ");
-                                match st {
-                                    browser::FullscreenState::Fullscreen => print_str(b"FULLSCREEN (1024x768)\n"),
-                                    browser::FullscreenState::Windowed => print_str(b"WINDOWED (300x180)\n"),
-                                    _ => print_str(b"OUTRO\n"),
-                                }
-                                let _ = unsafe { surface.resize(session.viewport_w, session.viewport_h) };
-                                let buf_cur2 = surface.slice_mut();
-                                session.render(buf_cur2);
-                                let _ = sys_window_update(win_id, buf_cur2);
-                            }
                             0x50 | 0x6A | 0x4A => { // Seta para Baixo (0x50) / 'j' / 'J' (Scroll +20px)
                                 print_str(b"[BROWSER-INTERACTION] ACTION ScrollDown\n");
                                 session.scroll_by(20);

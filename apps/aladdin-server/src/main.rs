@@ -26,10 +26,10 @@ use aladdin::contracts::shared_rings::{
 use aladdin::desktop::session::AladdinSession;
 
 // ── Allocator de Heap em Espaço de Usuário (.bss) ─────────────────────────────
-// 14 MiB de memória em .bss (0 bytes no arquivo ELF do disco).
+// 16 MiB de memória em .bss (0 bytes no arquivo ELF do disco).
 // Dimensionado para rodar sob máquinas reais e VMs com 64 MB de RAM total:
-// Backbuffer 1024×768 (3 MiB) + sub_buf (3 MiB) + janelas clientes Ring 3 (3 MiB) + folgas (5 MiB).
-const HEAP_SIZE: usize = 14 * 1024 * 1024;
+// Backbuffer 1024×768 (3 MiB) + sub_buf (3 MiB) + cliente 1024×768 (3 MiB) + cache (3 MiB) + folgas (4 MiB).
+const HEAP_SIZE: usize = 16 * 1024 * 1024;
 static mut HEAP_MEMORY: [u8; HEAP_SIZE] = [0u8; HEAP_SIZE];
 
 const MIN_ALIGN: usize = 16;
@@ -1779,7 +1779,10 @@ pub extern "C" fn _start() -> ! {
 
                         // 3. Atualiza superfície quando danificada ou recém-criada (IMP-02)
                         if win.damaged != 0 || is_new {
-                            let total_px = (win.width as usize) * (win.height as usize);
+                            let new_w = win.width as usize;
+                            let new_h = win.height as usize;
+                            let _ = sess.sync_client_window_size(win.owner_pid as usize, wm_id, new_w, new_h, fb_w, fb_h);
+                            let total_px = new_w * new_h;
                             if total_px > 0 && total_px <= 1024 * 768 {
                                 if client_cache_buf.len() < total_px {
                                     client_cache_buf.resize(total_px, 0u32);
