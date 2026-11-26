@@ -1,0 +1,24 @@
+{
+  "os": "windows",
+  "arch": "x86_64",
+  "avx2": true,
+  "fma": true,
+  "gpu_adapter": "JHCS WGPU [NVIDIA GeForce GTX 1650]",
+  "vector_add": [
+    {"grid": "8x8", "elems": 64, "broker_ns": 773, "scalar_ns": 6, "simd_ns": 14, "simd_e2e_ns": 787, "winner": "Scalar CPU"},
+    {"grid": "64x64", "elems": 4096, "broker_ns": 782, "scalar_ns": 474, "simd_ns": 460, "simd_e2e_ns": 1242, "winner": "Scalar CPU"},
+    {"grid": "256x256", "elems": 65536, "broker_ns": 775, "scalar_ns": 9486, "simd_ns": 9063, "simd_e2e_ns": 9838, "winner": "Scalar CPU"},
+    {"grid": "512x512", "elems": 262144, "broker_ns": 862, "scalar_ns": 41448, "simd_ns": 46977, "simd_e2e_ns": 47839, "winner": "Scalar CPU"},
+    {"grid": "1024x1024", "elems": 1048576, "broker_ns": 1495, "scalar_ns": 1067080, "simd_ns": 1536355, "simd_e2e_ns": 1537850, "winner": "Scalar CPU"}
+  ],
+  "matmul": [
+    {"n": 8, "elems": 8, "flops": 64, "broker_ns": 914, "scalar_ns": 639, "simd_ns": 221, "simd_e2e_ns": 1135, "gflops_scalar": 1.603, "gflops_simd": 0.902, "wgpu": {"total_ns": 6711660, "e2e_ns": 6712574, "upload_ns": 1231000, "dispatch_ns": 232820, "download_ns": 4810980, "gflops": 0.000}, "winner": "Scalar CPU"},
+    {"n": 16, "elems": 16, "flops": 256, "broker_ns": 998, "scalar_ns": 5671, "simd_ns": 1793, "simd_e2e_ns": 2791, "gflops_scalar": 1.445, "gflops_simd": 2.935, "wgpu": {"total_ns": 2370160, "e2e_ns": 2371158, "upload_ns": 1385100, "dispatch_ns": 327460, "download_ns": 225340, "gflops": 0.003}, "winner": "SIMD (AVX2/FMA)"},
+    {"n": 32, "elems": 32, "flops": 1024, "broker_ns": 969, "scalar_ns": 13157, "simd_ns": 6348, "simd_e2e_ns": 7317, "gflops_scalar": 4.981, "gflops_simd": 8.957, "wgpu": {"total_ns": 1698080, "e2e_ns": 1699049, "upload_ns": 935380, "dispatch_ns": 200500, "download_ns": 230740, "gflops": 0.039}, "winner": "SIMD (AVX2/FMA)"},
+    {"n": 64, "elems": 64, "flops": 4096, "broker_ns": 1137, "scalar_ns": 67053, "simd_ns": 38240, "simd_e2e_ns": 39377, "gflops_scalar": 7.819, "gflops_simd": 13.315, "wgpu": {"total_ns": 2981720, "e2e_ns": 2982857, "upload_ns": 1630340, "dispatch_ns": 593680, "download_ns": 245960, "gflops": 0.176}, "winner": "SIMD (AVX2/FMA)"},
+    {"n": 128, "elems": 128, "flops": 16384, "broker_ns": 1250, "scalar_ns": 404995, "simd_ns": 282970, "simd_e2e_ns": 284220, "gflops_scalar": 10.356, "gflops_simd": 14.757, "wgpu": {"total_ns": 1436580, "e2e_ns": 1437830, "upload_ns": 700780, "dispatch_ns": 111620, "download_ns": 385500, "gflops": 2.917}, "winner": "SIMD (AVX2/FMA)"},
+    {"n": 256, "elems": 256, "flops": 65536, "broker_ns": 2383, "scalar_ns": 2717766, "simd_ns": 2272800, "simd_e2e_ns": 2275183, "gflops_scalar": 12.346, "gflops_simd": 14.748, "wgpu": {"total_ns": 2284340, "e2e_ns": 2286723, "upload_ns": 1066280, "dispatch_ns": 191080, "download_ns": 720400, "gflops": 14.674}, "winner": "SIMD (AVX2/FMA)"},
+    {"n": 512, "elems": 512, "flops": 262144, "broker_ns": 3550, "scalar_ns": 19741200, "simd_ns": 15570500, "simd_e2e_ns": 15574050, "gflops_scalar": 13.598, "gflops_simd": 17.236, "wgpu": {"total_ns": 4481000, "e2e_ns": 4484550, "upload_ns": 1065750, "dispatch_ns": 130600, "download_ns": 2989450, "gflops": 59.858}, "winner": "GPU (wgpu)"},
+    {"n": 1024, "elems": 1024, "flops": 1048576, "broker_ns": 2850, "scalar_ns": 233903500, "simd_ns": 232898500, "simd_e2e_ns": 232901350, "gflops_scalar": 9.181, "gflops_simd": 9.221, "wgpu": {"total_ns": 20343000, "e2e_ns": 20345850, "upload_ns": 2568800, "dispatch_ns": 231100, "download_ns": 16729500, "gflops": 105.549}, "winner": "GPU (wgpu)"}
+  ]
+}
