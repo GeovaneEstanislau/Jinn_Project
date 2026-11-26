@@ -7,6 +7,15 @@
     <language>pt-br</language>
     <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
     <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
+        <item>
+      <title>3-tier DNS table (/disk/hosts + LRU TTL /disk/dns_cache.db), syscalls 93-96, IRQ</title>
+      <link>https://jinn-os.dev.br</link>
+      <guid isPermaLink="false">jinn-os-3-tier-dns-table---disk-hosts---lru-ttl--disk-dns-cache-db---syscalls-93-96--irq-202611260425</guid>
+      <pubDate>Thu, 26 Nov 2026 04:25:29 +0000</pubDate>
+      <description><![CDATA[
+        <p>Consolidamos o suporte a resolucao DNS cascateada (Cloudflare/Google), decodificacao de imagens bare-metal no Jinn Browser, aceleracao SIMD AVX2 no JHCS e persistencia estrita em disco FAT32 com zero-idle.</p>
+      ]]></description>
+    </item>
     <item>
       <title>Tabela Local de DNS em 3 Camadas: Hosts Estáticos, Cache LRU Persistente com TTL e Painel Aladdin</title>
       <link>https://jinn-os.dev.br/artigos/tabela-local-dns-hosts-cache-persistente-ttl-aladdin.html</link>
