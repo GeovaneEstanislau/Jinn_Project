@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Indexação Semântica Schema.org, Menções Contextuais e Radar Expandido no Jinn Observatory — Jinn OS</title>
+  <meta name="description"
+    content="Como automatizamos o motor semântico em web/build_feed.py e syndicate_broadcast.py: TechArticle + NewsArticle JSON-LD (headline <= 110 chars, timezone -03:00), classificador about/mentions com Radar Expandido, badges clicáveis, bloco de Aplicabilidade e evidências visuais em RSS/Release Notes.">
+  <link rel="canonical"
+    href="https://jinn-os.dev.br/artigos/indexacao-semantica-observatorio-engenharia-jinn-os.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url"
+    content="https://jinn-os.dev.br/artigos/indexacao-semantica-observatorio-engenharia-jinn-os.html">
+  <meta property="og:title"
+    content="Indexação Semântica Schema.org, Menções Contextuais e Radar Expandido no Jinn Observatory">
+  <meta property="og:description"
+    content="Motor determinístico em build_feed.py e syndicate_broadcast.py gerando JSON-LD TechArticle/NewsArticle <=110 chars (-03:00), about/mentions contextuais, badges clicáveis e evidências visuais nos feeds.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/observatory-semantic-index-evidence.png">
+
+  <!-- Artigo Meta (Indexação Google News / RSS / Feed) -->
+  <meta name="article:tag" content="ARCHITECTURE, JSON-LD, SCHEMA.ORG, WEBSUB, OBSERVATORY">
+  <meta name="article:published_time" content="2026-11-26T19:05:00-03:00">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Jinn Engineering Observatory: Schema.org TechArticle (Auto-Generated) -->
+  <script type="application/ld+json" id="jinn-techarticle-jsonld">
+{
+  "@context": "https://schema.org",
+  "@type": [
+    "TechArticle",
+    "NewsArticle"
+  ],
+  "headline": "Indexação Semântica Schema.org, Menções Contextuais e Radar Expandido no Jinn Observatory",
+  "description": "Como automatizamos o motor semântico em web/build_feed.py e syndicate_broadcast.py: TechArticle + NewsArticle JSON-LD (headline <= 110 chars, timezone -03:00), classificador about/mentions com Radar Expandido, badges clicáveis, bloco de Aplicabilidade e evidências visuais em RSS/Release Notes.",
+  "image": [
+    "https://jinn-os.dev.br/assets/observatory-semantic-index-evidence.png"
+  ],
+  "datePublished": "2026-11-26T19:05:00-03:00",
+  "dateModified": "2026-11-26T19:05:00-03:00",
+  "inLanguage": "pt-BR",
+  "articleSection": [
+    "Architecture & RFCs"
+  ],
+  "author": {
+    "@type": "Person",
+    "name": "Geovane da Conceição Estanislau",
+    "url": "https://github.com/GeovaneEstanislau"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Jinn Engineering Observatory",
+    "url": "https://jinn-os.dev.br/",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://jinn-os.dev.br/assets/wallpaper.jpg"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://jinn-os.dev.br/artigos/indexacao-semantica-observatorio-engenharia-jinn-os.html"
+  },
+  "about": [
+    {
+      "@type": "Thing",
+      "name": "Semantic Web & News Indexing"
+    },
+    {
+      "@type": "Thing",
+      "name": "Zero-Copy IPC"
+    },
+    {
+      "@type": "Thing",
+      "name": "L2/L3 Fast-Path Networking"
+    },
+    {
+      "@type": "Thing",
+      "name": "Three-Tier DNS Resolution"
+    },
+    {
+      "@type": "Thing",
+      "name": "TLS 1.3 Cryptography"
+    },
+    {
+      "@type": "Thing",
+      "name": "Bare-Metal TCP/IP Stack"
+    }
+  ],
+  "mentions": [
+    {
+      "@type": "Organization",
+      "name": "Google"
+    },
+    {
+      "@type": "Organization",
+      "name": "Bosch"
+    },
+    {
+      "@type": "Thing",
+      "name": "Academic Systems Research Labs"
+    },
+    {
+      "@type": "Organization",
+      "name": "NVIDIA"
+    },
+    {
+      "@type": "Organization",
+      "name": "Siemens"
+    },
+    {
+      "@type": "Organization",
+      "name": "STMicroelectronics"
+    },
+    {
+      "@type": "Thing",
+      "name": "Industrial Automation Integrators"
+    },
+    {
+      "@type": "Organization",
+      "name": "Cloudflare"
+    },
+    {
+      "@type": "Organization",
+      "name": "Akamai"
+    },
+    {
+      "@type": "Organization",
+      "name": "Huawei"
+    },
+    {
+      "@type": "Organization",
+      "name": "RISC-V International"
+    },
+    {
+      "@type": "Organization",
+      "name": "LF Edge"
+    }
+  ],
+  "keywords": "Jinn OS, Microkernel, Rust no_std, x86_64, ARCHITECTURE, JSON-LD, SCHEMA.ORG, WEBSUB, OBSERVATORY, Semantic Web & News Indexing, Zero-Copy IPC, L2/L3 Fast-Path Networking, Three-Tier DNS Resolution, TLS 1.3 Cryptography, SPSC Ring Buffer, io_uring, HotRouteTable, 3-Tier DNS"
+}
+  </script>
+  <!-- /Jinn Engineering Observatory: Schema.org TechArticle -->
+</head>
+
+<body class="bg-slate-950 text-slate-200 min-h-screen antialiased selection:bg-cyan-500/30">
+  <header class="border-b border-slate-800 bg-slate-900/70 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-4xl mx-auto px-6 h-14 flex items-center justify-between">
+      <a href="/artigos/?lab=architecture-rfcs" class="flex items-center gap-2 hover:text-cyan-400 transition-colors text-xs font-mono">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span>Observatory • Indexação Semântica</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="/feed.xml" target="_blank" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS</span>
+        </a>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="text-cyan-300 hover:text-white">Jinn_Project GitHub</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-6 py-10 space-y-8">
+    <article class="prose prose-invert prose-slate max-w-none space-y-6">
+      <div class="space-y-3 border-b border-slate-800 pb-6">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400">
+          <span class="bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 rounded-full">SEMANTIC OBSERVATORY</span>
+          <span class="bg-emerald-950 border border-emerald-800 text-emerald-300 px-2.5 py-0.5 rounded-full">JSON-LD • WEBSUB • RADAR</span>
+          <span class="text-slate-500">•</span>
+          <time datetime="2026-11-26">26 Nov 2026</time>
+          <span class="text-slate-500">•</span>
+          <span class="text-slate-400">Geovane da Conceição Estanislau</span>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white leading-tight">
+          Indexação Semântica Schema.org, Menções Contextuais e Radar Expandido no Jinn Observatory
+        </h1>
+        <p class="text-base sm:text-lg text-slate-300 leading-relaxed">
+          Para que pesquisas técnicas encontrem o artigo certo sem depender de SEO artificial, evoluímos o pipeline estático em <code>web/build_feed.py</code> e <code>scripts/syndicate_broadcast.py</code> (com wrapper em <code>web/syndicate_broadcast.py</code>). Agora cada artigo recebe classificação automática por palavras-chave técnicas para <code>about</code> e <code>mentions</code>, timestamps normalizados em <code>-03:00</code>, headlines limitadas a <code>110</code> caracteres, badges clicáveis na central <code>/artigos/</code> e resumos visuais nos feeds e Release Notes.
+        </p>
+      </div>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">1. Diagnóstico do Pipeline Anterior &amp; Lacunas Identificadas</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          Ao auditar os artigos publicados antes desta refatoração no <strong>Jinn Engineering Observatory</strong>, identificamos cinco gargalos objetivos que afetavam a precisão semântica para Google News, buscadores técnicos e automações de release:
+        </p>
+        <ul class="list-disc list-inside space-y-2 text-sm text-slate-300 leading-relaxed">
+          <li>
+            <strong>Headlines acima do limite de 110 caracteres:</strong> 8 artigos possuíam títulos de página longos (entre 112 e 138 caracteres) injetados diretamente no campo JSON-LD <code>headline</code>. Criamos <code>clamp_headline(..., 110)</code> preservando divisões naturais e fronteiras de palavra.
+          </li>
+          <li>
+            <strong>Timestamps mistos (<code>Z</code> vs <code>-03:00</code>):</strong> artigos antigos sem <code>article:published_time</code> ou marcados em UTC exibiam sufixo <code>Z</code> em <code>datePublished</code>. Padronizamos a conversão via <code>TZ_BRT</code> para garantir ISO 8601 com fuso <code>-03:00</code> em <code>100%</code> do acervo.
+          </li>
+          <li>
+            <strong><code>about</code> e <code>mentions</code> estáticos por domínio amplo:</strong> o JSON-LD dependia apenas de listas fixas por categoria e omitia atores contextuais (<em>NVIDIA</em>, <em>Bosch</em>, <em>STMicroelectronics</em>, <em>Google</em>) e entidades do Radar Expandido (<em>Industrial Automation Integrators</em>, <em>Academic Systems Research Labs</em>, <em>Sovereign Public Infrastructure</em>). Implementamos <code>classify_semantic_metadata</code> com 12 regras conceituais e 20 regras contextuais de menção.
+          </li>
+          <li>
+            <strong>Ausência do bloco padronizado de aplicabilidade em artigos legados e layout do buscador em <code>/artigos/</code>:</strong> artigos anteriores não exibiam de forma uniforme a tríade <em>Indústria, Uso Doméstico e Servidores</em> nem pills clicáveis para entidades individuais (<code>?q=</code>). Adicionalmente, a inspeção visual via Chromium headless revelou compressão horizontal da barra <code>#article-search</code> ao lado das 7 pílulas de bancadas em 1440px e um falso positivo regex (<code>2B</code> extraído de <code>B2B</code>). Ambos foram corrigidos com layout em duas faixas e lookbehind negativo <code>(?&lt;![A-Za-z])</code> em <code>extract_measurable_gain</code>.
+          </li>
+          <li>
+            <strong>Sinergia com o pipeline de sindicação:</strong> <code>scripts/syndicate_broadcast.py</code> ainda não extraía automaticamente as imagens <code>&lt;figure&gt;</code> de cada relatório para compor o resumo de evidências visuais em RSS/Atom, Discord, Telegram e GitHub Release Notes, e não havia ponto de entrada sob <code>web/syndicate_broadcast.py</code>.
+          </li>
+        </ul>
+      </section>
+
+      <section class="space-y-5">
+        <h2 class="text-2xl font-bold text-white">2. Arquitetura Implementada &amp; Melhorias Verificadas</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-slate-300">
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-cyan-300">Motor Semântico (<code>web/build_feed.py</code>)</h3>
+            <p class="leading-relaxed">
+              Combina bancadas (<code>classify_labs</code>), ecossistemas (<code>classify_ecosystems</code>) e regras finas (<code>SEMANTIC_CONCEPT_RULES</code> + <code>MENTION_RULES</code> + <code>RADAR_EXPANDED_ENTITIES</code>) para montar <code>TechArticle</code> + <code>NewsArticle</code> sem dependência externa. Audita ainda <code>swg-basic.js</code> (<code>autoPromptType: "none"</code>) e posicionamento exclusivo do CTA no rodapé.
+            </p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-emerald-300">Central Clicável &amp; Broadcast</h3>
+            <p class="leading-relaxed">
+              Em <code>web/artigos/index.html</code>, cada badge de bancada (<code>?lab=</code>), domínio (<code>?eco=</code>) ou ecossistema/radar (<code>?q=</code>) filtra o catálogo em memória e sincroniza a URL. Nos scripts de difusão (<code>scripts/syndicate_broadcast.py</code> e <code>web/syndicate_broadcast.py</code>), <code>discover_visual_evidences</code> coleta capturas <code>.png</code> e legenda técnica para feeds e Releases.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-5">
+        <h2 class="text-2xl font-bold text-white">3. Evidências Visuais Reais: Central Atualizada &amp; Auditoria JSON-LD</h2>
+        <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80 not-prose">
+          <img src="../assets/observatory-semantic-index-evidence.png" alt="Screenshot da central /artigos/ exibindo barra de busca desobstruída, 6 bancadas, 4 domínios e badges clicáveis por ecossistema e Radar Expandido" class="w-full h-auto" />
+          <figcaption class="p-3 text-xs text-slate-400 font-mono">
+            Figura 1: Captura real em Chrome Headless da central <code>/artigos/</code> após correção do layout da barra de busca (<code>w-96 shrink-0</code>), exibindo 6 bancadas, filtros de ecossistema e badges clicáveis por organização e Radar Expandido.
+          </figcaption>
+        </figure>
+
+        <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80 not-prose">
+          <img src="../assets/observatory-jsonld-semantic-validation.png" alt="Painel de auditoria Schema.org JSON-LD confirmando headlines menores ou iguais a 110 chars, timezone -03:00, about/mentions e SWG no rodapé" class="w-full h-auto" />
+          <figcaption class="p-3 text-xs text-slate-400 font-mono">
+            Figura 2: Saída visual do validador determinístico em todo o acervo: <code>100%</code> das headlines em JSON-LD abaixo de 110 caracteres, <code>datePublished</code> padronizado em <code>-03:00</code>, <code>about</code>/<code>mentions</code> contextuais e conformidade Reader Revenue Manager (<code>autoPromptType: "none"</code> + rodapé).
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">4. Aplicabilidade Prática (Indústria, Uso Doméstico e Servidores)</h2>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-emerald-300 mb-1">Usos Industriais (Descoberta de Ativos Edge, PLC/IHM &amp; Integradores Regionais)</h3>
+            <p>Engenheiros de automação e integradores fora do radar tradicional de OSDev que buscam por requisitos específicos (<em>deterministic scheduling</em>, <em>Zero-GPU 2D compositing</em>, <em>FAT32 fault-tolerant persistence</em>) encontram diretamente a publicação e a landing page <code>/solucoes/</code> correspondente com fronteira explícita da Tabela B.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-cyan-300 mb-1">Usos Domésticos &amp; Acadêmicos (Acervo Didático Auditável em Rust <code>no_std</code>)</h3>
+            <p>Estudantes, entusiastas de reuso de PCs antigos e grupos universitários navegam por post-mortems, compositores SIMD e protocolos bare-metal por tópico ou bancada sem scripts pesados de rastreamento, com CTA discreto apenas ao fim da leitura.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-purple-300 mb-1">Usos em Servidores (Sindicadores RSS/WebSub, Release Notes &amp; Arquitetura Zero-Trust)</h3>
+            <p>Agregadores RSS/Atom, bots de CI (<code>.github/workflows/broadcast.yml</code>) e avaliadores de infraestrutura de borda recebem metadados ricos com palavras-chave técnicas, evidências visuais auditáveis e métricas extraídas de forma determinística via Python padrão.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-3 border-t border-slate-800 pt-6">
+        <h2 class="text-xl font-bold text-white">5. Melhorias &amp; Limitações Conhecidas</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          A associação semântica atual utiliza regras léxicas determinísticas e auditáveis em repositório — o que evita custos de APIs externas e alucinações, mas depende de curadoria de termos em <code>SEMANTIC_CONCEPT_RULES</code> e <code>MENTION_RULES</code> à medida que novos domínios forem explorados. A interpretação final pelo Google News Publisher Center e Rich Results Test ocorrerá somente após o deploy em produção no GitHub Pages e notificação WebSub.
+        </p>
+      </section>
+      <!-- Jinn Ecosystem & Open Collaboration Block (Auto-Generated) -->
+      <section aria-labelledby="ecosystems-collaboration-heading" class="not-prose my-10 p-6 rounded-xl bg-slate-900/75 border border-slate-800 space-y-5">
+        <div class="space-y-2">
+          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Engineering Observatory • Semântica &amp; Colaboração Aberta</p>
+          <h3 id="ecosystems-collaboration-heading" class="text-lg sm:text-xl font-bold text-white">
+            Domínios Técnicos &amp; Ecossistemas Relacionados
+          </h3>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Badges clicáveis indexados por bancada, domínio de engenharia e organizações/padrões do Radar Expandido (Nível B contextual, sem endosso implícito):
+          </p>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <a href="/artigos/?lab=architecture-rfcs" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400"><span>Architecture &amp; RFCs</span></a>
+          <a href="/artigos/?eco=fastpath-ipc-net" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400"><span>IPC &amp; Redes Fast-Path</span><span class="opacity-70">&bull; Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking</span></a>
+        </div>
+
+        <div class="pt-1">
+          <div class="text-[11px] font-mono text-slate-400 mb-2">Ecossistemas, Padrões &amp; Radar Expandido (clique para filtrar o acervo):</div>
+          <div class="flex flex-wrap gap-1.5">
+            <a href="/artigos/?q=Google" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Google</a>
+          <a href="/artigos/?q=Bosch" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Bosch</a>
+          <a href="/artigos/?q=Academic+Systems+Research+Labs" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-emerald-950/60 border-emerald-700/70 text-emerald-200 hover:border-emerald-400">Academic Systems Research Labs</a>
+          <a href="/artigos/?q=NVIDIA" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">NVIDIA</a>
+          <a href="/artigos/?q=Siemens" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Siemens</a>
+          <a href="/artigos/?q=STMicroelectronics" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">STMicroelectronics</a>
+          <a href="/artigos/?q=Industrial+Automation+Integrators" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-emerald-950/60 border-emerald-700/70 text-emerald-200 hover:border-emerald-400">Industrial Automation Integrators</a>
+          <a href="/artigos/?q=Cloudflare" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Cloudflare</a>
+          <a href="/artigos/?q=Akamai" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Akamai</a>
+          <a href="/artigos/?q=Huawei" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Huawei</a>
+          <a href="/artigos/?q=RISC-V+International" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">RISC-V International</a>
+          <a href="/artigos/?q=LF+Edge" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">LF Edge</a>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-cyan-300 font-mono">
+            Aplicabilidade: Indústria, Uso Doméstico e Servidores
+          </h4>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-emerald-300">Indústria &amp; Edge</div>
+              <p class="text-slate-400 leading-relaxed">Gateways industriais, coletores SCADA e frotas com links intermitentes via SharedRings SPSC (4096 B), HotRouteTable e diagnóstico de falha por estágio.</p>
+            </div>
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-cyan-300">Uso Doméstico &amp; Educação</div>
+              <p class="text-slate-400 leading-relaxed">Navegação ágil com DNS 3 camadas (/disk/hosts → LRU → upstream) e fallback resiliente de conectividade.</p>
+            </div>
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-purple-300">Servidores &amp; HPC</div>
+              <p class="text-slate-400 leading-relaxed">Caminhos críticos IPC lock-free e observabilidade de pilha TCP/TLS 1.3 no_std com inspeção direta por syscalls.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-emerald-300 font-mono">
+            Chamada Aberta para Pilotos (Indústria Local, Universidades &amp; Setor Público Ético)
+          </h4>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Convidamos <strong>integradores de automação industrial</strong>, <strong>laboratórios universitários de arquitetura/SO</strong> e <strong>instituições públicas eticamente responsáveis</strong> a reproduzirem estes experimentos em silício real (fechando lacunas emulador vs. hardware da Tabela B) ou propor estudos-piloto com <strong>Jinn OS</strong>, <strong>Aladdin</strong> e <strong>JHCS</strong>.
+          </p>
+          <div class="flex flex-wrap gap-2.5 text-xs font-mono pt-1">
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-cyan-400 text-slate-200 hover:text-cyan-300 transition-colors">
+              GitHub: Jinn_Project
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/jhcs-rs" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-purple-400 text-slate-200 hover:text-purple-300 transition-colors">
+              GitHub: jhcs-rs
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/ENGINEERING_STATUS_AND_LIMITATIONS.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-amber-400 text-slate-200 hover:text-amber-300 transition-colors">
+              Fronteira Honesta &amp; Tabela B
+            </a>
+            <a href="/solucoes/edge-industrial-zero-idle.html" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
+              Soluções &amp; Benchmarks
+            </a>
+            <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-cyan-950/90 border border-cyan-600/70 hover:bg-cyan-900 text-cyan-200 transition-colors">
+              Contato Técnico &amp; Pilotos
+            </a>
+          </div>
+        </div>
+      </section>
+      <!-- /Jinn Ecosystem & Open Collaboration Block -->
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn Engineering Observatory • Semantic Indexing • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/artigos/" class="text-cyan-400 hover:underline">Central de Artigos</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-slate-300 hover:text-white">Portal Principal</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>

@@ -28,10 +28,23 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 if str(WEB_DIR) not in sys.path:
     sys.path.insert(0, str(WEB_DIR))
 
-from build_feed import ECOSYSTEM_DOMAINS, OBSERVATORY_LABS, classify_ecosystems, classify_labs, extract_measurable_gain, format_ecosystem_summary_text
+from build_feed import (
+    DEFAULT_IMAGE_URL,
+    ECOSYSTEM_DOMAINS,
+    OBSERVATORY_LABS,
+    SITE_URL,
+    classify_ecosystems,
+    classify_labs,
+    classify_semantic_metadata,
+    extract_measurable_gain,
+    extract_visual_evidences,
+    format_ecosystem_summary_text,
+)
 
 DEFAULT_PORTAL_URL = "https://jinn-os.dev.br"
 DEFAULT_REPO_URL = "https://github.com/GeovaneEstanislau/Jinn_Project"
+ASSETS_DIR = WEB_DIR / "assets"
+ARTIGOS_DIR = WEB_DIR / "artigos"
 
 def get_git_info(commit_ref="HEAD"):
     """Obtém tag, hash do commit e mensagem completa do commit."""
@@ -63,6 +76,38 @@ def get_git_info(commit_ref="HEAD"):
 
     return info
 
+def discover_visual_evidences(link: str, eco_ids: list, lab_ids: list, title: str, body_text: str = "") -> list[dict]:
+    """Extrai evidências visuais do artigo linkado ou das capturas recentes em web/assets/."""
+    evidences: list[dict] = []
+    if link and "/artigos/" in link:
+        slug_name = link.rstrip("/").split("/")[-1].split("#")[0].split("?")[0]
+        if slug_name.endswith(".html"):
+            art_path = ARTIGOS_DIR / slug_name
+            if art_path.exists():
+                raw_html = art_path.read_text(encoding="utf-8", errors="ignore")
+                og_m = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', raw_html, re.I)
+                default_img = og_m.group(1).strip() if og_m else DEFAULT_IMAGE_URL
+                evidences = extract_visual_evidences(raw_html, default_img, title)
+
+    if not evidences and ASSETS_DIR.exists():
+        haystack = f"{title} {body_text} {' '.join(eco_ids)} {' '.join(lab_ids)}".lower()
+        scored: list[tuple[int, float, Path]] = []
+        for asset in ASSETS_DIR.glob("*.png"):
+            tokens = [t for t in re.split(r"[^a-z0-9]+", asset.stem.lower()) if len(t) >= 3]
+            hits = sum(1 for tok in tokens if tok in haystack)
+            scored.append((hits, asset.stat().st_mtime, asset))
+        scored.sort(reverse=True)
+        for _, _, asset in scored[:3]:
+            evidences.append({
+                "url": f"{SITE_URL}/assets/{asset.name}",
+                "caption": f"Evidência visual Observatory ({asset.name})",
+            })
+
+    if not evidences:
+        evidences.append({"url": DEFAULT_IMAGE_URL, "caption": title[:110]})
+    return evidences[:4]
+
+
 def format_ecosystem_labels(eco_ids):
     """Retorna rótulos concisos de domínios e ecossistemas de referência."""
     labels = []
@@ -73,40 +118,66 @@ def format_ecosystem_labels(eco_ids):
     return labels
 
 
-def format_release_notes(title, version, summary, gain, eco_ids, lab_ids, link, commit):
-    """Gera template estruturado de Release Notes para GitHub Releases com ganho mensurável e ecossistemas."""
+def format_release_notes(
+    title,
+    version,
+    summary,
+    gain,
+    eco_ids,
+    lab_ids,
+    link,
+    commit,
+    about_concepts=None,
+    mention_entities=None,
+    search_keywords=None,
+    visual_evidences=None,
+):
+    """Gera template estruturado de Release Notes para GitHub Releases com ecossistemas, keywords e evidências visuais."""
     lab_bullets = ", ".join(OBSERVATORY_LABS[l]["title"] for l in lab_ids if l in OBSERVATORY_LABS) or "Architecture & RFCs"
     eco_bullets = "\n".join(
         f"- **{ECOSYSTEM_DOMAINS[e]['title']}** (`{e}`): {', '.join(ECOSYSTEM_DOMAINS[e]['ecosystems'])}"
         for e in eco_ids if e in ECOSYSTEM_DOMAINS
     )
+    kw_line = ", ".join((search_keywords or [])[:12]) or "Jinn OS, Microkernel, Rust no_std"
+    mentions_line = ", ".join((mention_entities or [])[:10]) or "Industrial Automation Integrators, Academic Systems Research Labs"
+    about_line = ", ".join((about_concepts or [])[:6]) or "Microkernel Architecture"
+    ev_lines = "\n".join(
+        f"- [{ev.get('caption', 'Evidência visual')}]({ev.get('url', DEFAULT_IMAGE_URL)})"
+        for ev in (visual_evidences or [])[:4]
+    ) or f"- [Portal Observatory]({DEFAULT_IMAGE_URL})"
     return (
         f"## Jinn OS {version} — {title}\n\n"
         f"{summary}\n\n"
         f"### Bancada Observatory & Ganho Mensurável\n"
         f"- Bancada(s): **{lab_bullets}**\n"
+        f"- Conceitos Semânticos (`about`): {about_line}\n"
         f"- {gain}\n"
         f"- Commit de referência: `{commit}`\n\n"
-        f"### Ecossistemas & Setores Aplicáveis\n"
-        f"{eco_bullets}\n\n"
-        f"### Canal Aberto de Colaboração & Pilotos\n"
-        f"Empresas de automação locais, universidades/grupos de pesquisa em SO e projetos públicos responsáveis podem reproduzir este build ou propor pilotos via:\n"
+        f"### Tags de Ecossistemas & Menções Contextuais (`mentions`)\n"
+        f"{eco_bullets}\n"
+        f"- Radar & Organizações Contextuais: {mentions_line}\n\n"
+        f"### Palavras-Chave Técnicas de Busca\n"
+        f"`{kw_line}`\n\n"
+        f"### Resumo das Evidências Visuais\n"
+        f"{ev_lines}\n\n"
+        f"### Aplicabilidade (Indústria, Uso Doméstico e Servidores) & Pilotos\n"
+        f"Chamada Aberta para Pilotos (Indústria Local, Universidades & Setor Público Ético) — validação física vs QEMU (Tabela B):\n"
         f"- Relatório & Telemetria: {link}\n"
         f"- Contato Técnico: {DEFAULT_PORTAL_URL}/#win-contact\n"
         f"- Feed RSS / Google News: {DEFAULT_PORTAL_URL}/feed.xml\n"
     )
 
 
-def format_microblog(title, version, summary, gain, eco_ids, lab_ids, link):
+def format_microblog(title, version, summary, gain, eco_ids, lab_ids, link, search_keywords=None):
     """Gera texto técnico conciso para Bluesky (<=300 chars), Mastodon e X."""
     lab_short = " / ".join(OBSERVATORY_LABS[l]["title"] for l in lab_ids if l in OBSERVATORY_LABS) or "Observatory"
     eco_short = " · ".join(ECOSYSTEM_DOMAINS[e]["short_label"] for e in eco_ids if e in ECOSYSTEM_DOMAINS)
     t = title[:64].rstrip()
-    g = gain.replace("Indicadores citados no relatório: ", "")[:58].rstrip()
+    g = gain.replace("Indicadores citados no relatório: ", "")[:54].rstrip()
     text = (
         f"Jinn [{lab_short[:28]}]: {t}\n\n"
         f"Metricas: {g}\n"
-        f"Ecossistemas: {eco_short[:58]}\n"
+        f"Ecossistemas: {eco_short[:56]}\n"
         f"{link}\n"
         f"#RustLang #OSDev #Microkernel #NoStd"
     )
@@ -116,16 +187,32 @@ def format_microblog(title, version, summary, gain, eco_ids, lab_ids, link):
         text = (
             f"Jinn [{lab_short[:24]}]: {t}\n\n"
             f"Metricas: {g}\n"
-            f"Ecossistemas: {eco_short[:52]}\n"
+            f"Ecossistemas: {eco_short[:50]}\n"
             f"{link}\n"
             f"#RustLang #OSDev #Microkernel #NoStd"
         )
     return text
 
 
-def format_discord_embed(title, version, summary, gain, eco_ids, link, commit):
-    """Gera payload JSON para Webhook do Discord com Rich Embed incluindo ganho e ecossistemas."""
+def format_discord_embed(
+    title,
+    version,
+    summary,
+    gain,
+    eco_ids,
+    link,
+    commit,
+    search_keywords=None,
+    visual_evidences=None,
+):
+    """Gera payload JSON para Webhook do Discord com Rich Embed incluindo ganho, keywords e evidências visuais."""
     eco_text = "\n".join(f"• {lbl}" for lbl in format_ecosystem_labels(eco_ids)) or "• Microkernel & Open Hardware"
+    kw_text = ", ".join((search_keywords or [])[:8]) or "Jinn OS, Microkernel, Rust no_std"
+    ev_text = "\n".join(
+        f"• [{ev.get('caption', 'Captura')[:70]}]({ev.get('url', DEFAULT_IMAGE_URL)})"
+        for ev in (visual_evidences or [])[:3]
+    ) or f"• [Observatory Preview]({DEFAULT_IMAGE_URL})"
+    thumb_url = (visual_evidences[0]["url"] if visual_evidences else f"{DEFAULT_PORTAL_URL}/assets/wallpaper.jpg")
     payload = {
         "username": "Jinn Engineering Observatory Bot",
         "avatar_url": f"{DEFAULT_PORTAL_URL}/assets/wallpaper.jpg",
@@ -135,6 +222,7 @@ def format_discord_embed(title, version, summary, gain, eco_ids, link, commit):
                 "url": link,
                 "description": summary,
                 "color": 0x00E5FF,
+                "image": {"url": thumb_url},
                 "fields": [
                     {
                         "name": "Ganho Técnico Mensurável",
@@ -147,7 +235,17 @@ def format_discord_embed(title, version, summary, gain, eco_ids, link, commit):
                         "inline": False
                     },
                     {
-                        "name": "Colaboração Aberta (Indústria Local, Academia & Setor Público)",
+                        "name": "Palavras-Chave Técnicas de Busca",
+                        "value": kw_text,
+                        "inline": False
+                    },
+                    {
+                        "name": "Evidências Visuais",
+                        "value": ev_text,
+                        "inline": False
+                    },
+                    {
+                        "name": "Chamada Aberta para Pilotos (Indústria Local, Academia & Setor Público Ético)",
                         "value": f"[Observatory]({DEFAULT_PORTAL_URL}) | [GitHub ({commit})]({DEFAULT_REPO_URL}) | [Contato/Pilotos]({DEFAULT_PORTAL_URL}/#win-contact) | [RSS Feed]({DEFAULT_PORTAL_URL}/feed.xml)",
                         "inline": False
                     }
@@ -163,23 +261,47 @@ def format_discord_embed(title, version, summary, gain, eco_ids, link, commit):
     return payload
 
 
-def format_telegram_message(title, version, summary, gain, eco_ids, link):
-    """Gera mensagem formatada em HTML para Bot do Telegram com ganhos e ecossistemas."""
+def format_telegram_message(
+    title,
+    version,
+    summary,
+    gain,
+    eco_ids,
+    link,
+    search_keywords=None,
+    visual_evidences=None,
+):
+    """Gera mensagem formatada em HTML para Bot do Telegram com ganhos, keywords e evidência visual."""
     eco_str = html_lib.escape(", ".join(ECOSYSTEM_DOMAINS[e]["short_label"] for e in eco_ids if e in ECOSYSTEM_DOMAINS))
+    kw_str = html_lib.escape(", ".join((search_keywords or [])[:6]) or "Jinn OS, Microkernel")
+    ev_url = visual_evidences[0]["url"] if visual_evidences else DEFAULT_IMAGE_URL
     text = (
         f"<b>Jinn OS {html_lib.escape(version)}: {html_lib.escape(title)}</b>\n\n"
         f"{html_lib.escape(summary)}\n\n"
         f"<b>Ganho Mensurável:</b> {html_lib.escape(gain)}\n"
-        f"<b>Ecossistemas:</b> {eco_str}\n\n"
+        f"<b>Ecossistemas:</b> {eco_str}\n"
+        f"<b>Palavras-chave:</b> {kw_str}\n\n"
         f"<a href=\"{DEFAULT_PORTAL_URL}\">Observatory</a> | "
         f"<a href=\"{link}\">Relatório</a> | "
+        f"<a href=\"{html_lib.escape(ev_url)}\">Evidência Visual</a> | "
         f"<a href=\"{DEFAULT_PORTAL_URL}/#win-contact\">Pilotos &amp; Colaboração</a>"
     )
     return text
 
 
-def update_rss_feed(feed_path, title, summary, link, gain="", eco_ids=None):
-    """Insere o novo item no topo do arquivo RSS/Atom (web/feed.xml e web/rss.xml) com ganhos e ecossistemas."""
+def update_rss_feed(
+    feed_path,
+    title,
+    summary,
+    link,
+    gain="",
+    eco_ids=None,
+    lab_ids=None,
+    search_keywords=None,
+    mention_entities=None,
+    visual_evidences=None,
+):
+    """Insere o novo item no topo do arquivo RSS/Atom (web/feed.xml e web/rss.xml) com tags, keywords e evidências."""
     if not os.path.exists(feed_path):
         print(f"[WARN] Arquivo RSS nao encontrado em: {feed_path}")
         return False
@@ -188,8 +310,19 @@ def update_rss_feed(feed_path, title, summary, link, gain="", eco_ids=None):
         content = f.read()
 
     eco_ids = eco_ids or ["microkernel-security"]
-    rich_desc = format_ecosystem_summary_text(summary, gain or "Evidência empírica reproduzível em QEMU/PCAP", eco_ids)
-    categories_xml = "\n".join(f"      <category>{html_lib.escape(e)}</category>" for e in eco_ids)
+    lab_ids = lab_ids or []
+    rich_desc = format_ecosystem_summary_text(
+        summary,
+        gain or "Evidência empírica reproduzível em QEMU/PCAP",
+        eco_ids,
+        keywords=search_keywords,
+        mentions=mention_entities,
+        evidences=visual_evidences,
+    )
+    cat_vals = list(dict.fromkeys([*eco_ids, *lab_ids]))
+    categories_xml = "\n".join(f"      <category>{html_lib.escape(c)}</category>" for c in cat_vals)
+    primary_ev_url = visual_ev_url(visual_evidences)
+    ev_mime = "image/png" if primary_ev_url.lower().endswith(".png") else "image/jpeg"
 
     now_rfc822 = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
     guid = "jinn-os-" + re.sub(r'[^a-zA-Z0-9]', '-', title.lower()).strip('-') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M")
@@ -203,6 +336,7 @@ def update_rss_feed(feed_path, title, summary, link, gain="", eco_ids=None):
       <description><![CDATA[
         <p>{rich_desc}</p>
       ]]></description>
+      <enclosure url="{html_lib.escape(primary_ev_url)}" length="70707" type="{ev_mime}" />
     </item>
 """
 
@@ -218,6 +352,13 @@ def update_rss_feed(feed_path, title, summary, link, gain="", eco_ids=None):
 
     print(f"  [OK] Feed RSS atualizado com sucesso: {feed_path}")
     return True
+
+
+def visual_ev_url(visual_evidences):
+    """Retorna URL da evidência visual principal para enclosure RSS."""
+    if visual_evidences and visual_evidences[0].get("url"):
+        return visual_evidences[0]["url"]
+    return DEFAULT_IMAGE_URL
 
 def dispatch_discord(webhook_url, payload, dry_run=False):
     """Envia webhook para canal do Discord."""
@@ -401,9 +542,14 @@ def main():
         else "Avanço verificado no Jinn Microkernel, compositor Aladdin e computação heterogênea JHCS com foco em isolamento Ring 3 e previsibilidade de recursos."
     )
     link = args.link or DEFAULT_PORTAL_URL
-    eco_ids = classify_ecosystems("RELEASE", [], title.lower(), title, f"{summary} {git_info['body']}")
-    lab_ids = classify_labs("RELEASE", [], title.lower(), title, f"{summary} {git_info['body']}")
-    gain = args.gain or extract_measurable_gain(title, f"{summary} {git_info['body']}")
+    body_all = f"{summary} {git_info['body']}"
+    eco_ids = classify_ecosystems("RELEASE", [], title.lower(), title, body_all)
+    lab_ids = classify_labs("RELEASE", [], title.lower(), title, body_all)
+    about_concepts, mention_entities, search_keywords = classify_semantic_metadata(
+        "RELEASE", lab_ids, title.lower(), title, body_all, eco_ids
+    )
+    visual_evidences = discover_visual_evidences(link, eco_ids, lab_ids, title, body_all)
+    gain = args.gain or extract_measurable_gain(title, body_all)
 
     print("================================================================================")
     print("  JINN ENGINEERING OBSERVATORY — SINDICAÇÃO DE ENGENHARIA & OUTREACH")
@@ -412,16 +558,28 @@ def main():
     print(f"Versão      : {version}")
     print(f"Bancadas    : {', '.join(lab_ids)}")
     print(f"Ecossistemas: {', '.join(eco_ids)}")
+    print(f"Keywords    : {', '.join(search_keywords[:8])}")
+    print(f"Evidências  : {len(visual_evidences)} arquivo(s)")
     print(f"Ganho       : {gain}")
     print(f"Link        : {link}")
     print(f"Dry-Run     : {args.dry_run}")
     print("================================================================================\n")
 
     # 1. Gerar Formatos
-    microblog_text = format_microblog(title, version, summary, gain, eco_ids, lab_ids, link)
-    discord_payload = format_discord_embed(title, version, summary, gain, eco_ids, link, git_info["commit"])
-    telegram_text = format_telegram_message(title, version, summary, gain, eco_ids, link)
-    release_notes = format_release_notes(title, version, summary, gain, eco_ids, lab_ids, link, git_info["commit"])
+    microblog_text = format_microblog(title, version, summary, gain, eco_ids, lab_ids, link, search_keywords=search_keywords)
+    discord_payload = format_discord_embed(
+        title, version, summary, gain, eco_ids, link, git_info["commit"],
+        search_keywords=search_keywords, visual_evidences=visual_evidences,
+    )
+    telegram_text = format_telegram_message(
+        title, version, summary, gain, eco_ids, link,
+        search_keywords=search_keywords, visual_evidences=visual_evidences,
+    )
+    release_notes = format_release_notes(
+        title, version, summary, gain, eco_ids, lab_ids, link, git_info["commit"],
+        about_concepts=about_concepts, mention_entities=mention_entities,
+        search_keywords=search_keywords, visual_evidences=visual_evidences,
+    )
 
     print("--- Formato 1: Microblogging (Bluesky / Mastodon / X) ---")
     print(microblog_text)
@@ -434,8 +592,12 @@ def main():
     # 2. Atualizar Feed RSS se solicitado
     if args.update_feed:
         print("\n[+] Atualizando Feeds RSS estáticos...")
-        update_rss_feed("web/feed.xml", title, summary, link, gain=gain, eco_ids=eco_ids)
-        update_rss_feed("web/rss.xml", title, summary, link, gain=gain, eco_ids=eco_ids)
+        for fp in ("web/feed.xml", "web/rss.xml"):
+            update_rss_feed(
+                fp, title, summary, link, gain=gain, eco_ids=eco_ids, lab_ids=lab_ids,
+                search_keywords=search_keywords, mention_entities=mention_entities,
+                visual_evidences=visual_evidences,
+            )
 
     # 3. Despacho Multicanal
     print("\n[+] Executando difusão nos canais configurados...")

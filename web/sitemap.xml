@@ -31,6 +31,20 @@
     <priority>0.9</priority>
   </url>
   <url>
+    <loc>https://jinn-os.dev.br/artigos/indexacao-semantica-observatorio-engenharia-jinn-os.html</loc>
+    <lastmod>2026-11-26</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn Engineering Observatory</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-26</news:publication_date>
+      <news:title>Indexação Semântica Schema.org, Menções Contextuais e Radar Expandido no Jinn Observatory</news:title>
+    </news:news>
+  </url>
+  <url>
     <loc>https://jinn-os.dev.br/artigos/arquitetura-captura-tecnica-ecossistemas-edge-hpc-jinn.html</loc>
     <lastmod>2026-11-26</lastmod>
     <changefreq>weekly</changefreq>
@@ -41,7 +55,7 @@
         <news:language>pt-BR</news:language>
       </news:publication>
       <news:publication_date>2026-11-26</news:publication_date>
-      <news:title>Arquitetura de Captura Técnica B2B/Deep Tech: Google Ads de Alta Precisão, Landing Pages /solucoes e Playbook Social no Jinn OS</news:title>
+      <news:title>Arquitetura de Captura Técnica B2B/Deep Tech: Google Ads de Alta Precisão, Landing Pages /solucoes e…</news:title>
     </news:news>
   </url>
   <url>
@@ -55,7 +69,7 @@
         <news:language>pt-BR</news:language>
       </news:publication>
       <news:publication_date>2026-11-26</news:publication_date>
-      <news:title>Auditoria Técnica de Ativos do Ecossistema Jinn: Computação Heterogênea, Zero-Idle SMP, SharedRings e Isolamento Ring 3</news:title>
+      <news:title>Auditoria Técnica de Ativos do Ecossistema Jinn: Computação Heterogênea, Zero-Idle SMP, SharedRings e…</news:title>
     </news:news>
   </url>
   <url>
@@ -83,7 +97,7 @@
         <news:language>pt-BR</news:language>
       </news:publication>
       <news:publication_date>2026-11-26</news:publication_date>
-      <news:title>Protocol Fallback in Experimental Browsers: Trade-offs de Confiabilidade, UX e Auditoria Anti-Downgrade no Jinn Browser</news:title>
+      <news:title>Protocol Fallback in Experimental Browsers: Trade-offs de Confiabilidade, UX e Auditoria Anti-Downgrade no…</news:title>
     </news:news>
   </url>
   <url>
@@ -97,7 +111,7 @@
         <news:language>pt-BR</news:language>
       </news:publication>
       <news:publication_date>2026-11-26</news:publication_date>
-      <news:title>Debugging TLS 1.3 Through Packet Capture and End-to-End Testing: Traces PCAP no QEMU e Regressão Cruzada e1000/VirtIO</news:title>
+      <news:title>Debugging TLS 1.3 Through Packet Capture and End-to-End Testing: Traces PCAP no QEMU e Regressão Cruzada…</news:title>
     </news:news>
   </url>
   <url>
@@ -111,7 +125,7 @@
         <news:language>pt-BR</news:language>
       </news:publication>
       <news:publication_date>2026-11-26</news:publication_date>
-      <news:title>Building a TLS 1.3 Browser in a Rust Microkernel Operating System: Arquitetura Ring 3 e Auditoria Honesta de PKI</news:title>
+      <news:title>Building a TLS 1.3 Browser in a Rust Microkernel Operating System: Arquitetura Ring 3 e Auditoria Honesta de…</news:title>
     </news:news>
   </url>
   <url>
@@ -125,35 +139,7 @@
         <news:language>pt-BR</news:language>
       </news:publication>
       <news:publication_date>2026-11-26</news:publication_date>
-      <news:title>Jinn Browser em Maturidade: Redirecionamentos Multi-Hop, Picture/Srcset, StageGeometry e Tela Cheia 1024x768 (F11)</news:title>
-    </news:news>
-  </url>
-  <url>
-    <loc>https://jinn-os.dev.br/artigos/compute-lab-jhcs-breakeven-escalar-simd-wgpu.html</loc>
-    <lastmod>2026-11-26</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-    <news:news>
-      <news:publication>
-        <news:name>Jinn Engineering Observatory</news:name>
-        <news:language>pt-BR</news:language>
-      </news:publication>
-      <news:publication_date>2026-11-26</news:publication_date>
-      <news:title>Compute Lab: Ponto de Equilíbrio (Breakeven) Real no jhcs-rs entre CPU Escalar, AVX2/FMA SIMD e GPU wgpu</news:title>
-    </news:news>
-  </url>
-  <url>
-    <loc>https://jinn-os.dev.br/artigos/arquitetura-observatory-ip-fronteira-honesta-computacao-heterogenea.html</loc>
-    <lastmod>2026-11-26</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-    <news:news>
-      <news:publication>
-        <news:name>Jinn Engineering Observatory</news:name>
-        <news:language>pt-BR</news:language>
-      </news:publication>
-      <news:publication_date>2026-11-26</news:publication_date>
-      <news:title>Jinn Engineering Observatory: Posicionamento Modular, Matriz de IP, Fronteira Honesta e Aplicações Industriais, Domésticas e em Servidores</news:title>
+      <news:title>Jinn Browser em Maturidade: Redirecionamentos Multi-Hop, Picture/Srcset, StageGeometry e Tela Cheia 1024x768…</news:title>
     </news:news>
   </url>
   <url>
@@ -269,6 +255,34 @@
     </news:news>
   </url>
   <url>
+    <loc>https://jinn-os.dev.br/artigos/compute-lab-jhcs-breakeven-escalar-simd-wgpu.html</loc>
+    <lastmod>2026-11-26</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn Engineering Observatory</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-26</news:publication_date>
+      <news:title>Compute Lab: Ponto de Equilíbrio (Breakeven) Real no jhcs-rs entre CPU Escalar, AVX2/FMA SIMD e GPU wgpu</news:title>
+    </news:news>
+  </url>
+  <url>
+    <loc>https://jinn-os.dev.br/artigos/arquitetura-observatory-ip-fronteira-honesta-computacao-heterogenea.html</loc>
+    <lastmod>2026-11-26</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn Engineering Observatory</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-26</news:publication_date>
+      <news:title>Jinn Engineering Observatory: Posicionamento Modular, Matriz de IP, Fronteira Honesta e Aplicações…</news:title>
+    </news:news>
+  </url>
+  <url>
     <loc>https://jinn-os.dev.br/artigos/post-mortem-tls13-poly1305-fallback-http-telemetria-jinn-browser.html</loc>
     <lastmod>2026-11-26</lastmod>
     <changefreq>weekly</changefreq>
@@ -279,12 +293,12 @@
         <news:language>pt-BR</news:language>
       </news:publication>
       <news:publication_date>2026-11-26</news:publication_date>
-      <news:title>Post-Mortem TLS 1.3 no Jinn Browser: Limbs Poly1305 RFC 8439, Alertas close_notify, Fallback HTTPS→HTTP e Telemetria Real</news:title>
+      <news:title>Post-Mortem TLS 1.3 no Jinn Browser: Limbs Poly1305 RFC 8439, Alertas close_notify, Fallback HTTPS→HTTP e…</news:title>
     </news:news>
   </url>
   <url>
     <loc>https://jinn-os.dev.br/artigos/tabela-rotas-quentes-dns-l2-fast-path-jinn-os.html</loc>
-    <lastmod>2026-11-26</lastmod>
+    <lastmod>2026-11-25</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
     <news:news>
@@ -292,13 +306,13 @@
         <news:name>Jinn Engineering Observatory</news:name>
         <news:language>pt-BR</news:language>
       </news:publication>
-      <news:publication_date>2026-11-26</news:publication_date>
+      <news:publication_date>2026-11-25</news:publication_date>
       <news:title>Tabela de Rotas Mais Usadas (`HotRouteTable`): Fast-Path Unificado DNS + L2/L3 no Jinn OS</news:title>
     </news:news>
   </url>
   <url>
     <loc>https://jinn-os.dev.br/artigos/tabela-local-dns-hosts-cache-persistente-ttl-aladdin.html</loc>
-    <lastmod>2026-11-26</lastmod>
+    <lastmod>2026-11-25</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
     <news:news>
@@ -306,7 +320,7 @@
         <news:name>Jinn Engineering Observatory</news:name>
         <news:language>pt-BR</news:language>
       </news:publication>
-      <news:publication_date>2026-11-26</news:publication_date>
+      <news:publication_date>2026-11-25</news:publication_date>
       <news:title>Tabela Local de DNS em 3 Camadas: Hosts Estáticos, Cache LRU Persistente com TTL e Painel Aladdin</news:title>
     </news:news>
   </url>
