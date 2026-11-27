@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>X.509/SAN, Anti-Downgrade HTTPS e Custo das Syscalls 88 e 97 no Jinn OS</title>
+  <meta name="description"
+    content="Hardening criptográfico #![no_std] no Jinn Browser (Ring 3): validação ASN.1 DER X.509, SAN/CN RFC 6125, assinatura CertificateVerify (ECDSA P-256, RSA-PSS e PKCS#1 v1.5), bloqueio de downgrade HTTPS para HTTP, selo HTTP (Sem TLS) e medição real rdtsc/µs da fronteira Ring 3 <-> Ring 0 das Syscalls 88 e 97 em QEMU (-device e1000, -smp 4).">
+  <link rel="canonical"
+    href="https://jinn-os.dev.br/artigos/network-failure-observability-x509-downgrade-protection-jinn.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url"
+    content="https://jinn-os.dev.br/artigos/network-failure-observability-x509-downgrade-protection-jinn.html">
+  <meta property="og:title"
+    content="X.509/SAN, Anti-Downgrade HTTPS e Custo das Syscalls 88 e 97 no Jinn OS">
+  <meta property="og:description"
+    content="Do parser X.509 sem heap em .bss ao bloqueio de downgrade em redirecionamentos/<img> e aferição rdtsc/µs das Syscalls 88 e 97 em QEMU e1000 SMP 4.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/browser-ciclo1-x509-san-blocked.png">
+
+  <!-- Artigo Meta (Indexação Google News / RSS / Feed) -->
+  <meta name="article:tag" content="SECURITY, TLS 1.3, X.509, JINN BROWSER, OBSERVABILITY, SYSCALL 88, SYSCALL 97">
+  <meta name="article:published_time" content="2026-11-26T22:50:00-03:00">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Jinn Engineering Observatory: Schema.org TechArticle (Auto-Generated) -->
+  <script type="application/ld+json" id="jinn-techarticle-jsonld">
+{
+  "@context": "https://schema.org",
+  "@type": [
+    "TechArticle",
+    "NewsArticle"
+  ],
+  "headline": "X.509/SAN, Anti-Downgrade HTTPS e Custo das Syscalls 88 e 97 no Jinn OS",
+  "description": "Hardening criptográfico #![no_std] no Jinn Browser (Ring 3): validação ASN.1 DER X.509, SAN/CN RFC 6125, assinatura CertificateVerify (ECDSA P-256, RSA-PSS e PKCS#1 v1.5), bloqueio de downgrade HTTPS para HTTP, selo HTTP (Sem TLS) e medição real rdtsc/µs da fronteira Ring 3 <-> Ring 0 das Syscalls 88 e 97 em QEMU (-device e1000, -smp 4).",
+  "image": [
+    "https://jinn-os.dev.br/assets/browser-ciclo1-x509-san-blocked.png"
+  ],
+  "datePublished": "2026-11-26T22:50:00-03:00",
+  "dateModified": "2026-11-26T22:50:00-03:00",
+  "inLanguage": "pt-BR",
+  "articleSection": [
+    "Security Lab",
+    "Architecture & RFCs"
+  ],
+  "author": {
+    "@type": "Person",
+    "name": "Geovane da Conceição Estanislau",
+    "url": "https://github.com/GeovaneEstanislau"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Jinn Engineering Observatory",
+    "url": "https://jinn-os.dev.br/",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://jinn-os.dev.br/assets/wallpaper.jpg"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://jinn-os.dev.br/artigos/network-failure-observability-x509-downgrade-protection-jinn.html"
+  },
+  "about": [
+    {
+      "@type": "Thing",
+      "name": "Microkernel Architecture"
+    },
+    {
+      "@type": "Thing",
+      "name": "TLS 1.3 Cryptography"
+    },
+    {
+      "@type": "Thing",
+      "name": "Deterministic Scheduling"
+    },
+    {
+      "@type": "Thing",
+      "name": "L2/L3 Fast-Path Networking"
+    },
+    {
+      "@type": "Thing",
+      "name": "Three-Tier DNS Resolution"
+    },
+    {
+      "@type": "Thing",
+      "name": "Zero-Copy IPC"
+    },
+    {
+      "@type": "Thing",
+      "name": "Bare-Metal TCP/IP Stack"
+    },
+    {
+      "@type": "Thing",
+      "name": "Energy-Proportional Computing"
+    }
+  ],
+  "mentions": [
+    {
+      "@type": "Organization",
+      "name": "Cloudflare"
+    },
+    {
+      "@type": "Organization",
+      "name": "Red Hat"
+    },
+    {
+      "@type": "Thing",
+      "name": "Academic Systems Research Labs"
+    },
+    {
+      "@type": "Thing",
+      "name": "Sovereign Public Infrastructure"
+    },
+    {
+      "@type": "Organization",
+      "name": "Intel"
+    },
+    {
+      "@type": "Organization",
+      "name": "Arm"
+    },
+    {
+      "@type": "Organization",
+      "name": "Bosch"
+    },
+    {
+      "@type": "Organization",
+      "name": "RISC-V International"
+    },
+    {
+      "@type": "Organization",
+      "name": "LF Edge"
+    },
+    {
+      "@type": "Organization",
+      "name": "Qualcomm"
+    },
+    {
+      "@type": "Organization",
+      "name": "Akamai"
+    },
+    {
+      "@type": "Organization",
+      "name": "Google"
+    }
+  ],
+  "keywords": "Jinn OS, Microkernel, Rust no_std, x86_64, SECURITY, TLS 1.3, X.509, JINN BROWSER, OBSERVABILITY, SYSCALL 88, SYSCALL 97, Microkernel Architecture, TLS 1.3 Cryptography, Deterministic Scheduling, L2/L3 Fast-Path Networking, Three-Tier DNS Resolution, SPSC Ring Buffer, Zero-Copy IPC"
+}
+  </script>
+  <!-- /Jinn Engineering Observatory: Schema.org TechArticle -->
+</head>
+
+<body class="bg-slate-950 text-slate-200 min-h-screen antialiased selection:bg-cyan-500/30">
+  <header class="border-b border-slate-800 bg-slate-900/70 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-4xl mx-auto px-6 h-14 flex items-center justify-between">
+      <a href="/artigos/?lab=security-lab" class="flex items-center gap-2 hover:text-cyan-400 transition-colors text-xs font-mono">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span>Observatory • Security Lab &amp; Network Observability</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="/feed.xml" target="_blank" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS</span>
+        </a>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="text-cyan-300 hover:text-white">GitHub Jinn_Project</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-6 py-10 space-y-8">
+    <article class="prose prose-invert prose-slate max-w-none space-y-6">
+      <div class="space-y-3 border-b border-slate-800 pb-6">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400">
+          <span class="bg-emerald-950 border border-emerald-800 text-emerald-300 px-2.5 py-0.5 rounded-full">HOMOLOGAÇÃO &amp; SEGURANÇA</span>
+          <span class="bg-amber-950 border border-amber-800 text-amber-300 px-2.5 py-0.5 rounded-full">X.509 • ANTI-DOWNGRADE • SYSCALLS 88/97</span>
+          <span class="text-slate-500">•</span>
+          <time datetime="2026-11-26">26 Nov 2026</time>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white leading-tight">
+          X.509/SAN, Bloqueio de Downgrade HTTPS e Custo Ring 3/Ring 0 das Syscalls 88 e 97
+        </h1>
+        <p class="text-base sm:text-lg text-slate-300 leading-relaxed">
+          Neste ciclo de maturidade criptográfica e observabilidade do <strong>Jinn OS</strong>, o cliente <strong>TLS 1.3</strong> do navegador nativo Ring 3 (<code>apps/ola-mundo/</code>) deixou de aceitar certificados sem verificação de identidade e passou a executar análise ASN.1 DER <code>#![no_std]</code> em memória estática <code>.bss</code> para validação de <em>Subject Alternative Name</em> (<code>SAN</code>/<code>CN</code>) e prova de posse criptográfica <code>CertificateVerify</code> (ECDSA NIST P-256, RSA-PSS e RSA-PKCS#1 v1.5), bloqueio estrito de rebaixamento <code>https://</code> &rarr; <code>http://</code> e medição real via <code>_rdtsc</code> e <code>CLOCK_MONOTONIC</code> do custo de travessia das <code>Syscall 88</code> e <code>Syscall 97</code> em ambiente QEMU (<code>-device e1000</code>, <code>-smp 4</code>).
+        </p>
+      </div>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">1. Diagnóstico Detalhado do que foi Levantado</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          A auditoria da pilha TLS 1.3 e da observabilidade do navegador nativo em <code>apps/ola-mundo/src/</code> identificou três lacunas concretas antes do endurecimento implementado neste ciclo:
+        </p>
+        <ul class="list-disc list-inside space-y-2 text-sm text-slate-300 leading-relaxed">
+          <li>
+            <strong>Ausência de vínculo criptográfico folha no handshake Ring 3:</strong> embora <code>apps/ola-mundo/src/tls.rs</code> derivasse segredos X25519/HKDF e validasse tags AEAD ChaCha20-Poly1305/AES-128-GCM e a mensagem <code>Finished</code>, as mensagens <code>Certificate</code> (tipo <code>11</code>) e <code>CertificateVerify</code> (tipo <code>15</code>) não eram verificadas contra o hostname requisitado nem contra a chave pública folha X.509, impedindo detectar domínios divergentes ou assinaturas adulteradas antes do tráfego HTTP cifrado.
+          </li>
+          <li>
+            <strong>Superfície de downgrade silencioso <code>https://</code> &rarr; <code>http://</code>:</strong> o seguimento de redirecionamentos HTTP <code>301..308</code>, <code>&lt;meta http-equiv="refresh"&gt;</code> e o <em>prefetch</em> de subrecursos <code>&lt;img src=...&gt;</code> podiam transitar de uma origem autenticada <code>https://</code> para transporte em texto claro <code>http://</code>; paralelamente, o fallback automático para alvos digitados sem esquema não diferenciava visualmente na UI quando uma página terminava carregada em HTTP não cifrado, e erros criptográficos em alvos sem esquema podiam disparar fallback inseguro.
+          </li>
+          <li>
+            <strong>Fronteira Ring 3 &harr; Ring 0 sem métricas temporais aferidas:</strong> a página de diagnóstico já consultava a <code>Syscall 88</code> (<code>sys_get_system_stats</code>) e a <code>Syscall 97</code> (<code>sys_net_hot_route_list</code>), porém sem calibração de frequência TSC nem contagem real em ciclos e microssegundos de cada travessia de privilégio.
+          </li>
+        </ul>
+      </section>
+
+      <section class="space-y-5">
+        <h2 class="text-2xl font-bold text-white">2. Melhorias Implementadas no Sistema (Zero-Alloc &amp; Zero-Idle)</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-slate-300">
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-emerald-300">Validação X.509/SAN &amp; <code>CertificateVerify</code> (<code>x509.rs</code>, <code>tls.rs</code>)</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li>Novo módulo <code>apps/ola-mundo/src/x509.rs</code> <code>#![no_std]</code> sem alocador dinâmico, alocando estado de folha e aritmética modular RSA (até 4096 bits) exclusivamente em buffers estáticos <code>.bss</code>.</li>
+              <li>Parser ASN.1 DER extrai SPKI RSA e ECDSA NIST P-256, além de extensões <code>SAN</code> (DNS <code>0x82</code> com suporte curinga de rótulo único RFC 6125 e IPv4 <code>0x87</code>) e fallback <code>CN</code>.</li>
+              <li><code>ClientHello</code> restringe <code>signature_algorithms</code> (<code>0x000D</code>) aos esquemas suportados <code>[0x0403, 0x0804, 0x0401]</code> (ECDSA P-256 SHA-256, RSA-PSS SHA-256, RSA-PKCS#1 v1.5 SHA-256) e <code>Tls13ClientSession</code> bloqueia <code>Finished</code> sem <code>Certificate</code> + <code>CertificateVerify</code> válidos.</li>
+            </ul>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-amber-300">Bloqueio Anti-Downgrade &amp; Selo <code>HTTP (Sem TLS)</code> (<code>main.rs</code>, <code>browser.rs</code>)</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li><code>fetch_http_document_inner</code> e <code>browser_load_and_display</code> rejeitam transições <code>https://</code> &rarr; <code>http://</code> em redirecionamentos <code>301</code>/<code>302</code>/<code>303</code>/<code>307</code>/<code>308</code> e <code>&lt;meta http-equiv="refresh"&gt;</code>.</li>
+              <li><code>prefetch_page_images</code> bloqueia subrecursos <code>&lt;img src="http://..."&gt;</code> dentro de documentos HTTPS, registrando alerta persistente <code>SEC: Downgrade HTTP Bloqueado (&lt;img&gt; HTTPS-only ativo)</code> na barra <code>BRCR</code>.</li>
+              <li>Fallback <code>https://</code> &rarr; <code>http://</code> restrito exclusivamente à navegação inicial sem esquema quando não há falha de certificado/downgrade, exibindo selo âmbar <code>HTTP (Sem TLS)</code> na barra superior e rodapé.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2 text-sm text-slate-300">
+          <h3 class="font-bold text-cyan-300">Observabilidade Ring 3 &harr; Ring 0 Calibrada (<code>measure_observability_boundary</code>)</h3>
+          <p class="text-xs leading-relaxed">
+            Em <code>apps/ola-mundo/src/main.rs</code>, a calibração de TSC (<code>ensure_tsc_calibrated</code>) executa uma única janela de <code>50 ms</code> via <code>sys_sleep(50)</code> (HLT determinístico em Ring 0 mantendo política Zero-Idle) combinada com <code>sys_clock_gettime(CLOCK_MONOTONIC)</code>, medindo em seguida a chamada ao vivo e 100 iterações estabilizadas (<code>10</code> de aquecimento) de <code>Syscall 88</code> (<code>sys_get_system_stats</code>) e <code>Syscall 97</code> (<code>sys_net_hot_route_list</code>) via <code>_rdtsc</code> para exibição no diagnóstico HTML e no log serial <code>[DIAG-BENCH]</code>.
+          </p>
+        </div>
+      </section>
+
+      <section class="space-y-5">
+        <h2 class="text-2xl font-bold text-white">3. Evidências Visuais Reais &amp; Métricas Aferidas em QEMU</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          Todas as capturas abaixo foram obtidas diretamente do framebuffer do QEMU (<code>-device e1000</code>, <code>-smp 4</code>, <code>-m 512M</code>) em tela cheia (<code>1024x768</code>) durante a execução da suíte <code>scripts/test_ciclo1_security_observability_e2e.py</code>, acompanhadas pelos logs seriais <code>[BROWSER-SEC]</code> e <code>[DIAG-BENCH]</code>.
+        </p>
+
+        <div class="space-y-6">
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/60">
+            <img src="/assets/browser-ciclo1-x509-san-blocked.png"
+              alt="Jinn Browser bloqueando certificado X.509 com SAN divergente divergent-host.evil.invalid e exibindo custo das Syscalls 88 e 97"
+              class="w-full h-auto block" />
+            <figcaption class="p-4 text-xs text-slate-300 border-t border-slate-800 space-y-1">
+              <div class="font-mono text-cyan-300 font-semibold">Evidência 1 — Rejeição X.509 por SAN/CN Divergente (Cenário 1A)</div>
+              <p>O servidor TLS 1.3 apresentou certificado ECDSA P-256 válido cujo SAN era <code>divergent-host.evil.invalid</code> contra o alvo <code>https://10.0.2.2:58777/</code>. O navegador bloqueou o carregamento em <code>X509_SAN_MISMATCH (RFC 6125)</code> sem tentar fallback HTTP, exibindo o custo medido Ring 3 &harr; Ring 0 (<code>Sys88 72951c (41.2 us) | Sys97 86557c (48.9 us)</code>) e repouso <code>BRCR: 0.134% [HIBERNATED] (CPU 0)</code>.</p>
+            </figcaption>
+          </figure>
+
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/60">
+            <img src="/assets/browser-ciclo1-certverify-blocked.png"
+              alt="Jinn Browser bloqueando CertificateVerify com assinatura ECDSA P-256 adulterada no handshake TLS 1.3"
+              class="w-full h-auto block" />
+            <figcaption class="p-4 text-xs text-slate-300 border-t border-slate-800 space-y-1">
+              <div class="font-mono text-amber-300 font-semibold">Evidência 2 — Rejeição de <code>CertificateVerify</code> Adulterado (Cenário 1B)</div>
+              <p>Mesmo com certificado folha contendo IP SAN compatível (<code>10.0.2.2</code>) e registro AEAD ChaCha20-Poly1305 íntegro, a corrupção de 1 byte na assinatura ECDSA P-256 (<code>0x0403</code>) da mensagem <code>CertificateVerify</code> foi interceptada antes da conclusão do handshake (<code>TLS_CERT_VERIFY (RFC 8446)</code>), exibindo <code>Sys88 210871c (119.3 us) | Sys97 110662c (62.6 us)</code>.</p>
+            </figcaption>
+          </figure>
+
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/60">
+            <img src="/assets/browser-ciclo1-redirect-downgrade.png"
+              alt="Jinn Browser bloqueando redirecionamento HTTP 302 de https:// para http://"
+              class="w-full h-auto block" />
+            <figcaption class="p-4 text-xs text-slate-300 border-t border-slate-800 space-y-1">
+              <div class="font-mono text-rose-300 font-semibold">Evidência 3 — Bloqueio de Downgrade em Redirecionamento 302 (Cenário 2A)</div>
+              <p>Após completar TLS 1.3 legítimo em <code>https://10.0.2.2:58779/</code>, o servidor respondeu <code>302 Found</code> com <code>Location: http://10.0.2.2:58775/downgraded.html</code>. A política anti-downgrade interrompeu a transição em <code>HTTPS_DOWNGRADE_BLOCKED</code>, mantendo <code>0</code> requisições recebidas no servidor HTTP-alvo e medindo <code>Sys88 56566c (32.0 us) | Sys97 51092c (28.9 us)</code>.</p>
+            </figcaption>
+          </figure>
+
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/60">
+            <img src="/assets/browser-ciclo1-downgrade-blocked.png"
+              alt="Página HTTPS verificada com subrecurso img HTTP bloqueado e alerta na barra inferior BRCR"
+              class="w-full h-auto block" />
+            <figcaption class="p-4 text-xs text-slate-300 border-t border-slate-800 space-y-1">
+              <div class="font-mono text-emerald-300 font-semibold">Evidência 4 — Subrecurso Misto <code>&lt;img src="http://..."&gt;</code> Bloqueado em HTTPS (Cenário 2B)</div>
+              <p>Em <code>https://10.0.2.2:58776/</code> com selo verde <code>TLS1.3</code> ativo, a tentativa de carga da imagem <code>http://10.0.2.2:58775/tracker.png</code> foi barrada antes da criação de socket (<code>0</code> pacotes recebidos no servidor HTTP de armadilha), preservando apenas o marcador <code>[IMG]</code> e sinalizando <code>SEC: Downgrade HTTP Bloqueado (&lt;img&gt; HTTPS-only ativo)</code> no rodapé âmbar.</p>
+            </figcaption>
+          </figure>
+
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/60">
+            <img src="/assets/browser-ciclo1-http-fallback-badge.png"
+              alt="Navegação sem esquema digitado com fallback automático para HTTP exibindo selo âmbar HTTP (Sem TLS)"
+              class="w-full h-auto block" />
+            <figcaption class="p-4 text-xs text-slate-300 border-t border-slate-800 space-y-1">
+              <div class="font-mono text-amber-300 font-semibold">Evidência 5 — Fallback Exclusivo Sem Esquema e Selo <code>HTTP (Sem TLS)</code> (Cenário 3)</div>
+              <p>Ao digitar <code>10.0.2.2:58780/</code> sem prefixo, o navegador tentou <code>https://</code> primeiro; após a recusa de handshake na porta HTTP legada, executou fallback para <code>http://10.0.2.2:58780/</code> exibindo moldura e pílula âmbar explícita <code>HTTP (Sem TLS)</code> e rodapé de advertência operacional.</p>
+            </figcaption>
+          </figure>
+        </div>
+
+        <div class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/70">
+          <table class="w-full text-left text-xs font-mono">
+            <thead class="bg-slate-900 text-slate-300 border-b border-slate-800">
+              <tr>
+                <th class="p-3">Ponto de Medição (QEMU e1000 / SMP 4)</th>
+                <th class="p-3">TSC Calibrado</th>
+                <th class="p-3">Syscall 88 (Live / Min / Méd100 / Máx)</th>
+                <th class="p-3">Syscall 97 (Live / Min / Méd100 / Máx)</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800 text-slate-300">
+              <tr>
+                <td class="p-3">Browser Cenário 1A (<code>X509_SAN_MISMATCH</code>)</td>
+                <td class="p-3"><code>1.767.177 kHz</code></td>
+                <td class="p-3">418.284 / 41.472 / <strong>72.951</strong> (<code>41.2 µs</code>) / 605.813 c</td>
+                <td class="p-3">363.996 / 44.388 / <strong>86.557</strong> (<code>48.9 µs</code>) / 1.494.684 c</td>
+              </tr>
+              <tr>
+                <td class="p-3">Browser Cenário 1B (<code>TLS_CERT_VERIFY</code>)</td>
+                <td class="p-3"><code>1.767.177 kHz</code></td>
+                <td class="p-3">329.112 / 87.696 / <strong>210.871</strong> (<code>119.3 µs</code>) / 4.236.260 c</td>
+                <td class="p-3">248.004 / 58.824 / <strong>110.662</strong> (<code>62.6 µs</code>) / 1.260.668 c</td>
+              </tr>
+              <tr>
+                <td class="p-3">Browser Cenário 2A (<code>HTTPS_DOWNGRADE_BLOCKED</code>)</td>
+                <td class="p-3"><code>1.767.177 kHz</code></td>
+                <td class="p-3">201.492 / 42.336 / <strong>56.566</strong> (<code>32.0 µs</code>) / 266.127 c</td>
+                <td class="p-3">162.900 / 43.308 / <strong>51.092</strong> (<code>28.9 µs</code>) / 230.292 c</td>
+              </tr>
+              <tr>
+                <td class="p-3">Suite <code>TEST 19.10</code> (<code>/disk/ola.elf</code>)</td>
+                <td class="p-3"><code>1.720.800 kHz</code></td>
+                <td class="p-3">1.273.228 / 52.740 / <strong>64.553</strong> (<code>37.5 µs</code>) / 617.148 c</td>
+                <td class="p-3">418.932 / 54.360 / <strong>61.482</strong> (<code>35.7 µs</code>) / 413.028 c</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="text-xs text-slate-400 leading-relaxed">
+          Além dos testes E2E em QEMU, o conjunto unitário no host compilado com <code>rustc --test</code> validou o parser DER X.509 e <code>verify_tls13_certificate_verify</code> contra vetores assinados com OpenSSL/<code>cryptography 50.0.2</code> cobrindo ECDSA P-256 (<code>0x0403</code>), RSA-PSS (<code>0x0804</code>), RSA-PKCS#1 v1.5 (<code>0x0401</code>), curinga SAN RFC 6125, IPv4 SAN e rejeição determinística de assinaturas e transcrições adulteradas. Nas regressões complementares pós-alteração, <code>test_hot_routes_e2e.py</code> (Fast-Path com <code>0</code> DNS/ARP na segunda visita e <code>100.00%</code> HLT nas APs ociosas) e <code>test_jaha_12_integrity.py</code> (invariante JAHA 1.2 com <code>0 bytes</code> de discrepância) passaram integralmente; o script legado <code>test_tls13_homologation.py</code> falhou ao aguardar execução automática headless sem invocar <code>spawn /disk/ola.elf</code> no perfil Desktop Aladdin atual, lacuna coberta pela execução direta da suíte <code>TEST 19</code> dentro do teste E2E do Ciclo 1.
+        </p>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">4. Limitações Conhecidas (Fronteira Honesta)</h2>
+        <ul class="list-disc list-inside space-y-2 text-sm text-slate-300 leading-relaxed">
+          <li>
+            <strong>Verificação focada no certificado folha (sem cadeia WebPKI local nem OCSP/CRL):</strong> <code>x509.rs</code> valida a estrutura DER folha, correspondência <code>SAN</code>/<code>CN</code> e posse criptográfica da chave privada via <code>CertificateVerify</code>, porém ainda não implementa repositório de CAs raiz em Ring 3, validação recursiva de cadeia intermediária nem checagem de revogação via OCSP/CRL.
+          </li>
+          <li>
+            <strong>Cobertura de esquemas de assinatura em Ring 3:</strong> estão ativos <code>ecdsa_secp256r1_sha256</code> (<code>0x0403</code>), <code>rsa_pss_rsae_sha256</code> (<code>0x0804</code>) e <code>rsa_pkcs1_sha256</code> (<code>0x0401</code>) até 4096 bits; <code>Ed25519</code> (<code>0x0807</code>) ainda não é oferecido nem verificado pelo cliente Ring 3.
+          </li>
+          <li>
+            <strong>Medições em emulação QEMU TCG vs. silício físico:</strong> os picos máximos (acima de centenas de milhares de ciclos) e latências base (<code>~29–119 µs</code>) refletem tradução binária TCG e preempção do host em QEMU (<code>-device e1000</code>, <code>-smp 4</code>), servindo como referência comparativa de regressão até aferição em placa de rede física.
+          </li>
+        </ul>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">5. Aplicabilidade Prática: Indústria, Uso Doméstico e Servidores</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-slate-300">
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-emerald-300">Indústria &amp; Automação Edge</h3>
+            <p class="text-xs leading-relaxed">
+              Interfaces operacionais (IHMs) e coletores SCADA em gateways embarcados podem inspecionar painéis HTTPS em redes fabris segmentadas sem alocador dinâmico de heap (<code>.bss</code> fixo), garantindo bloqueio estrito contra downgrade de sessão para HTTP claro e exposição explícita quando um CLP legado operar sob <code>HTTP (Sem TLS)</code>.
+            </p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-cyan-300">Uso Doméstico &amp; Educação</h3>
+            <p class="text-xs leading-relaxed">
+              Estações enxutas e ambientes educacionais de arquitetura de sistemas obtêm feedback imediato e legível de segurança de transporte — separando divergência SAN, assinatura inválida e rebaixamento HTTP — preservando o repouso Zero-Idle (<code>0.134%</code> BRCR em espera) para economia térmica e silenciosa.
+            </p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-purple-300">Servidores &amp; Redes Auditáveis</h3>
+            <p class="text-xs leading-relaxed">
+              A instrumentação determinística das <code>Syscall 88</code> e <code>Syscall 97</code> em <code>32–49 µs</code> típicos em QEMU permite quantificar com precisão o orçamento de observabilidade Ring 3 &harr; Ring 0 ao coletar métricas NIC, tabelas ARP/HotRoute e auditorias de segurança sem comprometer a fila crítica de pacotes.
+            </p>
+          </div>
+        </div>
+      </section>
+      <!-- Jinn Ecosystem & Open Collaboration Block (Auto-Generated) -->
+      <section aria-labelledby="ecosystems-collaboration-heading" class="not-prose my-10 p-6 rounded-xl bg-slate-900/75 border border-slate-800 space-y-5">
+        <div class="space-y-2">
+          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Engineering Observatory • Semântica &amp; Colaboração Aberta</p>
+          <h3 id="ecosystems-collaboration-heading" class="text-lg sm:text-xl font-bold text-white">
+            Domínios Técnicos &amp; Ecossistemas Relacionados
+          </h3>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Badges clicáveis indexados por bancada, domínio de engenharia e organizações/padrões do Radar Expandido (Nível B contextual, sem endosso implícito):
+          </p>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <a href="/artigos/?lab=security-lab" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400"><span>Security Lab</span></a>
+          <a href="/artigos/?lab=architecture-rfcs" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400"><span>Architecture &amp; RFCs</span></a>
+          <a href="/artigos/?eco=fastpath-ipc-net" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400"><span>IPC &amp; Redes Fast-Path</span><span class="opacity-70">&bull; Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking</span></a>
+          <a href="/artigos/?eco=zero-idle-efficiency" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400"><span>Zero-Idle &amp; SMP</span><span class="opacity-70">&bull; Energy-Proportional Runtime, SMP Accounting &amp; Low-Overhead Scheduling</span></a>
+          <a href="/artigos/?eco=microkernel-security" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400"><span>Microkernel &amp; Segurança</span><span class="opacity-70">&bull; Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity</span></a>
+        </div>
+
+        <div class="pt-1">
+          <div class="text-[11px] font-mono text-slate-400 mb-2">Ecossistemas, Padrões &amp; Radar Expandido (clique para filtrar o acervo):</div>
+          <div class="flex flex-wrap gap-1.5">
+            <a href="/artigos/?q=Cloudflare" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Cloudflare</a>
+          <a href="/artigos/?q=Red+Hat" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Red Hat</a>
+          <a href="/artigos/?q=Academic+Systems+Research+Labs" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-emerald-950/60 border-emerald-700/70 text-emerald-200 hover:border-emerald-400">Academic Systems Research Labs</a>
+          <a href="/artigos/?q=Sovereign+Public+Infrastructure" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-emerald-950/60 border-emerald-700/70 text-emerald-200 hover:border-emerald-400">Sovereign Public Infrastructure</a>
+          <a href="/artigos/?q=Intel" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Intel</a>
+          <a href="/artigos/?q=Arm" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Arm</a>
+          <a href="/artigos/?q=Bosch" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Bosch</a>
+          <a href="/artigos/?q=RISC-V+International" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">RISC-V International</a>
+          <a href="/artigos/?q=LF+Edge" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">LF Edge</a>
+          <a href="/artigos/?q=Qualcomm" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Qualcomm</a>
+          <a href="/artigos/?q=Akamai" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Akamai</a>
+          <a href="/artigos/?q=Google" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Google</a>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-cyan-300 font-mono">
+            Aplicabilidade: Indústria, Uso Doméstico e Servidores
+          </h4>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-emerald-300">Indústria &amp; Edge</div>
+              <p class="text-slate-400 leading-relaxed">Gateways industriais, coletores SCADA e frotas com links intermitentes via SharedRings SPSC (4096 B), HotRouteTable e diagnóstico de falha por estágio.</p>
+            </div>
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-cyan-300">Uso Doméstico &amp; Educação</div>
+              <p class="text-slate-400 leading-relaxed">Navegação ágil com DNS 3 camadas (/disk/hosts → LRU → upstream) e fallback resiliente de conectividade.</p>
+            </div>
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-purple-300">Servidores &amp; HPC</div>
+              <p class="text-slate-400 leading-relaxed">Caminhos críticos IPC lock-free e observabilidade de pilha TCP/TLS 1.3 no_std com inspeção direta por syscalls.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-emerald-300 font-mono">
+            Chamada Aberta para Pilotos (Indústria Local, Universidades &amp; Setor Público Ético)
+          </h4>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Convidamos <strong>integradores de automação industrial</strong>, <strong>laboratórios universitários de arquitetura/SO</strong> e <strong>instituições públicas eticamente responsáveis</strong> a reproduzirem estes experimentos em silício real (fechando lacunas emulador vs. hardware da Tabela B) ou propor estudos-piloto com <strong>Jinn OS</strong>, <strong>Aladdin</strong> e <strong>JHCS</strong>.
+          </p>
+          <div class="flex flex-wrap gap-2.5 text-xs font-mono pt-1">
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-cyan-400 text-slate-200 hover:text-cyan-300 transition-colors">
+              GitHub: Jinn_Project
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/jhcs-rs" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-purple-400 text-slate-200 hover:text-purple-300 transition-colors">
+              GitHub: jhcs-rs
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/ENGINEERING_STATUS_AND_LIMITATIONS.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-amber-400 text-slate-200 hover:text-amber-300 transition-colors">
+              Fronteira Honesta &amp; Tabela B
+            </a>
+            <a href="/solucoes/edge-industrial-zero-idle.html" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
+              Soluções &amp; Benchmarks
+            </a>
+            <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-cyan-950/90 border border-cyan-600/70 hover:bg-cyan-900 text-cyan-200 transition-colors">
+              Contato Técnico &amp; Pilotos
+            </a>
+          </div>
+        </div>
+      </section>
+      <!-- /Jinn Ecosystem & Open Collaboration Block -->
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn Engineering Observatory • Security &amp; Observability • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/artigos/" class="text-cyan-400 hover:underline">Central de Artigos</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-slate-300 hover:text-white">Portal Principal</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>

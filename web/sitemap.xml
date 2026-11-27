@@ -31,6 +31,20 @@
     <priority>0.9</priority>
   </url>
   <url>
+    <loc>https://jinn-os.dev.br/artigos/network-failure-observability-x509-downgrade-protection-jinn.html</loc>
+    <lastmod>2026-11-26</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn Engineering Observatory</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-26</news:publication_date>
+      <news:title>X.509/SAN, Anti-Downgrade HTTPS e Custo das Syscalls 88 e 97 no Jinn OS</news:title>
+    </news:news>
+  </url>
+  <url>
     <loc>https://jinn-os.dev.br/artigos/jinn-browser-viewport-redirecionamentos-png-nostd-poly1305.html</loc>
     <lastmod>2026-11-26</lastmod>
     <changefreq>weekly</changefreq>
@@ -70,20 +84,6 @@
       </news:publication>
       <news:publication_date>2026-11-26</news:publication_date>
       <news:title>Arquitetura de Captura Técnica B2B/Deep Tech: Google Ads de Alta Precisão, Landing Pages /solucoes e…</news:title>
-    </news:news>
-  </url>
-  <url>
-    <loc>https://jinn-os.dev.br/artigos/auditoria-ativos-jinn-arquitetura-eficiencia-isolamento.html</loc>
-    <lastmod>2026-11-26</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-    <news:news>
-      <news:publication>
-        <news:name>Jinn Engineering Observatory</news:name>
-        <news:language>pt-BR</news:language>
-      </news:publication>
-      <news:publication_date>2026-11-26</news:publication_date>
-      <news:title>Auditoria Técnica de Ativos do Ecossistema Jinn: Computação Heterogênea, Zero-Idle SMP, SharedRings e…</news:title>
     </news:news>
   </url>
   <url>
@@ -196,6 +196,20 @@
       </news:publication>
       <news:publication_date>2026-11-26</news:publication_date>
       <news:title>Pilha Criptográfica Soberana: TLS 1.3 e ChaCha20-Poly1305 em Bare-Metal Rust</news:title>
+    </news:news>
+  </url>
+  <url>
+    <loc>https://jinn-os.dev.br/artigos/auditoria-ativos-jinn-arquitetura-eficiencia-isolamento.html</loc>
+    <lastmod>2026-11-26</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <news:news>
+      <news:publication>
+        <news:name>Jinn Engineering Observatory</news:name>
+        <news:language>pt-BR</news:language>
+      </news:publication>
+      <news:publication_date>2026-11-26</news:publication_date>
+      <news:title>Auditoria Técnica de Ativos do Ecossistema Jinn: Computação Heterogênea, Zero-Idle SMP, SharedRings e…</news:title>
     </news:news>
   </url>
   <url>

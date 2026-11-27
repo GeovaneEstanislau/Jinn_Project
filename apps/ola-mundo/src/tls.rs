@@ -4,6 +4,8 @@
 //! RFC 7748 (Curve25519 / X25519) e RFC 6234 (SHA-256) operando inteiramente
 //! sobre buffers estáticos e pilhas de execução, sem dependência de alocador dinâmico.
 
+use crate::x509::{self, CertVerifyError};
+
 pub const TLS_AES_128_GCM_SHA256: u16 = 0x1301;
 pub const TLS_CHACHA20_POLY1305_SHA256: u16 = 0x1303;
 pub const TLS13_VERSION: u16 = 0x0304;
@@ -1027,7 +1029,13 @@ pub struct Tls13ClientSession {
     pub cipher_suite: u16,
     pub hs_reasm_len: usize,
     pub has_server_hello: bool,
+    pub has_certificate: bool,
+    pub has_cert_verify: bool,
     pub is_established: bool,
+    pub expected_host: [u8; 96],
+    pub expected_host_len: usize,
+    pub verified_sig_scheme: u16,
+    pub last_cert_err: Option<CertVerifyError>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1073,12 +1081,27 @@ impl Tls13ClientSession {
             cipher_suite: TLS_CHACHA20_POLY1305_SHA256,
             hs_reasm_len: 0,
             has_server_hello: false,
+            has_certificate: false,
+            has_cert_verify: false,
             is_established: false,
+            expected_host: [0u8; 96],
+            expected_host_len: 0,
+            verified_sig_scheme: 0,
+            last_cert_err: None,
         }
     }
 
     /// Gera o pacote ClientHello com extensões completas RFC 8446 (SNI, supported_groups, signature_algorithms, supported_versions, key_share)
     pub fn build_client_hello(&mut self, hostname: &[u8], out: &mut [u8]) -> usize {
+        let mut trimmed_host = hostname;
+        while !trimmed_host.is_empty() && trimmed_host[trimmed_host.len() - 1] == b'.' {
+            trimmed_host = &trimmed_host[..trimmed_host.len() - 1];
+        }
+        let h_copy = trimmed_host.len().min(self.expected_host.len());
+        self.expected_host = [0u8; 96];
+        self.expected_host[..h_copy].copy_from_slice(&trimmed_host[..h_copy]);
+        self.expected_host_len = h_copy;
+
         let mut p = 0;
 
         // TLS Record Header: [0x16, 0x03, 0x01, len_hi, len_lo]
@@ -1130,17 +1153,13 @@ impl Tls13ClientSession {
         out[p] = 0x00; out[p + 1] = 0x1D; p += 2; // X25519
         out[p] = 0x00; out[p + 1] = 0x17; p += 2; // secp256r1
 
-        // 3. signature_algorithms (0x000D): ECDSA P-256/P-384, Ed25519, RSA-PSS e RSA PKCS#1
+        // 3. signature_algorithms (0x000D): esquemas verificados por x509.rs (ECDSA P-256, RSA-PSS SHA-256, RSA PKCS#1 SHA-256)
         out[p] = 0x00; out[p + 1] = 0x0D; p += 2;
-        out[p] = 0x00; out[p + 1] = 0x10; p += 2; // ext_len = 16
-        out[p] = 0x00; out[p + 1] = 0x0E; p += 2; // list_len = 14 (7 algs)
+        out[p] = 0x00; out[p + 1] = 0x08; p += 2; // ext_len = 8
+        out[p] = 0x00; out[p + 1] = 0x06; p += 2; // list_len = 6 (3 algs)
         out[p] = 0x04; out[p + 1] = 0x03; p += 2; // ecdsa_secp256r1_sha256 (0x0403)
         out[p] = 0x08; out[p + 1] = 0x04; p += 2; // rsa_pss_rsae_sha256 (0x0804)
         out[p] = 0x04; out[p + 1] = 0x01; p += 2; // rsa_pkcs1_sha256 (0x0401)
-        out[p] = 0x05; out[p + 1] = 0x03; p += 2; // ecdsa_secp384r1_sha384 (0x0503)
-        out[p] = 0x08; out[p + 1] = 0x05; p += 2; // rsa_pss_rsae_sha384 (0x0805)
-        out[p] = 0x08; out[p + 1] = 0x06; p += 2; // rsa_pss_rsae_sha512 (0x0806)
-        out[p] = 0x08; out[p + 1] = 0x07; p += 2; // ed25519 (0x0807)
 
         // 4. supported_versions (0x002B): TLS 1.3 (0x0304)
         out[p] = 0x00; out[p + 1] = 0x2B; p += 2;
@@ -1358,7 +1377,43 @@ impl Tls13ClientSession {
                 break;
             }
 
-            if msg_type == 20 { // Finished
+            if msg_type == 11 {
+                // Certificate (11): parse X.509 folha + extrai SPKI + valida SAN/CN contra expected_host
+                if let Err(e) = x509::process_tls13_certificate_msg(
+                    &reasm[pos..pos + full_msg_len],
+                    &self.expected_host[..self.expected_host_len],
+                ) {
+                    self.last_cert_err = Some(e);
+                    return Err(e.as_str());
+                }
+                self.has_certificate = true;
+                self.transcript.update(&reasm[pos..pos + full_msg_len]);
+            } else if msg_type == 15 {
+                // CertificateVerify (15): verifica assinatura do transcript hash antes de CertificateVerify
+                if !self.has_certificate {
+                    self.last_cert_err = Some(CertVerifyError::MalformedCertificateVerify);
+                    return Err("CertificateVerify recebido antes de Certificate");
+                }
+                let transcript_before_cv = self.transcript.current_digest();
+                match x509::verify_tls13_certificate_verify(
+                    &reasm[pos..pos + full_msg_len],
+                    &transcript_before_cv,
+                ) {
+                    Ok(scheme) => {
+                        self.verified_sig_scheme = scheme;
+                        self.has_cert_verify = true;
+                        self.transcript.update(&reasm[pos..pos + full_msg_len]);
+                    }
+                    Err(e) => {
+                        self.last_cert_err = Some(e);
+                        return Err(e.as_str());
+                    }
+                }
+            } else if msg_type == 20 { // Finished
+                if !self.has_certificate || !self.has_cert_verify {
+                    self.last_cert_err = Some(CertVerifyError::InvalidSignature);
+                    return Err("TLS 1.3 Finished rejeitado sem Certificate/CertificateVerify validos");
+                }
                 if msg_len < 32 {
                     return Err("Finished do servidor invalido");
                 }
@@ -1433,7 +1488,7 @@ impl Tls13ClientSession {
                 self.is_established = true;
                 generated_client_finished = Some(58);
             } else {
-                // EncryptedExtensions (8), Certificate (11), CertificateVerify (15)
+                // EncryptedExtensions (8), NewSessionTicket, etc.
                 self.transcript.update(&reasm[pos..pos + full_msg_len]);
             }
             pos += full_msg_len;

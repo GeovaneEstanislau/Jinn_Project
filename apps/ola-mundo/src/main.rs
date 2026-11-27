@@ -5,6 +5,7 @@ mod font;
 mod browser;
 pub mod wallet;
 pub mod tls;
+pub mod x509;
 pub mod gzip;
 
 use core::{arch::asm, panic::PanicInfo};
@@ -1874,6 +1875,186 @@ impl FetchDiagInfo {
 }
 
 static mut LAST_FETCH_DIAG: FetchDiagInfo = FetchDiagInfo::empty();
+static mut CALIBRATED_TSC_KHZ: u64 = 0;
+
+#[inline(always)]
+unsafe fn read_tsc() -> u64 {
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    let val = core::arch::x86_64::_rdtsc();
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    val
+}
+
+/// Calibra a frequencia do TSC (em kHz) uma unica vez via CLOCK_MONOTONIC + sys_sleep(50ms HLT).
+unsafe fn ensure_tsc_calibrated() -> u64 {
+    if CALIBRATED_TSC_KHZ > 0 {
+        return CALIBRATED_TSC_KHZ;
+    }
+    let mut ts0 = Timespec::default();
+    let mut ts1 = Timespec::default();
+    if sys_clock_gettime(1, &mut ts0 as *mut Timespec) < 0 {
+        return 0;
+    }
+    let t0 = read_tsc();
+    let _ = sys_sleep(50);
+    let t1 = read_tsc();
+    if sys_clock_gettime(1, &mut ts1 as *mut Timespec) < 0 {
+        return 0;
+    }
+    let dt_ns = ((ts1.tv_sec as i128 - ts0.tv_sec as i128) * 1_000_000_000i128)
+        + (ts1.tv_nsec as i128 - ts0.tv_nsec as i128);
+    let d_cyc = t1.wrapping_sub(t0);
+    if dt_ns > 1_000_000 && d_cyc > 0 {
+        let khz = ((d_cyc as u128 * 1_000_000u128) / (dt_ns as u128)) as u64;
+        if khz > 0 {
+            CALIBRATED_TSC_KHZ = khz;
+            return khz;
+        }
+    }
+    0
+}
+
+#[inline]
+fn cycles_to_us_tenths(cycles: u64, tsc_khz: u64) -> u64 {
+    if tsc_khz == 0 {
+        return 0;
+    }
+    ((cycles as u128 * 10_000u128) / (tsc_khz as u128)) as u64
+}
+
+fn diag_push_us_tenths(dst: &mut [u8], pos: &mut usize, cycles: u64, tsc_khz: u64) {
+    if tsc_khz == 0 {
+        diag_push_bytes(dst, pos, b"N/A");
+        return;
+    }
+    let tenths = cycles_to_us_tenths(cycles, tsc_khz);
+    diag_push_u64(dst, pos, tenths / 10);
+    diag_push_bytes(dst, pos, b".");
+    diag_push_u64(dst, pos, tenths % 10);
+    diag_push_bytes(dst, pos, b" us");
+}
+
+#[derive(Clone, Copy)]
+struct ObsBenchStats {
+    tsc_khz: u64,
+    sys88_live_cyc: u64,
+    sys88_min_cyc: u64,
+    sys88_avg_cyc: u64,
+    sys88_max_cyc: u64,
+    sys97_live_cyc: u64,
+    sys97_min_cyc: u64,
+    sys97_avg_cyc: u64,
+    sys97_max_cyc: u64,
+}
+
+unsafe fn benchmark_observability_syscalls(
+    sys88_live_cyc: u64,
+    sys97_live_cyc: u64,
+    verbose: bool,
+) -> ObsBenchStats {
+    let tsc_khz = ensure_tsc_calibrated();
+    let mut bench_stats = SystemStatsUser::default();
+    let mut bench_hr = [HotRouteEntryUser::empty(); 16];
+
+    for _ in 0..10 {
+        let _ = sys_get_system_stats(&mut bench_stats as *mut SystemStatsUser);
+        let _ = sys_net_hot_route_list(&mut bench_hr);
+    }
+
+    let mut min88 = u64::MAX;
+    let mut max88 = 0u64;
+    let mut sum88 = 0u128;
+    for _ in 0..100 {
+        let a = read_tsc();
+        let _ = sys_get_system_stats(&mut bench_stats as *mut SystemStatsUser);
+        let b = read_tsc();
+        let dt = b.wrapping_sub(a);
+        if dt < min88 {
+            min88 = dt;
+        }
+        if dt > max88 {
+            max88 = dt;
+        }
+        sum88 += dt as u128;
+    }
+
+    let mut min97 = u64::MAX;
+    let mut max97 = 0u64;
+    let mut sum97 = 0u128;
+    for _ in 0..100 {
+        let a = read_tsc();
+        let _ = sys_net_hot_route_list(&mut bench_hr);
+        let b = read_tsc();
+        let dt = b.wrapping_sub(a);
+        if dt < min97 {
+            min97 = dt;
+        }
+        if dt > max97 {
+            max97 = dt;
+        }
+        sum97 += dt as u128;
+    }
+
+    let res = ObsBenchStats {
+        tsc_khz,
+        sys88_live_cyc,
+        sys88_min_cyc: if min88 == u64::MAX { 0 } else { min88 },
+        sys88_avg_cyc: (sum88 / 100) as u64,
+        sys88_max_cyc: max88,
+        sys97_live_cyc,
+        sys97_min_cyc: if min97 == u64::MAX { 0 } else { min97 },
+        sys97_avg_cyc: (sum97 / 100) as u64,
+        sys97_max_cyc: max97,
+    };
+
+    if verbose {
+        let mut msg = [0u8; 256];
+        let mut mp = 0usize;
+        diag_push_bytes(&mut msg, &mut mp, b"[DIAG-BENCH] tsc_khz=");
+        diag_push_u64(&mut msg, &mut mp, res.tsc_khz);
+        diag_push_bytes(&mut msg, &mut mp, b" sys88_live=");
+        diag_push_u64(&mut msg, &mut mp, res.sys88_live_cyc);
+        diag_push_bytes(&mut msg, &mut mp, b" sys88_min=");
+        diag_push_u64(&mut msg, &mut mp, res.sys88_min_cyc);
+        diag_push_bytes(&mut msg, &mut mp, b" sys88_avg100=");
+        diag_push_u64(&mut msg, &mut mp, res.sys88_avg_cyc);
+        diag_push_bytes(&mut msg, &mut mp, b" (");
+        diag_push_us_tenths(&mut msg, &mut mp, res.sys88_avg_cyc, res.tsc_khz);
+        diag_push_bytes(&mut msg, &mut mp, b") sys88_max=");
+        diag_push_u64(&mut msg, &mut mp, res.sys88_max_cyc);
+        diag_push_bytes(&mut msg, &mut mp, b" | sys97_live=");
+        diag_push_u64(&mut msg, &mut mp, res.sys97_live_cyc);
+        diag_push_bytes(&mut msg, &mut mp, b" sys97_min=");
+        diag_push_u64(&mut msg, &mut mp, res.sys97_min_cyc);
+        diag_push_bytes(&mut msg, &mut mp, b" sys97_avg100=");
+        diag_push_u64(&mut msg, &mut mp, res.sys97_avg_cyc);
+        diag_push_bytes(&mut msg, &mut mp, b" (");
+        diag_push_us_tenths(&mut msg, &mut mp, res.sys97_avg_cyc, res.tsc_khz);
+        diag_push_bytes(&mut msg, &mut mp, b") sys97_max=");
+        diag_push_u64(&mut msg, &mut mp, res.sys97_max_cyc);
+        diag_push_bytes(&mut msg, &mut mp, b"\n");
+        print_str(&msg[..mp]);
+    }
+    res
+}
+
+unsafe fn measure_observability_boundary(
+    stats: &mut SystemStatsUser,
+    hr_out: &mut [HotRouteEntryUser; 16],
+    verbose: bool,
+) -> (ObsBenchStats, i64, i64) {
+    let _ = ensure_tsc_calibrated();
+    let s88_t0 = read_tsc();
+    let r88 = sys_get_system_stats(stats as *mut SystemStatsUser);
+    let s88_live_cyc = read_tsc().wrapping_sub(s88_t0);
+
+    let s97_t0 = read_tsc();
+    let r97 = sys_net_hot_route_list(hr_out);
+    let s97_live_cyc = read_tsc().wrapping_sub(s97_t0);
+
+    let obs = benchmark_observability_syscalls(s88_live_cyc, s97_live_cyc, verbose);
+    (obs, r88, r97)
+}
 
 #[inline]
 fn diag_push_bytes(dst: &mut [u8], pos: &mut usize, src: &[u8]) {
@@ -1972,7 +2153,10 @@ enum FetchError {
     TooManyRedirects,
     HttpStatus(u16),
     HttpsRedirect,
+    HttpsDowngradeBlocked,
     TlsEntropyFailed,
+    TlsCertHostMismatch,
+    TlsCertVerifyFailed,
     TlsHandshakeFailed,
     TlsDecryptFailed,
 }
@@ -2222,11 +2406,30 @@ unsafe fn fetch_http_document_inner(
                         }
                         Ok(None) => {}
                         Err(e) => {
+                            let cert_err = sess.last_cert_err;
                             print_str(b"[DIAG-FLOW] TLS: Falha no handshake cifrado: ");
                             print_str(e.as_bytes());
                             print_str(b"\n");
                             let _ = sys_close(sockfd);
-                            return Err(FetchError::TlsHandshakeFailed);
+                            match cert_err {
+                                Some(crate::x509::CertVerifyError::HostnameMismatch) => {
+                                    let mut d = [0u8; 96];
+                                    let dlen = crate::x509::last_cert_diag(&mut d);
+                                    print_str(b"[BROWSER-SEC] BLOQUEADO certificado TLS (SAN/CN mismatch): ");
+                                    print_str(&d[..dlen]);
+                                    print_str(b"\n");
+                                    return Err(FetchError::TlsCertHostMismatch);
+                                }
+                                Some(_) => {
+                                    let mut d = [0u8; 96];
+                                    let dlen = crate::x509::last_cert_diag(&mut d);
+                                    print_str(b"[BROWSER-SEC] BLOQUEADO certificado/assinatura TLS: ");
+                                    print_str(&d[..dlen]);
+                                    print_str(b"\n");
+                                    return Err(FetchError::TlsCertVerifyFailed);
+                                }
+                                None => return Err(FetchError::TlsHandshakeFailed),
+                            }
                         }
                     }
                 } else {
@@ -2536,12 +2739,19 @@ unsafe fn fetch_http_document_inner(
             let loc = &hdr.location[..hdr.location_len];
             let mut resolved_loc = [0u8; 128];
             let res_len = browser::resolve_relative_url(target_slice, loc, &mut resolved_loc);
-            let next_hash = fnv1a_url(&resolved_loc[..res_len]);
+            let next_url = &resolved_loc[..res_len];
+            if target_slice.starts_with(b"https://") && next_url.starts_with(b"http://") {
+                print_str(b"[BROWSER-SEC] BLOQUEADO downgrade HTTPS -> HTTP em redirecionamento: ");
+                print_str(next_url);
+                print_str(b"\n");
+                return Err(FetchError::HttpsDowngradeBlocked);
+            }
+            let next_hash = fnv1a_url(next_url);
             if visited_hashes[..visited_count].contains(&next_hash) {
                 print_str(b"[BROWSER-NET] Loop de redirecionamento HTTP detectado!\n");
                 return Err(FetchError::TooManyRedirects);
             }
-            current_target[..res_len].copy_from_slice(&resolved_loc[..res_len]);
+            current_target[..res_len].copy_from_slice(next_url);
             current_target_len = res_len;
             continue;
         }
@@ -2678,6 +2888,13 @@ unsafe fn prefetch_page_images(
         if !img_url.starts_with(b"http://") && !img_url.starts_with(b"https://") {
             continue;
         }
+        if base_url.starts_with(b"https://") && img_url.starts_with(b"http://") {
+            print_str(b"[BROWSER-SEC] BLOQUEADO downgrade HTTPS -> HTTP em subrecurso <img>: ");
+            print_str(img_url);
+            print_str(b"\n");
+            session.record_downgrade_blocked();
+            continue;
+        }
 
         print_str(b"[BROWSER-IMG] Baixando imagem remota: ");
         print_str(img_url);
@@ -2685,14 +2902,20 @@ unsafe fn prefetch_page_images(
 
         let mut img_final_url = [0u8; 128];
         let mut img_final_len = 0usize;
-        if let Ok(img_bytes) = fetch_http_document_inner(img_url, scratch_buf, true, &mut img_final_url, &mut img_final_len) {
-            if img_bytes > 0 && img_bytes <= 65536 {
-                let _ = browser::cache_store_remote_image(raw_src, img_url, &scratch_buf[..img_bytes]);
-                print_str(b"[BROWSER-IMG] Imagem armazenada em cache (");
-                print_u64(img_bytes as u64);
-                print_str(b" bytes)\n");
-                updated = true;
+        match fetch_http_document_inner(img_url, scratch_buf, true, &mut img_final_url, &mut img_final_len) {
+            Ok(img_bytes) => {
+                if img_bytes > 0 && img_bytes <= 65536 {
+                    let _ = browser::cache_store_remote_image(raw_src, img_url, &scratch_buf[..img_bytes]);
+                    print_str(b"[BROWSER-IMG] Imagem armazenada em cache (");
+                    print_u64(img_bytes as u64);
+                    print_str(b" bytes)\n");
+                    updated = true;
+                }
             }
+            Err(FetchError::HttpsDowngradeBlocked) => {
+                session.record_downgrade_blocked();
+            }
+            Err(_) => {}
         }
         fetched += 1;
     }
@@ -2781,12 +3004,17 @@ unsafe fn browser_load_and_display(
 
         let mut final_url_buf = [0u8; 128];
         let mut final_url_len = 0usize;
+        let mut used_http_fallback = false;
         let mut fetch_res = fetch_http_document_inner(path, out_buf, allow_http_fallback, &mut final_url_buf, &mut final_url_len);
+        let fallback_allowed_err = !matches!(
+            fetch_res,
+            Err(FetchError::TlsCertHostMismatch | FetchError::TlsCertVerifyFailed | FetchError::HttpsDowngradeBlocked)
+        );
         if fetch_res.is_ok() && final_url_len > 0 {
             let flen = final_url_len.min(127);
             active_url_buf[..flen].copy_from_slice(&final_url_buf[..flen]);
             active_url_len = flen;
-        } else if fetch_res.is_err() && allow_http_fallback && path.starts_with(b"https://") {
+        } else if fetch_res.is_err() && allow_http_fallback && fallback_allowed_err && path.starts_with(b"https://") {
             let rest = &path[8..];
             let fb_prefix = b"http://";
             let mut fb_buf = [0u8; 128];
@@ -2796,7 +3024,7 @@ unsafe fn browser_load_and_display(
             let fb_len = fb_prefix.len() + rlen;
             let fb_url = &fb_buf[..fb_len];
 
-            print_str(b"[BROWSER-NET] HTTPS/TLS indisponivel para alvo sem esquema; executando fallback HTTP automatico: ");
+            print_str(b"[BROWSER-NET] HTTPS/TLS indisponivel para alvo sem esquema; executando fallback HTTP (Sem TLS): ");
             print_str(fb_url);
             print_str(b"\n");
 
@@ -2805,19 +3033,23 @@ unsafe fn browser_load_and_display(
 
             if let Some(cached_len) = browser::storage::BrowserCacheStore::retrieve(fb_url, out_buf) {
                 fetch_res = Ok(cached_len);
+                used_http_fallback = true;
             } else {
                 let mut fb_final = [0u8; 128];
                 let mut fb_final_len = 0usize;
                 fetch_res = fetch_http_document_inner(fb_url, out_buf, false, &mut fb_final, &mut fb_final_len);
-                if fetch_res.is_ok() && fb_final_len > 0 {
-                    let flen = fb_final_len.min(127);
-                    active_url_buf[..flen].copy_from_slice(&fb_final[..flen]);
-                    active_url_len = flen;
+                if fetch_res.is_ok() {
+                    used_http_fallback = true;
+                    if fb_final_len > 0 {
+                        let flen = fb_final_len.min(127);
+                        active_url_buf[..flen].copy_from_slice(&fb_final[..flen]);
+                        active_url_len = flen;
+                    }
                 }
             }
         }
 
-        // Suporte a `<meta http-equiv="refresh" content="...;url=...">` (ate 2 saltos, com guarda de loop)
+        // Suporte a `<meta http-equiv="refresh" content="...;url=...">` (ate 2 saltos, com guarda anti-downgrade)
         let hash_meta_url = |u: &[u8]| -> u64 {
             let mut h: u64 = 0xcbf29ce484222325;
             for &b in u {
@@ -2838,6 +3070,14 @@ unsafe fn browser_load_and_display(
             if let Some(m_len) = browser::extract_meta_refresh_url(&out_buf[..curr_len], &mut meta_raw) {
                 let mut next_url = [0u8; 128];
                 let n_len = browser::resolve_relative_url(&active_url_buf[..active_url_len], &meta_raw[..m_len], &mut next_url);
+                if active_url_buf[..active_url_len].starts_with(b"https://") && next_url[..n_len].starts_with(b"http://") {
+                    print_str(b"[BROWSER-SEC] BLOQUEADO downgrade HTTPS -> HTTP em meta-refresh: ");
+                    print_str(&next_url[..n_len]);
+                    print_str(b"\n");
+                    session.record_downgrade_blocked();
+                    fetch_res = Err(FetchError::HttpsDowngradeBlocked);
+                    break;
+                }
                 let next_hash = hash_meta_url(&next_url[..n_len]);
                 let already_seen = meta_visited[..meta_vis_count].iter().any(|&h| h == next_hash);
                 if n_len > 0 && !already_seen {
@@ -2911,6 +3151,12 @@ unsafe fn browser_load_and_display(
                     }
                 }
                 let final_slice: &[u8] = if use_fmt_buf { &fmt_buf[..active_len] } else { doc_slice };
+                if used_http_fallback && active_url.starts_with(b"http://") {
+                    session.mark_http_fallback_insecure();
+                    print_str(b"[BROWSER-SEC] BADGE_HTTP_SEM_TLS ativo para: ");
+                    print_str(active_url);
+                    print_str(b"\n");
+                }
                 session.record_navigation_current(active_url);
                 // Armazena copia transacional no cache local (/disk/browser/cache/)
                 browser::storage::BrowserCacheStore::store(active_url, final_slice);
@@ -2932,6 +3178,8 @@ unsafe fn browser_load_and_display(
                 let diag = LAST_FETCH_DIAG;
                 let mut stage_buf = [0u8; 64];
                 let mut stage_len = 0usize;
+                let mut x509_diag_buf = [0u8; 96];
+                let x509_diag_len = crate::x509::last_cert_diag(&mut x509_diag_buf);
 
                 let (err_title, err_msg, err_detail): (&[u8], &[u8], &[u8]) = match err {
                     FetchError::DnsNxDomain => {
@@ -3086,13 +3334,47 @@ unsafe fn browser_load_and_display(
                             b"Registro cifrado rejeitado na verificacao da tag AEAD",
                         )
                     }
+                    FetchError::TlsCertHostMismatch => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"X509_SAN_MISMATCH (RFC 6125)");
+                        let detail_s: &[u8] = if x509_diag_len > 0 {
+                            &x509_diag_buf[..x509_diag_len]
+                        } else {
+                            b"SAN/CN do certificado folha nao corresponde ao hostname TLS solicitado"
+                        };
+                        (
+                            b"Certificado Incompativel (SAN/CN)",
+                            b"O certificado X.509 apresentado pelo servidor nao corresponde ao dominio acessado.",
+                            detail_s,
+                        )
+                    }
+                    FetchError::TlsCertVerifyFailed => {
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"TLS_CERT_VERIFY (RFC 8446)");
+                        let detail_s: &[u8] = if x509_diag_len > 0 {
+                            &x509_diag_buf[..x509_diag_len]
+                        } else {
+                            b"Assinatura CertificateVerify (RSA-PSS/PKCS1/ECDSA-P256) ou SPKI X.509 rejeitada"
+                        };
+                        (
+                            b"Assinatura TLS Invalida",
+                            b"Falha na verificacao criptografica da identidade X.509 do servidor.",
+                            detail_s,
+                        )
+                    }
+                    FetchError::HttpsDowngradeBlocked => {
+                        session.record_downgrade_blocked();
+                        diag_push_bytes(&mut stage_buf, &mut stage_len, b"HTTPS_DOWNGRADE_BLOCKED");
+                        (
+                            b"Downgrade HTTPS para HTTP Bloqueado",
+                            b"Uma navegacao iniciada em HTTPS tentou redirecionar para HTTP nao cifrado.",
+                            b"Politica anti-downgrade bloqueou redirecionamento https:// -> http://",
+                        )
+                    }
                 };
 
                 let mut stats = SystemStatsUser::default();
-                let _ = sys_get_system_stats(&mut stats as *mut SystemStatsUser);
-
                 let hr_ptr = core::ptr::addr_of_mut!(HOT_ROUTE_TMP) as *mut [HotRouteEntryUser; 16];
-                let hr_count = sys_net_hot_route_list(&mut *hr_ptr).max(0) as usize;
+                let (obs_bench, _r88, r97_res) = measure_observability_boundary(&mut stats, &mut *hr_ptr, true);
+                let hr_count = r97_res.max(0) as usize;
                 let mut matched_hotroute = false;
                 let mut found_mac = [0u8; 6];
                 let mut has_mac = false;
@@ -3164,6 +3446,18 @@ unsafe fn browser_load_and_display(
                     diag_push_bytes(&mut mac_buf, &mut mac_len, b"Pendente ARP");
                 }
 
+                let mut bench_buf = [0u8; 112];
+                let mut bench_len = 0usize;
+                diag_push_bytes(&mut bench_buf, &mut bench_len, b"Sys88 ");
+                diag_push_u64(&mut bench_buf, &mut bench_len, obs_bench.sys88_avg_cyc);
+                diag_push_bytes(&mut bench_buf, &mut bench_len, b"c (");
+                diag_push_us_tenths(&mut bench_buf, &mut bench_len, obs_bench.sys88_avg_cyc, obs_bench.tsc_khz);
+                diag_push_bytes(&mut bench_buf, &mut bench_len, b") | Sys97 ");
+                diag_push_u64(&mut bench_buf, &mut bench_len, obs_bench.sys97_avg_cyc);
+                diag_push_bytes(&mut bench_buf, &mut bench_len, b"c (");
+                diag_push_us_tenths(&mut bench_buf, &mut bench_len, obs_bench.sys97_avg_cyc, obs_bench.tsc_khz);
+                diag_push_bytes(&mut bench_buf, &mut bench_len, b")");
+
                 let err_len = browser::format_net_error_html_diag(
                     active_url,
                     err_title,
@@ -3175,6 +3469,7 @@ unsafe fn browser_load_and_display(
                     &mac_buf[..mac_len],
                     stats.net_tx_packets,
                     stats.net_rx_packets,
+                    &bench_buf[..bench_len],
                     out_buf,
                 );
                 session.load_document_bytes(&out_buf[..err_len], active_url);
@@ -5380,6 +5675,16 @@ unsafe fn test_tls13_cryptography_and_syscalls() {
         print_str(b"  [FAIL] 19.9: Falha ao construir ClientHello TLS 1.3!\n");
     }
 
+    // 10. Benchmark de fronteira Ring 3 <-> Ring 0 (Syscalls 88 e 97)
+    let mut b_stats = SystemStatsUser::default();
+    let b97_ptr = core::ptr::addr_of_mut!(HOT_ROUTE_TMP) as *mut [HotRouteEntryUser; 16];
+    let (obs, r88, r97) = measure_observability_boundary(&mut b_stats, &mut *b97_ptr, true);
+    if r88 >= 0 && r97 >= 0 && obs.sys88_avg_cyc > 0 && obs.sys97_avg_cyc > 0 {
+        print_str(b"  [PASS] 19.10: Observabilidade Ring3<->Ring0 (Sys88 & Sys97) calibrada em rdtsc/us!\n");
+    } else {
+        print_str(b"  [FAIL] 19.10: Falha ao aferir custo Ring3<->Ring0 das Syscalls 88/97!\n");
+    }
+
     print_str(b"  [PASS] test_tls13_cryptography_and_syscalls: Triade Criptografica e TLS 1.3 Homologados em Ring 3!\n");
 }
 
@@ -5567,6 +5872,11 @@ pub extern "C" fn _start(argc: usize, argv: *const *const u8, _envp: *const *con
                 run_worker_task(3);
             } else if streq(arg1, b"periodic") {
                 run_periodic_task(4);
+            } else if streq(arg1, b"diag_bench") {
+                let mut b_stats = SystemStatsUser::default();
+                let p97 = core::ptr::addr_of_mut!(HOT_ROUTE_TMP) as *mut [HotRouteEntryUser; 16];
+                let _ = measure_observability_boundary(&mut b_stats, &mut *p97, true);
+                sys_exit(0);
             } else if streq(arg1, b"simbad_subtests") {
                 print_str(b"\n==================================================================\n");
                 print_str(b"  SIMBAD SERVER HEADLESS - BATERIA ISOLADA DOS 4 SUBTESTES\n");

@@ -4609,6 +4609,8 @@ pub struct BrowserSession {
     pub saved_w: usize,
     pub saved_h: usize,
     pub fullscreen_state: FullscreenState,
+    pub http_fallback_insecure: bool,
+    pub downgrade_blocked_count: usize,
     pub page: ParsedPage,
     pub dom: DomArena,
     pub css: MiniCss,
@@ -4642,6 +4644,8 @@ impl BrowserSession {
             saved_w: WIN_W,
             saved_h: WIN_H,
             fullscreen_state: FullscreenState::Windowed,
+            http_fallback_insecure: false,
+            downgrade_blocked_count: 0,
             page: ParsedPage::new(),
             dom: DomArena::new(),
             css: MiniCss::new(),
@@ -4670,6 +4674,8 @@ impl BrowserSession {
         self.saved_w = WIN_W;
         self.saved_h = WIN_H;
         self.fullscreen_state = FullscreenState::Windowed;
+        self.http_fallback_insecure = false;
+        self.downgrade_blocked_count = 0;
         self.page.reset();
         self.dom.reset();
         self.css.reset();
@@ -4922,12 +4928,22 @@ impl BrowserSession {
         BrowserAction::None
     }
 
+    pub fn mark_http_fallback_insecure(&mut self) {
+        self.http_fallback_insecure = true;
+    }
+
+    pub fn record_downgrade_blocked(&mut self) {
+        self.downgrade_blocked_count = self.downgrade_blocked_count.saturating_add(1);
+    }
+
     pub fn load_document_bytes(&mut self, html: &[u8], url: &[u8]) {
         self.set_url(url);
         self.scroll_y = 0;
         self.dragging_scrollbar = false;
         self.is_address_focused = false;
         self.address_selected = false;
+        self.http_fallback_insecure = false;
+        self.downgrade_blocked_count = 0;
         parse_html(html, &mut self.page);
         parse_html_into_dom(html, &mut self.dom, &mut self.css, &mut self.js_runtime);
         self.recompute_layout();
@@ -5152,25 +5168,48 @@ impl BrowserSession {
         fill_rounded_rect(buf, w, h, fs_btn_x.saturating_sub(2), 3, 20, 20, 4, 0x001E_293B);
         font::draw_text(buf, w, h, fs_btn_x + 3, 9, b"F", fs_col, None);
 
-        // Campo de URL (Barra de Endereço em Pílula)
-        let url_x = 66;
-        let badge_w = 64;
-        let url_w = w.saturating_sub(url_x + 32 + badge_w);
-        let border_col = if self.is_address_focused { 0x0038_BDF8 } else { 0x0033_4155 };
-
-        fill_rounded_rect(buf, w, h, url_x, 3, url_w, 20, 6, 0x000F_172A);
-        draw_rounded_border(buf, w, h, url_x, 3, url_w, 20, 6, 1, border_col);
-
-        // Badge de segurança / status de rede em tempo real à direita da barra
-        let badge_x = url_x + url_w + 4;
+        // Campo de URL + Badge dinâmico de segurança ("TLS1.3", "HTTP (Sem TLS)" ou "e1000")
         let is_https = self.current_url[..self.current_url_len].starts_with(b"https://");
-        let (badge_txt, badge_bg, badge_fg): (&[u8], u32, u32) = if is_https {
+        let (badge_txt, badge_bg, badge_fg): (&[u8], u32, u32) = if self.http_fallback_insecure {
+            (b"HTTP (Sem TLS)", 0x007C_2D12, 0x00FB_BF24) // Amber Security Warning
+        } else if is_https {
             (b"TLS1.3", 0x0006_4E3B, 0x0034_D399) // Emerald
         } else {
             (b"e1000", 0x001E_3A5F, 0x0038_BDF8)  // Intel e1000 Sky
         };
-        fill_rounded_rect(buf, w, h, badge_x, 3, badge_w.saturating_sub(6), 20, 4, badge_bg);
-        font::draw_text(buf, w, h, badge_x + 6, 9, badge_txt, badge_fg, None);
+
+        let url_x = 66;
+        let max_avail = w.saturating_sub(url_x + 32);
+        let desired_box_w = badge_txt.len() * font::FONT_WIDTH + 10;
+        let badge_w = (desired_box_w + 6).min(max_avail.saturating_sub(56).max(64));
+        let badge_box_w = badge_w.saturating_sub(6);
+        let url_w = w.saturating_sub(url_x + 32 + badge_w);
+        let border_col = if self.is_address_focused {
+            0x0038_BDF8
+        } else if self.http_fallback_insecure {
+            0x00F5_9E0B
+        } else {
+            0x0033_4155
+        };
+
+        fill_rounded_rect(buf, w, h, url_x, 3, url_w, 20, 6, 0x000F_172A);
+        draw_rounded_border(buf, w, h, url_x, 3, url_w, 20, 6, 1, border_col);
+
+        let badge_x = url_x + url_w + 4;
+        fill_rounded_rect(buf, w, h, badge_x, 3, badge_box_w, 20, 4, badge_bg);
+        font::draw_text_clipped_rect(
+            buf,
+            w,
+            h,
+            badge_x + 5,
+            9,
+            badge_txt,
+            badge_fg,
+            None,
+            badge_x + badge_box_w.saturating_sub(2),
+            3,
+            23,
+        );
 
         let url_max_x = url_x + url_w.saturating_sub(4);
         let vis_chars = (url_w.saturating_sub(14) / font::FONT_WIDTH).max(1);
@@ -5332,10 +5371,22 @@ impl BrowserSession {
             let status_y = stage.status_rect.y;
             let status_h = stage.status_rect.h;
             fill_rect(buf, w, h, 0, status_y, w, status_h, COLOR_CHROME);
-            let status_txt: &[u8] = if w >= 460 {
-                b"BRCR: 0.134% [HIBERNATED] (Mem 0.336% | Gfx 0% | CPU 0)"
+            let (status_txt, status_col): (&[u8], u32) = if self.downgrade_blocked_count > 0 {
+                if w >= 460 {
+                    (b"SEC: Downgrade HTTP Bloqueado (<img> HTTPS-only ativo) | BRCR: 0.134%", 0x00FB_BF24)
+                } else {
+                    (b"SEC: Downgrade <img> bloqueado", 0x00FB_BF24)
+                }
+            } else if self.http_fallback_insecure {
+                if w >= 460 {
+                    (b"HTTP (Sem TLS) - Fallback sem esquema ativo | BRCR: 0.134% [HIBERNATED]", 0x00FB_BF24)
+                } else {
+                    (b"HTTP (Sem TLS) | BRCR: 0.13%", 0x00FB_BF24)
+                }
+            } else if w >= 460 {
+                (b"BRCR: 0.134% [HIBERNATED] (Mem 0.336% | Gfx 0% | CPU 0)", COLOR_URL_TEXT)
             } else {
-                b"BRCR: 0.13% | Mem 0.34% | CPU 0"
+                (b"BRCR: 0.13% | Mem 0.34% | CPU 0", COLOR_URL_TEXT)
             };
             font::draw_text_clipped_rect(
                 buf,
@@ -5344,7 +5395,7 @@ impl BrowserSession {
                 6,
                 status_y + 3,
                 status_txt,
-                COLOR_URL_TEXT,
+                status_col,
                 None,
                 w.saturating_sub(6),
                 status_y + 1,
@@ -6958,6 +7009,7 @@ pub fn format_net_error_html_diag(
     gw_mac: &[u8],
     tx_pkts: u64,
     rx_pkts: u64,
+    syscall_bench: &[u8],
     out: &mut [u8],
 ) -> usize {
     let mut pos = 0usize;
@@ -7010,6 +7062,10 @@ pub fn format_net_error_html_diag(
     append_u64(out, &mut pos, rx_pkts);
     append(out, &mut pos, b" | ARP Gateway: ");
     append(out, &mut pos, gw_mac);
+    if !syscall_bench.is_empty() {
+        append(out, &mut pos, b"</p><p><b>Custo Ring3&lt;-&gt;Ring0 (Sys88/97): </b>");
+        append(out, &mut pos, syscall_bench);
+    }
     append(out, &mut pos, b"</p><p><i>Detalhes tecnicos: </i>");
     append(out, &mut pos, detail);
     append(out, &mut pos, b"</p><hr/><p><a href=\"index.htm\">Voltar ao Inicio</a></p></div></body></html>");
@@ -7029,6 +7085,7 @@ pub fn format_net_error_html(url: &[u8], title: &[u8], msg: &[u8], detail: &[u8]
         b"--:--:--:--:--:--",
         0,
         0,
+        b"",
         out,
     )
 }
@@ -7045,12 +7102,12 @@ pub fn format_tls_info_html(url: &[u8], out: &mut [u8]) -> usize {
     append(out, &mut pos, b"<!DOCTYPE html><html><head><title>Jinn Browser - TLS 1.3 Criptografia Ativa</title></head><body>");
     append(out, &mut pos, b"<h1>Conexao Segura (HTTPS / TLS 1.3)</h1>");
     append(out, &mut pos, b"<p><b>Status da Pilha: </b>Operacional e Habilitada (RFC 8446)</p>");
-    append(out, &mut pos, b"<p><b>Cipher Suite Principal: </b>TLS_CHACHA20_POLY1305_SHA256 (0x1303)</p>");
+    append(out, &mut pos, b"<p><b>Cipher Suite Principal: </b>TLS_CHACHA20_POLY1305_SHA256 (0x1303) / AES-128-GCM (0x1301)</p>");
     append(out, &mut pos, b"<p><b>Troca de Chaves Assimetrica: </b>ECDHE Curve25519 / X25519 (RFC 7748)</p>");
     append(out, &mut pos, b"<p><b>Entropia Criptografica: </b>CSPRNG via sys_getrandom (Syscall 69) [RDRAND + Jitter]</p>");
     append(out, &mut pos, b"<p><b>Relogio do Sistema: </b>RTC CMOS UTC via sys_clock_gettime (Syscall 70)</p>");
-    append(out, &mut pos, b"<p><b>Validacao X.509: </b>ASN.1 DER Parser com checagem temporal notBefore/notAfter e SAN</p>");
-    append(out, &mut pos, b"<p><b>Root CA Trust Store: </b>ISRG Root X1 (Let's Encrypt), DigiCert Global Root G2, Jinn OS Root CA</p>");
+    append(out, &mut pos, b"<p><b>Validacao X.509 &amp; CertificateVerify: </b>Parser DER sem alocacao, SAN/CN RFC 6125 e assinatura ECDSA P-256 / RSA-PSS / PKCS#1 v1.5</p>");
+    append(out, &mut pos, b"<p><b>Limitacoes PKI Conhecidas: </b>Sem OCSP, CRL ou assinatura Ed25519 nesta fase Ring 3</p>");
     append(out, &mut pos, b"<p><b>Destino / URL: </b>");
     append(out, &mut pos, url);
     append(out, &mut pos, b"</p><p><b>Navegacao Web Aberta: </b>Conexoes HTTPS nativas habilitadas na porta 443</p>");
