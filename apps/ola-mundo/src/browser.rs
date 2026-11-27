@@ -940,6 +940,8 @@ impl MiniCss {
             rule.align_items = parse_align_items(val);
         } else if prop.eq_ignore_ascii_case(b"text-align") {
             rule.text_align = parse_text_align(val);
+        } else if prop.eq_ignore_ascii_case(b"grid-template-columns") {
+            rule.grid_cols = parse_grid_template_columns(val);
         }
     }
 
@@ -1362,17 +1364,41 @@ impl MiniCss {
                 style.margin_bottom = 0;
             }
         } else if tag_bytes == b"input" || tag_bytes == b"textarea" {
-            style.color = COLOR_TEXT;
-            style.bg_color = Some(0x0018_1825);
-            style.border_color = Some(0x0045_475A);
-            style.border_width = 1;
-            style.border_radius = 2;
-            style.padding_top = 2;
-            style.padding_bottom = 2;
-            style.padding_left = 4;
-            style.padding_right = 4;
-            style.display = DisplayMode::InlineBlock;
-            style.display_block = false;
+            let sentinel = dom.nodes[node_idx].alt_len;
+            if sentinel == 2 {
+                style.display = DisplayMode::None;
+                style.display_block = false;
+            } else if sentinel == 3 {
+                style.color = 0x00E0_F2FE;
+                style.has_explicit_color = true;
+                style.bg_color = Some(0x001E_3A5F);
+                style.border_color = Some(0x0038_BDF8);
+                style.border_width = 1;
+                style.border_radius = 4;
+                style.padding_top = 4;
+                style.padding_bottom = 4;
+                style.padding_left = 10;
+                style.padding_right = 10;
+                style.margin_top = 3;
+                style.margin_bottom = 3;
+                style.display = DisplayMode::InlineBlock;
+                style.display_block = false;
+            } else {
+                style.color = if sentinel == 1 { 0x0094_A3B8 } else { COLOR_TEXT };
+                style.has_explicit_color = true;
+                style.bg_color = Some(0x000F_172A);
+                style.border_color = Some(0x0047_5569);
+                style.border_width = 1;
+                style.border_radius = 4;
+                style.margin_top = 3;
+                style.margin_bottom = 4;
+                style.padding_top = 4;
+                style.padding_bottom = 4;
+                style.padding_left = 8;
+                style.padding_right = 8;
+                style.display = DisplayMode::Block;
+                style.display_block = true;
+            }
         }
 
         // Herança CSS de cor do elemento pai quando não há cor explícita no elemento
@@ -1433,7 +1459,7 @@ impl MiniCss {
                 Self::apply_tailwind_token(&mut style, tok, tag_bytes);
             }
 
-            let bps: [(&[u8], usize); 3] = [(b"sm:", 480), (b"md:", 600), (b"lg:", 680)];
+            let bps: [(&[u8], usize); 3] = [(b"sm:", 480), (b"md:", 760), (b"lg:", 960)];
             for &(prefix, min_w) in &bps {
                 if viewport_w >= min_w {
                     for tok in class_slice.split(|&b| b == b' ' || b == b'\t' || b == b'\r' || b == b'\n') {
@@ -1538,9 +1564,52 @@ impl MiniCss {
                         || prop.eq_ignore_ascii_case(b"row-gap")
                     {
                         if let Some(px) = parse_px(val) { style.gap = px.min(64); }
+                    } else if prop.eq_ignore_ascii_case(b"grid-template-columns") {
+                        if let Some(gc) = parse_grid_template_columns(val) {
+                            style.grid_cols = gc;
+                        }
                     }
                 }
             }
+        }
+
+        // Fallback visual discreto para cartões/painéis/badges sem CSS explícito carregado
+        if style.bg_color.is_none() && style.border_color.is_none() {
+            let is_dark_shell = dom.has_class(node_idx, b"hero")
+                || dom.has_class(node_idx, b"terminal")
+                || dom.has_class(node_idx, b"window");
+            let is_card_panel = is_dark_shell
+                || dom.has_class(node_idx, b"card")
+                || dom.has_class(node_idx, b"panel")
+                || dom.has_class(node_idx, b"lab-card");
+            if is_card_panel {
+                style.bg_color = Some(if is_dark_shell { 0x000F_172A } else { 0x001E_293B });
+                style.border_color = Some(0x0033_4155);
+                style.border_width = 1;
+                style.border_radius = 6;
+                style.padding_top = style.padding_top.max(6);
+                style.padding_bottom = style.padding_bottom.max(6);
+                style.padding_left = style.padding_left.max(8);
+                style.padding_right = style.padding_right.max(8);
+                style.margin_top = style.margin_top.max(4);
+                style.margin_bottom = style.margin_bottom.max(4);
+            } else if dom.has_class(node_idx, b"badge") || dom.has_class(node_idx, b"pill") {
+                style.bg_color = Some(0x001E_3A5F);
+                style.border_color = Some(0x0038_BDF8);
+                style.border_width = 1;
+                style.border_radius = 4;
+                style.padding_top = style.padding_top.max(2);
+                style.padding_bottom = style.padding_bottom.max(2);
+                style.padding_left = style.padding_left.max(6);
+                style.padding_right = style.padding_right.max(6);
+                style.display = DisplayMode::InlineBlock;
+                style.display_block = false;
+            }
+        }
+
+        // Em janelas estreitas (< 760px), força empilhamento 1-coluna para evitar esmagamento de grids
+        if viewport_w < 760 && style.grid_cols > 1 {
+            style.grid_cols = 1;
         }
 
         // Preserva o posicionamento em fluxo de .os-window / .top-panel / .cairo-dock / .conky-hud sem cortar altura de 100vh/28px
@@ -2460,6 +2529,44 @@ pub fn parse_text_align(val: &[u8]) -> Option<TextAlign> {
     } else {
         None
     }
+}
+
+pub fn parse_grid_template_columns(val: &[u8]) -> Option<usize> {
+    let s = strip_css_important(val);
+    if s.is_empty() || s.eq_ignore_ascii_case(b"none") {
+        return None;
+    }
+    if s.len() > 7 && s[..7].eq_ignore_ascii_case(b"repeat(") {
+        let inner = s[7..].trim_ascii();
+        if inner.starts_with(b"auto-fit") || inner.starts_with(b"auto-fill") {
+            return Some(3);
+        }
+        if let Some(n) = parse_int(inner) {
+            if n > 0 {
+                return Some((n as usize).clamp(1, 6));
+            }
+        }
+    }
+    let mut cols = 0usize;
+    let mut depth = 0usize;
+    let mut in_tok = false;
+    for &b in s {
+        if b == b'(' {
+            if !in_tok && depth == 0 {
+                cols += 1;
+                in_tok = true;
+            }
+            depth += 1;
+        } else if b == b')' {
+            depth = depth.saturating_sub(1);
+        } else if depth == 0 && (b == b' ' || b == b'\t' || b == b'\r' || b == b'\n') {
+            in_tok = false;
+        } else if !in_tok {
+            cols += 1;
+            in_tok = true;
+        }
+    }
+    if cols > 0 { Some(cols.clamp(1, 6)) } else { None }
 }
 
 // ── Funções Auxiliares de Parsing e Conversão ─────────────────────────────────
@@ -3390,8 +3497,14 @@ pub fn parse_html_into_dom_with_base(
                 pending_picture_src_len = 0;
             }
 
-            // Lê atributos com guarda de borda (evita colisão data-src vs src): id, class, style, href, srcset, src, alt, width, height, onclick
+            // Lê atributos com guarda de borda (evita colisão data-src vs src): id, class, style, href, srcset, src, alt, width, height, onclick, value, placeholder, type
             let mut is_self_closing = false;
+            let mut input_val_buf = [0u8; 64];
+            let mut input_val_len = 0usize;
+            let mut input_ph_buf = [0u8; 64];
+            let mut input_ph_len = 0usize;
+            let mut is_input_hidden = false;
+            let mut is_input_submit = false;
             while i < len && html[i] != b'>' {
                 if html[i] == b'/' && i + 1 < len && html[i + 1] == b'>' {
                     is_self_closing = true;
@@ -3440,8 +3553,37 @@ pub fn parse_html_into_dom_with_base(
                 } else if is_attr_match(html, i, b"onclick=") {
                     let a_val = read_html_attr_val(html, &mut i, 8);
                     dom.nodes[node_id].onclick_len = copy_trunc_bytes(&mut dom.nodes[node_id].onclick_attr, a_val);
+                } else if is_attr_match(html, i, b"value=") {
+                    let a_val = read_html_attr_val(html, &mut i, 6);
+                    input_val_len = copy_trunc_bytes(&mut input_val_buf, a_val);
+                } else if is_attr_match(html, i, b"placeholder=") {
+                    let a_val = read_html_attr_val(html, &mut i, 12);
+                    input_ph_len = copy_trunc_bytes(&mut input_ph_buf, a_val);
+                } else if is_attr_match(html, i, b"type=") {
+                    let a_val = read_html_attr_val(html, &mut i, 5);
+                    if a_val.eq_ignore_ascii_case(b"hidden") {
+                        is_input_hidden = true;
+                    } else if a_val.eq_ignore_ascii_case(b"submit") || a_val.eq_ignore_ascii_case(b"button") {
+                        is_input_submit = true;
+                    }
                 } else {
                     i += 1;
+                }
+            }
+
+            if tag_name == b"input" || tag_name == b"textarea" {
+                if is_input_hidden {
+                    dom.nodes[node_id].alt_len = 2;
+                } else if input_val_len > 0 {
+                    let cpy = input_val_len.min(dom.nodes[node_id].text.len());
+                    dom.nodes[node_id].text[..cpy].copy_from_slice(&input_val_buf[..cpy]);
+                    dom.nodes[node_id].text_len = cpy;
+                    dom.nodes[node_id].alt_len = if is_input_submit { 3 } else { 0 };
+                } else if input_ph_len > 0 {
+                    let cpy = input_ph_len.min(dom.nodes[node_id].text.len());
+                    dom.nodes[node_id].text[..cpy].copy_from_slice(&input_ph_buf[..cpy]);
+                    dom.nodes[node_id].text_len = cpy;
+                    dom.nodes[node_id].alt_len = 1;
                 }
             }
 
@@ -3885,6 +4027,18 @@ pub struct DocumentLayout {
 }
 
 impl DocumentLayout {
+    #[inline]
+    fn is_ascii_rule_run(s: &[u8]) -> bool {
+        if s.len() < 8 {
+            return false;
+        }
+        let c = s[0];
+        if c != b'=' && c != b'-' && c != b'_' && c != b'*' && c != b'~' {
+            return false;
+        }
+        s.iter().all(|&b| b == c)
+    }
+
     pub const fn new() -> Self {
         Self {
             lines: [RenderLine {
@@ -4402,6 +4556,31 @@ impl DocumentLayout {
                 let space_px = if need_space { font::FONT_WIDTH } else { 0 };
                 let word_px = word.len() * font::FONT_WIDTH;
 
+                let is_rule_run = Self::is_ascii_rule_run(word);
+                if is_rule_run {
+                    // Trunca linhas decorativas repetitivas (====, ----) ao restante da linha sem vazar nem quebrar
+                    if seg_len > 0 {
+                        self.flush_inline_segment(dom, &seg_buf[..seg_len], seg_start_x, line_y, color, link_node);
+                        seg_len = 0;
+                        cursor_x = base_x;
+                        line_y += line_max_h;
+                        line_max_h = font::FONT_HEIGHT + 4;
+                    } else if cursor_x > base_x && cursor_x + space_px + word_px > row_right {
+                        cursor_x = base_x;
+                        line_y += line_max_h;
+                        line_max_h = font::FONT_HEIGHT + 4;
+                    }
+                    let max_rule_chars = ((row_right.saturating_sub(cursor_x)) / font::FONT_WIDTH).clamp(1, 95);
+                    let take = word.len().min(max_rule_chars);
+                    self.flush_inline_segment(dom, &word[..take], cursor_x, line_y, color, None);
+                    line_y += line_max_h;
+                    line_max_h = font::FONT_HEIGHT + 4;
+                    cursor_x = base_x;
+                    prev_ended_sep = true;
+                    placed_any = true;
+                    continue;
+                }
+
                 if cursor_x + space_px + word_px > row_right && cursor_x > base_x {
                     if seg_len > 0 {
                         self.flush_inline_segment(dom, &seg_buf[..seg_len], seg_start_x, line_y, color, link_node);
@@ -4821,7 +5000,8 @@ impl DocumentLayout {
             let mut max_y = *curr_y;
 
             if is_grid_row {
-                let cols = node.computed_style.grid_cols.min(visible_children.max(1)).max(1);
+                let max_sane_cols = (inner_w / 140).max(1);
+                let cols = node.computed_style.grid_cols.min(max_sane_cols).min(visible_children.max(1)).max(1);
                 let col_w = inner_w.saturating_sub(gap.saturating_mul(cols - 1)) / cols;
                 let mut col_idx = 0usize;
                 let mut row_y = *curr_y;
@@ -5112,7 +5292,10 @@ impl DocumentLayout {
             *curr_y += node.computed_style.margin_top;
         }
 
+        let is_form_input = tag == b"input" || tag == b"textarea";
+        let is_input_submit = is_form_input && node.alt_len == 3;
         let is_interactive = tag == b"button"
+            || is_input_submit
             || node.onclick_len > 0
             || node.data_open_window_len > 0
             || (dom.has_class(node_idx, b"win-btn") && dom.has_class(node_idx, b"close"));
@@ -5144,7 +5327,8 @@ impl DocumentLayout {
 
         let text = &node.text[..node.text_len];
         if node.text_len == 0 && has_box {
-            let empty_h = node.computed_style.height.unwrap_or(14).clamp(6, 56);
+            let default_empty_h = if tag == b"textarea" { 44 } else if tag == b"input" { font::FONT_HEIGHT + 4 } else { 14 };
+            let empty_h = node.computed_style.height.unwrap_or(default_empty_h).clamp(6, 64);
             *curr_y += empty_h;
         } else if is_interactive {
             self.add_wrapped_text_interactive(text, elem_x, curr_y, max_chars, color, true, node.id);
@@ -5159,22 +5343,26 @@ impl DocumentLayout {
 
         if has_box {
             let content_h = curr_y.saturating_sub(box_start_y);
+            let min_field_h = if tag == b"textarea" { 44 + pad_top + pad_bottom } else { font::FONT_HEIGHT + pad_top + pad_bottom + 2 };
             let box_h = if node.text_len == 0 {
-                content_h.max(node.computed_style.height.unwrap_or(14)).max(6)
+                content_h.max(node.computed_style.height.unwrap_or(if is_form_input { min_field_h } else { 14 })).max(6)
             } else {
-                content_h.max(node.computed_style.height.unwrap_or(0)).max(font::FONT_HEIGHT + pad_top + pad_bottom + 2)
+                content_h.max(node.computed_style.height.unwrap_or(0)).max(min_field_h)
             };
             if box_h > content_h {
                 *curr_y = box_start_y + box_h;
             }
+            let max_box_w = eff_avail_w.saturating_sub(mar_left + mar_right);
             let box_w = if let Some(w) = node.computed_style.width {
-                w.min(eff_avail_w.saturating_sub(mar_left + mar_right))
+                w.min(max_box_w)
+            } else if is_form_input && !is_input_submit {
+                max_box_w.min(260).max(180).min(max_box_w)
             } else if node.computed_style.display_block && node.text_len > 0 {
-                eff_avail_w.saturating_sub(mar_left + mar_right)
+                max_box_w
             } else if node.text_len == 0 {
-                node.computed_style.width.unwrap_or(32).min(eff_avail_w.saturating_sub(mar_left + mar_right))
+                node.computed_style.width.unwrap_or(32).min(max_box_w)
             } else {
-                (node.text_len * font::FONT_WIDTH + pad_left + pad_right + 12).min(eff_avail_w.saturating_sub(mar_left + mar_right))
+                (node.text_len * font::FONT_WIDTH + pad_left + pad_right + 12).min(max_box_w)
             };
             if self.box_count < self.boxes.len() {
                 self.boxes[self.box_count] = BoxRect {
@@ -5210,60 +5398,19 @@ impl DocumentLayout {
         is_interactive: bool,
         node_idx: usize,
     ) {
-        if text.is_empty() { return; }
-
-        let mut offset = 0usize;
-
-        while offset < text.len() && self.line_count < self.lines.len() {
-            let remaining = text.len() - offset;
-            let take = if remaining <= max_chars {
-                remaining
-            } else {
-                let mut break_idx = max_chars;
-                while break_idx > 0 && text[offset + break_idx] != b' ' {
-                    break_idx -= 1;
-                }
-                if break_idx == 0 { max_chars } else { break_idx }
-            };
-
-            let mut line_buf = [0u8; 96];
-            let actual_take = take.min(95);
-            line_buf[..actual_take].copy_from_slice(&text[offset..offset + actual_take]);
-
-            if is_interactive {
-                if self.click_count < self.click_regions.len() {
-                    let reg = ClickRegion {
-                        x: start_x.saturating_sub(2),
-                        y: *curr_y,
-                        w: actual_take * font::FONT_WIDTH + 8,
-                        h: font::FONT_HEIGHT + 4,
-                        target: [0; 128],
-                        target_len: 0,
-                        is_js: true,
-                        node_idx,
-                    };
-                    self.click_regions[self.click_count] = reg;
-                    self.click_count += 1;
-                }
-            }
-
-            self.lines[self.line_count] = RenderLine {
-                text: line_buf,
-                text_len: actual_take,
-                x: start_x,
-                y: *curr_y,
-                color,
-                is_link: false,
-                is_hr: false,
-            };
-            self.line_count += 1;
-
-            offset += take;
-            while offset < text.len() && text[offset] == b' ' {
-                offset += 1;
-            }
-            *curr_y += font::FONT_HEIGHT + 4;
-        }
+        self.push_wrapped_text(
+            text,
+            start_x,
+            max_chars * font::FONT_WIDTH,
+            curr_y,
+            max_chars,
+            color,
+            false,
+            None,
+            TextAlign::Left,
+            is_interactive,
+            node_idx,
+        );
     }
 
     pub fn compute(&mut self, page: &ParsedPage, content_width: usize) {
@@ -5444,22 +5591,53 @@ impl DocumentLayout {
         target_href: Option<&[u8]>,
         text_align: TextAlign,
     ) {
+        self.push_wrapped_text(
+            text,
+            start_x,
+            avail_w,
+            curr_y,
+            max_chars,
+            color,
+            is_link,
+            target_href,
+            text_align,
+            false,
+            0,
+        );
+    }
+
+    fn push_wrapped_text(
+        &mut self,
+        text: &[u8],
+        start_x: usize,
+        avail_w: usize,
+        curr_y: &mut usize,
+        max_chars: usize,
+        color: u32,
+        is_link: bool,
+        target_href: Option<&[u8]>,
+        text_align: TextAlign,
+        is_interactive: bool,
+        node_idx: usize,
+    ) {
         if text.is_empty() { return; }
 
+        let safe_max = max_chars.max(1);
         let mut offset = 0usize;
 
         while offset < text.len() && self.line_count < self.lines.len() {
-            // Encontra comprimento da fatia que cabe na linha
-            let remaining = text.len() - offset;
-            let take = if remaining <= max_chars {
-                remaining
+            let rem_slice = &text[offset..];
+            let is_rule = Self::is_ascii_rule_run(rem_slice.trim_ascii());
+            let remaining = rem_slice.len();
+            let take = if is_rule || remaining <= safe_max {
+                remaining.min(safe_max)
             } else {
-                // Tenta quebrar em espaço
-                let mut break_idx = max_chars;
+                // Tenta quebrar em espaço evitando separadores repetidos vazarem
+                let mut break_idx = safe_max;
                 while break_idx > 0 && text[offset + break_idx] != b' ' {
                     break_idx -= 1;
                 }
-                if break_idx == 0 { max_chars } else { break_idx }
+                if break_idx == 0 { safe_max } else { break_idx }
             };
 
             let mut line_buf = [0u8; 96];
@@ -5473,20 +5651,24 @@ impl DocumentLayout {
                 _ => start_x,
             };
 
-            // Se for link, registra a região clicável desta linha
-            if is_link {
+            if is_interactive && self.click_count < self.click_regions.len() {
+                let mut reg = ClickRegion::empty();
+                reg.x = line_x.saturating_sub(2);
+                reg.y = *curr_y;
+                reg.w = line_px_w + 8;
+                reg.h = font::FONT_HEIGHT + 4;
+                reg.is_js = true;
+                reg.node_idx = node_idx;
+                self.click_regions[self.click_count] = reg;
+                self.click_count += 1;
+            } else if is_link {
                 if let Some(href) = target_href {
                     if self.click_count < self.click_regions.len() {
-                        let mut reg = ClickRegion {
-                            x: line_x,
-                            y: *curr_y,
-                            w: line_px_w,
-                            h: font::FONT_HEIGHT + 2,
-                            target: [0; 128],
-                            target_len: 0,
-                            is_js: false,
-                            node_idx: 0,
-                        };
+                        let mut reg = ClickRegion::empty();
+                        reg.x = line_x;
+                        reg.y = *curr_y;
+                        reg.w = line_px_w;
+                        reg.h = font::FONT_HEIGHT + 2;
                         let h_len = href.len().min(128);
                         reg.target[..h_len].copy_from_slice(&href[..h_len]);
                         reg.target_len = h_len;
@@ -5507,6 +5689,10 @@ impl DocumentLayout {
             };
             self.line_count += 1;
 
+            if is_rule {
+                *curr_y += font::FONT_HEIGHT + 4;
+                break;
+            }
             offset += take;
             while offset < text.len() && text[offset] == b' ' {
                 offset += 1;
@@ -5573,6 +5759,8 @@ pub struct BrowserSession {
     pub fullscreen_state: FullscreenState,
     pub http_fallback_insecure: bool,
     pub downgrade_blocked_count: usize,
+    pub net_iface: [u8; 16],
+    pub net_iface_len: usize,
     pub page: ParsedPage,
     pub dom: DomArena,
     pub css: MiniCss,
@@ -5608,6 +5796,8 @@ impl BrowserSession {
             fullscreen_state: FullscreenState::Windowed,
             http_fallback_insecure: false,
             downgrade_blocked_count: 0,
+            net_iface: *b"e1000\0\0\0\0\0\0\0\0\0\0\0",
+            net_iface_len: 5,
             page: ParsedPage::new(),
             dom: DomArena::new(),
             css: MiniCss::new(),
@@ -5638,6 +5828,8 @@ impl BrowserSession {
         self.fullscreen_state = FullscreenState::Windowed;
         self.http_fallback_insecure = false;
         self.downgrade_blocked_count = 0;
+        self.net_iface = *b"e1000\0\0\0\0\0\0\0\0\0\0\0";
+        self.net_iface_len = 5;
         self.page.reset();
         self.dom.reset();
         self.css.reset();
@@ -5653,6 +5845,74 @@ impl BrowserSession {
             self.bookmark_store.init_defaults_if_empty();
             let _ = self.bookmark_store.save();
         }
+    }
+
+    pub fn set_net_iface(&mut self, iface: &[u8]) {
+        if iface.is_empty() {
+            self.net_iface = *b"e1000\0\0\0\0\0\0\0\0\0\0\0";
+            self.net_iface_len = 5;
+            return;
+        }
+        let len = iface.len().min(self.net_iface.len());
+        self.net_iface = [0u8; 16];
+        self.net_iface[..len].copy_from_slice(&iface[..len]);
+        self.net_iface_len = len;
+    }
+
+    fn chrome_pills_geometry(&self, w: usize) -> (usize, usize, usize, usize, usize, &[u8], u32, u32, &[u8]) {
+        let url_slice = &self.current_url[..self.current_url_len];
+        let is_https = url_slice.starts_with(b"https://");
+        let is_http = url_slice.starts_with(b"http://");
+        let (sec_txt, sec_bg, sec_fg): (&[u8], u32, u32) = if self.http_fallback_insecure {
+            (b"HTTP (Sem TLS)", 0x007C_2D12, 0x00FB_BF24)
+        } else if is_https {
+            (b"TLS1.3", 0x0006_4E3B, 0x0034_D399)
+        } else if is_http {
+            (b"HTTP", 0x001E_293B, 0x0094_A3B8)
+        } else {
+            (b"VFS", 0x001E_293B, 0x0094_A3B8)
+        };
+        let nic_txt: &[u8] = if self.net_iface_len > 0 {
+            &self.net_iface[..self.net_iface_len]
+        } else {
+            b"e1000"
+        };
+
+        let url_x = 66usize;
+        let right_edge = w.saturating_sub(28);
+        let avail_mid = right_edge.saturating_sub(url_x);
+        let max_pills_zone = avail_mid.saturating_sub(56);
+
+        let raw_nic_w = nic_txt.len() * font::FONT_WIDTH + 8;
+        let nic_box_w = raw_nic_w.min(max_pills_zone / 2).max(28.min(max_pills_zone));
+        let gap = if nic_box_w > 0 { 3 } else { 0 };
+        let raw_sec_w = sec_txt.len() * font::FONT_WIDTH + 8;
+        let sec_box_w = raw_sec_w.min(max_pills_zone.saturating_sub(nic_box_w + gap + 4)).max(28.min(max_pills_zone));
+        let total_pills = sec_box_w + gap + nic_box_w + 6;
+        let url_w = avail_mid.saturating_sub(total_pills).max(40);
+        let sec_x = url_x + url_w + 4;
+        let nic_x = sec_x + sec_box_w + gap;
+        (url_w, sec_x, sec_box_w, nic_x, nic_box_w, sec_txt, sec_bg, sec_fg, nic_txt)
+    }
+
+    fn draw_chrome_pill(buf: &mut [u32], w: usize, h: usize, x: usize, box_w: usize, txt: &[u8], bg: u32, fg: u32) {
+        if box_w < 12 {
+            return;
+        }
+        fill_rounded_rect(buf, w, h, x, 3, box_w, 20, 4, bg);
+        font::draw_text_clipped_rect(
+            buf,
+            w,
+            h,
+            x + 4,
+            9,
+            txt,
+            fg,
+            None,
+            x + box_w.saturating_sub(2),
+            3,
+            23,
+        );
     }
 
     #[allow(dead_code)]
@@ -6052,8 +6312,7 @@ impl BrowserSession {
 
             // Barra de Endereço em Pílula (66 .. url_x + url_w)
             let url_x = 66;
-            let badge_w = 64;
-            let url_w = w.saturating_sub(url_x + 32 + badge_w);
+            let (url_w, _, _, _, _, _, _, _, _) = self.chrome_pills_geometry(w);
             if click_x >= url_x && click_x <= url_x + url_w {
                 self.focus_address();
                 return BrowserAction::FocusAddress;
@@ -6173,22 +6432,10 @@ impl BrowserSession {
         fill_rounded_rect(buf, w, h, fs_btn_x.saturating_sub(2), 3, 20, 20, 4, 0x001E_293B);
         font::draw_text(buf, w, h, fs_btn_x + 3, 9, b"F", fs_col, None);
 
-        // Campo de URL + Badge dinâmico de segurança ("TLS1.3", "HTTP (Sem TLS)" ou "e1000")
-        let is_https = self.current_url[..self.current_url_len].starts_with(b"https://");
-        let (badge_txt, badge_bg, badge_fg): (&[u8], u32, u32) = if self.http_fallback_insecure {
-            (b"HTTP (Sem TLS)", 0x007C_2D12, 0x00FB_BF24) // Amber Security Warning
-        } else if is_https {
-            (b"TLS1.3", 0x0006_4E3B, 0x0034_D399) // Emerald
-        } else {
-            (b"e1000", 0x001E_3A5F, 0x0038_BDF8)  // Intel e1000 Sky
-        };
-
+        // Campo de URL + Pílulas duplas lado a lado (Transporte TLS/HTTP + Placa NIC ativa)
         let url_x = 66;
-        let max_avail = w.saturating_sub(url_x + 32);
-        let desired_box_w = badge_txt.len() * font::FONT_WIDTH + 10;
-        let badge_w = (desired_box_w + 6).min(max_avail.saturating_sub(56).max(64));
-        let badge_box_w = badge_w.saturating_sub(6);
-        let url_w = w.saturating_sub(url_x + 32 + badge_w);
+        let (url_w, sec_x, sec_box_w, nic_x, nic_box_w, sec_txt, sec_bg, sec_fg, nic_txt) =
+            self.chrome_pills_geometry(w);
         let border_col = if self.is_address_focused {
             0x0038_BDF8
         } else if self.http_fallback_insecure {
@@ -6200,21 +6447,8 @@ impl BrowserSession {
         fill_rounded_rect(buf, w, h, url_x, 3, url_w, 20, 6, 0x000F_172A);
         draw_rounded_border(buf, w, h, url_x, 3, url_w, 20, 6, 1, border_col);
 
-        let badge_x = url_x + url_w + 4;
-        fill_rounded_rect(buf, w, h, badge_x, 3, badge_box_w, 20, 4, badge_bg);
-        font::draw_text_clipped_rect(
-            buf,
-            w,
-            h,
-            badge_x + 5,
-            9,
-            badge_txt,
-            badge_fg,
-            None,
-            badge_x + badge_box_w.saturating_sub(2),
-            3,
-            23,
-        );
+        Self::draw_chrome_pill(buf, w, h, sec_x, sec_box_w, sec_txt, sec_bg, sec_fg);
+        Self::draw_chrome_pill(buf, w, h, nic_x, nic_box_w, nic_txt, 0x001E_3A5F, 0x0038_BDF8);
 
         let url_max_x = url_x + url_w.saturating_sub(4);
         let vis_chars = (url_w.saturating_sub(14) / font::FONT_WIDTH).max(1);

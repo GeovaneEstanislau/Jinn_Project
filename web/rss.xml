@@ -7,19 +7,21 @@
     <language>pt-br</language>
     <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
     <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
-        <item>
-      <title>add remote HTTPS stylesheet pre-fetch, compound CSS/Tailwind engine and flex wrapping</title>
-      <link>https://jinn-os.dev.br</link>
-      <guid isPermaLink="false">jinn-os-add-remote-https-stylesheet-pre-fetch--compound-css-tailwind-engine-and-flex-wrapping-202611271513</guid>
-      <pubDate>Fri, 27 Nov 2026 15:13:40 +0000</pubDate>
+    <item>
+      <title>Motor Visual CSS Cards/Grid, Compositor Aladdin e Fluxo TCP no Jinn Browser</title>
+      <link>https://jinn-os.dev.br/artigos/motor-layout-css-cards-grid-jinn-browser.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-motor-layout-css-cards-grid-jinn-browser</guid>
+      <pubDate>Fri, 27 Nov 2026 13:00:00 -0300</pubDate>
+      <description>Arquitetura #![no_std] de renderização visual com CSS Grid (grid-template-columns), formulários &lt;input&gt;/&lt;textarea&gt; com placeholder, pílulas duplas TLS1.3+NIC (Syscall 88), correção de recorte do Aladdin acima do Cairo-Dock e sintonia de janela TCP para CDN TLS 1.3. [Ganho técnico: Indicadores citados no relatório: 46 KiB, 64 KiB] [Ecossistemas &amp; Menções: Cloudflare, Red Hat, RISC-V International, Academic Systems Research Labs, Sovereign Public Infrastructure, Intel, Arm, Bosch] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, JINN BROWSER, ALADDIN DESKTOP, CSS GRID, TLS 1.3, RING 3, Microkernel Architecture] [Evidências visuais: Antes (VirtualBox Real): sobreposição de Aladdin Desktop sobre [X] Sair na barra superior, Cairo-Dock ocultando a barra BRCR da janela maximizada e ausência de  (https://jinn-os.dev.br/assets/browser-css-before-vbox.jpg) ; Depois — Modo Janela ( 300x180 , QEMU): topbar Aladdin com folga limpa antes de [X] Sair , empilhamento responsivo 1-coluna em jinn-os.dev.br e pílulas duplas T (https://jinn-os.dev.br/assets/browser-layout-cards-windowed.png) ; Depois — Janela Maximizada no Aladdin ( 1022x622 , QEMU): borda inferior e barra BRCR: 0.134% [HIBERNATED] interrompidas acima do Cairo-Dock ( 11 px livres), co (https://jinn-os.dev.br/assets/browser-layout-maximized-aladdin-dock.png)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
+      <category>fastpath-ipc-net</category>
       <category>compute-simd</category>
       <category>microkernel-security</category>
-      <category>fastpath-ipc-net</category>
-      <category>compute-lab</category>
-      <description><![CDATA[
-        <p>Avanço verificado no Jinn Microkernel, compositor Aladdin e computação heterogênea JHCS com foco em isolamento Ring 3 e previsibilidade de recursos. [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas & Menções: Red Hat, Tenstorrent, Academic Systems Research Labs, AMD, Arm, NVIDIA, Cloudflare, RISC-V International] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, compute-lab, Microkernel Architecture, Heterogeneous Compute Scheduling, Zero-GPU 2D Compositing, SIMD Vectorization, Workload Efficiency] [Evidências visuais: Evidência visual Observatory (landing-jhcs-heterogeneous-compute.png) (https://jinn-os.dev.br/assets/landing-jhcs-heterogeneous-compute.png) ; Evidência visual Observatory (browser-css-tailwind-windowed.png) (https://jinn-os.dev.br/assets/browser-css-tailwind-windowed.png) ; Evidência visual Observatory (browser-css-tailwind-f11.png) (https://jinn-os.dev.br/assets/browser-css-tailwind-f11.png)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</p>
-      ]]></description>
-      <enclosure url="https://jinn-os.dev.br/assets/landing-jhcs-heterogeneous-compute.png" length="70707" type="image/png" />
+      <category>architecture-rfcs</category>
+      <category>security-lab</category>
+      <category>Microkernel Architecture</category>
+      <category>TLS 1.3 Cryptography</category>
+      <category>Deterministic Scheduling</category>
+      <enclosure url="https://jinn-os.dev.br/assets/browser-layout-maximized-aladdin-dock.png" length="28083" type="image/png" />
     </item>
     <item>
       <title>Jinn Browser: Stylesheets HTTPS Remotos, Motor CSS Composto, Tailwind Nativo #![no_std] e Flexbox Wrapping</title>
@@ -49,7 +51,7 @@
       <category>TLS 1.3 Cryptography</category>
       <category>Deterministic Scheduling</category>
       <category>L2/L3 Fast-Path Networking</category>
-      <enclosure url="https://jinn-os.dev.br/assets/browser-multisan-google.png" length="63839" type="image/png" />
+      <enclosure url="https://jinn-os.dev.br/assets/browser-multisan-google.png" length="63510" type="image/png" />
     </item>
     <item>
       <title>Timer LAPIC One-Shot Tickless no Jinn OS: Queda de 99,8% nos Ticks em Repouso e Relógio TSC</title>
@@ -80,7 +82,7 @@
       <category>Microkernel Architecture</category>
       <category>TLS 1.3 Cryptography</category>
       <category>Deterministic Scheduling</category>
-      <enclosure url="https://jinn-os.dev.br/assets/browser-ciclo1-x509-san-blocked.png" length="9856" type="image/png" />
+      <enclosure url="https://jinn-os.dev.br/assets/browser-ciclo1-x509-san-blocked.png" length="10392" type="image/png" />
     </item>
     <item>
       <title>Jinn Browser: Viewport Scissor, Redirecionamentos 301–308, PNG #![no_std] e Carry Poly1305 em TLS 1.3</title>
@@ -521,6 +523,18 @@
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
+      <title>feat(browser,css,web): add remote HTTPS stylesheet pre-fetch, compound CSS/Tailwind engine and flex wrapping [announce]</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/1f470f45ed16104c7d9e2a8050ff499f545c3626</link>
+      <guid isPermaLink="false">1f470f45ed16104c7d9e2a8050ff499f545c3626</guid>
+      <pubDate>Fri, 27 Nov 2026 12:13:21 -0300</pubDate>
+      <description>feat(browser,css,web): add remote HTTPS stylesheet pre-fetch, compound CSS/Tailwind engine and flex wrapping [announce] [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas &amp; Menções: Cloudflare, Sovereign Public Infrastructure, Akamai, Google, Huawei, RISC-V International, LF Edge, Industrial Automation Integrators] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, architecture-rfcs, Zero-Copy IPC, L2/L3 Fast-Path Networking, Three-Tier DNS Resolution, TLS 1.3 Cryptography, Bare-Metal TCP/IP Stack] [Evidências visuais: feat(browser,css,web): add remote HTTPS stylesheet pre-fetch, compound CSS/Tailwind engine and flex wrapping [announce] (https://jinn-os.dev.br/assets/wallpaper.jpg)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
+      <category>fastpath-ipc-net</category>
+      <category>architecture-rfcs</category>
+      <category>Zero-Copy IPC</category>
+      <category>L2/L3 Fast-Path Networking</category>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
       <title>fix(tls,x509,browser): fix RFC 8017 RSA-PSS maskedDB check, stream unlimited SANs and allow scheme-less HTTP fallback [announce]</title>
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/9af8efd02571aff9911e6e8bd6d8eb9ecfa86e04</link>
       <guid isPermaLink="false">9af8efd02571aff9911e6e8bd6d8eb9ecfa86e04</guid>
@@ -628,24 +642,12 @@
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/275d8ea396f93539b7efafcc434b41c63bcb7f51</link>
       <guid isPermaLink="false">275d8ea396f93539b7efafcc434b41c63bcb7f51</guid>
       <pubDate>Thu, 26 Nov 2026 18:05:54 -0300</pubDate>
-      <description>feat(browser,fullscreen,frente6): fix F11/1024x768 fullscreen sync, verify E2E suites and publish Google News post-mortem [announce] [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas &amp; Menções: Google, Sovereign Public Infrastructure, Cloudflare, Akamai, Huawei, RISC-V International, LF Edge, Industrial Automation Integrators] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, architecture-rfcs, post-mortems, Semantic Web &amp; News Indexing, Zero-Copy IPC, L2/L3 Fast-Path Networking, Three-Tier DNS Resolution] [Evidências visuais: feat(browser,fullscreen,frente6): fix F11/1024x768 fullscreen sync, verify E2E suites and publish Google News post-mortem [announce] (https://jinn-os.dev.br/assets/wallpaper.jpg)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
+      <description>---END--- [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas &amp; Menções: Google, Sovereign Public Infrastructure, Cloudflare, Akamai, Huawei, RISC-V International, LF Edge, Industrial Automation Integrators] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, architecture-rfcs, post-mortems, Semantic Web &amp; News Indexing, Zero-Copy IPC, L2/L3 Fast-Path Networking, Three-Tier DNS Resolution] [Evidências visuais: feat(browser,fullscreen,frente6): fix F11/1024x768 fullscreen sync, verify E2E suites and publish Google News post-mortem [announce] (https://jinn-os.dev.br/assets/wallpaper.jpg)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
       <category>fastpath-ipc-net</category>
       <category>architecture-rfcs</category>
       <category>post-mortems</category>
       <category>Semantic Web &amp; News Indexing</category>
       <category>Zero-Copy IPC</category>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>feat(compute-lab,frente5): publish jhcs-rs Scalar vs AVX2 vs wgpu breakeven [announce]</title>
-      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/5f4adaf5f39271f03745a1b88bf9fc1134e7b8d5</link>
-      <guid isPermaLink="false">5f4adaf5f39271f03745a1b88bf9fc1134e7b8d5</guid>
-      <pubDate>Thu, 26 Nov 2026 17:46:11 -0300</pubDate>
-      <description>---END--- [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas &amp; Menções: AMD, NVIDIA, Intel, Arm, Tenstorrent, Academic Systems Research Labs, SiFive, Industrial Automation Integrators] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, compute-lab, SIMD Vectorization, Heterogeneous Compute Scheduling, Zero-GPU 2D Compositing, Workload Efficiency, JHCS] [Evidências visuais: feat(compute-lab,frente5): publish jhcs-rs Scalar vs AVX2 vs wgpu breakeven [announce] (https://jinn-os.dev.br/assets/wallpaper.jpg)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
-      <category>compute-simd</category>
-      <category>compute-lab</category>
-      <category>SIMD Vectorization</category>
-      <category>Heterogeneous Compute Scheduling</category>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
   </channel>

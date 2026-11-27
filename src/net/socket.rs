@@ -177,8 +177,8 @@ impl Socket {
 
         self.rx_head = (self.rx_head + to_store) % SOCK_RX_STREAM_SIZE;
         self.rx_len += to_store;
-        // Atualiza dinamicamente a janela de recepção anunciada (RFC 793)
-        self.tcb.local_win = self.rx_available_space().min(65535) as u16;
+        // Atualiza dinamicamente a janela de recepção anunciada (RFC 793) limitada à folga do anel RX da NIC
+        self.tcb.local_win = self.rx_available_space().min(24576) as u16;
         to_store
     }
 
@@ -204,8 +204,8 @@ impl Socket {
 
         self.rx_tail = (self.rx_tail + to_read) % SOCK_RX_STREAM_SIZE;
         self.rx_len -= to_read;
-        // Atualiza dinamicamente a janela de recepção anunciada (RFC 793)
-        self.tcb.local_win = self.rx_available_space().min(65535) as u16;
+        // Atualiza dinamicamente a janela de recepção anunciada (RFC 793) limitada à folga do anel RX da NIC
+        self.tcb.local_win = self.rx_available_space().min(24576) as u16;
         Some(to_read)
     }
 }

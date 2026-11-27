@@ -10,7 +10,7 @@ pub const TCP_FLAG_PSH: u8 = 0x08;
 pub const TCP_FLAG_ACK: u8 = 0x10;
 pub const TCP_FLAG_URG: u8 = 0x20;
 
-pub const TCP_DEFAULT_WINDOW: u16 = 65535;
+pub const TCP_DEFAULT_WINDOW: u16 = 24576;
 pub const TCP_DEFAULT_RTO_TICKS: u64 = 100; // 1 segundo (100 Hz timer)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

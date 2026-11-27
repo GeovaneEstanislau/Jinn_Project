@@ -3606,6 +3606,24 @@ unsafe fn browser_load_and_display(
     }
 }
 
+unsafe fn sync_browser_net_iface(session: &mut browser::BrowserSession) {
+    let mut stats = SystemStatsUser::default();
+    if sys_get_system_stats(&mut stats as *mut SystemStatsUser) >= 0 {
+        let raw = diag_cstr_trim(&stats.net_adapter);
+        if raw.windows(6).any(|w| w.eq_ignore_ascii_case(b"virtio")) {
+            session.set_net_iface(b"virtio");
+        } else if raw.windows(5).any(|w| w.eq_ignore_ascii_case(b"pcnet")) {
+            session.set_net_iface(b"pcnet");
+        } else if raw.windows(4).any(|w| w.eq_ignore_ascii_case(b"loop"))
+            || raw.windows(6).any(|w| w.eq_ignore_ascii_case(b"nenhum"))
+        {
+            session.set_net_iface(b"lo");
+        } else {
+            session.set_net_iface(b"e1000");
+        }
+    }
+}
+
 unsafe fn run_gui_demo() {
     print_str(b"\n==================================================================\n");
     print_str(b"  JINN BROWSER 0.2.0 - INTEGRACAO NATIVA, EVENTOS E INTERATIVIDADE\n");
@@ -3613,6 +3631,7 @@ unsafe fn run_gui_demo() {
 
     let mut session = unsafe { &mut *core::ptr::addr_of_mut!(BROWSER_SESSION) };
     session.reset();
+    sync_browser_net_iface(session);
     let mut surface = DynamicSurfaceBuffer::new();
     unsafe { surface.init(); }
     let buf_slice = surface.slice_mut();
@@ -4059,6 +4078,7 @@ unsafe fn run_browser_interactive(initial_url: Option<&[u8]>) -> ! {
 
     let mut session = unsafe { &mut *core::ptr::addr_of_mut!(BROWSER_SESSION) };
     session.reset();
+    sync_browser_net_iface(session);
     print_str(b"[BROWSER-STORAGE] Inicializando infraestrutura de persistencia local...\n");
     session.init_persistence();
     print_str(b"[BROWSER-STORAGE] Persistencia pronta em /disk/browser/ (cache, cookies, history, bookmark)!\n");
@@ -4170,7 +4190,10 @@ unsafe fn run_browser_interactive(initial_url: Option<&[u8]>) -> ! {
                         let _ = unsafe { surface.resize(session.viewport_w, session.viewport_h) };
                         let buf_cur = surface.slice_mut();
                         session.render(buf_cur);
-                        let _ = sys_window_update(win_id, buf_cur);
+                        let upd_ret = sys_window_update(win_id, buf_cur);
+                        print_str(b"[BROWSER-INTERACTION] EVENT_WINDOW_RESIZE_DONE upd=");
+                        print_i64(upd_ret);
+                        print_str(b"\n");
                     }
                 }
                 EVENT_WINDOW_EXPOSE => {

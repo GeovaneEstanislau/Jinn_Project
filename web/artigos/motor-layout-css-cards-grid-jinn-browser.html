@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Motor Visual CSS Cards/Grid, Compositor Aladdin e Fluxo TCP no Jinn Browser — Jinn OS</title>
+  <meta name="description"
+    content="Arquitetura #![no_std] de renderização visual com CSS Grid (grid-template-columns), formulários <input>/<textarea> com placeholder, pílulas duplas TLS1.3+NIC (Syscall 88), correção de recorte do Aladdin acima do Cairo-Dock e sintonia de janela TCP para CDN TLS 1.3.">
+  <link rel="canonical"
+    href="https://jinn-os.dev.br/artigos/motor-layout-css-cards-grid-jinn-browser.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url"
+    content="https://jinn-os.dev.br/artigos/motor-layout-css-cards-grid-jinn-browser.html">
+  <meta property="og:title"
+    content="Motor Visual CSS Cards/Grid, Compositor Aladdin e Fluxo TCP no Jinn Browser">
+  <meta property="og:description"
+    content="Do texto plano no VirtualBox ao layout em cartões e grids #![no_std], pílulas duplas TLS1.3+e1000, barra Aladdin sem colisões e 14/14 portais HTTPS reais validados em QEMU.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/browser-layout-maximized-aladdin-dock.png">
+
+  <!-- Artigo Meta (Indexação Google News / RSS / Feed) -->
+  <meta name="article:tag" content="JINN BROWSER, ALADDIN DESKTOP, CSS GRID, TLS 1.3, RING 3">
+  <meta name="article:published_time" content="2026-11-27T13:00:00-03:00">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Jinn Engineering Observatory: Schema.org TechArticle (Auto-Generated) -->
+  <script type="application/ld+json" id="jinn-techarticle-jsonld">
+{
+  "@context": "https://schema.org",
+  "@type": [
+    "TechArticle",
+    "NewsArticle"
+  ],
+  "headline": "Motor Visual CSS Cards/Grid, Compositor Aladdin e Fluxo TCP no Jinn Browser",
+  "description": "Arquitetura #![no_std] de renderização visual com CSS Grid (grid-template-columns), formulários <input>/<textarea> com placeholder, pílulas duplas TLS1.3+NIC (Syscall 88), correção de recorte do Aladdin acima do Cairo-Dock e sintonia de janela TCP para CDN TLS 1.3.",
+  "image": [
+    "https://jinn-os.dev.br/assets/browser-layout-maximized-aladdin-dock.png"
+  ],
+  "datePublished": "2026-11-27T13:00:00-03:00",
+  "dateModified": "2026-11-27T13:00:00-03:00",
+  "inLanguage": "pt-BR",
+  "articleSection": [
+    "Architecture & RFCs",
+    "Security Lab"
+  ],
+  "author": {
+    "@type": "Person",
+    "name": "Geovane da Conceição Estanislau",
+    "url": "https://github.com/GeovaneEstanislau"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Jinn Engineering Observatory",
+    "url": "https://jinn-os.dev.br/",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://jinn-os.dev.br/assets/wallpaper.jpg"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://jinn-os.dev.br/artigos/motor-layout-css-cards-grid-jinn-browser.html"
+  },
+  "about": [
+    {
+      "@type": "Thing",
+      "name": "Microkernel Architecture"
+    },
+    {
+      "@type": "Thing",
+      "name": "TLS 1.3 Cryptography"
+    },
+    {
+      "@type": "Thing",
+      "name": "Deterministic Scheduling"
+    },
+    {
+      "@type": "Thing",
+      "name": "W^X Memory Enforcement"
+    },
+    {
+      "@type": "Thing",
+      "name": "Zero-GPU 2D Compositing"
+    },
+    {
+      "@type": "Thing",
+      "name": "L2/L3 Fast-Path Networking"
+    },
+    {
+      "@type": "Thing",
+      "name": "Three-Tier DNS Resolution"
+    },
+    {
+      "@type": "Thing",
+      "name": "Zero-Copy IPC"
+    }
+  ],
+  "mentions": [
+    {
+      "@type": "Organization",
+      "name": "Cloudflare"
+    },
+    {
+      "@type": "Organization",
+      "name": "Red Hat"
+    },
+    {
+      "@type": "Organization",
+      "name": "RISC-V International"
+    },
+    {
+      "@type": "Thing",
+      "name": "Academic Systems Research Labs"
+    },
+    {
+      "@type": "Thing",
+      "name": "Sovereign Public Infrastructure"
+    },
+    {
+      "@type": "Organization",
+      "name": "Intel"
+    },
+    {
+      "@type": "Organization",
+      "name": "Arm"
+    },
+    {
+      "@type": "Organization",
+      "name": "Bosch"
+    },
+    {
+      "@type": "Organization",
+      "name": "STMicroelectronics"
+    },
+    {
+      "@type": "Organization",
+      "name": "LF Edge"
+    },
+    {
+      "@type": "Organization",
+      "name": "Akamai"
+    },
+    {
+      "@type": "Organization",
+      "name": "Google"
+    }
+  ],
+  "keywords": "Jinn OS, Microkernel, Rust no_std, x86_64, JINN BROWSER, ALADDIN DESKTOP, CSS GRID, TLS 1.3, RING 3, Microkernel Architecture, TLS 1.3 Cryptography, Deterministic Scheduling, W^X Memory Enforcement, Zero-GPU 2D Compositing, SPSC Ring Buffer, Zero-Copy IPC, io_uring, HotRouteTable"
+}
+  </script>
+  <!-- /Jinn Engineering Observatory: Schema.org TechArticle -->
+</head>
+
+<body class="bg-slate-950 text-slate-200 font-sans antialiased">
+  <header class="border-b border-slate-800 bg-slate-900/70 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-4xl mx-auto px-6 h-14 flex items-center justify-between">
+      <a href="/artigos/?lab=architecture-rfcs" class="flex items-center gap-2 hover:text-cyan-400 transition-colors text-xs font-mono">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span>Observatory • Jinn Browser &amp; Aladdin</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="/feed.xml" target="_blank" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS</span>
+        </a>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="text-cyan-300 hover:text-white">GitHub: Jinn_Project</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-6 py-10 space-y-8">
+    <article class="prose prose-invert prose-slate max-w-none space-y-6">
+      <div class="space-y-3 border-b border-slate-800 pb-6">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400">
+          <span class="bg-rose-950 border border-rose-800 text-rose-300 px-2.5 py-0.5 rounded-full">JINN BROWSER ENGINE</span>
+          <span class="bg-purple-950 border border-purple-800 text-purple-300 px-2.5 py-0.5 rounded-full">CSS GRID • ALADDIN COMPOSITOR • TLS 1.3 TCP</span>
+          <span class="text-slate-500">&bull;</span>
+          <time datetime="2026-11-27">27 Nov 2026</time>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white leading-tight">
+          Motor Visual CSS Cards/Grid, Compositor Aladdin e Fluxo TCP no Jinn Browser
+        </h1>
+        <p class="text-base sm:text-lg text-slate-300 leading-relaxed">
+          Fechando a evolução visual entre o microkernel <strong>Jinn OS</strong>, o compositor <strong>Aladdin Desktop</strong> e o <strong>Jinn Browser</strong> em <code>#![no_std]</code>, esta entrega elimina colisões na barra superior do sistema, posiciona janelas maximizadas estritamente acima do Cairo-Dock, adiciona suporte nativo a <code>grid-template-columns</code>, renderização de <code>&lt;input&gt;</code>/<code>&lt;textarea&gt;</code> com <code>placeholder</code>/<code>value</code>, pílulas duplas de transporte e NIC (<code>TLS1.3</code> + <code>e1000</code>/<code>virtio</code> via Syscall 88) e ajusta a janela receptora TCP para absorver rajadas TLS 1.3 de CDNs sem perdas.
+        </p>
+      </div>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">1. Achados da Auditoria Visual e de Transporte</h2>
+        <ul class="list-disc list-inside space-y-2 text-sm text-slate-300 leading-relaxed">
+          <li>
+            <strong>Colisão no Wingpanel do Aladdin (<code>Aladdin/src/desktop/wingpanel.rs</code>):</strong> a cápsula de telemetria à direita usava largura fixa de <code>460 px</code> em <code>cap_x = screen_w - 472</code> (<code>552..1012</code> em <code>1024x768</code>) enquanto o botão <code>[X] Sair</code> começava em <code>exit_x = screen_w - 68</code> (<code>956..1016</code>), sobrepondo <code>Aladdin Desktop</code> e <code>Up: XXs</code> sobre o botão vermelho.
+          </li>
+          <li>
+            <strong>Sobreposição do Cairo-Dock em janelas maximizadas (<code>session.rs</code> &amp; <code>wm/manager.rs</code>):</strong> o Cairo-Dock ocupa altura <code>DOCK_HEIGHT = 62</code> em <code>dock_y = screen_h - 72</code> (<code>696 px</code> em <code>768 px</code>), mas <code>toggle_maximize</code> recebia <code>dock_h = 54</code>, estendendo o rodapé <code>BRCR</code> até <code>705 px</code> por trás do dock.
+          </li>
+          <li>
+            <strong>Lacunas de layout e telemetria no Jinn Browser (<code>browser.rs</code> &amp; <code>main.rs</code>):</strong> ausência de <code>grid-template-columns</code>, colapso incompleto abaixo de <code>760 px</code>, separadores ASCII extensos (<code>====</code>/<code>----</code>) quebrados em sobras feias na linha seguinte, campos de formulário sem texto visível de <code>placeholder</code>/<code>value</code> e exibição de um único selo de status em vez da dupla transporte + adaptador de rede.
+          </li>
+          <li>
+            <strong>Estouro de rajada TCP sobre anel RX da NIC <code>e1000</code>:</strong> o controlador <code>e1000</code> utiliza <code>NUM_DESC = 32</code> descritores RX (<code>~46 KiB</code> em hardware), porém <code>TCP_DEFAULT_WINDOW = 65535</code> permitia rajadas de <code>64 KiB</code> contínuos em CDNs como Cloudflare (<code>126+ KiB</code>), ocasionando queda/reordenação no burst e falha pontual AEAD após <code>63 KB</code>.
+          </li>
+        </ul>
+      </section>
+
+      <section class="space-y-5">
+        <h2 class="text-2xl font-bold text-white">2. Arquitetura Implementada (#![no_std], Zero-Idle &amp; .bss)</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-slate-300">
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-cyan-300">Compositor Aladdin: Topbar &amp; Cairo-Dock</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li><code>right_capsule_bounds</code> e <code>exit_btn_x</code> unificados entre <code>wingpanel.rs</code> e <code>session.rs</code>, posicionando <code>cap_x</code> à esquerda de <code>exit_x - 8</code> e encadeando retornos de <code>draw_label_and_num</code> sem offsets chumbados.</li>
+              <li><code>snap_left</code>, <code>snap_right</code> e <code>toggle_maximize</code> calibrados com <code>WINGPANEL_HEIGHT</code> (<code>28 px</code>) e folga de <code>DOCK_HEIGHT + 12</code> (<code>74 px</code>), encerrando a janela maximizada em <code>y=685</code> com <code>11 px</code> livres acima do dock em <code>y=696</code>.</li>
+              <li>Clamping de coordenadas Y em <code>create_client_window</code> e <code>sync_client_window_size</code> preservando visibilidade do barramento inferior após restauração de tela cheia.</li>
+            </ul>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-emerald-300">CSS Grid, Formulários &amp; Contenção de Texto</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li><code>parse_grid_template_columns</code> em regras CSS e atributos <code>style="..."</code> suportando <code>repeat(N, ...)</code> e listas de trilhas, com empilhamento em 1 coluna para viewports <code>&lt; 760 px</code> e breakpoints <code>md:</code> em <code>760 px</code> / <code>lg:</code> em <code>960 px</code>.</li>
+              <li>Fallback visual discreto exclusivo para elementos sem estilo CSS (<code>.card</code>, <code>.panel</code>, <code>.hero</code>, <code>.badge</code>) preservando cores originais quando <code>style.css</code> está carregada.</li>
+              <li>Extração de <code>value=</code>, <code>placeholder=</code> e <code>type=</code> em <code>&lt;input&gt;</code>/<code>&lt;textarea&gt;</code> sem ampliar <code>DomNode</code> em <code>.bss</code>, além de unificação em <code>push_wrapped_text</code> com <code>is_ascii_rule_run</code> para truncar <code>====</code>/<code>----</code> em linha única.</li>
+            </ul>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-purple-300">Pílulas Duplas de Transporte &amp; NIC (Syscall 88)</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li><code>sync_browser_net_iface</code> consulta <code>sys_get_system_stats</code> (<code>SystemStatsUser.net_adapter</code>) na inicialização e normaliza o driver ativo (<code>e1000</code>, <code>virtio</code>, <code>pcnet</code>, <code>lo</code>) para <code>BrowserSession</code>.</li>
+              <li><code>chrome_pills_geometry</code> e <code>draw_chrome_pill</code> compartilham o cálculo exato entre <code>handle_click</code> e <code>render</code> para exibir lado a lado o selo criptográfico (<code>TLS1.3</code> ou <code>HTTP (Sem TLS)</code>) e o adaptador de rede antes do botão <code>[F]</code>.</li>
+            </ul>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-amber-300">Sintonia de Janela TCP para Anéis RX</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li>Ajuste de <code>TCP_DEFAULT_WINDOW</code> (<code>src/net/tcp.rs</code>) e <code>local_win</code> (<code>src/net/socket.rs</code>) para <code>24576</code> bytes (~16–17 frames Ethernet), mantendo o tráfego em voo confortavelmente abaixo dos <code>32</code> descritores RX do controlador <code>e1000</code>.</li>
+              <li>Telemetria <code>EVENT_WINDOW_RESIZE_DONE upd=&lt;code&gt;</code> no laço de eventos Ring 3 permitindo sincronização determinística em ensaios de redimensionamento.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-5">
+        <h2 class="text-2xl font-bold text-white">3. Evidências Visuais Comparativas (VirtualBox &rarr; QEMU)</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 not-prose">
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80 md:col-span-2">
+            <img src="../assets/browser-css-before-vbox.jpg" alt="Captura prévia em VirtualBox exibindo colisão na topbar Aladdin, dock cobrindo a barra BRCR e texto corrido sem cartões" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Antes (VirtualBox Real): sobreposição de <code>Aladdin Desktop</code> sobre <code>[X] Sair</code> na barra superior, Cairo-Dock ocultando a barra <code>BRCR</code> da janela maximizada e ausência de separação visual em cartões e formulários.
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/browser-layout-cards-windowed.png" alt="Jinn Browser em modo janela 300x180 sobre o desktop Aladdin com topbar sem colisão e pílulas duplas TLS1.3 e e1000" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Depois — Modo Janela (<code>300x180</code>, QEMU): topbar Aladdin com folga limpa antes de <code>[X] Sair</code>, empilhamento responsivo 1-coluna em <code>jinn-os.dev.br</code> e pílulas duplas <code>TLS1.3</code> + <code>e1000</code> visíveis na barra de endereços.
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/browser-layout-maximized-aladdin-dock.png" alt="Jinn Browser maximizado no Aladdin Desktop parando acima do Cairo-Dock com barra BRCR integralmente visível" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Depois — Janela Maximizada no Aladdin (<code>1022x622</code>, QEMU): borda inferior e barra <code>BRCR: 0.134% [HIBERNATED]</code> interrompidas acima do Cairo-Dock (<code>11 px</code> livres), com painel <code>Conky HUD</code> e pílulas completas.
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/browser-layout-cards-grid-f11.png" alt="Tela cheia F11 1024x768 renderizando https://jinn-os.dev.br com cartões, grade de bancadas, atalhos e pílulas duplas TLS1.3 e e1000" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Depois — Tela Cheia <code>F11</code> (<code>1024x768</code>): renderização completa da fachada de <code>https://jinn-os.dev.br</code> com cabeçalho de telemetria, card <code>Conky HUD</code>, badges de bancadas, atalhos do desktop e pílulas <code>TLS1.3</code> + <code>e1000</code>.
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/browser-layout-modal-vfs-f11.png" alt="Modal interativo do Explorador VFS aberto via clique em jinn-os.dev.br sobre o Jinn Browser" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Depois — Interatividade de Modais (<code>F11</code>): acionamento por clique (<code>JsAction</code>) revelando o card estilizado <em>Explorador de Arquivos do VFS (FAT32 &amp; Ext2)</em> com botões de janela e links navegáveis.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">4. Bateria Consolidada de Regressão E2E (QEMU)</h2>
+        <ul class="list-disc list-inside space-y-2 text-sm text-slate-300 leading-relaxed">
+          <li>
+            <strong><code>test_x509_sites_e2e.py</code> (<code>14/14</code> sites aprovados):</strong> carregamento bem-sucedido após o ajuste da janela TCP em <code>google.com</code>, <code>github.com</code>, <code>en.wikipedia.org</code>, <code>news.ycombinator.com</code>, <code>example.com</code>, <code>jinn-os.dev.br</code>, <code>frogfind.com</code>, <code>68k.news</code>, <code>pudim.com.br</code>, <code>www.kernel.org</code>, <code>www.rust-lang.org</code>, <code>www.cloudflare.com</code>, <code>www.mozilla.org</code> e <code>g1.globo.com</code> (<code>114.022 B</code> decifrados em G1 Globo e resposta completa Cloudflare sem erro AEAD).
+          </li>
+          <li>
+            <strong><code>test_ciclo1_security_observability_e2e.py</code> (<code>10/10</code> cenários):</strong> bloqueios X.509/SAN, <code>CertificateVerify</code>, redirect e subrecurso HTTP->HTTPS downgrade, selo <code>HTTP (Sem TLS)</code> lado a lado com <code>e1000</code>, e fronteira medida via <code>[DIAG-BENCH]</code> (Sys88 média <code>8.9–9.6 &mu;s</code> e Sys97 média <code>13.1–15.6 &mu;s</code>).
+          </li>
+          <li>
+            <strong><code>test_hot_routes_e2e.py</code>:</strong> Fast-Path validado com <code>ARP=0 DNS=0</code> em navegação subsequente e pós-reboot frio sobre FAT32, mantendo <code>100.00%</code> de ociosidade em HLT nos núcleos AP ociosos (<code>cpu2</code>/<code>cpu3</code>).
+          </li>
+          <li>
+            <strong><code>test_jaha_12_integrity.py</code>:</strong> reconciliação estrita de frames físicos com <code>INVARIANT PASSED (0 bytes discrepancy)</code>.
+          </li>
+        </ul>
+      </section>
+
+      <section class="space-y-3 border-t border-slate-800 pt-6">
+        <h2 class="text-xl font-bold text-white">5. Limitações Conhecidas</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          O motor gráfico Ring 3 ainda não rasteriza primitivas vetoriais <code>&lt;svg&gt;</code> nem posicionamento CSS absoluto flutuante com arraste (<code>position: fixed</code> sobreposto via JavaScript completo); por isso, ícones em SVG exibem suas caixas coloridas estilizadas e janelas do portal abrem em fluxo estruturado sem sobrepor a grade anterior. Além disso, os ensaios completos pós-patch foram executados sob emulação QEMU (<code>e1000</code> e 4 vCPUs); a reprodução em VirtualBox e hardware bare-metal físico permanece aberta para verificação com parceiros.
+        </p>
+      </section>
+
+            <!-- Jinn Ecosystem & Open Collaboration Block (Auto-Generated) -->
+      <section aria-labelledby="ecosystems-collaboration-heading" class="not-prose my-10 p-6 rounded-xl bg-slate-900/75 border border-slate-800 space-y-5">
+        <div class="space-y-2">
+          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Engineering Observatory • Semântica &amp; Colaboração Aberta</p>
+          <h3 id="ecosystems-collaboration-heading" class="text-lg sm:text-xl font-bold text-white">
+            Domínios Técnicos &amp; Ecossistemas Relacionados
+          </h3>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Badges clicáveis indexados por bancada, domínio de engenharia e organizações/padrões do Radar Expandido (Nível B contextual, sem endosso implícito):
+          </p>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <a href="/artigos/?lab=architecture-rfcs" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400"><span>Architecture &amp; RFCs</span></a>
+          <a href="/artigos/?lab=security-lab" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400"><span>Security Lab</span></a>
+          <a href="/artigos/?eco=fastpath-ipc-net" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400"><span>IPC &amp; Redes Fast-Path</span><span class="opacity-70">&bull; Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking</span></a>
+          <a href="/artigos/?eco=compute-simd" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-purple-950/80 border-purple-700/70 text-purple-300 hover:border-purple-400"><span>Compute &amp; SIMD</span><span class="opacity-70">&bull; Heterogeneous Compute, SIMD &amp; Zero-GPU Acceleration</span></a>
+          <a href="/artigos/?eco=microkernel-security" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400"><span>Microkernel &amp; Segurança</span><span class="opacity-70">&bull; Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity</span></a>
+        </div>
+
+        <div class="pt-1">
+          <div class="text-[11px] font-mono text-slate-400 mb-2">Ecossistemas, Padrões &amp; Radar Expandido (clique para filtrar o acervo):</div>
+          <div class="flex flex-wrap gap-1.5">
+            <a href="/artigos/?q=Cloudflare" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Cloudflare</a>
+          <a href="/artigos/?q=Red+Hat" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Red Hat</a>
+          <a href="/artigos/?q=RISC-V+International" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">RISC-V International</a>
+          <a href="/artigos/?q=Academic+Systems+Research+Labs" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-emerald-950/60 border-emerald-700/70 text-emerald-200 hover:border-emerald-400">Academic Systems Research Labs</a>
+          <a href="/artigos/?q=Sovereign+Public+Infrastructure" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-emerald-950/60 border-emerald-700/70 text-emerald-200 hover:border-emerald-400">Sovereign Public Infrastructure</a>
+          <a href="/artigos/?q=Intel" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Intel</a>
+          <a href="/artigos/?q=Arm" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Arm</a>
+          <a href="/artigos/?q=Bosch" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Bosch</a>
+          <a href="/artigos/?q=STMicroelectronics" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">STMicroelectronics</a>
+          <a href="/artigos/?q=LF+Edge" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">LF Edge</a>
+          <a href="/artigos/?q=Akamai" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Akamai</a>
+          <a href="/artigos/?q=Google" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Google</a>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-cyan-300 font-mono">
+            Aplicabilidade: Indústria, Uso Doméstico e Servidores
+          </h4>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-emerald-300">Indústria &amp; Edge</div>
+              <p class="text-slate-400 leading-relaxed">Gateways industriais, coletores SCADA e frotas com links intermitentes via SharedRings SPSC (4096 B), HotRouteTable e diagnóstico de falha por estágio.</p>
+            </div>
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-cyan-300">Uso Doméstico &amp; Educação</div>
+              <p class="text-slate-400 leading-relaxed">Navegação ágil com DNS 3 camadas (/disk/hosts → LRU → upstream) e fallback resiliente de conectividade.</p>
+            </div>
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-purple-300">Servidores &amp; HPC</div>
+              <p class="text-slate-400 leading-relaxed">Caminhos críticos IPC lock-free e observabilidade de pilha TCP/TLS 1.3 no_std com inspeção direta por syscalls.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-emerald-300 font-mono">
+            Chamada Aberta para Pilotos (Indústria Local, Universidades &amp; Setor Público Ético)
+          </h4>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Convidamos <strong>integradores de automação industrial</strong>, <strong>laboratórios universitários de arquitetura/SO</strong> e <strong>instituições públicas eticamente responsáveis</strong> a reproduzirem estes experimentos em silício real (fechando lacunas emulador vs. hardware da Tabela B) ou propor estudos-piloto com <strong>Jinn OS</strong>, <strong>Aladdin</strong> e <strong>JHCS</strong>.
+          </p>
+          <div class="flex flex-wrap gap-2.5 text-xs font-mono pt-1">
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-cyan-400 text-slate-200 hover:text-cyan-300 transition-colors">
+              GitHub: Jinn_Project
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/jhcs-rs" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-purple-400 text-slate-200 hover:text-purple-300 transition-colors">
+              GitHub: jhcs-rs
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/ENGINEERING_STATUS_AND_LIMITATIONS.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-amber-400 text-slate-200 hover:text-amber-300 transition-colors">
+              Fronteira Honesta &amp; Tabela B
+            </a>
+            <a href="/solucoes/edge-industrial-zero-idle.html" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
+              Soluções &amp; Benchmarks
+            </a>
+            <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-cyan-950/90 border border-cyan-600/70 hover:bg-cyan-900 text-cyan-200 transition-colors">
+              Contato Técnico &amp; Pilotos
+            </a>
+          </div>
+        </div>
+      </section>
+      <!-- /Jinn Ecosystem & Open Collaboration Block -->
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn Engineering Observatory • Browser, Compositor &amp; Networking • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/artigos/" class="text-cyan-400 hover:underline">Central de Artigos</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-slate-300 hover:text-white">Portal Principal</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>
