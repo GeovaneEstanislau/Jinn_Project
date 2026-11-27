@@ -3008,7 +3008,7 @@ unsafe fn browser_load_and_display(
         let mut fetch_res = fetch_http_document_inner(path, out_buf, allow_http_fallback, &mut final_url_buf, &mut final_url_len);
         let fallback_allowed_err = !matches!(
             fetch_res,
-            Err(FetchError::TlsCertHostMismatch | FetchError::TlsCertVerifyFailed | FetchError::HttpsDowngradeBlocked)
+            Err(FetchError::TlsCertHostMismatch | FetchError::TlsCertVerifyFailed)
         );
         if fetch_res.is_ok() && final_url_len > 0 {
             let flen = final_url_len.min(127);

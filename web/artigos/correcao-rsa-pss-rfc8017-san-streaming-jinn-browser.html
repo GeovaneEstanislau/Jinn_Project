@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Desbloqueando a Web no Jinn Browser: Bug RFC 8017 RSA-PSS (50%), SAN Streaming Ilimitado e Fallback Sem Esquema — Jinn OS</title>
+  <meta name="description"
+    content="Diagnóstico e correção dos bloqueios em sites HTTPS reais no Jinn Browser: verificação de bits superiores em maskedDB[0] na RFC 8017 §9.1.2 (RSA-PSS), avaliação SAN em streaming além de 16 entradas (Google/Wikipedia) e fallback HTTP (Sem TLS) apenas para URLs sem esquema, mantendo 10/10 critérios anti-downgrade do Ciclo 1.">
+  <link rel="canonical"
+    href="https://jinn-os.dev.br/artigos/correcao-rsa-pss-rfc8017-san-streaming-jinn-browser.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url"
+    content="https://jinn-os.dev.br/artigos/correcao-rsa-pss-rfc8017-san-streaming-jinn-browser.html">
+  <meta property="og:title"
+    content="Correção RFC 8017 RSA-PSS e SAN Streaming Ilimitado no Jinn Browser">
+  <meta property="og:description"
+    content="Como a correção do Passo 6 da RFC 8017 (maskedDB[0]) e o parsing SAN sem teto de 16 entradas levaram o Jinn Browser a carregar 14/14 sites reais sob TLS 1.3 no QEMU.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/browser-multisan-google.png">
+
+  <!-- Artigo Meta (Indexação Google News / RSS / Feed) -->
+  <meta name="article:tag" content="JINN BROWSER, TLS 1.3, X.509, RSA-PSS, RFC 8017">
+  <meta name="article:published_time" content="2026-11-27T00:02:00-03:00">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Jinn Engineering Observatory: Schema.org TechArticle (Auto-Generated) -->
+  <script type="application/ld+json" id="jinn-techarticle-jsonld">
+{
+  "@context": "https://schema.org",
+  "@type": [
+    "TechArticle",
+    "NewsArticle"
+  ],
+  "headline": "Desbloqueando a Web no Jinn Browser: Bug RFC 8017 RSA-PSS (50%), SAN Streaming Ilimitado e Fallback Sem…",
+  "description": "Diagnóstico e correção dos bloqueios em sites HTTPS reais no Jinn Browser: verificação de bits superiores em maskedDB[0] na RFC 8017 §9.1.2 (RSA-PSS), avaliação SAN em streaming além de 16 entradas (Google/Wikipedia) e fallback HTTP (Sem TLS) apenas para URLs sem esquema, mantendo 10/10 critérios anti-downgrade do Ciclo 1.",
+  "image": [
+    "https://jinn-os.dev.br/assets/browser-multisan-google.png"
+  ],
+  "datePublished": "2026-11-27T00:02:00-03:00",
+  "dateModified": "2026-11-27T00:02:00-03:00",
+  "inLanguage": "pt-BR",
+  "articleSection": [
+    "Security Lab",
+    "Architecture & RFCs"
+  ],
+  "author": {
+    "@type": "Person",
+    "name": "Geovane da Conceição Estanislau",
+    "url": "https://github.com/GeovaneEstanislau"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Jinn Engineering Observatory",
+    "url": "https://jinn-os.dev.br/",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://jinn-os.dev.br/assets/wallpaper.jpg"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://jinn-os.dev.br/artigos/correcao-rsa-pss-rfc8017-san-streaming-jinn-browser.html"
+  },
+  "about": [
+    {
+      "@type": "Thing",
+      "name": "TLS 1.3 Cryptography"
+    },
+    {
+      "@type": "Thing",
+      "name": "Deterministic Scheduling"
+    },
+    {
+      "@type": "Thing",
+      "name": "L2/L3 Fast-Path Networking"
+    },
+    {
+      "@type": "Thing",
+      "name": "Three-Tier DNS Resolution"
+    },
+    {
+      "@type": "Thing",
+      "name": "Zero-Copy IPC"
+    },
+    {
+      "@type": "Thing",
+      "name": "Bare-Metal TCP/IP Stack"
+    }
+  ],
+  "mentions": [
+    {
+      "@type": "Organization",
+      "name": "Cloudflare"
+    },
+    {
+      "@type": "Thing",
+      "name": "Sovereign Public Infrastructure"
+    },
+    {
+      "@type": "Organization",
+      "name": "Intel"
+    },
+    {
+      "@type": "Organization",
+      "name": "Google"
+    },
+    {
+      "@type": "Thing",
+      "name": "Academic Systems Research Labs"
+    },
+    {
+      "@type": "Organization",
+      "name": "Akamai"
+    },
+    {
+      "@type": "Organization",
+      "name": "Huawei"
+    },
+    {
+      "@type": "Organization",
+      "name": "RISC-V International"
+    },
+    {
+      "@type": "Organization",
+      "name": "LF Edge"
+    },
+    {
+      "@type": "Thing",
+      "name": "Industrial Automation Integrators"
+    }
+  ],
+  "keywords": "Jinn OS, Microkernel, Rust no_std, x86_64, JINN BROWSER, TLS 1.3, X.509, RSA-PSS, RFC 8017, TLS 1.3 Cryptography, Deterministic Scheduling, L2/L3 Fast-Path Networking, Three-Tier DNS Resolution, Zero-Copy IPC, SPSC Ring Buffer, io_uring, HotRouteTable, 3-Tier DNS"
+}
+  </script>
+  <!-- /Jinn Engineering Observatory: Schema.org TechArticle -->
+</head>
+
+<body class="bg-slate-950 text-slate-200 min-h-screen antialiased selection:bg-cyan-500/30">
+  <header class="border-b border-slate-800 bg-slate-900/70 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-4xl mx-auto px-6 h-14 flex items-center justify-between">
+      <a href="/artigos/?lab=security-lab" class="flex items-center gap-2 hover:text-cyan-400 transition-colors text-xs font-mono">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span>Observatory • Browser &amp; Security Lab</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="/feed.xml" target="_blank" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS</span>
+        </a>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="text-cyan-300 hover:text-white">GitHub: Jinn_Project</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-6 py-10 space-y-8">
+    <article class="prose prose-invert prose-slate max-w-none space-y-6">
+      <div class="space-y-3 border-b border-slate-800 pb-6">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400">
+          <span class="bg-rose-950 border border-rose-800 text-rose-300 px-2.5 py-0.5 rounded-full">JINN BROWSER</span>
+          <span class="bg-emerald-950 border border-emerald-800 text-emerald-300 px-2.5 py-0.5 rounded-full">TLS 1.3 • RSA-PSS • SAN STREAMING</span>
+          <span class="text-slate-500">•</span>
+          <time datetime="2026-11-27">27 Nov 2026</time>
+          <span class="text-slate-500">•</span>
+          <span class="text-slate-400">Diagnóstico Pós-Ciclo 1</span>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white leading-tight">
+          Por que Sites Reais Eram Bloqueados no Jinn Browser: Bug RFC 8017 RSA-PSS, Limite de 16 SANs e Política de Fallback
+        </h1>
+        <p class="text-base sm:text-lg text-slate-300 leading-relaxed">
+          Após ativar a validação estrita de certificados X.509/SAN e assinaturas <code>CertificateVerify</code> no <strong>Jinn Browser</strong> (Ciclo 1), testes em domínios públicos reais no QEMU revelaram bloqueios espúrios em portais como <code>jinn-os.dev.br</code>, <code>google.com</code>, <code>en.wikipedia.org</code>, <code>68k.news</code> e subrecursos de CDN. A investigação isolou um defeito sutil de ordenação de máscara na implementação da <strong>RFC 8017 (EMSA-PSS-VERIFY)</strong> — que falhava exatamente metade das assinaturas RSA-2048 válidas — e um corte estático em <code>MAX_SAN_ENTRIES = 16</code>, levando o navegador de falhas intermitentes para <strong>14/14 sites reais carregados com sucesso</strong> preservando 100% da proteção anti-downgrade.
+        </p>
+      </div>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">1. Diagnóstico Detalhado do que foi Levantado</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          Ao sondar múltiplos destinos públicos reais diretamente no QEMU com <code>-device e1000 -smp 4</code>, os logs seriais (<code>[DIAG-FLOW]</code> e <code>[BROWSER-SEC]</code>) mostraram três causas raiz distintas:
+        </p>
+        <ul class="list-disc list-inside space-y-2 text-sm text-slate-300 leading-relaxed">
+          <li>
+            <strong>Falsa rejeição de 50% nas assinaturas RSA-PSS (RFC 8017 §9.1.2):</strong> no verificador <code>verify_rsa_pss_sha256</code> (<code>apps/ola-mundo/src/x509.rs</code>) — e no código homólogo do kernel <code>verify_pss_sha256</code> (<code>src/crypto/rsa.rs</code>) — a conferência dos bits mais significativos não utilizados (<code>unused_bits = 8*k - (modBits - 1) = 1</code> em módulos RSA-2048) era executada em <code>db[0]</code> <em>após</em> aplicar <code>masked_db ^ MGF1(H)</code>. Contudo, a RFC 8017 §9.1.1 Passo 10 zera o bit superior em <code>maskedDB[0]</code> <em>após</em> o XOR com a máscara aleatória; logo, sempre que o bit 7 de <code>MGF1(H)[0]</code> valia <code>1</code> (probabilidade de 50%), <code>db[0]</code> recuperava bit 7 igual a <code>1</code> e disparava <code>CertVerifyError::InvalidSignature</code> (observado ao vivo em <code>https://jinn-os.dev.br</code>, <code>https://68k.news</code> e em 4 de 6 requisições consecutivas ao mesmo IP de <code>github.githubassets.com</code>).
+          </li>
+          <li>
+            <strong>Truncamento de <code>MAX_SAN_ENTRIES = 16</code> em certificados multi-SAN:</strong> o parser ASN.1 DER interrompia a leitura da extensão <code>SubjectAlternativeName</code> ao atingir 16 entradas. Em certificados corporativos/CDN extensos, o domínio alvo ficava além da 16ª posição — por exemplo, índice <code>48/66</code> em <code>google.com</code> (<code>*.google.com</code>) e índice <code>19/41</code> em <code>en.wikipedia.org</code> (<code>*.m.mediawiki.org</code>) — gerando falso erro <code>HostnameMismatch</code>.
+          </li>
+          <li>
+            <strong>Bloqueio de redirecionamentos legítimos <code>301 -&gt; http://</code> em URLs digitadas sem esquema:</strong> quando o usuário digitava <code>68k.news</code> (sem <code>https://</code>), o navegador elevava especulativamente para <code>https://68k.news</code> (<code>allow_http_fallback = true</code>), recebia <code>301 Moved Permanently</code> para <code>http://frogfind.com/news</code> e abortava como <code>HttpsDowngradeBlocked</code> em vez de retroceder com aviso visual âmbar. Também foram identificados casos de query/fragmento antes de <code>/</code> (ex.: <code>example.com?q=1</code>) que incluíam <code>?q=1</code> no hostname DNS.
+          </li>
+        </ul>
+      </section>
+
+      <section class="space-y-5">
+        <h2 class="text-2xl font-bold text-white">2. Correções Implementadas no Código</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-slate-300">
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-cyan-300">Conformidade RFC 8017 §9.1.2 (<code>x509.rs</code> &amp; <code>rsa.rs</code>)</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li>Passo 6 movido para validar <code>(masked_db[0] &amp; !mask_top) != 0</code> <em>antes</em> do XOR com <code>work.mask</code>.</li>
+              <li>Passo 9 aplicado explicitamente após o XOR: <code>work.db[0] &amp;= mask_top</code> (em <code>apps/ola-mundo/src/x509.rs</code>) e <code>db[0] &amp;= mask_top</code> (em <code>src/crypto/rsa.rs</code>).</li>
+              <li>Preservada a rejeição imediata caso assinatura adulterada viole a máscara ou os bytes <code>0x00* || 0x01 || salt</code>.</li>
+            </ul>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-emerald-300">SAN Streaming Ilimitado &amp; Cadeias Maiores (<code>x509.rs</code>, <code>tls.rs</code>)</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li><code>parse_leaf_x509(der, expected_host, st)</code> avalia <code>hostname_matches_pattern</code> sobre todas as entradas DNS (<code>0x82</code>) e IPv4 (<code>0x87</code>) em streaming, gravando <code>st.san_matched = true</code> sem depender do limite de buffer de diagnóstico (<code>16</code> itens).</li>
+              <li><code>HS_REASM_BUF</code> em <code>apps/ola-mundo/src/tls.rs</code> ampliado de <code>32 KiB</code> para <code>64 KiB</code> em <code>.bss</code> para comportar cadeias extensas.</li>
+            </ul>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-purple-300">Fallback Sem Esquema vs. Anti-Downgrade (<code>main.rs</code>)</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li>URLs digitadas com <code>https://</code> explícito (<code>allow_http_fallback = false</code>) continuam bloqueando qualquer redirecionamento ou subrecurso <code>http://</code>.</li>
+              <li>Apenas quando não há esquema digitado, um redirect especulativo <code>https:// -&gt; http://</code> recua para <code>http://</code> exibindo o selo âmbar <code>HTTP (Sem TLS)</code>.</li>
+            </ul>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-amber-300">Parser HTTP/URL Robusto (<code>browser.rs</code>)</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li><code>parse_http_url</code> passa a separar autoridade e caminho no primeiro delimitador entre <code>/</code>, <code>?</code> ou <code>#</code>.</li>
+              <li>Se o caminho resultante iniciar com <code>?</code> ou vazio, antepõe <code>/</code> antes de serializar <code>GET /... HTTP/1.1</code>.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-5">
+        <h2 class="text-2xl font-bold text-white">3. Validação ao Vivo (14/14 Sites) &amp; Evidências Visuais no QEMU</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          Após a compilação final, a bateria automatizada <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/scripts/test_x509_sites_e2e.py" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:underline"><code>scripts/test_x509_sites_e2e.py</code></a> validou o carregamento completo de <code>14/14</code> sites reais no Jinn Browser, enquanto <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:underline"><code>scripts/test_ciclo1_security_observability_e2e.py</code></a> e <code>scripts/test_jaha_12_integrity.py</code> confirmaram zero regressões nas proteções de segurança e contabilidade de memória:
+        </p>
+
+        <div class="overflow-x-auto not-prose rounded-xl border border-slate-800 bg-slate-900/70">
+          <table class="w-full text-left border-collapse text-xs sm:text-sm">
+            <thead>
+              <tr class="border-b border-slate-800 bg-slate-900 text-slate-300 font-mono">
+                <th class="p-3">Site Testado</th>
+                <th class="p-3">Perfil Criptográfico / Redirecionamento</th>
+                <th class="p-3 text-emerald-300">Resultado Pós-Correção</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/80 font-mono text-xs">
+              <tr>
+                <td class="p-3 text-slate-200">https://google.com</td>
+                <td class="p-3 text-slate-400">301 -&gt; www.google.com | 66 SANs (hit #48)</td>
+                <td class="p-3 text-emerald-300 font-bold">PAGE_LOADED (87.675 B HTML + PNG)</td>
+              </tr>
+              <tr>
+                <td class="p-3 text-slate-200">https://en.wikipedia.org</td>
+                <td class="p-3 text-slate-400">301 -&gt; /wiki/Main_Page | 41 SANs (hit #19)</td>
+                <td class="p-3 text-emerald-300 font-bold">PAGE_LOADED (114.688 B)</td>
+              </tr>
+              <tr>
+                <td class="p-3 text-slate-200">https://jinn-os.dev.br</td>
+                <td class="p-3 text-slate-400">RSA-2048 PSS (0x0804)</td>
+                <td class="p-3 text-emerald-300 font-bold">PAGE_LOADED (61.313 B)</td>
+              </tr>
+              <tr>
+                <td class="p-3 text-slate-200">https://github.com</td>
+                <td class="p-3 text-slate-400">ECDSA P-256 + 6 imagens RSA-2048 CDN</td>
+                <td class="p-3 text-emerald-300 font-bold">PAGE_LOADED (114.682 B, 6/6 imgs OK)</td>
+              </tr>
+              <tr>
+                <td class="p-3 text-slate-200">68k.news (sem esquema)</td>
+                <td class="p-3 text-slate-400">301 -&gt; http://frogfind.com/news</td>
+                <td class="p-3 text-amber-300 font-bold">PAGE_LOADED (69.686 B) + HTTP (Sem TLS)</td>
+              </tr>
+              <tr>
+                <td class="p-3 text-slate-200">https://www.kernel.org</td>
+                <td class="p-3 text-slate-400">RSA-2048 PSS + 6 imagens</td>
+                <td class="p-3 text-emerald-300 font-bold">PAGE_LOADED (20.436 B)</td>
+              </tr>
+              <tr>
+                <td class="p-3 text-slate-200">https://www.rust-lang.org</td>
+                <td class="p-3 text-slate-400">301 -&gt; rust-lang.org/ | RSA-2048 PSS</td>
+                <td class="p-3 text-emerald-300 font-bold">PAGE_LOADED (18.595 B)</td>
+              </tr>
+              <tr>
+                <td class="p-3 text-slate-200">https://www.cloudflare.com</td>
+                <td class="p-3 text-slate-400">ECDSA P-256 Chunked</td>
+                <td class="p-3 text-emerald-300 font-bold">PAGE_LOADED (123.951 B)</td>
+              </tr>
+              <tr>
+                <td class="p-3 text-slate-200">https://www.mozilla.org</td>
+                <td class="p-3 text-slate-400">RSA-2048 PSS + 6 assets</td>
+                <td class="p-3 text-emerald-300 font-bold">PAGE_LOADED (47.881 B)</td>
+              </tr>
+              <tr>
+                <td class="p-3 text-slate-200">https://g1.globo.com</td>
+                <td class="p-3 text-slate-400">RSA-2048 PSS</td>
+                <td class="p-3 text-emerald-300 font-bold">PAGE_LOADED (114.050 B)</td>
+              </tr>
+              <tr>
+                <td class="p-3 text-slate-200">news.ycombinator.com, example.com, frogfind.com, pudim.com.br</td>
+                <td class="p-3 text-slate-400">ECDSA P-256 TLS 1.3</td>
+                <td class="p-3 text-emerald-300 font-bold">4/4 PAGE_LOADED</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 not-prose">
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/browser-multisan-google.png" alt="Jinn Browser carregando https://www.google.com/ com selo TLS1.3 verde e logo Google PNG renderizado" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 1 (<code>browser-multisan-google.png</code>): <code>https://www.google.com/</code> validado além da 16ª entrada SAN (<code>48/66</code>), exibindo badge <code>TLS1.3</code> e logotipo PNG decodificado em <code>.bss</code>.
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80">
+            <img src="../assets/browser-rsapss-jinn-os.png" alt="Jinn Browser carregando https://jinn-os.dev.br sobre RSA-2048 PSS após correção RFC 8017" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 2 (<code>browser-rsapss-jinn-os.png</code>): <code>https://jinn-os.dev.br</code> (certificado RSA-2048 PSS) autenticado com 100% de consistência após a correção de <code>maskedDB[0]</code> na RFC 8017.
+            </figcaption>
+          </figure>
+          <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80 md:col-span-2">
+            <img src="../assets/browser-fallback-68k.png" alt="Jinn Browser carregando 68k.news redirecionado para http://frogfind.com/news com aviso HTTP (Sem TLS) âmbar" class="w-full h-auto" />
+            <figcaption class="p-3 text-xs text-slate-400 font-mono">
+              Figura 3 (<code>browser-fallback-68k.png</code>): Navegação sem esquema <code>68k.news</code> recuando de <code>301 -&gt; http://frogfind.com/news</code> com selo âmbar explícito <code>HTTP (Sem TLS)</code>, preservando o bloqueio estrito para URLs digitadas com <code>https://</code>.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">4. Aplicabilidade Prática (Indústria, Uso Doméstico e Servidores)</h2>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-emerald-300 mb-1">Usos Industriais (Acesso a Portais de Fornecedores, Documentação &amp; IHMs)</h3>
+            <p>Terminais industriais isolados e bancadas de diagnóstico frequentemente consultam portais atrás de CDNs corporativas (com dezenas de SANs no certificado folha) e endpoints RSA-2048. A correção determinística de SAN streaming e RSA-PSS elimina bloqueios aleatórios sem depender de bibliotecas OpenSSL pesadas.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-cyan-300 mb-1">Usos Domésticos (Navegação Direta em Portais Populares e Web Retrô)</h3>
+            <p>Usuários finais voltam a acessar buscadores, enciclopédias e portais nacionais sobre HTTPS (<code>google.com</code>, <code>wikipedia.org</code>, <code>g1.globo.com</code>, <code>github.com</code>), mantendo transparência quando sites legados operam apenas sobre HTTP via aviso visual <code>HTTP (Sem TLS)</code>.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-purple-300 mb-1">Usos em Servidores (Integridade de Pacotes e Clientes TLS <code>#![no_std]</code>)</h3>
+            <p>A correção idêntica em <code>src/crypto/rsa.rs</code> dentro do Ring 0 garante que verificações futuras de artefatos assinados via RSA-PSS pelo gerenciador de pacotes e atualizações do kernel não herdem o defeito de 50% de rejeição na checagem de <code>maskedDB[0]</code>.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-3 border-t border-slate-800 pt-6">
+        <h2 class="text-xl font-bold text-white">5. Limitações Conhecidas &amp; Fronteira Honesta</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          Conforme documentado no repositório, o verificador TLS 1.3 em Ring 3 valida posse criptográfica da chave pública folha (<code>CertificateVerify</code>) e identidade SAN/CN, mas ainda não verifica a cadeia completa contra um repositório raiz de CAs (Trust Store) nem revogação OCSP/CRL; páginas com resposta superior a <code>128 KiB</code> têm a leitura truncada no limite atual do buffer estático, e todos os ensaios foram conduzidos sob QEMU (<code>-device e1000</code>, <code>-smp 4</code>).
+        </p>
+      </section>
+
+            <!-- Jinn Ecosystem & Open Collaboration Block (Auto-Generated) -->
+      <section aria-labelledby="ecosystems-collaboration-heading" class="not-prose my-10 p-6 rounded-xl bg-slate-900/75 border border-slate-800 space-y-5">
+        <div class="space-y-2">
+          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Engineering Observatory • Semântica &amp; Colaboração Aberta</p>
+          <h3 id="ecosystems-collaboration-heading" class="text-lg sm:text-xl font-bold text-white">
+            Domínios Técnicos &amp; Ecossistemas Relacionados
+          </h3>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Badges clicáveis indexados por bancada, domínio de engenharia e organizações/padrões do Radar Expandido (Nível B contextual, sem endosso implícito):
+          </p>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <a href="/artigos/?lab=security-lab" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400"><span>Security Lab</span></a>
+          <a href="/artigos/?lab=architecture-rfcs" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-indigo-950/80 border-indigo-700/70 text-indigo-300 hover:border-indigo-400"><span>Architecture &amp; RFCs</span></a>
+          <a href="/artigos/?eco=fastpath-ipc-net" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-cyan-950/80 border-cyan-700/70 text-cyan-300 hover:border-cyan-400"><span>IPC &amp; Redes Fast-Path</span><span class="opacity-70">&bull; Zero-Copy Ring Buffers &amp; L2/L3 Fast-Path Networking</span></a>
+        </div>
+
+        <div class="pt-1">
+          <div class="text-[11px] font-mono text-slate-400 mb-2">Ecossistemas, Padrões &amp; Radar Expandido (clique para filtrar o acervo):</div>
+          <div class="flex flex-wrap gap-1.5">
+            <a href="/artigos/?q=Cloudflare" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Cloudflare</a>
+          <a href="/artigos/?q=Sovereign+Public+Infrastructure" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-emerald-950/60 border-emerald-700/70 text-emerald-200 hover:border-emerald-400">Sovereign Public Infrastructure</a>
+          <a href="/artigos/?q=Intel" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Intel</a>
+          <a href="/artigos/?q=Google" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Google</a>
+          <a href="/artigos/?q=Academic+Systems+Research+Labs" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-emerald-950/60 border-emerald-700/70 text-emerald-200 hover:border-emerald-400">Academic Systems Research Labs</a>
+          <a href="/artigos/?q=Akamai" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Akamai</a>
+          <a href="/artigos/?q=Huawei" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Huawei</a>
+          <a href="/artigos/?q=RISC-V+International" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">RISC-V International</a>
+          <a href="/artigos/?q=LF+Edge" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">LF Edge</a>
+          <a href="/artigos/?q=Industrial+Automation+Integrators" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-emerald-950/60 border-emerald-700/70 text-emerald-200 hover:border-emerald-400">Industrial Automation Integrators</a>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-cyan-300 font-mono">
+            Aplicabilidade: Indústria, Uso Doméstico e Servidores
+          </h4>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-emerald-300">Indústria &amp; Edge</div>
+              <p class="text-slate-400 leading-relaxed">Gateways industriais, coletores SCADA e frotas com links intermitentes via SharedRings SPSC (4096 B), HotRouteTable e diagnóstico de falha por estágio.</p>
+            </div>
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-cyan-300">Uso Doméstico &amp; Educação</div>
+              <p class="text-slate-400 leading-relaxed">Navegação ágil com DNS 3 camadas (/disk/hosts → LRU → upstream) e fallback resiliente de conectividade.</p>
+            </div>
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-purple-300">Servidores &amp; HPC</div>
+              <p class="text-slate-400 leading-relaxed">Caminhos críticos IPC lock-free e observabilidade de pilha TCP/TLS 1.3 no_std com inspeção direta por syscalls.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-emerald-300 font-mono">
+            Chamada Aberta para Pilotos (Indústria Local, Universidades &amp; Setor Público Ético)
+          </h4>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Convidamos <strong>integradores de automação industrial</strong>, <strong>laboratórios universitários de arquitetura/SO</strong> e <strong>instituições públicas eticamente responsáveis</strong> a reproduzirem estes experimentos em silício real (fechando lacunas emulador vs. hardware da Tabela B) ou propor estudos-piloto com <strong>Jinn OS</strong>, <strong>Aladdin</strong> e <strong>JHCS</strong>.
+          </p>
+          <div class="flex flex-wrap gap-2.5 text-xs font-mono pt-1">
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-cyan-400 text-slate-200 hover:text-cyan-300 transition-colors">
+              GitHub: Jinn_Project
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/jhcs-rs" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-purple-400 text-slate-200 hover:text-purple-300 transition-colors">
+              GitHub: jhcs-rs
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/ENGINEERING_STATUS_AND_LIMITATIONS.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-amber-400 text-slate-200 hover:text-amber-300 transition-colors">
+              Fronteira Honesta &amp; Tabela B
+            </a>
+            <a href="/solucoes/edge-industrial-zero-idle.html" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
+              Soluções &amp; Benchmarks
+            </a>
+            <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-cyan-950/90 border border-cyan-600/70 hover:bg-cyan-900 text-cyan-200 transition-colors">
+              Contato Técnico &amp; Pilotos
+            </a>
+          </div>
+        </div>
+      </section>
+      <!-- /Jinn Ecosystem & Open Collaboration Block -->
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn Engineering Observatory • Browser &amp; Cryptography • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/artigos/" class="text-cyan-400 hover:underline">Central de Artigos</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-slate-300 hover:text-white">Portal Principal</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>

@@ -998,7 +998,7 @@ fn is_ipv4_literal_bytes(host: &[u8]) -> bool {
 }
 
 static mut HS_DECRYPT_BUF: [u8; 18432] = [0u8; 18432];
-static mut HS_REASM_BUF: [u8; 32768] = [0u8; 32768];
+static mut HS_REASM_BUF: [u8; 65536] = [0u8; 65536];
 
 // ── TLS 1.3 Client Handshake Protocol (Buffer Estático RFC 8446) ─────────────
 

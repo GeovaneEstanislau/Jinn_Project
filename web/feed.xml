@@ -7,20 +7,19 @@
     <language>pt-br</language>
     <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
     <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
-        <item>
-      <title>implement tickless LAPIC one-shot timer and publish benchmarks</title>
-      <link>https://jinn-os.dev.br</link>
-      <guid isPermaLink="false">jinn-os-implement-tickless-lapic-one-shot-timer-and-publish-benchmarks-202611270234</guid>
-      <pubDate>Fri, 27 Nov 2026 02:34:54 +0000</pubDate>
-      <category>zero-idle-efficiency</category>
-      <category>compute-simd</category>
-      <category>microkernel-security</category>
-      <category>performance-lab</category>
-      <category>efficiency-lab</category>
-      <description><![CDATA[
-        <p>Avanço verificado no Jinn Microkernel, compositor Aladdin e computação heterogênea JHCS com foco em isolamento Ring 3 e previsibilidade de recursos. [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas & Menções: Academic Systems Research Labs, Red Hat, Tenstorrent, Intel, AMD, Arm, NVIDIA, RISC-V International] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, performance-lab, efficiency-lab, Microkernel Architecture, Deterministic Scheduling, Heterogeneous Compute Scheduling, Zero-GPU 2D Compositing] [Evidências visuais: Evidência visual Observatory (lapic-tickless-zero-idle.png) (https://jinn-os.dev.br/assets/lapic-tickless-zero-idle.png) ; Evidência visual Observatory (landing-jhcs-heterogeneous-compute.png) (https://jinn-os.dev.br/assets/landing-jhcs-heterogeneous-compute.png) ; Evidência visual Observatory (landing-edge-zero-idle.png) (https://jinn-os.dev.br/assets/landing-edge-zero-idle.png)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</p>
-      ]]></description>
-      <enclosure url="https://jinn-os.dev.br/assets/lapic-tickless-zero-idle.png" length="70707" type="image/png" />
+    <item>
+      <title>Desbloqueando a Web no Jinn Browser: Bug RFC 8017 RSA-PSS (50%), SAN Streaming Ilimitado e Fallback Sem Esquema</title>
+      <link>https://jinn-os.dev.br/artigos/correcao-rsa-pss-rfc8017-san-streaming-jinn-browser.html</link>
+      <guid isPermaLink="false">jinn-os-artigo-correcao-rsa-pss-rfc8017-san-streaming-jinn-browser</guid>
+      <pubDate>Fri, 27 Nov 2026 00:02:00 -0300</pubDate>
+      <description>Diagnóstico e correção dos bloqueios em sites HTTPS reais no Jinn Browser: verificação de bits superiores em maskedDB[0] na RFC 8017 §9.1.2 (RSA-PSS), avaliação SAN em streaming além de 16 entradas (Google/Wikipedia) e fallback HTTP (Sem TLS) apenas para URLs sem esquema, mantendo 10/10 critérios anti-downgrade do Ciclo 1. [Ganho técnico: Indicadores citados no relatório: 100%, 50%] [Ecossistemas &amp; Menções: Cloudflare, Sovereign Public Infrastructure, Intel, Google, Academic Systems Research Labs, Akamai, Huawei, RISC-V International] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, JINN BROWSER, TLS 1.3, X.509, RSA-PSS, RFC 8017, TLS 1.3 Cryptography] [Evidências visuais: Figura 1 ( browser-multisan-google.png ): https://www.google.com/ validado além da 16ª entrada SAN ( 48/66 ), exibindo badge TLS1.3 e logotipo PNG decodificado  (https://jinn-os.dev.br/assets/browser-multisan-google.png) ; Figura 2 ( browser-rsapss-jinn-os.png ): https://jinn-os.dev.br (certificado RSA-2048 PSS) autenticado com 100% de consistência após a correção de maskedDB[0] n (https://jinn-os.dev.br/assets/browser-rsapss-jinn-os.png) ; Figura 3 ( browser-fallback-68k.png ): Navegação sem esquema 68k.news recuando de 301 -&gt; http://frogfind.com/news com selo âmbar explícito HTTP (Sem TLS) , pres (https://jinn-os.dev.br/assets/browser-fallback-68k.png)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
+      <category>fastpath-ipc-net</category>
+      <category>security-lab</category>
+      <category>architecture-rfcs</category>
+      <category>TLS 1.3 Cryptography</category>
+      <category>Deterministic Scheduling</category>
+      <category>L2/L3 Fast-Path Networking</category>
+      <enclosure url="https://jinn-os.dev.br/assets/browser-multisan-google.png" length="63839" type="image/png" />
     </item>
     <item>
       <title>Timer LAPIC One-Shot Tickless no Jinn OS: Queda de 99,8% nos Ticks em Repouso e Relógio TSC</title>
@@ -492,6 +491,19 @@
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
     <item>
+      <title>feat(kernel,apic,web): implement tickless LAPIC one-shot timer and publish benchmarks [announce]</title>
+      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/89a62a009e55832270c9b61e54b9162e4c24db62</link>
+      <guid isPermaLink="false">89a62a009e55832270c9b61e54b9162e4c24db62</guid>
+      <pubDate>Thu, 26 Nov 2026 23:34:39 -0300</pubDate>
+      <description>feat(kernel,apic,web): implement tickless LAPIC one-shot timer and publish benchmarks [announce] [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas &amp; Menções: Intel, Academic Systems Research Labs, AMD, Arm, Qualcomm, Siemens, Bosch, STMicroelectronics] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, performance-lab, efficiency-lab, Deterministic Scheduling, Energy-Proportional Computing, SMP Per-CPU Accounting, Lazy TTL Cache Evaluation] [Evidências visuais: feat(kernel,apic,web): implement tickless LAPIC one-shot timer and publish benchmarks [announce] (https://jinn-os.dev.br/assets/wallpaper.jpg)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
+      <category>zero-idle-efficiency</category>
+      <category>performance-lab</category>
+      <category>efficiency-lab</category>
+      <category>Deterministic Scheduling</category>
+      <category>Energy-Proportional Computing</category>
+      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
+    </item>
+    <item>
       <title>feat(tls,browser,web): enforce X.509 SAN/CertificateVerify, block HTTPS downgrade and publish observability report [announce]</title>
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/df834618070e4aa67c8662430e2d2f21556ee2a9</link>
       <guid isPermaLink="false">df834618070e4aa67c8662430e2d2f21556ee2a9</guid>
@@ -598,25 +610,11 @@
       <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/9863214e427df95edecd720ce095aa4a1be4b838</link>
       <guid isPermaLink="false">9863214e427df95edecd720ce095aa4a1be4b838</guid>
       <pubDate>Thu, 26 Nov 2026 17:28:01 -0300</pubDate>
-      <description>feat(web,frente4): structure 6 Observatory labs, TechArticle/NewsArticle JSON-LD and publish observatory article [announce] [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas &amp; Menções: Google, Intel, AMD, Arm, NVIDIA, Tenstorrent, SiFive, Academic Systems Research Labs] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, architecture-rfcs, Semantic Web &amp; News Indexing, SIMD Vectorization, Heterogeneous Compute Scheduling, Zero-GPU 2D Compositing, Workload Efficiency] [Evidências visuais: feat(web,frente4): structure 6 Observatory labs, TechArticle/NewsArticle JSON-LD and publish observatory article [announce] (https://jinn-os.dev.br/assets/wallpaper.jpg)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
+      <description>---END--- [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas &amp; Menções: Google, Intel, AMD, Arm, NVIDIA, Tenstorrent, SiFive, Academic Systems Research Labs] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, architecture-rfcs, Semantic Web &amp; News Indexing, SIMD Vectorization, Heterogeneous Compute Scheduling, Zero-GPU 2D Compositing, Workload Efficiency] [Evidências visuais: feat(web,frente4): structure 6 Observatory labs, TechArticle/NewsArticle JSON-LD and publish observatory article [announce] (https://jinn-os.dev.br/assets/wallpaper.jpg)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
       <category>compute-simd</category>
       <category>architecture-rfcs</category>
       <category>Semantic Web &amp; News Indexing</category>
       <category>SIMD Vectorization</category>
-      <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
-    </item>
-    <item>
-      <title>feat(browser): StageGeometry, horizontal inline flow, picture srcset, RSS/JSON formatter and scrollbar drag</title>
-      <link>https://github.com/GeovaneEstanislau/Jinn_Project/commit/c241e269b5f6f185851fae6652f1f41162018c5a</link>
-      <guid isPermaLink="false">c241e269b5f6f185851fae6652f1f41162018c5a</guid>
-      <pubDate>Thu, 26 Nov 2026 17:12:34 -0300</pubDate>
-      <description>---END--- [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas &amp; Menções: Sovereign Public Infrastructure, Intel, AMD, Arm, Qualcomm, Siemens, Bosch, STMicroelectronics] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, architecture-rfcs, post-mortems, Deterministic Scheduling, Energy-Proportional Computing, SMP Per-CPU Accounting, Lazy TTL Cache Evaluation] [Evidências visuais: feat(browser): StageGeometry, horizontal inline flow, picture srcset, RSS/JSON formatter and scrollbar drag (https://jinn-os.dev.br/assets/wallpaper.jpg)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
-      <category>zero-idle-efficiency</category>
-      <category>fastpath-ipc-net</category>
-      <category>architecture-rfcs</category>
-      <category>post-mortems</category>
-      <category>Deterministic Scheduling</category>
-      <category>Energy-Proportional Computing</category>
       <enclosure url="https://jinn-os.dev.br/assets/wallpaper.jpg" length="70707" type="image/jpeg" />
     </item>
   </channel>

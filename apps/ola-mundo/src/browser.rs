@@ -6463,8 +6463,10 @@ pub fn parse_http_url(url: &[u8]) -> Option<ParsedHttpUrl> {
         clean = &clean[8..];
     }
 
-    // Separa host (+ porta) do caminho
-    let (host_port_slice, path_slice) = match clean.iter().position(|&b| b == b'/') {
+    // Separa host (+ porta) do caminho (ou query/fragment sem '/' inicial)
+    let split_idx = clean.iter().position(|&b| b == b'/' || b == b'?' || b == b'#');
+    let (host_port_slice, path_slice) = match split_idx {
+        Some(idx) if clean[idx] == b'/' => (&clean[..idx], &clean[idx..]),
         Some(idx) => (&clean[..idx], &clean[idx..]),
         None => (clean, &b"/"[..]),
     };
@@ -6503,14 +6505,24 @@ pub fn parse_http_url(url: &[u8]) -> Option<ParsedHttpUrl> {
     };
     parsed.host[..host_slice.len()].copy_from_slice(host_slice);
 
-    // Remove fragmento '#' do path enviado na requisição HTTP
+    // Remove fragmento '#' do path enviado na requisição HTTP e garante '/' inicial
     let req_path = match path_slice.iter().position(|&b| b == b'#') {
         Some(idx) => &path_slice[..idx],
         None => path_slice,
     };
-    let p_len = req_path.len().min(127);
-    parsed.path[..p_len].copy_from_slice(&req_path[..p_len]);
-    parsed.path_len = p_len;
+    if req_path.is_empty() {
+        parsed.path[0] = b'/';
+        parsed.path_len = 1;
+    } else if req_path[0] != b'/' {
+        parsed.path[0] = b'/';
+        let p_len = req_path.len().min(126);
+        parsed.path[1..1 + p_len].copy_from_slice(&req_path[..p_len]);
+        parsed.path_len = 1 + p_len;
+    } else {
+        let p_len = req_path.len().min(127);
+        parsed.path[..p_len].copy_from_slice(&req_path[..p_len]);
+        parsed.path_len = p_len;
+    }
 
     Some(parsed)
 }

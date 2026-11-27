@@ -104,6 +104,7 @@ struct LeafCertState {
     p256_qx: [u64; 4],
     p256_qy: [u64; 4],
     has_san_ext: bool,
+    san_matched: bool,
     san_count: usize,
     sans: [SanEntry; MAX_SAN_ENTRIES],
     cn_len: usize,
@@ -125,6 +126,7 @@ impl LeafCertState {
             p256_qx: [0u64; 4],
             p256_qy: [0u64; 4],
             has_san_ext: false,
+            san_matched: false,
             san_count: 0,
             sans: [SanEntry::empty(); MAX_SAN_ENTRIES],
             cn_len: 0,
@@ -145,6 +147,7 @@ impl LeafCertState {
         self.p256_qx = [0u64; 4];
         self.p256_qy = [0u64; 4];
         self.has_san_ext = false;
+        self.san_matched = false;
         self.san_count = 0;
         self.cn_len = 0;
         self.diag_len = 0;
@@ -876,6 +879,17 @@ fn verify_rsa_pss_sha256(hash: &[u8; 32], sig: &[u8]) -> Result<(), CertVerifyEr
     let masked_db = &em[..db_len];
     let h = &em[db_len..k - 1];
 
+    let unused_bits = (8 * k).saturating_sub(mod_bits.saturating_sub(1));
+    let mask_top = if unused_bits > 0 && unused_bits < 8 {
+        0xFFu8 >> unused_bits
+    } else {
+        0xFFu8
+    };
+    // RFC 8017 Secao 9.1.2 Passo 6: verifica os bits superiores em masked_db[0] ANTES do XOR
+    if (masked_db[0] & !mask_top) != 0 {
+        return Err(CertVerifyError::InvalidSignature);
+    }
+
     // MGF1 com SHA-256 sobre H para work.mask[..db_len]
     let mut counter: u32 = 0;
     let mut off = 0usize;
@@ -893,14 +907,8 @@ fn verify_rsa_pss_sha256(hash: &[u8; 32], sig: &[u8]) -> Result<(), CertVerifyEr
     for i in 0..db_len {
         work.db[i] = masked_db[i] ^ work.mask[i];
     }
-
-    let unused_bits = (8 * k).saturating_sub(mod_bits.saturating_sub(1));
-    if unused_bits > 0 && unused_bits < 8 {
-        let mask_top = 0xFFu8 >> unused_bits;
-        if (work.db[0] & !mask_top) != 0 {
-            return Err(CertVerifyError::InvalidSignature);
-        }
-    }
+    // RFC 8017 Secao 9.1.2 Passo 9: limpa os bits nao utilizados no topo de DB[0]
+    work.db[0] &= mask_top;
 
     let mut split_idx = None;
     for i in 0..db_len {
@@ -1059,7 +1067,7 @@ fn parse_spki_into_state(spki_bytes: &[u8], st: &mut LeafCertState) {
     st.key_kind = LeafKeyKind::Unsupported;
 }
 
-fn parse_leaf_x509(der: &[u8], st: &mut LeafCertState) -> Result<(), CertVerifyError> {
+fn parse_leaf_x509(der: &[u8], expected_host: &[u8], st: &mut LeafCertState) -> Result<(), CertVerifyError> {
     st.clear();
     let mut outer = DerReader::new(der);
     let cert_seq = outer.read_sequence().map_err(|_| CertVerifyError::MalformedCertificate)?;
@@ -1104,27 +1112,40 @@ fn parse_leaf_x509(der: &[u8], st: &mut LeafCertState) -> Result<(), CertVerifyE
                     let mut erd = DerReader::new(ext_item);
                     if let Ok((otag, oid)) = erd.read_element() {
                         if otag == 0x06 && oid == [0x55, 0x1D, 0x11] {
-                            // SubjectAlternativeName (2.5.29.17)
+                            // SubjectAlternativeName (2.5.29.17): avalia todas as entradas em streaming sem limite de 16 SANs
                             st.has_san_ext = true;
                             while !erd.is_empty() {
                                 if let Ok((vtag, vbytes)) = erd.read_element() {
                                     if vtag == 0x04 {
                                         if let Ok(san_seq) = DerReader::new(vbytes).read_sequence() {
                                             let mut san_rd = DerReader::new(san_seq);
-                                            while !san_rd.is_empty() && st.san_count < MAX_SAN_ENTRIES {
+                                            while !san_rd.is_empty() {
                                                 if let Ok((gtag, gdata)) = san_rd.read_element() {
-                                                    if gtag == 0x82 && !gdata.is_empty() && gdata.len() <= MAX_HOST_LEN {
-                                                        let slot = &mut st.sans[st.san_count];
-                                                        slot.is_ip = false;
-                                                        slot.len = gdata.len();
-                                                        slot.bytes[..gdata.len()].copy_from_slice(gdata);
-                                                        st.san_count += 1;
+                                                    if gtag == 0x82 && !gdata.is_empty() {
+                                                        if !expected_host.is_empty() && hostname_matches_pattern(expected_host, gdata) {
+                                                            st.san_matched = true;
+                                                        }
+                                                        if gdata.len() <= MAX_HOST_LEN && st.san_count < MAX_SAN_ENTRIES {
+                                                            let slot = &mut st.sans[st.san_count];
+                                                            slot.is_ip = false;
+                                                            slot.len = gdata.len();
+                                                            slot.bytes[..gdata.len()].copy_from_slice(gdata);
+                                                            st.san_count += 1;
+                                                        }
                                                     } else if gtag == 0x87 && gdata.len() == 4 {
-                                                        let slot = &mut st.sans[st.san_count];
-                                                        slot.is_ip = true;
                                                         let ip4 = [gdata[0], gdata[1], gdata[2], gdata[3]];
-                                                        slot.len = format_ipv4_into(&ip4, &mut slot.bytes);
-                                                        st.san_count += 1;
+                                                        let mut ip_buf = [0u8; MAX_HOST_LEN];
+                                                        let ip_len = format_ipv4_into(&ip4, &mut ip_buf);
+                                                        if !expected_host.is_empty() && hostname_matches_pattern(expected_host, &ip_buf[..ip_len]) {
+                                                            st.san_matched = true;
+                                                        }
+                                                        if st.san_count < MAX_SAN_ENTRIES {
+                                                            let slot = &mut st.sans[st.san_count];
+                                                            slot.is_ip = true;
+                                                            slot.len = ip_len;
+                                                            slot.bytes[..ip_len].copy_from_slice(&ip_buf[..ip_len]);
+                                                            st.san_count += 1;
+                                                        }
                                                     }
                                                 } else {
                                                     break;
@@ -1211,11 +1232,8 @@ fn check_hostname_against_state(st: &mut LeafCertState, expected_host: &[u8]) ->
         return true;
     }
     if st.has_san_ext {
-        for i in 0..st.san_count {
-            let entry = &st.sans[i];
-            if hostname_matches_pattern(expected_host, &entry.bytes[..entry.len]) {
-                return true;
-            }
+        if st.san_matched {
+            return true;
         }
         if st.san_count > 0 {
             let mut tmp = [0u8; MAX_HOST_LEN];
@@ -1270,7 +1288,7 @@ pub fn process_tls13_certificate_msg(cert_msg: &[u8], expected_host: &[u8]) -> R
     let cert0_der = &body[off..off + cert0_len];
 
     let st = unsafe { &mut *core::ptr::addr_of_mut!(LEAF_CERT_STATE) };
-    parse_leaf_x509(cert0_der, st)?;
+    parse_leaf_x509(cert0_der, expected_host, st)?;
 
     if st.key_kind == LeafKeyKind::Unsupported || st.key_kind == LeafKeyKind::None {
         return Err(CertVerifyError::UnsupportedPublicKey);

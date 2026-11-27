@@ -112,6 +112,18 @@ impl RSAPublicKey {
         let masked_db = &em[..k - h_len - 1];
         let h = &em[k - h_len - 1..k - 1];
 
+        let mod_bits = self.n.bit_length();
+        let unused_bits = (8 * k).saturating_sub(mod_bits.saturating_sub(1));
+        let mask_top = if unused_bits > 0 && unused_bits < 8 {
+            0xFFu8 >> unused_bits
+        } else {
+            0xFFu8
+        };
+        // RFC 8017 Secao 9.1.2 Passo 6: os bits mais significativos de maskedDB[0] devem ser zero ANTES do XOR
+        if (masked_db[0] & !mask_top) != 0 {
+            return Err("RSA-PSS: bits de topo de maskedDB nao zerados");
+        }
+
         // MGF1 com SHA-256 sobre H
         let db_mask = mgf1_sha256(h, masked_db.len());
         let mut db = alloc::vec![0u8; masked_db.len()];
@@ -119,16 +131,8 @@ impl RSAPublicKey {
         for i in 0..masked_db.len() {
             db[i] = masked_db[i] ^ db_mask[i];
         }
-
-        // Zera os bits de padding do topo do DB conforme modulo
-        let mod_bits = self.n.bit_length();
-        let unused_bits = (8 * k) - (mod_bits - 1);
-        if unused_bits > 0 && unused_bits < 8 {
-            let mask = 0xFF >> unused_bits;
-            if (db[0] & !mask) != 0 {
-                return Err("RSA-PSS: bits de topo de DB nao zerados");
-            }
-        }
+        // RFC 8017 Secao 9.1.2 Passo 9: limpar bits nao utilizados do topo de DB[0]
+        db[0] &= mask_top;
 
         // DB deve ser: 0x00 ... 0x00 || 0x01 || salt
         let mut split_idx = None;
