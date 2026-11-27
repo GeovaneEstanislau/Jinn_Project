@@ -7,6 +7,21 @@
     <language>pt-br</language>
     <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
     <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
+        <item>
+      <title>fix RFC 8017 RSA-PSS maskedDB check, stream unlimited SANs and allow scheme-less HTTP fallback</title>
+      <link>https://jinn-os.dev.br</link>
+      <guid isPermaLink="false">jinn-os-fix-rfc-8017-rsa-pss-maskeddb-check--stream-unlimited-sans-and-allow-scheme-less-http-fallback-202611270303</guid>
+      <pubDate>Fri, 27 Nov 2026 03:03:43 +0000</pubDate>
+      <category>compute-simd</category>
+      <category>microkernel-security</category>
+      <category>fastpath-ipc-net</category>
+      <category>architecture-rfcs</category>
+      <category>post-mortems</category>
+      <description><![CDATA[
+        <p>Avanço verificado no Jinn Microkernel, compositor Aladdin e computação heterogênea JHCS com foco em isolamento Ring 3 e previsibilidade de recursos. [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas & Menções: Red Hat, Tenstorrent, Academic Systems Research Labs, AMD, Arm, NVIDIA, Cloudflare, RISC-V International] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, architecture-rfcs, post-mortems, Microkernel Architecture, Heterogeneous Compute Scheduling, Zero-GPU 2D Compositing, SIMD Vectorization] [Evidências visuais: Evidência visual Observatory (tls-http-fallback-demo.png) (https://jinn-os.dev.br/assets/tls-http-fallback-demo.png) ; Evidência visual Observatory (landing-jhcs-heterogeneous-compute.png) (https://jinn-os.dev.br/assets/landing-jhcs-heterogeneous-compute.png) ; Evidência visual Observatory (jinn-capture-architecture-funnel.png) (https://jinn-os.dev.br/assets/jinn-capture-architecture-funnel.png)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</p>
+      ]]></description>
+      <enclosure url="https://jinn-os.dev.br/assets/tls-http-fallback-demo.png" length="70707" type="image/png" />
+    </item>
     <item>
       <title>Desbloqueando a Web no Jinn Browser: Bug RFC 8017 RSA-PSS (50%), SAN Streaming Ilimitado e Fallback Sem Esquema</title>
       <link>https://jinn-os.dev.br/artigos/correcao-rsa-pss-rfc8017-san-streaming-jinn-browser.html</link>
