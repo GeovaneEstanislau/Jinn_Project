@@ -39,7 +39,7 @@ pub const COLOR_SCROLL_THUMB_BORDER: u32 = 0x0089_DCEB;
 
 // ── Pipeline Completo: Flat Vector DOM, Mini-CSS e Mini-JS (no_std) ──────────
 
-pub const MAX_DOM_NODES: usize = 512;
+pub const MAX_DOM_NODES: usize = 1152;
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -129,7 +129,7 @@ pub fn compute_stage_geometry(w: usize, h: usize) -> StageGeometry {
     // Contêiner centralizado com max-width legível (760px) quando em tela cheia / janelas largas
     let inner_pad = 6usize;
     let raw_content_w = vp_w.saturating_sub(inner_pad * 2).max(40);
-    let content_w = if vp_w > 780 { raw_content_w.min(760) } else { raw_content_w };
+    let content_w = if vp_w > 940 { raw_content_w.min(920) } else { raw_content_w };
     let content_x = if vp_w > content_w + inner_pad * 2 {
         (vp_w - content_w) / 2
     } else {
@@ -157,6 +157,7 @@ pub struct ComputedStyle {
     pub border_color: Option<u32>,
     pub border_width: usize,
     pub border_radius: usize,
+    pub border_sides: u8,
     pub font_size: usize,
     pub width: Option<usize>,
     pub height: Option<usize>,
@@ -174,6 +175,9 @@ pub struct ComputedStyle {
     pub display_block: bool,
     pub display: DisplayMode,
     pub flex_direction: FlexDirection,
+    pub flex_wrap: bool,
+    pub grid_cols: usize,
+    pub has_explicit_color: bool,
     pub justify_content: JustifyContent,
     pub align_items: AlignItems,
     pub text_align: TextAlign,
@@ -187,6 +191,7 @@ impl ComputedStyle {
             border_color: None,
             border_width: 1,
             border_radius: 0,
+            border_sides: 15,
             font_size: 12,
             width: None,
             height: None,
@@ -204,6 +209,9 @@ impl ComputedStyle {
             display_block: true,
             display: DisplayMode::Block,
             flex_direction: FlexDirection::Row,
+            flex_wrap: false,
+            grid_cols: 0,
+            has_explicit_color: false,
             justify_content: JustifyContent::FlexStart,
             align_items: AlignItems::FlexStart,
             text_align: TextAlign::Left,
@@ -211,7 +219,7 @@ impl ComputedStyle {
     }
 }
 
-pub const MAX_DOM_CHILDREN: usize = 16;
+pub const MAX_DOM_CHILDREN: usize = 24;
 
 #[allow(dead_code)]
 #[derive(Clone, Copy)]
@@ -222,7 +230,7 @@ pub struct DomNode {
     pub tag_len: usize,
     pub id_attr: [u8; 32],
     pub id_len: usize,
-    pub class_attr: [u8; 64],
+    pub class_attr: [u8; 256],
     pub class_len: usize,
     pub style_attr: [u8; 128],
     pub style_len: usize,
@@ -234,6 +242,8 @@ pub struct DomNode {
     pub height_attr: u16,
     pub alt_attr: [u8; 32],
     pub alt_len: usize,
+    pub data_open_window: [u8; 32],
+    pub data_open_window_len: usize,
     pub onclick_attr: [u8; 256],
     pub onclick_len: usize,
     pub text: [u8; 256],
@@ -253,7 +263,7 @@ impl DomNode {
             tag_len: 0,
             id_attr: [0; 32],
             id_len: 0,
-            class_attr: [0; 64],
+            class_attr: [0; 256],
             class_len: 0,
             style_attr: [0; 128],
             style_len: 0,
@@ -265,6 +275,8 @@ impl DomNode {
             height_attr: 0,
             alt_attr: [0; 32],
             alt_len: 0,
+            data_open_window: [0; 32],
+            data_open_window_len: 0,
             onclick_attr: [0; 256],
             onclick_len: 0,
             text: [0; 256],
@@ -387,18 +399,19 @@ impl DomArena {
     pub fn remove_class(&mut self, idx: usize, class_name: &[u8]) {
         if idx >= self.node_count { return; }
         let node = &mut self.nodes[idx];
-        let mut new_buf = [0u8; 64];
+        let mut new_buf = [0u8; 256];
         let mut new_len = 0;
+        let max_len = node.class_attr.len();
         let c_attr = &node.class_attr[..node.class_len];
         for word in c_attr.split(|&b| b == b' ' || b == b'\t' || b == b'\r' || b == b'\n') {
             if word.is_empty() || word.eq_ignore_ascii_case(class_name) {
                 continue;
             }
-            if new_len > 0 && new_len < 63 {
+            if new_len > 0 && new_len + 1 < max_len {
                 new_buf[new_len] = b' ';
                 new_len += 1;
             }
-            let cpy = word.len().min(64 - new_len);
+            let cpy = word.len().min(max_len - new_len);
             new_buf[new_len..new_len + cpy].copy_from_slice(&word[..cpy]);
             new_len += cpy;
         }
@@ -447,7 +460,35 @@ impl DomArena {
 
 // ── Mini-CSS e Resolução de Estilos ──────────────────────────────────────────
 
-pub const MAX_CSS_RULES: usize = 128;
+pub const MAX_CSS_RULES: usize = 256;
+pub const MAX_CSS_VARS: usize = 32;
+
+#[derive(Clone, Copy)]
+pub struct CssVar {
+    pub name: [u8; 32],
+    pub name_len: usize,
+    pub val: [u8; 64],
+    pub val_len: usize,
+}
+
+impl CssVar {
+    pub const fn empty() -> Self {
+        Self {
+            name: [0; 32],
+            name_len: 0,
+            val: [0; 64],
+            val_len: 0,
+        }
+    }
+}
+
+fn strip_css_important(val: &[u8]) -> &[u8] {
+    let mut s = val.trim_ascii();
+    if s.len() >= 10 && s[s.len() - 10..].eq_ignore_ascii_case(b"!important") {
+        s = s[..s.len() - 10].trim_ascii();
+    }
+    s
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SelectorKind {
@@ -461,9 +502,9 @@ pub enum SelectorKind {
 #[derive(Clone, Copy)]
 pub struct CssRule {
     pub kind: SelectorKind,
-    pub selector: [u8; 32],
+    pub selector: [u8; 64],
     pub selector_len: usize,
-    pub parent_selector: [u8; 32],
+    pub parent_selector: [u8; 64],
     pub parent_selector_len: usize,
     pub specificity: u16,
     pub color: Option<u32>,
@@ -471,6 +512,7 @@ pub struct CssRule {
     pub border_color: Option<u32>,
     pub border_width: Option<usize>,
     pub border_radius: Option<usize>,
+    pub border_sides: Option<u8>,
     pub font_size: Option<usize>,
     pub width: Option<usize>,
     pub height: Option<usize>,
@@ -487,6 +529,8 @@ pub struct CssRule {
     pub is_bold: Option<bool>,
     pub display: Option<DisplayMode>,
     pub flex_direction: Option<FlexDirection>,
+    pub flex_wrap: Option<bool>,
+    pub grid_cols: Option<usize>,
     pub justify_content: Option<JustifyContent>,
     pub align_items: Option<AlignItems>,
     pub text_align: Option<TextAlign>,
@@ -496,9 +540,9 @@ impl CssRule {
     pub const fn empty() -> Self {
         Self {
             kind: SelectorKind::Tag,
-            selector: [0; 32],
+            selector: [0; 64],
             selector_len: 0,
-            parent_selector: [0; 32],
+            parent_selector: [0; 64],
             parent_selector_len: 0,
             specificity: 1,
             color: None,
@@ -506,6 +550,7 @@ impl CssRule {
             border_color: None,
             border_width: None,
             border_radius: None,
+            border_sides: None,
             font_size: None,
             width: None,
             height: None,
@@ -522,6 +567,8 @@ impl CssRule {
             is_bold: None,
             display: None,
             flex_direction: None,
+            flex_wrap: None,
+            grid_cols: None,
             justify_content: None,
             align_items: None,
             text_align: None,
@@ -529,9 +576,190 @@ impl CssRule {
     }
 }
 
+fn selector_part_specificity(sel: &[u8]) -> u16 {
+    let mut spec = 0u16;
+    let mut i = 0usize;
+    while i < sel.len() {
+        let b = sel[i];
+        if b == b'.' {
+            spec = spec.saturating_add(10);
+            i += 1;
+            while i < sel.len() && sel[i] != b'.' && sel[i] != b'#' { i += 1; }
+        } else if b == b'#' {
+            spec = spec.saturating_add(100);
+            i += 1;
+            while i < sel.len() && sel[i] != b'.' && sel[i] != b'#' { i += 1; }
+        } else {
+            if i == 0 && b != b'*' {
+                spec = spec.saturating_add(1);
+            }
+            while i < sel.len() && sel[i] != b'.' && sel[i] != b'#' { i += 1; }
+        }
+    }
+    spec.max(1)
+}
+
+fn selector_matches_node(dom: &DomArena, node_idx: usize, sel: &[u8]) -> bool {
+    let s = sel.trim_ascii();
+    if s.is_empty() || node_idx >= dom.node_count {
+        return false;
+    }
+    let node = &dom.nodes[node_idx];
+    if node.node_type != DomNodeType::Element {
+        return false;
+    }
+    let tag_bytes = &node.tag[..node.tag_len];
+    let mut i = 0usize;
+    let mut matched_any = false;
+    while i < s.len() {
+        if s[i] == b'.' {
+            i += 1;
+            let start = i;
+            while i < s.len() && s[i] != b'.' && s[i] != b'#' { i += 1; }
+            let cls = &s[start..i];
+            if cls.is_empty() || !dom.has_class(node_idx, cls) {
+                return false;
+            }
+            matched_any = true;
+        } else if s[i] == b'#' {
+            i += 1;
+            let start = i;
+            while i < s.len() && s[i] != b'.' && s[i] != b'#' { i += 1; }
+            let id_target = &s[start..i];
+            if id_target.is_empty() || node.id_len != id_target.len() || &node.id_attr[..node.id_len] != id_target {
+                return false;
+            }
+            matched_any = true;
+        } else {
+            let start = i;
+            while i < s.len() && s[i] != b'.' && s[i] != b'#' { i += 1; }
+            let tag_target = &s[start..i];
+            if tag_target != b"*" && (tag_bytes.len() != tag_target.len() || !tag_bytes.eq_ignore_ascii_case(tag_target)) {
+                return false;
+            }
+            matched_any = true;
+        }
+    }
+    matched_any
+}
+
+fn parse_tw_spacing(raw: &[u8]) -> Option<usize> {
+    if raw == b"px" { return Some(1); }
+    let val100 = parse_fixed_100(raw)?;
+    Some(((val100 * 4 + 50) / 100).min(48))
+}
+
+fn parse_tw_base_color(name: &[u8], shade: Option<usize>) -> Option<u32> {
+    if name == b"white" { return Some(0x00FF_FFFF); }
+    if name == b"black" { return Some(0x0000_0000); }
+    if name == b"slate" || name == b"gray" || name == b"zinc" || name == b"neutral" {
+        return Some(match shade.unwrap_or(500) {
+            100 => 0x00F1_F5F9,
+            200 => 0x00E2_E8F0,
+            300 => 0x00CB_D5E1,
+            400 => 0x0094_A3B8,
+            500 => 0x0064_748B,
+            600 => 0x0047_5569,
+            700 => 0x0033_4155,
+            800 => 0x001E_293B,
+            900 => 0x000F_172A,
+            _ => 0x0002_0617,
+        });
+    }
+    if name == b"cyan" || name == b"sky" {
+        return Some(match shade.unwrap_or(400) {
+            200 => 0x00A5_F3FC,
+            300 => 0x0067_E8F9,
+            400 => 0x0022_D3EE,
+            500 => 0x0006_B6D4,
+            600 => 0x0008_91B2,
+            700 => 0x000E_7490,
+            _ => 0x0008_3344,
+        });
+    }
+    if name == b"emerald" || name == b"green" || name == b"teal" {
+        return Some(match shade.unwrap_or(400) {
+            300 => 0x006E_E7B7,
+            400 => 0x0034_D399,
+            500 => 0x0010_B981,
+            600 => 0x0005_9669,
+            700 => 0x0004_7857,
+            900 => 0x0006_4E3B,
+            _ => 0x0002_2C22,
+        });
+    }
+    if name == b"blue" || name == b"indigo" {
+        return Some(match shade.unwrap_or(500) {
+            300 => 0x00A5_B4FC,
+            400 => 0x0060_A5FA,
+            500 => 0x0063_66F1,
+            600 => 0x004F_46E5,
+            700 => 0x0043_38CA,
+            900 => 0x001E_3A8A,
+            _ => 0x001E_1B4B,
+        });
+    }
+    if name == b"purple" || name == b"violet" || name == b"fuchsia" {
+        return Some(match shade.unwrap_or(400) {
+            300 => 0x00D8_B4FE,
+            400 => 0x00C0_84FC,
+            500 => 0x00A8_55F7,
+            600 => 0x0093_33EA,
+            700 => 0x007E_22CE,
+            _ => 0x003B_0764,
+        });
+    }
+    if name == b"amber" || name == b"yellow" || name == b"orange" {
+        return Some(match shade.unwrap_or(400) {
+            300 => 0x00FC_D34D,
+            400 => 0x00FB_BF24,
+            500 => 0x00F5_9E0B,
+            600 => 0x00D9_7706,
+            700 => 0x00B4_5309,
+            _ => 0x0045_1A03,
+        });
+    }
+    if name == b"rose" || name == b"red" {
+        return Some(match shade.unwrap_or(400) {
+            300 => 0x00FD_A4AF,
+            400 => 0x00FB_7185,
+            500 => 0x00F4_3F5E,
+            600 => 0x00E1_1D48,
+            700 => 0x00BE_123C,
+            _ => 0x004C_0519,
+        });
+    }
+    None
+}
+
+fn parse_tw_color_token(spec: &[u8]) -> Option<u32> {
+    let (color_part, alpha_opt) = if let Some(slash) = spec.iter().position(|&b| b == b'/') {
+        (&spec[..slash], parse_px(&spec[slash + 1..]))
+    } else {
+        (spec, None)
+    };
+    let (name, shade) = if let Some(dash) = color_part.iter().rposition(|&b| b == b'-') {
+        (&color_part[..dash], parse_px(&color_part[dash + 1..]))
+    } else {
+        (color_part, None)
+    };
+    let rgb = parse_tw_base_color(name, shade)?;
+    if let Some(pct) = alpha_opt {
+        let a255 = ((pct.min(100) * 255 + 50) / 100) as u32;
+        if a255 == 0 { return None; }
+        if a255 < 250 {
+            return Some(blend_over_rgb(rgb, CSS_DARK_CANVAS, a255));
+        }
+    }
+    Some(rgb)
+}
+
 pub struct MiniCss {
     pub rules: [CssRule; MAX_CSS_RULES],
     pub rule_count: usize,
+    pub vars: [CssVar; MAX_CSS_VARS],
+    pub var_count: usize,
+    pub body_bg_color: Option<u32>,
 }
 
 impl MiniCss {
@@ -539,16 +767,184 @@ impl MiniCss {
         Self {
             rules: [CssRule::empty(); MAX_CSS_RULES],
             rule_count: 0,
+            vars: [CssVar::empty(); MAX_CSS_VARS],
+            var_count: 0,
+            body_bg_color: None,
         }
     }
 
     #[inline(always)]
     pub fn reset(&mut self) {
         self.rule_count = 0;
+        self.var_count = 0;
+        self.body_bg_color = None;
+    }
+
+    fn set_var(&mut self, name: &[u8], val: &[u8]) {
+        let clean_val = strip_css_important(val);
+        for i in 0..self.var_count {
+            if self.vars[i].name_len == name.len() && &self.vars[i].name[..self.vars[i].name_len] == name {
+                self.vars[i].val_len = copy_trunc_bytes(&mut self.vars[i].val, clean_val);
+                return;
+            }
+        }
+        if self.var_count < MAX_CSS_VARS {
+            let slot = &mut self.vars[self.var_count];
+            slot.name_len = copy_trunc_bytes(&mut slot.name, name);
+            slot.val_len = copy_trunc_bytes(&mut slot.val, clean_val);
+            self.var_count += 1;
+        }
+    }
+
+    fn lookup_var<'a>(&'a self, name: &[u8]) -> Option<&'a [u8]> {
+        for i in 0..self.var_count {
+            if self.vars[i].name_len == name.len() && &self.vars[i].name[..self.vars[i].name_len] == name {
+                return Some(&self.vars[i].val[..self.vars[i].val_len]);
+            }
+        }
+        None
+    }
+
+    pub fn resolve_css_value<'a>(&self, raw: &[u8], scratch: &'a mut [u8; 160]) -> &'a [u8] {
+        let s = strip_css_important(raw);
+        let mut out_len = 0usize;
+        let mut i = 0usize;
+        while i < s.len() && out_len < scratch.len() - 1 {
+            if s[i..].starts_with(b"var(") {
+                let mut j = i + 4;
+                let mut depth = 1usize;
+                while j < s.len() && depth > 0 {
+                    if s[j] == b'(' { depth += 1; }
+                    else if s[j] == b')' { depth -= 1; }
+                    j += 1;
+                }
+                let inner = if j > i + 4 && s[j - 1] == b')' {
+                    &s[i + 4..j - 1]
+                } else {
+                    &s[i + 4..j]
+                };
+                let (vname, fallback) = if let Some(comma) = inner.iter().position(|&b| b == b',') {
+                    (inner[..comma].trim_ascii(), Some(inner[comma + 1..].trim_ascii()))
+                } else {
+                    (inner.trim_ascii(), None)
+                };
+                let replacement = self.lookup_var(vname).or(fallback).unwrap_or(b"");
+                let take = replacement.len().min((scratch.len() - 1) - out_len);
+                scratch[out_len..out_len + take].copy_from_slice(&replacement[..take]);
+                out_len += take;
+                i = j;
+            } else {
+                scratch[out_len] = s[i];
+                out_len += 1;
+                i += 1;
+            }
+        }
+        scratch[..out_len].trim_ascii()
+    }
+
+    fn apply_decl_to_rule(&self, rule: &mut CssRule, prop: &[u8], raw_val: &[u8]) {
+        let mut val_buf = [0u8; 160];
+        let val = self.resolve_css_value(raw_val, &mut val_buf);
+        if val.is_empty() { return; }
+
+        if prop.eq_ignore_ascii_case(b"color") {
+            rule.color = parse_color(val);
+        } else if prop.eq_ignore_ascii_case(b"background-color") || prop.eq_ignore_ascii_case(b"background") {
+            if let Some(bg) = parse_color(val) {
+                rule.bg_color = Some(bg);
+            }
+        } else if prop.eq_ignore_ascii_case(b"border") {
+            let (bw, bc) = parse_border(val);
+            if bw.is_some() { rule.border_width = bw; }
+            if bc.is_some() { rule.border_color = bc; }
+            rule.border_sides = Some(15);
+        } else if prop.eq_ignore_ascii_case(b"border-bottom")
+            || prop.eq_ignore_ascii_case(b"border-top")
+            || prop.eq_ignore_ascii_case(b"border-left")
+            || prop.eq_ignore_ascii_case(b"border-right")
+        {
+            let (bw, bc) = parse_border(val);
+            if bw.is_some() { rule.border_width = bw; }
+            if bc.is_some() { rule.border_color = bc; }
+            let bit = if prop.eq_ignore_ascii_case(b"border-top") { 1 }
+                else if prop.eq_ignore_ascii_case(b"border-right") { 2 }
+                else if prop.eq_ignore_ascii_case(b"border-bottom") { 4 }
+                else { 8 };
+            rule.border_sides = Some(rule.border_sides.unwrap_or(0) | bit);
+        } else if prop.eq_ignore_ascii_case(b"-webkit-mask-image") || prop.eq_ignore_ascii_case(b"mask-image") {
+            rule.display = Some(DisplayMode::None);
+        } else if prop.eq_ignore_ascii_case(b"border-color") {
+            rule.border_color = parse_color(val);
+        } else if prop.eq_ignore_ascii_case(b"border-width") {
+            rule.border_width = parse_px(val);
+        } else if prop.eq_ignore_ascii_case(b"border-radius") {
+            rule.border_radius = parse_px(val);
+        } else if prop.eq_ignore_ascii_case(b"font-size") {
+            rule.font_size = parse_px(val);
+        } else if prop.eq_ignore_ascii_case(b"width") {
+            rule.width = parse_px(val);
+        } else if prop.eq_ignore_ascii_case(b"height") {
+            rule.height = parse_px(val);
+        } else if prop.eq_ignore_ascii_case(b"max-width") {
+            rule.max_width = parse_px(val);
+        } else if prop.eq_ignore_ascii_case(b"margin") {
+            if let Some((v, h)) = parse_one_or_two_px(val) {
+                rule.margin_top = Some(v);
+                rule.margin_bottom = Some(v);
+                rule.margin_left = Some(h);
+                rule.margin_right = Some(h);
+            }
+        } else if prop.eq_ignore_ascii_case(b"margin-top") {
+            rule.margin_top = parse_px(val);
+        } else if prop.eq_ignore_ascii_case(b"margin-bottom") {
+            rule.margin_bottom = parse_px(val);
+        } else if prop.eq_ignore_ascii_case(b"margin-left") {
+            rule.margin_left = parse_px(val);
+        } else if prop.eq_ignore_ascii_case(b"margin-right") {
+            rule.margin_right = parse_px(val);
+        } else if prop.eq_ignore_ascii_case(b"padding") {
+            if let Some((v, h)) = parse_one_or_two_px(val) {
+                rule.padding_top = Some(v);
+                rule.padding_bottom = Some(v);
+                rule.padding_left = Some(h);
+                rule.padding_right = Some(h);
+            }
+        } else if prop.eq_ignore_ascii_case(b"padding-top") {
+            rule.padding_top = parse_px(val);
+        } else if prop.eq_ignore_ascii_case(b"padding-bottom") {
+            rule.padding_bottom = parse_px(val);
+        } else if prop.eq_ignore_ascii_case(b"padding-left") {
+            rule.padding_left = parse_px(val);
+        } else if prop.eq_ignore_ascii_case(b"padding-right") {
+            rule.padding_right = parse_px(val);
+        } else if prop.eq_ignore_ascii_case(b"gap")
+            || prop.eq_ignore_ascii_case(b"column-gap")
+            || prop.eq_ignore_ascii_case(b"row-gap")
+        {
+            rule.gap = parse_px(val);
+        } else if prop.eq_ignore_ascii_case(b"font-weight") {
+            if val.eq_ignore_ascii_case(b"bold") || val.eq_ignore_ascii_case(b"600") || val.eq_ignore_ascii_case(b"700") || val.eq_ignore_ascii_case(b"800") {
+                rule.is_bold = Some(true);
+            } else if val.eq_ignore_ascii_case(b"normal") || val.eq_ignore_ascii_case(b"400") {
+                rule.is_bold = Some(false);
+            }
+        } else if prop.eq_ignore_ascii_case(b"display") {
+            rule.display = parse_display(val);
+        } else if prop.eq_ignore_ascii_case(b"flex-direction") {
+            rule.flex_direction = parse_flex_direction(val);
+        } else if prop.eq_ignore_ascii_case(b"flex-wrap") {
+            rule.flex_wrap = parse_flex_wrap(val);
+        } else if prop.eq_ignore_ascii_case(b"justify-content") {
+            rule.justify_content = parse_justify_content(val);
+        } else if prop.eq_ignore_ascii_case(b"align-items") {
+            rule.align_items = parse_align_items(val);
+        } else if prop.eq_ignore_ascii_case(b"text-align") {
+            rule.text_align = parse_text_align(val);
+        }
     }
 
     pub fn parse_stylesheet(&mut self, css: &[u8]) {
-        self.rule_count = 0;
+        self.reset();
         self.parse_stylesheet_append(css);
     }
 
@@ -556,7 +952,7 @@ impl MiniCss {
         let mut i = 0usize;
         let len = css.len();
 
-        while i < len && self.rule_count < MAX_CSS_RULES {
+        while i < len {
             while i < len && (css[i] == b' ' || css[i] == b'\t' || css[i] == b'\r' || css[i] == b'\n') {
                 i += 1;
             }
@@ -580,142 +976,98 @@ impl MiniCss {
             let sel_raw = css[sel_start..i].trim_ascii();
             i += 1;
 
+            // Suporta blocos aninhados (@media / @keyframes) sem corromper o scanner
+            if sel_raw.starts_with(b"@") {
+                let mut depth = 1usize;
+                while i < len && depth > 0 {
+                    if css[i] == b'{' { depth += 1; }
+                    else if css[i] == b'}' { depth -= 1; }
+                    i += 1;
+                }
+                continue;
+            }
+
             let body_start = i;
-            while i < len && css[i] != b'}' {
+            let mut depth = 1usize;
+            while i < len && depth > 0 {
+                if css[i] == b'{' { depth += 1; }
+                else if css[i] == b'}' { depth -= 1; }
                 i += 1;
             }
-            let body = &css[body_start..i];
-            if i < len && css[i] == b'}' {
-                i += 1;
-            }
+            let body_end = if depth == 0 && i > body_start { i - 1 } else { i };
+            let body = &css[body_start..body_end];
 
             if sel_raw.is_empty() { continue; }
 
-            // Suporta seletores múltiplos separados por vírgula (ex: "h1, h2, h3")
+            // Processa blocos `:root` extraindo `--var: val` antes das regras visuais
+            if sel_raw.eq_ignore_ascii_case(b":root") {
+                for decl in body.split(|&b| b == b';') {
+                    let decl_clean = decl.trim_ascii();
+                    if let Some(colon) = decl_clean.iter().position(|&b| b == b':') {
+                        let prop = decl_clean[..colon].trim_ascii();
+                        let val = decl_clean[colon + 1..].trim_ascii();
+                        if prop.starts_with(b"--") {
+                            self.set_var(prop, val);
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if self.rule_count >= MAX_CSS_RULES {
+                continue;
+            }
+
             for sub_sel in sel_raw.split(|&b| b == b',') {
                 let s_clean = sub_sel.trim_ascii();
                 if s_clean.is_empty() || self.rule_count >= MAX_CSS_RULES { continue; }
-
-                let mut rule = CssRule::empty();
-
-                // Verifica se é seletor descendente simples com espaço ("nav a", ".card .btn", "div p")
-                if let Some(space_pos) = s_clean.iter().position(|&b| b == b' ' || b == b'\t') {
-                    let parent_part = s_clean[..space_pos].trim_ascii();
-                    let child_part = s_clean[space_pos + 1..].trim_ascii();
-
-                    rule.kind = SelectorKind::Descendant;
-                    let p_cpy = parent_part.len().min(31);
-                    rule.parent_selector[..p_cpy].copy_from_slice(&parent_part[..p_cpy]);
-                    rule.parent_selector_len = p_cpy;
-
-                    let c_cpy = child_part.len().min(31);
-                    rule.selector[..c_cpy].copy_from_slice(&child_part[..c_cpy]);
-                    rule.selector_len = c_cpy;
-                    rule.specificity = 2;
-                } else if s_clean[0] == b'.' {
-                    rule.kind = SelectorKind::Class;
-                    let sel_name = &s_clean[1..];
-                    let cpy = sel_name.len().min(31);
-                    rule.selector[..cpy].copy_from_slice(&sel_name[..cpy]);
-                    rule.selector_len = cpy;
-                    rule.specificity = 10;
-                } else if s_clean[0] == b'#' {
-                    rule.kind = SelectorKind::Id;
-                    let sel_name = &s_clean[1..];
-                    let cpy = sel_name.len().min(31);
-                    rule.selector[..cpy].copy_from_slice(&sel_name[..cpy]);
-                    rule.selector_len = cpy;
-                    rule.specificity = 100;
-                } else {
-                    rule.kind = SelectorKind::Tag;
-                    let cpy = s_clean.len().min(31);
-                    rule.selector[..cpy].copy_from_slice(&s_clean[..cpy]);
-                    rule.selector_len = cpy;
-                    rule.specificity = 1;
+                // Ignora pseudo-classes / pseudo-elementos (:hover, :focus, ::after, ::-webkit-*)
+                if s_clean.contains(&b':') {
+                    continue;
                 }
 
-                // Parser de declarações
+                let mut rule = CssRule::empty();
+                let last_ws = s_clean.iter().rposition(|&b| b == b' ' || b == b'\t' || b == b'>');
+                if let Some(pos) = last_ws {
+                    let mut p_part = s_clean[..pos].trim_ascii();
+                    while let Some(prev_ws) = p_part.iter().rposition(|&b| b == b' ' || b == b'\t' || b == b'>') {
+                        p_part = p_part[prev_ws + 1..].trim_ascii();
+                    }
+                    let c_part = s_clean[pos + 1..].trim_ascii();
+                    if p_part.is_empty() || c_part.is_empty() {
+                        continue;
+                    }
+                    rule.kind = SelectorKind::Descendant;
+                    rule.parent_selector_len = copy_trunc_bytes(&mut rule.parent_selector, p_part);
+                    rule.selector_len = copy_trunc_bytes(&mut rule.selector, c_part);
+                    rule.specificity = selector_part_specificity(p_part).saturating_add(selector_part_specificity(c_part));
+                } else if s_clean[0] == b'.' {
+                    rule.kind = SelectorKind::Class;
+                    rule.selector_len = copy_trunc_bytes(&mut rule.selector, s_clean);
+                    rule.specificity = selector_part_specificity(s_clean);
+                } else if s_clean[0] == b'#' {
+                    rule.kind = SelectorKind::Id;
+                    rule.selector_len = copy_trunc_bytes(&mut rule.selector, s_clean);
+                    rule.specificity = selector_part_specificity(s_clean);
+                } else {
+                    rule.kind = SelectorKind::Tag;
+                    rule.selector_len = copy_trunc_bytes(&mut rule.selector, s_clean);
+                    rule.specificity = selector_part_specificity(s_clean);
+                }
+
                 for decl in body.split(|&b| b == b';') {
                     let decl_clean = decl.trim_ascii();
                     if decl_clean.is_empty() { continue; }
                     if let Some(colon) = decl_clean.iter().position(|&b| b == b':') {
                         let prop = decl_clean[..colon].trim_ascii();
                         let val = decl_clean[colon + 1..].trim_ascii();
+                        self.apply_decl_to_rule(&mut rule, prop, val);
+                    }
+                }
 
-                        if prop.eq_ignore_ascii_case(b"color") {
-                            rule.color = parse_color(val);
-                        } else if prop.eq_ignore_ascii_case(b"background-color") || prop.eq_ignore_ascii_case(b"background") {
-                            rule.bg_color = parse_color(val);
-                        } else if prop.eq_ignore_ascii_case(b"border") {
-                            let (bw, bc) = parse_border(val);
-                            if bw.is_some() { rule.border_width = bw; }
-                            if bc.is_some() { rule.border_color = bc; }
-                        } else if prop.eq_ignore_ascii_case(b"border-color") {
-                            rule.border_color = parse_color(val);
-                        } else if prop.eq_ignore_ascii_case(b"border-width") {
-                            rule.border_width = parse_px(val);
-                        } else if prop.eq_ignore_ascii_case(b"border-radius") {
-                            rule.border_radius = parse_px(val);
-                        } else if prop.eq_ignore_ascii_case(b"font-size") {
-                            rule.font_size = parse_px(val);
-                        } else if prop.eq_ignore_ascii_case(b"width") {
-                            rule.width = parse_px(val);
-                        } else if prop.eq_ignore_ascii_case(b"height") {
-                            rule.height = parse_px(val);
-                        } else if prop.eq_ignore_ascii_case(b"max-width") {
-                            rule.max_width = parse_px(val);
-                        } else if prop.eq_ignore_ascii_case(b"margin") {
-                            if let Some((v, h)) = parse_one_or_two_px(val) {
-                                rule.margin_top = Some(v);
-                                rule.margin_bottom = Some(v);
-                                rule.margin_left = Some(h);
-                                rule.margin_right = Some(h);
-                            }
-                        } else if prop.eq_ignore_ascii_case(b"margin-top") {
-                            rule.margin_top = parse_px(val);
-                        } else if prop.eq_ignore_ascii_case(b"margin-bottom") {
-                            rule.margin_bottom = parse_px(val);
-                        } else if prop.eq_ignore_ascii_case(b"margin-left") {
-                            rule.margin_left = parse_px(val);
-                        } else if prop.eq_ignore_ascii_case(b"margin-right") {
-                            rule.margin_right = parse_px(val);
-                        } else if prop.eq_ignore_ascii_case(b"padding") {
-                            if let Some((v, h)) = parse_one_or_two_px(val) {
-                                rule.padding_top = Some(v);
-                                rule.padding_bottom = Some(v);
-                                rule.padding_left = Some(h);
-                                rule.padding_right = Some(h);
-                            }
-                        } else if prop.eq_ignore_ascii_case(b"padding-top") {
-                            rule.padding_top = parse_px(val);
-                        } else if prop.eq_ignore_ascii_case(b"padding-bottom") {
-                            rule.padding_bottom = parse_px(val);
-                        } else if prop.eq_ignore_ascii_case(b"padding-left") {
-                            rule.padding_left = parse_px(val);
-                        } else if prop.eq_ignore_ascii_case(b"padding-right") {
-                            rule.padding_right = parse_px(val);
-                        } else if prop.eq_ignore_ascii_case(b"gap")
-                            || prop.eq_ignore_ascii_case(b"column-gap")
-                            || prop.eq_ignore_ascii_case(b"row-gap")
-                        {
-                            rule.gap = parse_px(val);
-                        } else if prop.eq_ignore_ascii_case(b"font-weight") {
-                            if val.eq_ignore_ascii_case(b"bold") {
-                                rule.is_bold = Some(true);
-                            } else if val.eq_ignore_ascii_case(b"normal") {
-                                rule.is_bold = Some(false);
-                            }
-                        } else if prop.eq_ignore_ascii_case(b"display") {
-                            rule.display = parse_display(val);
-                        } else if prop.eq_ignore_ascii_case(b"flex-direction") {
-                            rule.flex_direction = parse_flex_direction(val);
-                        } else if prop.eq_ignore_ascii_case(b"justify-content") {
-                            rule.justify_content = parse_justify_content(val);
-                        } else if prop.eq_ignore_ascii_case(b"align-items") {
-                            rule.align_items = parse_align_items(val);
-                        } else if prop.eq_ignore_ascii_case(b"text-align") {
-                            rule.text_align = parse_text_align(val);
-                        }
+                if rule.kind == SelectorKind::Tag && s_clean.eq_ignore_ascii_case(b"body") {
+                    if let Some(bg) = rule.bg_color {
+                        self.body_bg_color = Some(bg);
                     }
                 }
 
@@ -725,23 +1077,164 @@ impl MiniCss {
         }
     }
 
-    pub fn resolve_all(&self, dom: &mut DomArena) {
+    pub fn resolve_all(&self, dom: &mut DomArena, viewport_w: usize) {
         for i in 0..dom.node_count {
-            self.resolve_node(dom, i);
+            self.resolve_node(dom, i, viewport_w);
         }
     }
 
-    pub fn resolve_node(&self, dom: &mut DomArena, node_idx: usize) {
+    fn apply_tailwind_token(style: &mut ComputedStyle, token: &[u8], tag_bytes: &[u8]) {
+        if token == b"hidden" {
+            style.display = DisplayMode::None;
+            style.display_block = false;
+        } else if token == b"block" {
+            style.display = DisplayMode::Block;
+            style.display_block = true;
+        } else if token == b"inline" {
+            style.display = DisplayMode::Inline;
+            style.display_block = false;
+        } else if token == b"inline-block" || token == b"inline-flex" {
+            style.display = DisplayMode::InlineBlock;
+            style.display_block = false;
+        } else if token == b"flex" {
+            style.display = DisplayMode::Flex;
+            style.display_block = false;
+        } else if token == b"grid" {
+            style.display = DisplayMode::Flex;
+            style.display_block = false;
+            style.flex_wrap = true;
+            if style.grid_cols == 0 {
+                style.grid_cols = 1;
+            }
+        } else if token == b"flex-col" {
+            style.flex_direction = FlexDirection::Column;
+        } else if token == b"flex-row" {
+            style.flex_direction = FlexDirection::Row;
+        } else if token == b"flex-wrap" {
+            style.flex_wrap = true;
+        } else if token.starts_with(b"grid-cols-") {
+            if let Some(cols) = parse_px(&token[10..]) {
+                style.grid_cols = cols.clamp(1, 6);
+            }
+        } else if token == b"items-center" {
+            style.align_items = AlignItems::Center;
+        } else if token == b"justify-between" {
+            style.justify_content = JustifyContent::SpaceBetween;
+        } else if token == b"justify-center" {
+            style.justify_content = JustifyContent::Center;
+        } else if token == b"text-center" {
+            style.text_align = TextAlign::Center;
+        } else if token == b"font-bold" || token == b"font-semibold" || token == b"font-medium" || token == b"font-black" {
+            style.is_bold = true;
+        } else if token == b"w-full" {
+            style.width = None;
+        } else if token == b"border" {
+            style.border_width = 1;
+            style.border_sides = 15;
+            if style.border_color.is_none() {
+                style.border_color = Some(0x0033_4155);
+            }
+        } else if token == b"border-2" {
+            style.border_width = 2;
+            style.border_sides = 15;
+            if style.border_color.is_none() {
+                style.border_color = Some(0x0033_4155);
+            }
+        } else if token == b"border-b" || token == b"border-t" || token == b"border-l" || token == b"border-l-4" {
+            style.border_width = if token == b"border-l-4" { 3 } else { 1 };
+            style.border_sides = if token == b"border-t" { 1 } else if token == b"border-b" { 4 } else { 8 };
+            if style.border_color.is_none() {
+                style.border_color = Some(0x0033_4155);
+            }
+        } else if token == b"rounded" {
+            style.border_radius = 4;
+        } else if token == b"rounded-lg" {
+            style.border_radius = 8;
+        } else if token == b"rounded-xl" {
+            style.border_radius = 10;
+        } else if token == b"rounded-full" {
+            style.border_radius = 12;
+        } else if token.starts_with(b"gap-") {
+            if let Some(g) = parse_tw_spacing(&token[4..]) { style.gap = g; }
+        } else if token.starts_with(b"space-y-") {
+            if let Some(g) = parse_tw_spacing(&token[8..]) { style.gap = g; }
+        } else if token.starts_with(b"p-") {
+            if let Some(p) = parse_tw_spacing(&token[2..]) {
+                style.padding_top = p; style.padding_bottom = p;
+                style.padding_left = p; style.padding_right = p;
+            }
+        } else if token.starts_with(b"px-") {
+            if let Some(p) = parse_tw_spacing(&token[3..]) {
+                style.padding_left = p; style.padding_right = p;
+            }
+        } else if token.starts_with(b"py-") {
+            if let Some(p) = parse_tw_spacing(&token[3..]) {
+                style.padding_top = p; style.padding_bottom = p;
+            }
+        } else if token.starts_with(b"pt-") {
+            if let Some(p) = parse_tw_spacing(&token[3..]) { style.padding_top = p; }
+        } else if token.starts_with(b"pb-") {
+            if let Some(p) = parse_tw_spacing(&token[3..]) { style.padding_bottom = p; }
+        } else if token.starts_with(b"pl-") {
+            if let Some(p) = parse_tw_spacing(&token[3..]) { style.padding_left = p; }
+        } else if token.starts_with(b"mt-") {
+            if let Some(m) = parse_tw_spacing(&token[3..]) { style.margin_top = m; }
+        } else if token.starts_with(b"mb-") {
+            if let Some(m) = parse_tw_spacing(&token[3..]) { style.margin_bottom = m; }
+        } else if token.starts_with(b"my-") {
+            if let Some(m) = parse_tw_spacing(&token[3..]) { style.margin_top = m; style.margin_bottom = m; }
+        } else if token.starts_with(b"w-") {
+            if let Some(w_px) = parse_tw_spacing(&token[2..]) { style.width = Some(w_px.max(6)); }
+        } else if token.starts_with(b"h-") {
+            if let Some(h_px) = parse_tw_spacing(&token[2..]) { style.height = Some(h_px.max(6)); }
+        } else if token.starts_with(b"bg-") && !token.starts_with(b"bg-gradient") {
+            if let Some(c) = parse_tw_color_token(&token[3..]) {
+                style.bg_color = Some(c);
+            }
+        } else if token.starts_with(b"from-") {
+            if style.bg_color.is_none() {
+                if let Some(c) = parse_tw_color_token(&token[5..]) {
+                    style.bg_color = Some(c);
+                }
+            }
+        } else if token.starts_with(b"to-") {
+            if let Some(c_to) = parse_tw_color_token(&token[3..]) {
+                style.bg_color = Some(match style.bg_color {
+                    Some(c_from) => blend_over_rgb(c_from, c_to, 128),
+                    None => c_to,
+                });
+            }
+        } else if token.starts_with(b"border-") {
+            if let Some(c) = parse_tw_color_token(&token[7..]) {
+                style.border_color = Some(c);
+            }
+        } else if token.starts_with(b"text-") {
+            if token == b"text-xs" { style.font_size = 11; }
+            else if token == b"text-sm" { style.font_size = 12; }
+            else if token == b"text-lg" { style.font_size = 14; }
+            else if token == b"text-xl" || token == b"text-2xl" || token == b"text-3xl" { style.font_size = 16; }
+            else if let Some(c) = parse_tw_color_token(&token[5..]) {
+                style.color = c;
+                style.has_explicit_color = true;
+            }
+        } else if token == b"font-mono" && tag_bytes != b"a" && !style.has_explicit_color {
+            style.color = 0x00CB_D5E1;
+        }
+    }
+
+    pub fn resolve_node(&self, dom: &mut DomArena, node_idx: usize, viewport_w: usize) {
         if node_idx >= dom.node_count { return; }
 
         let tag = dom.nodes[node_idx].tag;
         let tag_len = dom.nodes[node_idx].tag_len;
         let tag_bytes = &tag[..tag_len];
+        let parent_idx = dom.nodes[node_idx].parent;
 
         // 1. Estilos Padrão do User-Agent baseados na Tag
         let mut style = ComputedStyle::default();
         if tag_bytes == b"h1" {
             style.color = COLOR_H1;
+            style.has_explicit_color = true;
             style.font_size = 16;
             style.margin_top = 8;
             style.margin_bottom = 6;
@@ -750,6 +1243,7 @@ impl MiniCss {
             style.display_block = true;
         } else if tag_bytes == b"h2" {
             style.color = 0x00F3_8BA8;
+            style.has_explicit_color = true;
             style.font_size = 14;
             style.margin_top = 6;
             style.margin_bottom = 4;
@@ -758,6 +1252,7 @@ impl MiniCss {
             style.display_block = true;
         } else if tag_bytes == b"h3" {
             style.color = 0x00A6_E3A1;
+            style.has_explicit_color = true;
             style.font_size = 13;
             style.margin_top = 4;
             style.margin_bottom = 4;
@@ -766,6 +1261,7 @@ impl MiniCss {
             style.display_block = true;
         } else if tag_bytes == b"h4" || tag_bytes == b"h5" || tag_bytes == b"h6" {
             style.color = 0x00F9_E2AF;
+            style.has_explicit_color = true;
             style.margin_top = 3;
             style.margin_bottom = 3;
             style.is_bold = true;
@@ -783,6 +1279,7 @@ impl MiniCss {
             style.display_block = false;
         } else if tag_bytes == b"button" {
             style.color = COLOR_BTN_TEXT;
+            style.has_explicit_color = true;
             style.bg_color = Some(0x0031_3244);
             style.border_color = Some(0x0045_475A);
             style.border_width = 1;
@@ -797,7 +1294,7 @@ impl MiniCss {
             style.padding_right = 6;
             style.display = DisplayMode::InlineBlock;
             style.display_block = false;
-        } else if tag_bytes == b"div" || tag_bytes == b"nav" || tag_bytes == b"header" || tag_bytes == b"section" || tag_bytes == b"main" || tag_bytes == b"article" || tag_bytes == b"footer" || tag_bytes == b"aside" || tag_bytes == b"picture" || tag_bytes == b"figure" || tag_bytes == b"figcaption" {
+        } else if tag_bytes == b"div" || tag_bytes == b"nav" || tag_bytes == b"header" || tag_bytes == b"section" || tag_bytes == b"main" || tag_bytes == b"article" || tag_bytes == b"footer" || tag_bytes == b"aside" || tag_bytes == b"picture" || tag_bytes == b"figure" || tag_bytes == b"figcaption" || tag_bytes == b"form" {
             style.display = DisplayMode::Block;
             style.display_block = true;
             style.margin_top = if tag_bytes == b"section" || tag_bytes == b"article" || tag_bytes == b"header" || tag_bytes == b"footer" { 4 } else { 0 };
@@ -817,6 +1314,7 @@ impl MiniCss {
             style.padding_right = 6;
             if tag_bytes == b"pre" {
                 style.color = 0x00A6_E3A1;
+                style.has_explicit_color = true;
             }
         } else if tag_bytes == b"table" || tag_bytes == b"tr" {
             style.display = DisplayMode::Block;
@@ -831,6 +1329,7 @@ impl MiniCss {
             if tag_bytes == b"th" {
                 style.is_bold = true;
                 style.color = 0x0089_DCEB;
+                style.has_explicit_color = true;
             }
         } else if tag_bytes == b"hr" {
             style.display = DisplayMode::Block;
@@ -862,7 +1361,7 @@ impl MiniCss {
                 style.margin_top = 0;
                 style.margin_bottom = 0;
             }
-        } else if tag_bytes == b"input" {
+        } else if tag_bytes == b"input" || tag_bytes == b"textarea" {
             style.color = COLOR_TEXT;
             style.bg_color = Some(0x0018_1825);
             style.border_color = Some(0x0045_475A);
@@ -876,70 +1375,77 @@ impl MiniCss {
             style.display_block = false;
         }
 
-        // 2. Cascata CSS: Tag (1) -> Descendente (2) -> Classe (10) -> ID (100) -> Inline (1000)
-
-        // 2.1. Regras de Tag
-        for i in 0..self.rule_count {
-            let r = &self.rules[i];
-            if r.kind == SelectorKind::Tag && tag_len == r.selector_len && tag_bytes.eq_ignore_ascii_case(&r.selector[..r.selector_len]) {
-                apply_rule_to_style(&mut style, r);
+        // Herança CSS de cor do elemento pai quando não há cor explícita no elemento
+        if !style.has_explicit_color && tag_bytes != b"a" {
+            if let Some(pid) = parent_idx {
+                if pid < dom.node_count {
+                    style.color = dom.nodes[pid].computed_style.color;
+                }
             }
         }
 
-        // 2.2. Regras Descendentes ("nav a", ".card .btn")
-        for i in 0..self.rule_count {
-            let r = &self.rules[i];
-            if r.kind == SelectorKind::Descendant {
-                let r_sel = &r.selector[..r.selector_len];
-                let matches_child = (r_sel.starts_with(b".") && dom.has_class(node_idx, &r_sel[1..]))
-                    || (r_sel.starts_with(b"#") && dom.nodes[node_idx].id_len == r_sel.len() - 1 && &dom.nodes[node_idx].id_attr[..dom.nodes[node_idx].id_len] == &r_sel[1..])
-                    || (tag_len == r_sel.len() && tag_bytes.eq_ignore_ascii_case(r_sel));
-
-                if matches_child {
-                    let mut matched_ancestor = false;
-                    let mut cur_parent = dom.nodes[node_idx].parent;
-                    let p_sel = &r.parent_selector[..r.parent_selector_len];
-                    while let Some(pid) = cur_parent {
-                        let pnode = &dom.nodes[pid];
-                        let matches_parent = (p_sel.starts_with(b".") && dom.has_class(pid, &p_sel[1..]))
-                            || (p_sel.starts_with(b"#") && pnode.id_len == p_sel.len() - 1 && &pnode.id_attr[..pnode.id_len] == &p_sel[1..])
-                            || (pnode.tag_len == p_sel.len() && pnode.tag[..pnode.tag_len].eq_ignore_ascii_case(p_sel));
-                        if matches_parent {
-                            matched_ancestor = true;
-                            break;
+        // 2. Cascata CSS ordenada por faixas de especificidade: Tag/Desc(1..9) -> Classe(10..19) -> Composta(20..99) -> ID(100+)
+        const TIERS: [(u16, u16); 4] = [(0, 10), (10, 20), (20, 100), (100, u16::MAX)];
+        for &(min_s, max_s) in &TIERS {
+            for i in 0..self.rule_count {
+                let r = &self.rules[i];
+                if r.specificity < min_s || r.specificity >= max_s {
+                    continue;
+                }
+                let matched = match r.kind {
+                    SelectorKind::Tag | SelectorKind::Class | SelectorKind::Id => {
+                        selector_matches_node(dom, node_idx, &r.selector[..r.selector_len])
+                    }
+                    SelectorKind::Descendant => {
+                        if selector_matches_node(dom, node_idx, &r.selector[..r.selector_len]) {
+                            let p_sel = &r.parent_selector[..r.parent_selector_len];
+                            let mut matched_ancestor = false;
+                            let mut cur_parent = dom.nodes[node_idx].parent;
+                            while let Some(pid) = cur_parent {
+                                if selector_matches_node(dom, pid, p_sel) {
+                                    matched_ancestor = true;
+                                    break;
+                                }
+                                cur_parent = dom.nodes[pid].parent;
+                            }
+                            matched_ancestor
+                        } else {
+                            false
                         }
-                        cur_parent = pnode.parent;
                     }
-                    if matched_ancestor {
-                        apply_rule_to_style(&mut style, r);
-                    }
-                }
-            }
-        }
-
-        // 2.3. Regras de Classe (.btn, .card)
-        for i in 0..self.rule_count {
-            let r = &self.rules[i];
-            if r.kind == SelectorKind::Class {
-                let r_sel = &r.selector[..r.selector_len];
-                if dom.has_class(node_idx, r_sel) {
+                };
+                if matched {
                     apply_rule_to_style(&mut style, r);
                 }
             }
         }
 
-        // 2.4. Regras de ID (#app, #counter)
-        for i in 0..self.rule_count {
-            let r = &self.rules[i];
-            if r.kind == SelectorKind::Id {
-                let r_sel = &r.selector[..r.selector_len];
-                if dom.nodes[node_idx].id_len == r.selector_len && &dom.nodes[node_idx].id_attr[..dom.nodes[node_idx].id_len] == r_sel {
-                    apply_rule_to_style(&mut style, r);
+        // 3. Utilitários Tailwind CSS Nativos (Base + Breakpoints Desktop sm:/md:/lg:)
+        if dom.nodes[node_idx].class_len > 0 {
+            let class_copy = dom.nodes[node_idx].class_attr;
+            let class_len = dom.nodes[node_idx].class_len;
+            let class_slice = &class_copy[..class_len];
+
+            for tok in class_slice.split(|&b| b == b' ' || b == b'\t' || b == b'\r' || b == b'\n') {
+                if tok.is_empty() || tok.contains(&b':') {
+                    continue;
+                }
+                Self::apply_tailwind_token(&mut style, tok, tag_bytes);
+            }
+
+            let bps: [(&[u8], usize); 3] = [(b"sm:", 480), (b"md:", 600), (b"lg:", 680)];
+            for &(prefix, min_w) in &bps {
+                if viewport_w >= min_w {
+                    for tok in class_slice.split(|&b| b == b' ' || b == b'\t' || b == b'\r' || b == b'\n') {
+                        if tok.starts_with(prefix) && tok.len() > prefix.len() {
+                            Self::apply_tailwind_token(&mut style, &tok[prefix.len()..], tag_bytes);
+                        }
+                    }
                 }
             }
         }
 
-        // 2.5. Estilos Inline (style="...")
+        // 4. Estilos Inline (style="...") — especificidade máxima
         if dom.nodes[node_idx].style_len > 0 {
             let inline = dom.nodes[node_idx].style_attr;
             let inline_len = dom.nodes[node_idx].style_len;
@@ -948,9 +1454,14 @@ impl MiniCss {
                 let decl_clean = decl.trim_ascii();
                 if let Some(colon) = decl_clean.iter().position(|&b| b == b':') {
                     let prop = decl_clean[..colon].trim_ascii();
-                    let val = decl_clean[colon + 1..].trim_ascii();
+                    let raw_val = decl_clean[colon + 1..].trim_ascii();
+                    let mut val_buf = [0u8; 160];
+                    let val = self.resolve_css_value(raw_val, &mut val_buf);
                     if prop.eq_ignore_ascii_case(b"color") {
-                        if let Some(c) = parse_color(val) { style.color = c; }
+                        if let Some(c) = parse_color(val) {
+                            style.color = c;
+                            style.has_explicit_color = true;
+                        }
                     } else if prop.eq_ignore_ascii_case(b"background-color") || prop.eq_ignore_ascii_case(b"background") {
                         if let Some(bg) = parse_color(val) { style.bg_color = Some(bg); }
                     } else if prop.eq_ignore_ascii_case(b"border") {
@@ -1014,6 +1525,8 @@ impl MiniCss {
                         }
                     } else if prop.eq_ignore_ascii_case(b"flex-direction") {
                         if let Some(fd) = parse_flex_direction(val) { style.flex_direction = fd; }
+                    } else if prop.eq_ignore_ascii_case(b"flex-wrap") {
+                        if let Some(fw) = parse_flex_wrap(val) { style.flex_wrap = fw; }
                     } else if prop.eq_ignore_ascii_case(b"justify-content") {
                         if let Some(jc) = parse_justify_content(val) { style.justify_content = jc; }
                     } else if prop.eq_ignore_ascii_case(b"align-items") {
@@ -1028,6 +1541,26 @@ impl MiniCss {
                     }
                 }
             }
+        }
+
+        // Preserva o posicionamento em fluxo de .os-window / .top-panel / .cairo-dock / .conky-hud sem cortar altura de 100vh/28px
+        if dom.has_class(node_idx, b"top-panel") {
+            style.display = DisplayMode::Flex;
+            style.flex_direction = FlexDirection::Row;
+            style.flex_wrap = true;
+            style.margin_bottom = style.margin_bottom.max(6);
+        } else if dom.has_class(node_idx, b"desktop-shortcuts") {
+            style.display = DisplayMode::Flex;
+            style.flex_direction = FlexDirection::Row;
+            style.flex_wrap = true;
+            style.width = None;
+            style.padding_top = style.padding_top.max(6);
+            style.padding_bottom = style.padding_bottom.max(6);
+        } else if dom.has_class(node_idx, b"cairo-dock-container") {
+            style.display = DisplayMode::Flex;
+            style.flex_direction = FlexDirection::Row;
+            style.flex_wrap = true;
+            style.margin_top = style.margin_top.max(8);
         }
 
         dom.nodes[node_idx].computed_style = style;
@@ -1130,11 +1663,15 @@ impl MiniCss {
 }
 
 fn apply_rule_to_style(style: &mut ComputedStyle, r: &CssRule) {
-    if let Some(c) = r.color { style.color = c; }
+    if let Some(c) = r.color {
+        style.color = c;
+        style.has_explicit_color = true;
+    }
     if let Some(bg) = r.bg_color { style.bg_color = Some(bg); }
     if let Some(bc) = r.border_color { style.border_color = Some(bc); }
     if let Some(bw) = r.border_width { style.border_width = bw; }
     if let Some(br) = r.border_radius { style.border_radius = br; }
+    if let Some(bs) = r.border_sides { style.border_sides = bs; }
     if let Some(fs) = r.font_size { style.font_size = fs; }
     if let Some(w) = r.width { style.width = Some(w); }
     if let Some(h) = r.height { style.height = Some(h); }
@@ -1153,6 +1690,8 @@ fn apply_rule_to_style(style: &mut ComputedStyle, r: &CssRule) {
         style.display_block = d == DisplayMode::Block;
     }
     if let Some(fd) = r.flex_direction { style.flex_direction = fd; }
+    if let Some(fw) = r.flex_wrap { style.flex_wrap = fw; }
+    if let Some(gc) = r.grid_cols { style.grid_cols = gc; }
     if let Some(jc) = r.justify_content { style.justify_content = jc; }
     if let Some(ai) = r.align_items { style.align_items = ai; }
     if let Some(ta) = r.text_align { style.text_align = ta; }
@@ -1691,13 +2230,16 @@ impl MiniJsRuntime {
 // ── Funções Auxiliares de Parsing e Conversão ─────────────────────────────────
 
 pub fn parse_color(input: &[u8]) -> Option<u32> {
-    let s = input.trim_ascii();
+    let s = strip_css_important(input);
     if s.is_empty() { return None; }
     if s.starts_with(b"#") {
         return parse_hex_color(s);
     }
     if s.starts_with(b"rgb(") || s.starts_with(b"rgba(") {
         return parse_rgb_color(s);
+    }
+    if find_subslice_ci(s, b"gradient(").is_some() {
+        return parse_gradient_fallback_color(s);
     }
     if s.eq_ignore_ascii_case(b"black") { return Some(0x0000_0000); }
     if s.eq_ignore_ascii_case(b"white") { return Some(0x00FF_FFFF); }
@@ -1708,8 +2250,81 @@ pub fn parse_color(input: &[u8]) -> Option<u32> {
     if s.eq_ignore_ascii_case(b"cyan") { return Some(0x0094_E2D5); }
     if s.eq_ignore_ascii_case(b"magenta") || s.eq_ignore_ascii_case(b"pink") { return Some(0x00F5_C2E7); }
     if s.eq_ignore_ascii_case(b"gray") || s.eq_ignore_ascii_case(b"grey") { return Some(0x006C_7086); }
-    if s.eq_ignore_ascii_case(b"transparent") { return None; }
+    if s.eq_ignore_ascii_case(b"transparent") || s.eq_ignore_ascii_case(b"none") { return None; }
     parse_hex_color(s)
+}
+
+const CSS_DARK_CANVAS: u32 = 0x000B_0F19;
+
+fn blend_over_rgb(fg: u32, bg: u32, alpha255: u32) -> u32 {
+    let a = alpha255.min(255);
+    let inv = 255 - a;
+    let fr = (fg >> 16) & 0xFF;
+    let fg_c = (fg >> 8) & 0xFF;
+    let fb = fg & 0xFF;
+    let br = (bg >> 16) & 0xFF;
+    let bg_c = (bg >> 8) & 0xFF;
+    let bb = bg & 0xFF;
+    let r = (fr * a + br * inv + 127) / 255;
+    let g = (fg_c * a + bg_c * inv + 127) / 255;
+    let b = (fb * a + bb * inv + 127) / 255;
+    (r << 16) | (g << 8) | b
+}
+
+fn parse_css_alpha_255(raw: &[u8]) -> u32 {
+    let s = raw.trim_ascii();
+    if s.is_empty() { return 255; }
+    if s.ends_with(b"%") {
+        let num = parse_fixed_100(&s[..s.len() - 1]).unwrap_or(10000);
+        return ((num.min(10000) * 255 + 5000) / 10000) as u32;
+    }
+    let val100 = parse_fixed_100(s).unwrap_or(100);
+    ((val100.min(100) * 255 + 50) / 100) as u32
+}
+
+fn parse_gradient_fallback_color(s: &[u8]) -> Option<u32> {
+    // Prioriza cor explícita fora dos parênteses (ex.: `radial-gradient(...) #0b0f19`)
+    let mut depth = 0usize;
+    let mut i = 0usize;
+    while i < s.len() {
+        let b = s[i];
+        if b == b'(' {
+            depth += 1;
+        } else if b == b')' {
+            depth = depth.saturating_sub(1);
+        } else if depth == 0 && b == b'#' {
+            let start = i;
+            let mut end = i + 1;
+            while end < s.len() && s[end].is_ascii_hexdigit() {
+                end += 1;
+            }
+            if let Some(c) = parse_hex_color(&s[start..end]) {
+                return Some(c);
+            }
+        }
+        i += 1;
+    }
+    // Fallback: primeira cor hex ou rgba dentro do gradiente
+    let mut j = 0usize;
+    while j < s.len() {
+        if s[j] == b'#' {
+            let mut end = j + 1;
+            while end < s.len() && s[end].is_ascii_hexdigit() {
+                end += 1;
+            }
+            if let Some(c) = parse_hex_color(&s[j..end]) {
+                return Some(c);
+            }
+        } else if s[j..].starts_with(b"rgba(") || s[j..].starts_with(b"rgb(") {
+            if let Some(rp) = s[j..].iter().position(|&c| c == b')') {
+                if let Some(c) = parse_rgb_color(&s[j..j + rp + 1]) {
+                    return Some(c);
+                }
+            }
+        }
+        j += 1;
+    }
+    None
 }
 
 pub fn parse_rgb_color(s: &[u8]) -> Option<u32> {
@@ -1721,28 +2336,42 @@ pub fn parse_rgb_color(s: &[u8]) -> Option<u32> {
     let r_str = parts.next()?.trim_ascii();
     let g_str = parts.next()?.trim_ascii();
     let b_str = parts.next()?.trim_ascii();
-    if let Some(a_str) = parts.next() {
-        let a = a_str.trim_ascii();
-        if a == b"0" || a == b"0.0" || a == b"0.00" || a == b".0" || a == b"0%" {
-            return None;
-        }
-    }
     let r = parse_int(r_str)? as u32;
     let g = parse_int(g_str)? as u32;
     let b = parse_int(b_str)? as u32;
-    Some(((r.min(255)) << 16) | ((g.min(255)) << 8) | (b.min(255)))
+    let rgb = ((r.min(255)) << 16) | ((g.min(255)) << 8) | (b.min(255));
+    if let Some(a_str) = parts.next() {
+        let a255 = parse_css_alpha_255(a_str);
+        if a255 == 0 {
+            return None;
+        }
+        if a255 < 250 {
+            return Some(blend_over_rgb(rgb, CSS_DARK_CANVAS, a255));
+        }
+    }
+    Some(rgb)
 }
 
 pub fn parse_border(val: &[u8]) -> (Option<usize>, Option<u32>) {
-    let s = val.trim_ascii();
+    let s = strip_css_important(val);
     let mut border_w = None;
     let mut border_c = None;
-    for part in s.split(|&b| b == b' ' || b == b'\t') {
-        let p = part.trim_ascii();
+    let mut i = 0usize;
+    while i < s.len() {
+        while i < s.len() && (s[i] == b' ' || s[i] == b'\t') { i += 1; }
+        if i >= s.len() { break; }
+        let start = i;
+        let mut depth = 0usize;
+        while i < s.len() && (depth > 0 || (s[i] != b' ' && s[i] != b'\t')) {
+            if s[i] == b'(' { depth += 1; }
+            else if s[i] == b')' { depth = depth.saturating_sub(1); }
+            i += 1;
+        }
+        let p = s[start..i].trim_ascii();
         if p.is_empty() || p.eq_ignore_ascii_case(b"solid") || p.eq_ignore_ascii_case(b"dashed") || p.eq_ignore_ascii_case(b"dotted") {
             continue;
         }
-        if border_w.is_none() && p.iter().any(|&b| b >= b'0' && b <= b'9') && !p.starts_with(b"#") {
+        if border_w.is_none() && !p.starts_with(b"#") && !p.starts_with(b"rgb") && p.iter().any(|&b| b >= b'0' && b <= b'9') {
             border_w = parse_px(p);
         } else if border_c.is_none() {
             border_c = parse_color(p);
@@ -1752,17 +2381,28 @@ pub fn parse_border(val: &[u8]) -> (Option<usize>, Option<u32>) {
 }
 
 pub fn parse_display(val: &[u8]) -> Option<DisplayMode> {
-    let s = val.trim_ascii();
+    let s = strip_css_important(val);
     if s.eq_ignore_ascii_case(b"none") {
         Some(DisplayMode::None)
     } else if s.eq_ignore_ascii_case(b"block") {
         Some(DisplayMode::Block)
     } else if s.eq_ignore_ascii_case(b"inline") {
         Some(DisplayMode::Inline)
-    } else if s.eq_ignore_ascii_case(b"inline-block") {
+    } else if s.eq_ignore_ascii_case(b"inline-block") || s.eq_ignore_ascii_case(b"inline-flex") {
         Some(DisplayMode::InlineBlock)
-    } else if s.eq_ignore_ascii_case(b"flex") {
+    } else if s.eq_ignore_ascii_case(b"flex") || s.eq_ignore_ascii_case(b"grid") {
         Some(DisplayMode::Flex)
+    } else {
+        None
+    }
+}
+
+pub fn parse_flex_wrap(val: &[u8]) -> Option<bool> {
+    let s = strip_css_important(val);
+    if s.eq_ignore_ascii_case(b"wrap") || s.eq_ignore_ascii_case(b"wrap-reverse") {
+        Some(true)
+    } else if s.eq_ignore_ascii_case(b"nowrap") {
+        Some(false)
     } else {
         None
     }
@@ -1859,27 +2499,73 @@ fn hex_byte(bytes: &[u8]) -> Option<u8> {
     Some((h << 4) | l)
 }
 
-pub fn parse_px(val: &[u8]) -> Option<usize> {
+fn parse_fixed_100(val: &[u8]) -> Option<usize> {
     let s = val.trim_ascii();
-    let mut num: usize = 0;
+    let mut int_part: usize = 0;
+    let mut frac_part: usize = 0;
+    let mut frac_scale: usize = 1;
+    let mut in_frac = false;
     let mut found = false;
     for &b in s {
         if b >= b'0' && b <= b'9' {
-            num = num.saturating_mul(10).saturating_add((b - b'0') as usize);
+            let d = (b - b'0') as usize;
+            if !in_frac {
+                int_part = int_part.saturating_mul(10).saturating_add(d);
+            } else if frac_scale < 100 {
+                frac_part = frac_part.saturating_mul(10).saturating_add(d);
+                frac_scale *= 10;
+            }
             found = true;
+        } else if b == b'.' && !in_frac {
+            in_frac = true;
         } else {
             break;
         }
     }
-    if found { Some(num) } else { None }
+    if !found {
+        return None;
+    }
+    let scaled_frac = if frac_scale == 10 { frac_part * 10 } else if frac_scale == 100 { frac_part } else { 0 };
+    Some(int_part.saturating_mul(100).saturating_add(scaled_frac))
+}
+
+pub fn parse_px(val: &[u8]) -> Option<usize> {
+    let s = strip_css_important(val);
+    let mut num_end = 0usize;
+    let mut seen_dot = false;
+    let mut found = false;
+    while num_end < s.len() {
+        let b = s[num_end];
+        if b >= b'0' && b <= b'9' {
+            found = true;
+            num_end += 1;
+        } else if b == b'.' && !seen_dot {
+            seen_dot = true;
+            num_end += 1;
+        } else {
+            break;
+        }
+    }
+    if !found { return None; }
+    let unit = s[num_end..].trim_ascii();
+    if unit.starts_with(b"%") || unit.eq_ignore_ascii_case(b"vw") || unit.eq_ignore_ascii_case(b"vh") {
+        return None;
+    }
+    let val100 = parse_fixed_100(&s[..num_end])?;
+    if unit.eq_ignore_ascii_case(b"rem") || unit.eq_ignore_ascii_case(b"em") {
+        Some(((val100 * 12 + 50) / 100).max(if val100 > 0 { 1 } else { 0 }))
+    } else {
+        Some((val100 + 50) / 100)
+    }
 }
 
 pub fn parse_one_or_two_px(val: &[u8]) -> Option<(usize, usize)> {
-    let s = val.trim_ascii();
+    let s = strip_css_important(val);
     if s.is_empty() { return None; }
     if let Some(pos) = s.iter().position(|&b| b == b' ' || b == b'\t') {
         let first = parse_px(&s[..pos])?;
-        let second = parse_px(&s[pos + 1..])?;
+        let rest = s[pos + 1..].trim_ascii();
+        let second = if rest.eq_ignore_ascii_case(b"auto") { 0 } else { parse_px(rest).unwrap_or(first) };
         Some((first, second))
     } else {
         let one = parse_px(s)?;
@@ -2373,9 +3059,20 @@ fn copy_trunc_bytes(dst: &mut [u8], src: &[u8]) -> usize {
 }
 
 pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, js: &mut MiniJsRuntime) {
+    parse_html_into_dom_with_base(html, b"", 800, dom, css, js);
+}
+
+pub fn parse_html_into_dom_with_base(
+    html: &[u8],
+    base_url: &[u8],
+    viewport_w: usize,
+    dom: &mut DomArena,
+    css: &mut MiniCss,
+    js: &mut MiniJsRuntime,
+) {
     dom.node_count = 0;
     dom.title_len = 0;
-    css.rule_count = 0;
+    css.reset();
 
     #[derive(Clone, Copy)]
     struct QueuedScript {
@@ -2404,7 +3101,7 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
     let mut i = 0usize;
     let len = html.len();
 
-    let mut parent_stack = [0usize; 16];
+    let mut parent_stack = [0usize; 24];
     let mut stack_depth = 0usize;
     let mut pending_picture_src = [0u8; 128];
     let mut pending_picture_src_len = 0usize;
@@ -2587,9 +3284,31 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
 
                 if let Some(href_val) = extract_attr_val(link_content, b"href=") {
                     if is_rel_css || href_val.ends_with(b".css") {
-                        let mut css_buf = [0u8; 4096];
-                        if let Some(n) = read_css_file_from_vfs(href_val, &mut css_buf) {
-                            css.parse_stylesheet_append(&css_buf[..n]);
+                        let mut loaded = false;
+                        if !base_url.is_empty() {
+                            let mut resolved_css = [0u8; 128];
+                            let rlen = resolve_relative_url(base_url, href_val, &mut resolved_css);
+                            if let Some(cached) = unsafe { cache_lookup_remote_css(&resolved_css[..rlen]) } {
+                                css.parse_stylesheet_append(cached);
+                                loaded = true;
+                            }
+                        }
+                        if !loaded {
+                            if let Some(cached) = unsafe { cache_lookup_remote_css(href_val) } {
+                                css.parse_stylesheet_append(cached);
+                                loaded = true;
+                            }
+                        }
+                        if !loaded {
+                            let vfs_buf = unsafe {
+                                core::slice::from_raw_parts_mut(
+                                    core::ptr::addr_of_mut!(VFS_CSS_SCRATCH) as *mut u8,
+                                    32768,
+                                )
+                            };
+                            if let Some(n) = read_css_file_from_vfs(href_val, vfs_buf) {
+                                css.parse_stylesheet_append(&vfs_buf[..n]);
+                            }
                         }
                     }
                 }
@@ -2628,13 +3347,21 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
 
             // Ignora completamente sub-árvores complexas de gráficos/scripts (svg, noscript)
             if tag_name == b"svg" {
-                while i < len && html[i] != b'>' { i += 1; }
-                if i < len { i += 1; }
-                while i + 5 < len && !html[i..i + 6].eq_ignore_ascii_case(b"</svg>") {
+                let mut svg_self_closing = false;
+                while i < len && html[i] != b'>' {
+                    if html[i] == b'/' && i + 1 < len && html[i + 1] == b'>' {
+                        svg_self_closing = true;
+                    }
                     i += 1;
                 }
-                while i < len && html[i] != b'>' { i += 1; }
                 if i < len { i += 1; }
+                if !svg_self_closing {
+                    while i + 5 < len && !html[i..i + 6].eq_ignore_ascii_case(b"</svg>") {
+                        i += 1;
+                    }
+                    while i < len && html[i] != b'>' { i += 1; }
+                    if i < len { i += 1; }
+                }
                 continue;
             }
             if tag_name == b"noscript" {
@@ -2707,6 +3434,9 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
                     if let Some(h_num) = parse_px(a_val) {
                         dom.nodes[node_id].height_attr = h_num.min(u16::MAX as usize) as u16;
                     }
+                } else if is_attr_match(html, i, b"data-open-window=") {
+                    let a_val = read_html_attr_val(html, &mut i, 17);
+                    dom.nodes[node_id].data_open_window_len = copy_trunc_bytes(&mut dom.nodes[node_id].data_open_window, a_val);
                 } else if is_attr_match(html, i, b"onclick=") {
                     let a_val = read_html_attr_val(html, &mut i, 8);
                     dom.nodes[node_id].onclick_len = copy_trunc_bytes(&mut dom.nodes[node_id].onclick_attr, a_val);
@@ -2739,7 +3469,7 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
 
             let is_void = tag_name == b"hr" || tag_name == b"br" || tag_name == b"img"
                 || tag_name == b"input" || tag_name == b"source" || tag_name == b"wbr";
-            if !is_void && !is_self_closing && stack_depth < 16 {
+            if !is_void && !is_self_closing && stack_depth < 24 {
                 parent_stack[stack_depth] = node_id;
                 stack_depth += 1;
             }
@@ -2800,7 +3530,7 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
     }
 
     // 1. Resolução inicial de estilos CSS completos em cascata
-    css.resolve_all(dom);
+    css.resolve_all(dom, viewport_w);
 
     // 2. DOMContentLoaded: Execução de scripts deferidos após construção da árvore DOM
     for s in 0..script_count {
@@ -2817,7 +3547,7 @@ pub fn parse_html_into_dom(html: &[u8], dom: &mut DomArena, css: &mut MiniCss, j
 
     // 3. Se algum script realizou mutação reativa do DOM, recalcula a cascata CSS
     if js.dom_dirty {
-        css.resolve_all(dom);
+        css.resolve_all(dom, viewport_w);
         js.dom_dirty = false;
     }
 }
@@ -2923,6 +3653,7 @@ pub struct BoxRect {
     pub border_color: Option<u32>,
     pub border_width: usize,
     pub border_radius: usize,
+    pub border_sides: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -3122,10 +3853,10 @@ pub fn parse_html(html: &[u8], page: &mut ParsedPage) {
 
 // ── Motor de Layout e Quebra de Linhas ────────────────────────────────────────
 
-pub const MAX_RENDER_LINES: usize = 512;
-pub const MAX_RENDER_BOXES: usize = 64;
+pub const MAX_RENDER_LINES: usize = 1024;
+pub const MAX_RENDER_BOXES: usize = 256;
 pub const MAX_RENDER_IMAGES: usize = 32;
-pub const MAX_CLICK_REGIONS: usize = 256;
+pub const MAX_CLICK_REGIONS: usize = 512;
 
 #[derive(Clone, Copy)]
 pub struct RenderImage {
@@ -3175,6 +3906,7 @@ impl DocumentLayout {
                 border_color: None,
                 border_width: 1,
                 border_radius: 0,
+                border_sides: 15,
             }; MAX_RENDER_BOXES],
             box_count: 0,
             images: [RenderImage {
@@ -3360,6 +4092,7 @@ impl DocumentLayout {
 
         let is_btn_or_box = tag == b"button"
             || n.onclick_len > 0
+            || n.data_open_window_len > 0
             || n.computed_style.bg_color.is_some()
             || n.computed_style.border_color.is_some();
 
@@ -3526,18 +4259,53 @@ impl DocumentLayout {
             }
 
             let text = &n.text[..n.text_len];
-            let color = if link_node.is_some() {
+            let color = if n.computed_style.has_explicit_color {
+                n.computed_style.color
+            } else if link_node.is_some() {
                 COLOR_LINK
             } else {
                 n.computed_style.color
             };
 
-            if is_box_btn && text.len() <= 36 {
+            if is_box_btn && text.len() <= 40 {
+                if text.is_empty() {
+                    let dot_w = n.computed_style.width.unwrap_or(10).min(avail_width).max(4);
+                    let dot_h = n.computed_style.height.unwrap_or(10).clamp(4, 32);
+                    if cursor_x > base_x {
+                        cursor_x += 4;
+                    }
+                    if cursor_x + dot_w > row_right && cursor_x > base_x {
+                        cursor_x = base_x;
+                        line_y += line_max_h;
+                        line_max_h = font::FONT_HEIGHT + 4;
+                    }
+                    let dot_y = line_y + (font::FONT_HEIGHT + 4).saturating_sub(dot_h) / 2;
+                    if self.box_count < self.boxes.len() {
+                        self.boxes[self.box_count] = BoxRect {
+                            x: cursor_x,
+                            y: dot_y,
+                            w: dot_w,
+                            h: dot_h,
+                            bg_color: n.computed_style.bg_color.unwrap_or(0x0031_3244),
+                            border_color: n.computed_style.border_color,
+                            border_width: n.computed_style.border_width,
+                            border_radius: n.computed_style.border_radius,
+                            border_sides: n.computed_style.border_sides,
+                        };
+                        self.box_count += 1;
+                    }
+                    cursor_x += dot_w + 4;
+                    line_max_h = line_max_h.max(dot_h + 2);
+                    prev_ended_sep = false;
+                    placed_any = true;
+                    continue;
+                }
+
                 let pad_l = n.computed_style.padding_left.max(4);
                 let pad_r = n.computed_style.padding_right.max(4);
                 let pad_t = n.computed_style.padding_top.max(2);
                 let pad_b = n.computed_style.padding_bottom.max(2);
-                let btn_w = (text.len() * font::FONT_WIDTH + pad_l + pad_r + 6).min(avail_width);
+                let btn_w = (text.len() * font::FONT_WIDTH + pad_l + pad_r + 8).min(avail_width);
                 let btn_h = font::FONT_HEIGHT + pad_t + pad_b + 4;
 
                 if cursor_x > base_x {
@@ -3559,13 +4327,14 @@ impl DocumentLayout {
                         border_color: n.computed_style.border_color,
                         border_width: n.computed_style.border_width,
                         border_radius: n.computed_style.border_radius,
+                        border_sides: n.computed_style.border_sides,
                     };
                     self.box_count += 1;
                 }
 
                 let text_x = cursor_x + pad_l + 3;
                 let text_y = line_y + pad_t + 2;
-                let is_js = (&n.tag[..n.tag_len] == b"button") || n.onclick_len > 0;
+                let is_js = (&n.tag[..n.tag_len] == b"button") || n.onclick_len > 0 || n.data_open_window_len > 0;
                 if is_js && self.click_count < self.click_regions.len() {
                     let mut reg = ClickRegion::empty();
                     reg.x = cursor_x;
@@ -3577,7 +4346,25 @@ impl DocumentLayout {
                     self.click_regions[self.click_count] = reg;
                     self.click_count += 1;
                 }
-                self.flush_inline_segment(dom, text, text_x, text_y, color, if is_js { None } else { link_node });
+                let suppress_underline = n.computed_style.bg_color.is_some();
+                self.flush_inline_segment(dom, text, text_x, text_y, color, if is_js || suppress_underline { None } else { link_node });
+                if suppress_underline && !is_js {
+                    if let Some(ln) = link_node {
+                        if ln < dom.node_count && dom.nodes[ln].href_len > 0 && self.click_count < self.click_regions.len() {
+                            let href = &dom.nodes[ln].href_attr[..dom.nodes[ln].href_len];
+                            let mut reg = ClickRegion::empty();
+                            reg.x = cursor_x;
+                            reg.y = line_y;
+                            reg.w = btn_w;
+                            reg.h = btn_h;
+                            let h_len = href.len().min(128);
+                            reg.target[..h_len].copy_from_slice(&href[..h_len]);
+                            reg.target_len = h_len;
+                            self.click_regions[self.click_count] = reg;
+                            self.click_count += 1;
+                        }
+                    }
+                }
                 cursor_x += btn_w + 4;
                 line_max_h = line_max_h.max(btn_h + 4);
                 prev_ended_sep = false;
@@ -3716,6 +4503,88 @@ impl DocumentLayout {
         }
     }
 
+    fn estimate_subtree_width(dom: &DomArena, node_idx: usize, depth: usize) -> usize {
+        if node_idx >= dom.node_count || depth > 5 {
+            return 0;
+        }
+        let n = &dom.nodes[node_idx];
+        if n.computed_style.display == DisplayMode::None {
+            return 0;
+        }
+        let pad_lr = n.computed_style.padding_left + n.computed_style.padding_right;
+        let mar_lr = n.computed_style.margin_left + n.computed_style.margin_right;
+        if let Some(w) = n.computed_style.width {
+            return w + pad_lr + mar_lr;
+        }
+        let own_text_w = if n.text_len > 0 {
+            n.text_len.min(48) * font::FONT_WIDTH + 14
+        } else {
+            0
+        };
+        if n.child_count == 0 {
+            let base = if own_text_w > 0 {
+                own_text_w
+            } else if n.computed_style.bg_color.is_some() || n.computed_style.border_color.is_some() {
+                36
+            } else {
+                0
+            };
+            return base + pad_lr + mar_lr;
+        }
+        let is_row = n.computed_style.display == DisplayMode::Inline
+            || n.computed_style.display == DisplayMode::InlineBlock
+            || (n.computed_style.display == DisplayMode::Flex
+                && n.computed_style.flex_direction == FlexDirection::Row
+                && n.computed_style.grid_cols <= 1);
+        let mut content_w = own_text_w;
+        let mut vis = 0usize;
+        for c in 0..n.child_count {
+            let cw = Self::estimate_subtree_width(dom, n.children[c], depth + 1);
+            if cw > 0 {
+                vis += 1;
+                if is_row {
+                    content_w = content_w.saturating_add(cw);
+                } else {
+                    content_w = content_w.max(cw);
+                }
+            }
+        }
+        if is_row && vis > 1 {
+            content_w = content_w.saturating_add(n.computed_style.gap.min(24) * (vis - 1));
+        }
+        content_w + pad_lr + mar_lr + 10
+    }
+
+    fn record_interactive_box_region(&mut self, dom: &DomArena, node_idx: usize, x: usize, y: usize, w: usize, h: usize) {
+        if node_idx >= dom.node_count || w == 0 || h == 0 || self.click_count >= self.click_regions.len() {
+            return;
+        }
+        let node = &dom.nodes[node_idx];
+        let is_close_btn = dom.has_class(node_idx, b"win-btn") && dom.has_class(node_idx, b"close");
+        if node.data_open_window_len > 0 || node.onclick_len > 0 || is_close_btn {
+            let mut reg = ClickRegion::empty();
+            reg.x = x;
+            reg.y = y;
+            reg.w = w;
+            reg.h = h;
+            reg.is_js = true;
+            reg.node_idx = node_idx;
+            self.click_regions[self.click_count] = reg;
+            self.click_count += 1;
+        } else if node.href_len > 0 {
+            let mut reg = ClickRegion::empty();
+            reg.x = x;
+            reg.y = y;
+            reg.w = w;
+            reg.h = h;
+            let cpy = node.href_len.min(128);
+            reg.target[..cpy].copy_from_slice(&node.href_attr[..cpy]);
+            reg.target_len = cpy;
+            self.click_regions[self.click_count] = reg;
+            self.click_count += 1;
+        }
+    }
+
     fn layout_subtree(
         &mut self,
         dom: &DomArena,
@@ -3765,12 +4634,19 @@ impl DocumentLayout {
             return;
         }
 
-        let eff_avail_w = if let Some(mw) = node.computed_style.max_width {
+        let width_limit = match (node.computed_style.width, node.computed_style.max_width) {
+            (Some(w), Some(mw)) => Some(w.min(mw)),
+            (Some(w), None) => Some(w),
+            (None, Some(mw)) => Some(mw),
+            (None, None) => None,
+        };
+        let eff_avail_w = if let Some(mw) = width_limit {
             avail_width.min(mw).max(font::FONT_WIDTH * 4)
         } else {
             avail_width
         };
         let auto_center_off = if node.computed_style.max_width.is_some()
+            && node.computed_style.width.is_none()
             && avail_width > eff_avail_w
             && node.computed_style.margin_left == 0
             && node.computed_style.margin_right == 0
@@ -3889,12 +4765,13 @@ impl DocumentLayout {
             return;
         }
 
-        // Layout Flexbox Linha (display: flex && flex-direction: row) ou linha de tabela <tr> com colunas
+        // Layout Flexbox / Grid Linha (display: flex && flex-direction: row) ou linha de tabela <tr>
         let is_table_row = tag == b"tr" && node.child_count > 1 && node.child_count <= 5;
+        let is_grid_row = node.child_count > 0 && node.computed_style.grid_cols > 1;
         let is_flex_row = node.child_count > 0
             && node.computed_style.display == DisplayMode::Flex
             && node.computed_style.flex_direction == FlexDirection::Row;
-        if is_flex_row || is_table_row {
+        if is_flex_row || is_table_row || is_grid_row {
             if node.computed_style.display_block {
                 *curr_y += node.computed_style.margin_top;
             }
@@ -3939,52 +4816,108 @@ impl DocumentLayout {
             } else {
                 node.computed_style.gap.min(32)
             };
-            let total_gap = gap.saturating_mul(visible_children.saturating_sub(1));
-            let avail_children_w = inner_w.saturating_sub(total_gap);
-            let child_w = if visible_children > 0 { avail_children_w / visible_children } else { avail_children_w };
-            let mut child_x = eff_base_x + mar_left + pad_left;
+            let start_x = eff_base_x + mar_left + pad_left;
+            let max_flex_right = start_x + inner_w;
             let mut max_y = *curr_y;
 
-            let max_flex_right = eff_base_x + mar_left + pad_left + inner_w;
-            for c in 0..node.child_count {
-                let cid = node.children[c];
-                if cid < dom.node_count && dom.nodes[cid].computed_style.display != DisplayMode::None {
-                    let rem_w = max_flex_right.saturating_sub(child_x);
-                    if rem_w < font::FONT_WIDTH {
-                        Self::mark_subtree_laid_out(dom, cid, laid_out);
-                        continue;
+            if is_grid_row {
+                let cols = node.computed_style.grid_cols.min(visible_children.max(1)).max(1);
+                let col_w = inner_w.saturating_sub(gap.saturating_mul(cols - 1)) / cols;
+                let mut col_idx = 0usize;
+                let mut row_y = *curr_y;
+                let mut row_max_y = row_y;
+                for c in 0..node.child_count {
+                    let cid = node.children[c];
+                    if cid < dom.node_count && dom.nodes[cid].computed_style.display != DisplayMode::None {
+                        if col_idx >= cols {
+                            col_idx = 0;
+                            row_y = row_max_y + gap.max(4);
+                            row_max_y = row_y;
+                        }
+                        let cx = start_x + col_idx * (col_w + gap);
+                        let mut cy = row_y;
+                        let target_w = dom.nodes[cid].computed_style.width.unwrap_or(col_w).min(col_w);
+                        self.layout_subtree(dom, cid, cx, &mut cy, target_w, laid_out);
+                        if cy > row_max_y { row_max_y = cy; }
+                        col_idx += 1;
                     }
-                    let mut child_y = *curr_y;
-                    let target_w = dom.nodes[cid].computed_style.width.unwrap_or(child_w).min(rem_w);
-                    self.layout_subtree(dom, cid, child_x, &mut child_y, target_w, laid_out);
-                    child_x += target_w + gap;
-                    if child_y > max_y {
-                        max_y = child_y;
+                }
+                max_y = row_max_y;
+            } else if is_flex_row && (node.computed_style.flex_wrap || visible_children >= 2) {
+                let mut child_x = start_x;
+                let mut row_y = *curr_y;
+                let mut row_max_y = row_y;
+                for c in 0..node.child_count {
+                    let cid = node.children[c];
+                    if cid < dom.node_count && dom.nodes[cid].computed_style.display != DisplayMode::None {
+                        let est_w = dom.nodes[cid].computed_style.width
+                            .unwrap_or_else(|| Self::estimate_subtree_width(dom, cid, 0))
+                            .max(12)
+                            .min(inner_w);
+                        if child_x > start_x && child_x + est_w > max_flex_right {
+                            child_x = start_x;
+                            row_y = row_max_y + gap.max(4);
+                            row_max_y = row_y;
+                        }
+                        let rem_w = max_flex_right.saturating_sub(child_x).max(font::FONT_WIDTH * 2);
+                        let target_w = est_w.min(rem_w);
+                        let mut cy = row_y;
+                        self.layout_subtree(dom, cid, child_x, &mut cy, target_w, laid_out);
+                        child_x += target_w + gap;
+                        if cy > row_max_y { row_max_y = cy; }
+                    }
+                }
+                max_y = row_max_y;
+            } else {
+                let total_gap = gap.saturating_mul(visible_children.saturating_sub(1));
+                let avail_children_w = inner_w.saturating_sub(total_gap);
+                let child_w = if visible_children > 0 { avail_children_w / visible_children } else { avail_children_w };
+                let mut child_x = start_x;
+
+                for c in 0..node.child_count {
+                    let cid = node.children[c];
+                    if cid < dom.node_count && dom.nodes[cid].computed_style.display != DisplayMode::None {
+                        let rem_w = max_flex_right.saturating_sub(child_x);
+                        if rem_w < font::FONT_WIDTH {
+                            Self::mark_subtree_laid_out(dom, cid, laid_out);
+                            continue;
+                        }
+                        let mut child_y = *curr_y;
+                        let target_w = dom.nodes[cid].computed_style.width.unwrap_or(child_w).min(rem_w);
+                        self.layout_subtree(dom, cid, child_x, &mut child_y, target_w, laid_out);
+                        child_x += target_w + gap;
+                        if child_y > max_y {
+                            max_y = child_y;
+                        }
                     }
                 }
             }
             *curr_y = max_y + pad_bottom;
 
+            let card_w = node
+                .computed_style
+                .width
+                .unwrap_or(eff_avail_w.saturating_sub(mar_left + mar_right))
+                .min(eff_avail_w.saturating_sub(mar_left + mar_right));
+            let content_h = curr_y.saturating_sub(box_start_y).max(font::FONT_HEIGHT + pad_top + pad_bottom);
+            let box_h = content_h.max(node.computed_style.height.unwrap_or(0));
+            if box_h > content_h {
+                *curr_y = box_start_y + box_h;
+            }
             if let Some(slot) = box_slot {
-                let box_h = node.computed_style.height.unwrap_or_else(|| {
-                    curr_y.saturating_sub(box_start_y).max(font::FONT_HEIGHT + pad_top + pad_bottom)
-                });
-                let box_w = node
-                    .computed_style
-                    .width
-                    .unwrap_or(eff_avail_w.saturating_sub(mar_left + mar_right))
-                    .min(eff_avail_w.saturating_sub(mar_left + mar_right));
                 self.boxes[slot] = BoxRect {
                     x: eff_base_x + mar_left,
                     y: box_start_y,
-                    w: box_w,
+                    w: card_w,
                     h: box_h,
                     bg_color: node.computed_style.bg_color.unwrap_or(0),
                     border_color: node.computed_style.border_color,
                     border_width: node.computed_style.border_width,
                     border_radius: node.computed_style.border_radius,
+                    border_sides: node.computed_style.border_sides,
                 };
             }
+            self.record_interactive_box_region(dom, node_idx, eff_base_x + mar_left, box_start_y, card_w, box_h);
 
             if node.computed_style.display_block {
                 *curr_y += node.computed_style.margin_bottom;
@@ -4139,26 +5072,30 @@ impl DocumentLayout {
 
             *curr_y += pad_bottom;
 
+            let card_w = node
+                .computed_style
+                .width
+                .unwrap_or(eff_avail_w.saturating_sub(mar_left + mar_right))
+                .min(eff_avail_w.saturating_sub(mar_left + mar_right));
+            let content_h = curr_y.saturating_sub(box_start_y).max(font::FONT_HEIGHT + pad_top + pad_bottom);
+            let box_h = content_h.max(node.computed_style.height.unwrap_or(0));
+            if box_h > content_h {
+                *curr_y = box_start_y + box_h;
+            }
             if let Some(slot) = box_slot {
-                let box_h = node.computed_style.height.unwrap_or_else(|| {
-                    curr_y.saturating_sub(box_start_y).max(font::FONT_HEIGHT + pad_top + pad_bottom)
-                });
-                let box_w = node
-                    .computed_style
-                    .width
-                    .unwrap_or(eff_avail_w.saturating_sub(mar_left + mar_right))
-                    .min(eff_avail_w.saturating_sub(mar_left + mar_right));
                 self.boxes[slot] = BoxRect {
                     x: eff_base_x + mar_left,
                     y: box_start_y,
-                    w: box_w,
+                    w: card_w,
                     h: box_h,
                     bg_color: node.computed_style.bg_color.unwrap_or(0),
                     border_color: node.computed_style.border_color,
                     border_width: node.computed_style.border_width,
                     border_radius: node.computed_style.border_radius,
+                    border_sides: node.computed_style.border_sides,
                 };
             }
+            self.record_interactive_box_region(dom, node_idx, eff_base_x + mar_left, box_start_y, card_w, box_h);
 
             if node.computed_style.display_block {
                 *curr_y += node.computed_style.margin_bottom;
@@ -4175,11 +5112,20 @@ impl DocumentLayout {
             *curr_y += node.computed_style.margin_top;
         }
 
-        let is_interactive = tag == b"button" || node.onclick_len > 0;
+        let is_interactive = tag == b"button"
+            || node.onclick_len > 0
+            || node.data_open_window_len > 0
+            || (dom.has_class(node_idx, b"win-btn") && dom.has_class(node_idx, b"close"));
         let enclosing_link = Self::find_enclosing_link(dom, node_idx);
         let is_link = enclosing_link.is_some();
         let target_href = enclosing_link;
-        let color = if is_link { COLOR_LINK } else { node.computed_style.color };
+        let color = if node.computed_style.has_explicit_color {
+            node.computed_style.color
+        } else if is_link {
+            COLOR_LINK
+        } else {
+            node.computed_style.color
+        };
         let has_box = node.computed_style.bg_color.is_some() || node.computed_style.border_color.is_some();
 
         let pad_left = node.computed_style.padding_left;
@@ -4189,18 +5135,22 @@ impl DocumentLayout {
         let mar_left = node.computed_style.margin_left;
         let mar_right = node.computed_style.margin_right;
 
-        let elem_x = eff_base_x + mar_left + pad_left + if is_interactive || has_box { 4 } else { 0 };
-        let avail_for_text = eff_avail_w.saturating_sub(mar_left + mar_right + pad_left + pad_right + 8);
+        let elem_x = eff_base_x + mar_left + pad_left + if is_interactive || has_box { 3 } else { 0 };
+        let avail_for_text = eff_avail_w.saturating_sub(mar_left + mar_right + pad_left + pad_right + if is_interactive || has_box { 6 } else { 0 });
         let max_chars = (avail_for_text / font::FONT_WIDTH).max(1);
 
         let box_start_y = *curr_y;
         *curr_y += pad_top;
 
         let text = &node.text[..node.text_len];
-        if is_interactive {
+        if node.text_len == 0 && has_box {
+            let empty_h = node.computed_style.height.unwrap_or(14).clamp(6, 56);
+            *curr_y += empty_h;
+        } else if is_interactive {
             self.add_wrapped_text_interactive(text, elem_x, curr_y, max_chars, color, true, node.id);
         } else if is_link {
-            self.add_wrapped_text_aligned(text, elem_x, avail_for_text, curr_y, max_chars, color, true, target_href, node.computed_style.text_align);
+            let show_underline = !has_box;
+            self.add_wrapped_text_aligned(text, elem_x, avail_for_text, curr_y, max_chars, color, show_underline, target_href, node.computed_style.text_align);
         } else if node.text_len > 0 {
             self.add_wrapped_text_aligned(text, elem_x, avail_for_text, curr_y, max_chars, color, false, None, node.computed_style.text_align);
         }
@@ -4208,17 +5158,25 @@ impl DocumentLayout {
         *curr_y += pad_bottom;
 
         if has_box {
+            let content_h = curr_y.saturating_sub(box_start_y);
+            let box_h = if node.text_len == 0 {
+                content_h.max(node.computed_style.height.unwrap_or(14)).max(6)
+            } else {
+                content_h.max(node.computed_style.height.unwrap_or(0)).max(font::FONT_HEIGHT + pad_top + pad_bottom + 2)
+            };
+            if box_h > content_h {
+                *curr_y = box_start_y + box_h;
+            }
+            let box_w = if let Some(w) = node.computed_style.width {
+                w.min(eff_avail_w.saturating_sub(mar_left + mar_right))
+            } else if node.computed_style.display_block && node.text_len > 0 {
+                eff_avail_w.saturating_sub(mar_left + mar_right)
+            } else if node.text_len == 0 {
+                node.computed_style.width.unwrap_or(32).min(eff_avail_w.saturating_sub(mar_left + mar_right))
+            } else {
+                (node.text_len * font::FONT_WIDTH + pad_left + pad_right + 12).min(eff_avail_w.saturating_sub(mar_left + mar_right))
+            };
             if self.box_count < self.boxes.len() {
-                let box_h = node.computed_style.height.unwrap_or_else(|| {
-                    curr_y.saturating_sub(box_start_y).max(font::FONT_HEIGHT + pad_top + pad_bottom + 2)
-                });
-                let box_w = if let Some(w) = node.computed_style.width {
-                    w.min(eff_avail_w.saturating_sub(mar_left + mar_right))
-                } else if node.computed_style.display_block {
-                    eff_avail_w.saturating_sub(mar_left + mar_right)
-                } else {
-                    (node.text_len * font::FONT_WIDTH + pad_left + pad_right + 12).min(eff_avail_w.saturating_sub(mar_left + mar_right))
-                };
                 self.boxes[self.box_count] = BoxRect {
                     x: (eff_base_x + mar_left).max(2),
                     y: box_start_y,
@@ -4228,9 +5186,13 @@ impl DocumentLayout {
                     border_color: node.computed_style.border_color,
                     border_width: node.computed_style.border_width,
                     border_radius: node.computed_style.border_radius,
+                    border_sides: node.computed_style.border_sides,
                 };
                 self.box_count += 1;
             }
+            self.record_interactive_box_region(dom, node_idx, (eff_base_x + mar_left).max(2), box_start_y, box_w, box_h);
+        } else {
+            self.record_interactive_box_region(dom, node_idx, elem_x, box_start_y, avail_for_text, curr_y.saturating_sub(box_start_y).max(font::FONT_HEIGHT));
         }
 
         if node.computed_style.display_block {
@@ -4708,13 +5670,46 @@ impl BrowserSession {
 
     pub fn dispatch_js_click(&mut self, node_idx: usize) -> bool {
         if node_idx < self.dom.node_count {
+            if self.dom.has_class(node_idx, b"win-btn") && self.dom.has_class(node_idx, b"close") {
+                let mut cur = self.dom.nodes[node_idx].parent;
+                while let Some(pid) = cur {
+                    if self.dom.has_class(pid, b"os-window") {
+                        self.dom.add_class(pid, b"hidden");
+                        self.css.resolve_all(&mut self.dom, self.viewport_w);
+                        self.recompute_layout();
+                        return true;
+                    }
+                    cur = self.dom.nodes[pid].parent;
+                }
+            }
+
+            let open_len = self.dom.nodes[node_idx].data_open_window_len;
+            if open_len > 0 {
+                let open_id = self.dom.nodes[node_idx].data_open_window;
+                let target_id = &open_id[..open_len];
+                if let Some(target_idx) = self.dom.find_by_id(target_id) {
+                    let was_hidden = self.dom.has_class(target_idx, b"hidden");
+                    for idx in 0..self.dom.node_count {
+                        if self.dom.has_class(idx, b"os-window") {
+                            self.dom.add_class(idx, b"hidden");
+                        }
+                    }
+                    if was_hidden {
+                        self.dom.remove_class(target_idx, b"hidden");
+                    }
+                    self.css.resolve_all(&mut self.dom, self.viewport_w);
+                    self.recompute_layout();
+                    return true;
+                }
+            }
+
             let onclick_len = self.dom.nodes[node_idx].onclick_len;
             if onclick_len > 0 {
                 let mut script_buf = [0u8; 256];
                 let cpy = onclick_len.min(255);
                 script_buf[..cpy].copy_from_slice(&self.dom.nodes[node_idx].onclick_attr[..cpy]);
                 self.js_runtime.eval_script(&script_buf[..cpy], &mut self.dom);
-                self.css.resolve_all(&mut self.dom);
+                self.css.resolve_all(&mut self.dom, self.viewport_w);
                 self.recompute_layout();
                 return true;
             }
@@ -4726,6 +5721,9 @@ impl BrowserSession {
         if new_w >= 100 && new_h >= 60 && new_w <= 1024 && new_h <= 768 {
             self.viewport_w = new_w;
             self.viewport_h = new_h;
+            if self.dom.node_count > 0 {
+                self.css.resolve_all(&mut self.dom, self.viewport_w);
+            }
             self.recompute_layout();
         }
     }
@@ -4754,6 +5752,9 @@ impl BrowserSession {
                 self.saved_h = self.viewport_h;
                 self.viewport_w = 1024;
                 self.viewport_h = 768;
+                if self.dom.node_count > 0 {
+                    self.css.resolve_all(&mut self.dom, self.viewport_w);
+                }
                 self.recompute_layout();
                 self.fullscreen_state = FullscreenState::Fullscreen;
                 FullscreenState::Fullscreen
@@ -4762,6 +5763,9 @@ impl BrowserSession {
                 self.fullscreen_state = FullscreenState::ExitingFullscreen;
                 self.viewport_w = if self.saved_w > 0 { self.saved_w } else { WIN_W };
                 self.viewport_h = if self.saved_h > 0 { self.saved_h } else { WIN_H };
+                if self.dom.node_count > 0 {
+                    self.css.resolve_all(&mut self.dom, self.viewport_w);
+                }
                 self.recompute_layout();
                 self.fullscreen_state = FullscreenState::Windowed;
                 FullscreenState::Windowed
@@ -4945,7 +5949,7 @@ impl BrowserSession {
         self.http_fallback_insecure = false;
         self.downgrade_blocked_count = 0;
         parse_html(html, &mut self.page);
-        parse_html_into_dom(html, &mut self.dom, &mut self.css, &mut self.js_runtime);
+        parse_html_into_dom_with_base(html, url, self.viewport_w, &mut self.dom, &mut self.css, &mut self.js_runtime);
         self.recompute_layout();
         if self.layout.line_count == 0 && !html.is_empty() {
             let stage = compute_stage_geometry(self.viewport_w, self.viewport_h);
@@ -5142,8 +6146,9 @@ impl BrowserSession {
         let clip_bottom = stage.viewport_rect.y + stage.viewport_rect.h;
         let max_content_x = stage.scrollbar_rect.x.saturating_sub(2);
 
-        // 1. Fundo Geral
-        fill_rect(buf, w, h, 0, 0, w, h, COLOR_BG);
+        // 1. Fundo Geral (respeita `body { background: ... }` quando presente)
+        let canvas_bg = self.css.body_bg_color.unwrap_or(COLOR_BG);
+        fill_rect(buf, w, h, 0, 0, w, h, canvas_bg);
 
         // 2. Barra Superior de Navegação (Chrome) - Estilo Glassmorphism / Frosted Glass translúcido (alpha ~140)
         fill_rect_alpha(buf, w, h, 0, 0, stage.chrome_rect.w, 26, 0x000F_172A, 140);
@@ -5260,7 +6265,7 @@ impl BrowserSession {
                     let draw_y = box_top.max(clip_top);
                     let draw_h = box_bottom.min(clip_bottom).saturating_sub(draw_y);
                     if draw_h > 0 {
-                        if bx.border_radius > 0 {
+                        if bx.border_radius > 0 && bx.border_sides == 15 {
                             if bx.bg_color != 0 {
                                 fill_rounded_rect(buf, w, h, bx.x, draw_y, bx_w, draw_h, bx.border_radius, bx.bg_color);
                             }
@@ -5269,10 +6274,30 @@ impl BrowserSession {
                             }
                         } else {
                             if bx.bg_color != 0 {
-                                fill_rect(buf, w, h, bx.x, draw_y, bx_w, draw_h, bx.bg_color);
+                                if bx.border_radius > 0 {
+                                    fill_rounded_rect(buf, w, h, bx.x, draw_y, bx_w, draw_h, bx.border_radius, bx.bg_color);
+                                } else {
+                                    fill_rect(buf, w, h, bx.x, draw_y, bx_w, draw_h, bx.bg_color);
+                                }
                             }
                             if let Some(bc) = bx.border_color {
-                                draw_rect_border(buf, w, h, bx.x, draw_y, bx_w, draw_h, bc);
+                                if bx.border_sides == 15 {
+                                    draw_rect_border(buf, w, h, bx.x, draw_y, bx_w, draw_h, bc);
+                                } else {
+                                    let bw = bx.border_width.clamp(1, 3);
+                                    if (bx.border_sides & 1) != 0 {
+                                        fill_rect(buf, w, h, bx.x, draw_y, bx_w, bw, bc);
+                                    }
+                                    if (bx.border_sides & 4) != 0 && draw_h >= bw {
+                                        fill_rect(buf, w, h, bx.x, draw_y + draw_h - bw, bx_w, bw, bc);
+                                    }
+                                    if (bx.border_sides & 8) != 0 {
+                                        fill_rect(buf, w, h, bx.x, draw_y, bw, draw_h, bc);
+                                    }
+                                    if (bx.border_sides & 2) != 0 && bx_w >= bw {
+                                        fill_rect(buf, w, h, bx.x + bx_w - bw, draw_y, bw, draw_h, bc);
+                                    }
+                                }
                             }
                         }
                     }
@@ -5570,6 +6595,107 @@ static mut IMG_PNG_IDAT_BUF: [u8; 65536] = [0u8; 65536];
 static mut IMG_PNG_ZLIB_OUT: [u8; 524288] = [0u8; 524288];
 
 const MAX_REMOTE_IMG_SLOTS: usize = 8;
+const MAX_REMOTE_CSS_SLOTS: usize = 4;
+
+static mut VFS_CSS_SCRATCH: [u8; 32768] = [0u8; 32768];
+
+#[derive(Clone, Copy)]
+struct RemoteCssEntry {
+    hash_a: u64,
+    hash_b: u64,
+    len: usize,
+    valid: bool,
+    data: [u8; 32768],
+}
+
+impl RemoteCssEntry {
+    const fn empty() -> Self {
+        Self {
+            hash_a: 0,
+            hash_b: 0,
+            len: 0,
+            valid: false,
+            data: [0; 32768],
+        }
+    }
+}
+
+static mut REMOTE_CSS_CACHE: [RemoteCssEntry; MAX_REMOTE_CSS_SLOTS] = [RemoteCssEntry::empty(); MAX_REMOTE_CSS_SLOTS];
+static mut REMOTE_CSS_NEXT_SLOT: usize = 0;
+
+pub unsafe fn cache_store_remote_css(key_a: &[u8], key_b: &[u8], raw: &[u8]) -> bool {
+    if raw.is_empty() || raw.len() > 32768 {
+        return false;
+    }
+    let ha = img_fnv1a_hash(key_a);
+    let hb = img_fnv1a_hash(key_b);
+    let mut target_slot = None;
+    for idx in 0..MAX_REMOTE_CSS_SLOTS {
+        if REMOTE_CSS_CACHE[idx].valid && REMOTE_CSS_CACHE[idx].hash_b == hb {
+            target_slot = Some(idx);
+            break;
+        }
+    }
+    let slot = match target_slot {
+        Some(s) => s,
+        None => {
+            let s = REMOTE_CSS_NEXT_SLOT % MAX_REMOTE_CSS_SLOTS;
+            REMOTE_CSS_NEXT_SLOT = (REMOTE_CSS_NEXT_SLOT + 1) % MAX_REMOTE_CSS_SLOTS;
+            s
+        }
+    };
+    REMOTE_CSS_CACHE[slot].hash_a = ha;
+    REMOTE_CSS_CACHE[slot].hash_b = hb;
+    REMOTE_CSS_CACHE[slot].data[..raw.len()].copy_from_slice(raw);
+    REMOTE_CSS_CACHE[slot].len = raw.len();
+    REMOTE_CSS_CACHE[slot].valid = true;
+    true
+}
+
+pub unsafe fn cache_lookup_remote_css(key: &[u8]) -> Option<&'static [u8]> {
+    if key.is_empty() {
+        return None;
+    }
+    let h = img_fnv1a_hash(key);
+    for idx in 0..MAX_REMOTE_CSS_SLOTS {
+        let e = &REMOTE_CSS_CACHE[idx];
+        if e.valid && (e.hash_b == h || e.hash_a == h) {
+            return Some(&e.data[..e.len]);
+        }
+    }
+    None
+}
+
+pub fn extract_next_stylesheet_href<'a>(html: &'a [u8], pos: &mut usize) -> Option<&'a [u8]> {
+    let len = html.len();
+    while *pos + 5 < len {
+        if html[*pos] == b'<' {
+            let mut j = *pos + 1;
+            if j + 3 < len && html[j..j + 4].eq_ignore_ascii_case(b"link")
+                && (j + 4 >= len || html[j + 4] == b' ' || html[j + 4] == b'\t' || html[j + 4] == b'\r' || html[j + 4] == b'\n')
+            {
+                j += 4;
+                let tag_start = j;
+                while j < len && html[j] != b'>' {
+                    j += 1;
+                }
+                let attrs = &html[tag_start..j];
+                *pos = if j < len { j + 1 } else { j };
+                let is_rel_css = extract_attr_val(attrs, b"rel=")
+                    .map(|r| r.eq_ignore_ascii_case(b"stylesheet"))
+                    .unwrap_or(false);
+                if let Some(href) = extract_attr_val(attrs, b"href=") {
+                    if is_rel_css || href.ends_with(b".css") {
+                        return Some(href);
+                    }
+                }
+                continue;
+            }
+        }
+        *pos += 1;
+    }
+    None
+}
 
 #[derive(Clone, Copy)]
 struct RemoteImgEntry {

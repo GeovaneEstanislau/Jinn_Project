@@ -2852,6 +2852,74 @@ unsafe fn fetch_http_document_inner(
     Err(FetchError::TooManyRedirects)
 }
 
+unsafe fn prefetch_page_stylesheets(
+    html: &[u8],
+    session: &mut browser::BrowserSession,
+    base_url: &[u8],
+    scratch_buf: &mut [u8],
+) {
+    let mut scan_pos = 0usize;
+    let mut fetched = 0usize;
+    while fetched < 4 {
+        let Some(raw_href) = browser::extract_next_stylesheet_href(html, &mut scan_pos) else {
+            break;
+        };
+        if raw_href.starts_with(b"/disk/") || raw_href.starts_with(b"/ext2/") || raw_href.starts_with(b"data:") {
+            continue;
+        }
+        let mut resolved_buf = [0u8; 128];
+        let res_len = browser::resolve_relative_url(base_url, raw_href, &mut resolved_buf);
+        let css_url = &resolved_buf[..res_len];
+        if !css_url.starts_with(b"http://") && !css_url.starts_with(b"https://") {
+            continue;
+        }
+        if base_url.starts_with(b"https://") && css_url.starts_with(b"http://") {
+            print_str(b"[BROWSER-SEC] BLOQUEADO downgrade HTTPS -> HTTP em subrecurso <link>: ");
+            print_str(css_url);
+            print_str(b"\n");
+            session.record_downgrade_blocked();
+            continue;
+        }
+        if browser::cache_lookup_remote_css(css_url).is_some() {
+            continue;
+        }
+        if let Some(cached_len) = browser::storage::BrowserCacheStore::retrieve(css_url, scratch_buf) {
+            if cached_len > 0 && cached_len <= 32768 {
+                let _ = browser::cache_store_remote_css(raw_href, css_url, &scratch_buf[..cached_len]);
+                print_str(b"[BROWSER-CSS] Stylesheet em cache disco: ");
+                print_str(css_url);
+                print_str(b"\n");
+                continue;
+            }
+        }
+        print_str(b"[BROWSER-CSS] Baixando stylesheet remota: ");
+        print_str(css_url);
+        print_str(b"\n");
+        let mut css_final_url = [0u8; 128];
+        let mut css_final_len = 0usize;
+        match fetch_http_document_inner(css_url, scratch_buf, false, &mut css_final_url, &mut css_final_len) {
+            Ok(css_bytes) => {
+                if css_bytes > 0 && css_bytes <= 32768 {
+                    let store_url = if css_final_len > 0 { &css_final_url[..css_final_len] } else { css_url };
+                    let _ = browser::cache_store_remote_css(raw_href, store_url, &scratch_buf[..css_bytes]);
+                    if store_url != css_url {
+                        let _ = browser::cache_store_remote_css(css_url, css_url, &scratch_buf[..css_bytes]);
+                    }
+                    browser::storage::BrowserCacheStore::store(css_url, &scratch_buf[..css_bytes]);
+                    print_str(b"[BROWSER-CSS] Stylesheet aplicada (");
+                    print_u64(css_bytes as u64);
+                    print_str(b" bytes)\n");
+                }
+            }
+            Err(FetchError::HttpsDowngradeBlocked) => {
+                session.record_downgrade_blocked();
+            }
+            Err(_) => {}
+        }
+        fetched += 1;
+    }
+}
+
 unsafe fn prefetch_page_images(
     session: &mut browser::BrowserSession,
     base_url: &[u8],
@@ -2982,7 +3050,12 @@ unsafe fn browser_load_and_display(
         // Verifica cache local (/disk/browser/cache/) antes da requisicao de rede
         if let Some(cached_len) = browser::storage::BrowserCacheStore::retrieve(path, out_buf) {
             print_str(b"[BROWSER-CACHE] Recurso obtido do cache local (/disk/browser/cache/)!\n");
-            let doc_slice = &out_buf[..cached_len];
+            let doc_slice = core::slice::from_raw_parts(core::ptr::addr_of!(HTML_FILE_BUF) as *const u8, cached_len);
+            let fmt_buf = core::slice::from_raw_parts_mut(
+                core::ptr::addr_of_mut!(HTTP_FORMAT_BUF) as *mut u8,
+                HTTP_BUF_SIZE,
+            );
+            prefetch_page_stylesheets(doc_slice, session, path, fmt_buf);
             session.load_document_bytes(doc_slice, path);
             session.record_navigation_current(path);
             session.render(buf_slice);
@@ -3141,6 +3214,7 @@ unsafe fn browser_load_and_display(
                     } else {
                         print_str(b"[HTML-INTEGRITY] AVISO: Documento sem tags HTML estruturais padrao (renderizando como texto/bloco).\n");
                     }
+                    prefetch_page_stylesheets(doc_slice, session, active_url, fmt_buf);
                     session.load_document_bytes(doc_slice, active_url);
                     if browser::detect_heavy_js_spa(doc_slice, session.layout.line_count) {
                         let spa_len = browser::format_spa_notice_html(active_url, fmt_buf);
