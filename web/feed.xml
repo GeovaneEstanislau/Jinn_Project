@@ -7,6 +7,20 @@
     <language>pt-br</language>
     <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
     <atom:link href="https://jinn-os.dev.br/rss.xml" rel="self" type="application/rss+xml" />
+        <item>
+      <title>add remote HTTPS stylesheet pre-fetch, compound CSS/Tailwind engine and flex wrapping</title>
+      <link>https://jinn-os.dev.br</link>
+      <guid isPermaLink="false">jinn-os-add-remote-https-stylesheet-pre-fetch--compound-css-tailwind-engine-and-flex-wrapping-202611271513</guid>
+      <pubDate>Fri, 27 Nov 2026 15:13:40 +0000</pubDate>
+      <category>compute-simd</category>
+      <category>microkernel-security</category>
+      <category>fastpath-ipc-net</category>
+      <category>compute-lab</category>
+      <description><![CDATA[
+        <p>Avanço verificado no Jinn Microkernel, compositor Aladdin e computação heterogênea JHCS com foco em isolamento Ring 3 e previsibilidade de recursos. [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas & Menções: Red Hat, Tenstorrent, Academic Systems Research Labs, AMD, Arm, NVIDIA, Cloudflare, RISC-V International] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, compute-lab, Microkernel Architecture, Heterogeneous Compute Scheduling, Zero-GPU 2D Compositing, SIMD Vectorization, Workload Efficiency] [Evidências visuais: Evidência visual Observatory (landing-jhcs-heterogeneous-compute.png) (https://jinn-os.dev.br/assets/landing-jhcs-heterogeneous-compute.png) ; Evidência visual Observatory (browser-css-tailwind-windowed.png) (https://jinn-os.dev.br/assets/browser-css-tailwind-windowed.png) ; Evidência visual Observatory (browser-css-tailwind-f11.png) (https://jinn-os.dev.br/assets/browser-css-tailwind-f11.png)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</p>
+      ]]></description>
+      <enclosure url="https://jinn-os.dev.br/assets/landing-jhcs-heterogeneous-compute.png" length="70707" type="image/png" />
+    </item>
     <item>
       <title>Jinn Browser: Stylesheets HTTPS Remotos, Motor CSS Composto, Tailwind Nativo #![no_std] e Flexbox Wrapping</title>
       <link>https://jinn-os.dev.br/artigos/jinn-browser-css-tailwind-stylesheet-remoto-flexbox-layout.html</link>
