@@ -30,14 +30,23 @@ pub extern "C" fn irq_dispatch(vector: u64, _frame: *mut usize) -> usize {
     let next_rsp = match vector {
         32 => {
             if cpu_id == 0 {
-                // IRQ0 — PIT timer via legacy PIC no BSP (incondicional para preservar árbitro do 8259)
+                // IRQ0 — PIT via legacy PIC no BSP (EOI incondicional preserva árbitro do 8259A)
                 timer::tick();
                 pic::send_eoi(0);
             }
-            // Envia EOI para o Local APIC em todos os núcleos
             apic::send_eoi();
-            
-            crate::scheduler::get().preempt_core(cpu_id, _frame as usize)
+            crate::scheduler::get().preempt_core_with_source(cpu_id, _frame as usize, false)
+        }
+        48 => {
+            // LAPIC One-Shot Timer dedicado por núcleo (sem passar pelo PIC 8259A)
+            apic::record_lapic_timer_irq(cpu_id);
+            apic::send_eoi();
+            crate::scheduler::get().preempt_core_with_source(cpu_id, _frame as usize, true)
+        }
+        49 => {
+            // SMP Reschedule IPI
+            apic::send_eoi();
+            crate::scheduler::get().preempt_core_with_source(cpu_id, _frame as usize, false)
         }
         33 => {
             // IRQ1 — PS/2 Keyboard

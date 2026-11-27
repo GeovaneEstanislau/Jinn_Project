@@ -140,6 +140,10 @@ pub struct PerCpuStatsUser {
     pub net_irq_count: u64,
     pub net_irq_verified: u64,
     pub cores: [PerCpuCoreStat; 8],
+    pub lapic_timer_irqs: u64,
+    pub oneshot_arms: u64,
+    pub pit_irq0_count: u64,
+    pub tickless_active: u64,
 }
 
 #[repr(C)]

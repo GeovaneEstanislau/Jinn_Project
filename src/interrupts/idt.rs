@@ -66,6 +66,7 @@ extern "C" {
     fn irq36_stub(); fn irq37_stub(); fn irq38_stub(); fn irq39_stub();
     fn irq40_stub(); fn irq41_stub(); fn irq42_stub(); fn irq43_stub();
     fn irq44_stub(); fn irq45_stub(); fn irq46_stub(); fn irq47_stub();
+    fn irq48_stub(); fn irq49_stub();
     fn isr128_stub();
 }
 
@@ -82,11 +83,12 @@ pub fn init() {
         exc28_stub as *const () as usize, exc29_stub as *const () as usize, exc30_stub as *const () as usize, exc31_stub as *const () as usize,
     ];
 
-    let irq_stubs: [usize; 16] = [
+    let irq_stubs: [usize; 18] = [
         irq32_stub as *const () as usize, irq33_stub as *const () as usize, irq34_stub as *const () as usize, irq35_stub as *const () as usize,
         irq36_stub as *const () as usize, irq37_stub as *const () as usize, irq38_stub as *const () as usize, irq39_stub as *const () as usize,
         irq40_stub as *const () as usize, irq41_stub as *const () as usize, irq42_stub as *const () as usize, irq43_stub as *const () as usize,
         irq44_stub as *const () as usize, irq45_stub as *const () as usize, irq46_stub as *const () as usize, irq47_stub as *const () as usize,
+        irq48_stub as *const () as usize, irq49_stub as *const () as usize,
     ];
 
     let mut cs_sel: u16;

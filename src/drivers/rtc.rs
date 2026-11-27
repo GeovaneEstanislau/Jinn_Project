@@ -295,11 +295,7 @@ pub fn current_unix_time() -> (u64, u32) {
 /// ou ajustes manuais de data/hora pelo usuário.
 /// Utiliza a contagem pura de ticks do hardware timer convertida com base na frequência configurada (`crate::timer::HZ`).
 pub fn monotonic_time() -> (u64, u32) {
-    let now_ticks = crate::timer::ticks();
-    let hz = crate::timer::HZ.max(1);
-    let secs = now_ticks / hz;
-    let nanos = ((now_ticks % hz) * (1_000_000_000 / hz)) as u32;
-    (secs, nanos)
+    crate::timer::monotonic_secs_nanos()
 }
 
 /// Retorna timestamp UNIX atual em segundos

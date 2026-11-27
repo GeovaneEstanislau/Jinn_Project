@@ -162,6 +162,30 @@ fn dhcp_is_bound() -> bool {
     unsafe { matches!(dhcp::DHCP_CLIENT.state, dhcp::DhcpState::Bound(_)) }
 }
 
+/// Informa o próximo deadline (em ticks de 10 ms) caso haja polling de fallback ativo ou waiters.
+/// Retorna `None` quando a IRQ da NIC já está verificada, o DHCP está ativo e não há waiters,
+/// permitindo que o BSP suspenda completamente o timer em `HLT` tickless.
+pub fn next_net_deadline_tick() -> Option<u64> {
+    if has_pending_work() {
+        return Some(crate::timer::ticks());
+    }
+    let verified = crate::drivers::net::NET_IRQ_VERIFIED.load(core::sync::atomic::Ordering::Acquire);
+    let active_waiters = NET_WAITER_COUNT.load(core::sync::atomic::Ordering::Acquire) > 0;
+    let bound = dhcp_is_bound();
+    if verified && bound && !active_waiters {
+        return None;
+    }
+    let last = LAST_NET_POLL_TICK.load(core::sync::atomic::Ordering::Relaxed);
+    let fallback_interval = if !verified {
+        5
+    } else if !bound {
+        25
+    } else {
+        50
+    };
+    Some(last.saturating_add(fallback_interval))
+}
+
 /// Processa rede sob demanda via IRQ (Zero-Idle), restringindo fallback apenas à janela inicial ou waiters ativos.
 pub fn poll_if_needed() {
     let pending = crate::drivers::net::NET_IRQ_PENDING.swap(false, core::sync::atomic::Ordering::AcqRel);

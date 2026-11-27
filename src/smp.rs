@@ -407,6 +407,21 @@ pub fn record_ctx_switch(cpu_id: usize) {
     }
 }
 
+fn serial_write_dec(mut n: u64) {
+    if n == 0 {
+        crate::serial_write_byte(b'0');
+        return;
+    }
+    let mut buf = [0u8; 20];
+    let mut i = 20;
+    while n > 0 {
+        i -= 1;
+        buf[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+    }
+    crate::serial_write(&buf[i..20]);
+}
+
 /// Ponto de entrada de 64-bits para núcleos secundários (APs).
 /// O Limine salta para este endereço com o ponteiro LimineSmpInfo em RDI.
 pub unsafe extern "C" fn ap_entry(info: *const LimineSmpInfo) -> ! {
@@ -431,11 +446,9 @@ pub unsafe extern "C" fn ap_entry(info: *const LimineSmpInfo) -> ! {
     crate::cpu::enable_sse();
     crate::cpu::enable_nxe();
 
-    // 5. Inicializa o Local APIC do núcleo
+    // 5. Inicializa o Local APIC do núcleo em modo One-Shot Tickless (mascarado enquanto ocioso)
     apic::init_ap();
-
-    // 6. Configura o timer Local APIC deste núcleo no vetor 32 para preempção a 100 Hz
-    apic::init_timer(32, 100);
+    apic::mask_timer();
 
     // 7. Registra estado online e inicializa contabilização lock-free por núcleo
     {
@@ -453,23 +466,42 @@ pub unsafe extern "C" fn ap_entry(info: *const LimineSmpInfo) -> ! {
     crate::serial_write_byte(b'0' + (lapic_id as u8));
     crate::serial_write(b")\n");
 
-    // 8. Habilita interrupções. O timer disparará no vetor 32 e acionará o escalonador
+    // 8. Habilita interrupções. Em repouso absoluto o timer permanece mascarado e o núcleo hiberna via `HLT`.
     core::arch::asm!("sti");
 
-    // 9. Loop de espera (Idle Loop do AP enquanto aguarda ou executa tarefas)
+    // 9. Loop de espera Zero-Idle (AP acorda imediatamente via Reschedule IPI ou se houver tarefa Ready)
     loop {
         core::arch::asm!("cli", options(nomem, nostack));
+        if crate::scheduler::check_ap_idle_before_hlt(cpu_id) {
+            core::arch::asm!("sti", options(nomem, nostack));
+            crate::scheduler::yield_now();
+            continue;
+        }
         account_enter_hlt(cpu_id);
         core::arch::asm!("sti; hlt");
     }
 }
 
-/// Inicializa o subsistema SMP, registra o BSP e acorda todos os APs detectados.
+/// Inicializa o subsistema SMP, calibra o timer LAPIC via PIT Canal 2, ativa modo One-Shot tickless e acorda APs.
 pub fn init() -> usize {
-    // 1. Inicializa o Local APIC no BSP (CPU 0) e ativa o timer periódico a 100 Hz (vetor 32)
-    // Garante preempção e suporte universal ao escalonador tanto em Uniprocessador (1 core) quanto SMP.
+    // 1. Inicializa Local APIC no BSP (CPU 0), calibra divisor 16 + TSC contra PIT Canal 2,
+    //    desativa o IRQ0 periódico do PIT (100 Hz) no PIC e ativa relógio diferencial TSC + One-Shot.
     crate::interrupts::apic::init();
-    crate::interrupts::apic::init_timer(32, 100);
+    crate::interrupts::apic::calibrate_timer_with_pit();
+    crate::interrupts::pic::mask_irq(0);
+    let tsc_per_10ms = apic::tsc_ticks_per_10ms();
+    crate::timer::enable_tickless_tsc_clock(tsc_per_10ms, crate::scheduler::read_tsc());
+    apic::set_tickless_enabled(true);
+    apic::arm_lapic_oneshot_deadline(apic::LAPIC_TIMER_VECTOR, Some(10_000));
+
+    let (lapic_per_ms, tsc_per_ms, cal_ok) = apic::calibration_stats();
+    crate::serial_write(b"[APIC-CAL] one_shot=1 pit_irq0_masked=1 cal=");
+    crate::serial_write(if cal_ok { b"PIT_CH2" } else { b"FALLBACK" });
+    crate::serial_write(b" lapic_ticks_ms=");
+    serial_write_dec(lapic_per_ms);
+    crate::serial_write(b" tsc_ticks_ms=");
+    serial_write_dec(tsc_per_ms);
+    crate::serial_write(b"\n");
 
     // 2. Inicializa tabela de mapeamento
     for slot in LAPIC_TO_CPUID.iter() {

@@ -51,8 +51,8 @@ https://jinn-os.dev.br/artigos/network-failure-observability-kernel-userspace-ji
 [1/3] Built a page-aligned (4096 B) lock-free SPSC ring page (`AladdinSharedRings`) in Rust `no_std` for Ring 3 UI <-> Ring 0 kernel events without per-frame syscalls.
 rx_header & tx_header sit on separate 64B cache lines; `CONSUMER_SLEEPING` triggers wakeup via Syscall 90 only after true idle sleep.
 
-[2/3] Under QEMU `-smp 4` (`test_hot_routes_e2e.py`), AP cores (`cpu1..cpu3`) stay in `sti; hlt` with `d_task=0` (100% idle cycles in `HLT`).
-Caveat: scheduler still keeps a 100 Hz PIT tick on BSP & real silicon power (Watts/C-states) is not measured yet — help welcome to benchmark on hardware!
+[2/3] Under QEMU `-smp 4` (`test_lapic_tickless_e2e.py` / `test_hot_routes_e2e.py`), BSP and APs (`cpu0..cpu3`) use calibrated LAPIC One-Shot tickless scheduling with IRQ0 masked (`idle=100.00%` cycles in `HLT`).
+Caveat: scheduler tickless quiescing is verified under QEMU TCG cycle telemetry; physical bare-metal power draw (Watts/Joules/C-states) is not measured yet — hardware benchmarks welcome!
 
 [3/3] Landing overview & contract specs (`MIT OR Apache-2.0` compositor, GPL-2.0-only / Commercial kernel):
 https://jinn-os.dev.br/solucoes/edge-industrial-zero-idle.html?utm_source=x&utm_medium=social&utm_campaign=sharedrings_zeroidle
@@ -104,8 +104,8 @@ Verified in QEMU (`-smp 4`, `-device e1000` / `virtio-net-pci`, FAT32+Ext2):
 - Idle: secondary AP cores sit in `sti; hlt` with `d_task=0` during idle test windows.
 
 Honest gaps (still unverified / unimplemented):
-- Ring 3 browser TLS (`apps/ola-mundo/src/tls.rs`) handles AEAD + `Finished` HMAC, but hasn't wired our Ring 0 X.509/SAN validator (`src/net/pki.rs`) yet — so no MITM protection in the browser today.
-- Still using a 100 Hz PIT tick on BSP (not fully LAPIC one-shot tickless), no IOMMU/KPTI yet, and `0.00% idle AP CPU` is QEMU cycle telemetry, not bare-metal RAPL/wattmeter power yet.
+- Ring 3 browser TLS (`apps/ola-mundo/src/tls.rs` + `x509.rs`) enforces leaf X.509 SAN/CN + `CertificateVerify` (RSA-PSS/PKCS1/ECDSA-P256), though full WebPKI root CA store & OCSP/CRL remain pending.
+- LAPIC One-Shot tickless mode & TSC monotonic differential clock are verified under QEMU TCG, while no IOMMU/KPTI yet and `0.00% idle CPU` is QEMU cycle telemetry, not bare-metal RAPL/wattmeter power yet.
 
 Audit matrix & limitations: https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/strategy/ASSET_PAIN_MATRIX.md
 ```
@@ -126,3 +126,9 @@ Key takeaway: tracking `upload_ns`, `dispatch_ns`, and `download_ns` explicitly 
 ## 5. Política de Marcações Indiretas e Etiqueta Técnica
 - **Nunca** marcar executivos ou contas oficiais com afirmações não medidas em silício físico.
 - **Sempre** acompanhar menções contextuais de arquiteturas (`AVX2/FMA`, `TLS 1.3`, `VirtIO-Net`, `e1000`, `Rust #![no_std]`) com link direto ao comando reproduzível (`cargo test`, `benchmark-breakeven`, scripts QEMU) e às restrições documentadas na **Tabela B**.
+
+---
+
+## 6. Anexo Executivo & CTA (`STRATEGIC_TECHNOLOGY_BRIEF`)
+- **Documento de Apresentação Técnica (12 Slides):** [`STRATEGIC_TECHNOLOGY_BRIEF.md`](STRATEGIC_TECHNOLOGY_BRIEF.md) — recomendado como anexo obrigatório em abordagens diretas (*outreach*), threads técnicas e respostas a interessados em parcerias ou pesquisa.
+- **CTA Padrão para Threads e Contatos Externos:** *"Detailed 12-slide architecture & honest scope brief: [`STRATEGIC_TECHNOLOGY_BRIEF.md`](https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/strategy/STRATEGIC_TECHNOLOGY_BRIEF.md) · Pilots & engineering contact: [`https://jinn-os.dev.br/#win-contact`](https://jinn-os.dev.br/#win-contact)."*

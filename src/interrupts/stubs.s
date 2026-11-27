@@ -85,6 +85,8 @@ irq_stub 44    # IRQ12 — PS/2 Mouse
 irq_stub 45    # IRQ13 — FPU
 irq_stub 46    # IRQ14 — ATA Primary
 irq_stub 47    # IRQ15 — ATA Secondary
+irq_stub 48    # LAPIC One-Shot Timer
+irq_stub 49    # SMP Reschedule IPI
 
 # ── Common exception handler ──────────────────────────────────────────────────
 exception_common:

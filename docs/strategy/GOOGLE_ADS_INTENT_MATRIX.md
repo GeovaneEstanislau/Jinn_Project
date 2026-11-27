@@ -117,3 +117,9 @@ Excluir cliques curiosos, tráfego de usuário final doméstico sem perfil técn
 ## 4. Critérios de Otimização Semanal (Campanha Enxuta)
 1. **Revisão de termos de pesquisa a cada 48h** nos primeiros 14 dias: negativar imediatamente qualquer termo fora de contexto de engenharia/B2B.
 2. **Métrica principal de conversão no Tag Manager (`AW-884426711`):** clique no CTA técnico de piloto (`/#win-contact`), cópia do comando de reprodução (`cargo run --release -p benchmark-breakeven`) ou acesso aos relatórios auditados no GitHub.
+
+---
+
+## 5. Anexo Técnico & CTA Executivo (`STRATEGIC_TECHNOLOGY_BRIEF`)
+- **Documento Base de Alinhamento B2B/Deep Tech:** [`STRATEGIC_TECHNOLOGY_BRIEF.md`](STRATEGIC_TECHNOLOGY_BRIEF.md) (12 slides em inglês técnico com arquitetura Ring 0/3, modelo modular *Zero-Idle* + LAPIC *One-Shot* tickless, contratos `Aladdin` e benchmarks `jhcs-rs`).
+- **CTA Pós-Clique Recomendado nas Landing Pages e Resposta a Leads:** *"Acesse o [Strategic Technology Brief (12 Slides)](https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/strategy/STRATEGIC_TECHNOLOGY_BRIEF.md) para revisar fronteiras auditadas (Tabela A/B), arquitetura Zero-Copy `AladdinSharedRings` e propor um piloto técnico em [`jinn-os.dev.br/#win-contact`](https://jinn-os.dev.br/#win-contact)."*

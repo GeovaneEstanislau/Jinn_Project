@@ -39,50 +39,117 @@ pub static SCHED_SAMPLE_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// Contadores por CPU alinhados a 64 bytes residem em `crate::smp::PerCpuAccounting`.
 
-/// Rastreia APs estacionados em `HLT` sem trabalho `Ready` e se seu timer LAPIC foi mascarado em hardware.
-static AP_PARKED: [core::sync::atomic::AtomicBool; crate::gdt::MAX_CPUS] = [
-    core::sync::atomic::AtomicBool::new(false), core::sync::atomic::AtomicBool::new(false),
-    core::sync::atomic::AtomicBool::new(false), core::sync::atomic::AtomicBool::new(false),
-    core::sync::atomic::AtomicBool::new(false), core::sync::atomic::AtomicBool::new(false),
-    core::sync::atomic::AtomicBool::new(false), core::sync::atomic::AtomicBool::new(false),
-];
-static AP_TIMER_HW_MASKED: [core::sync::atomic::AtomicBool; crate::gdt::MAX_CPUS] = [
-    core::sync::atomic::AtomicBool::new(false), core::sync::atomic::AtomicBool::new(false),
-    core::sync::atomic::AtomicBool::new(false), core::sync::atomic::AtomicBool::new(false),
-    core::sync::atomic::AtomicBool::new(false), core::sync::atomic::AtomicBool::new(false),
-    core::sync::atomic::AtomicBool::new(false), core::sync::atomic::AtomicBool::new(false),
-];
+/// Rastreia núcleos estacionados em `HLT` sem trabalho `Ready` e se seu timer LAPIC foi mascarado em hardware.
+static AP_PARKED: [core::sync::atomic::AtomicBool; crate::gdt::MAX_CPUS] = [const { core::sync::atomic::AtomicBool::new(false) }; crate::gdt::MAX_CPUS];
+static AP_TIMER_HW_MASKED: [core::sync::atomic::AtomicBool; crate::gdt::MAX_CPUS] = [const { core::sync::atomic::AtomicBool::new(false) }; crate::gdt::MAX_CPUS];
+/// Próximo deadline (em ticks de 10 ms) armado no BSP em modo One-Shot (`u64::MAX` = mascarado).
+static BSP_ARMED_DEADLINE_TICK: AtomicU64 = AtomicU64::new(u64::MAX);
 
-/// Acorda um AP estacionado via IPI (vetor 32) caso haja tarefas prontas para execução paralela.
+/// Acorda um núcleo estacionado via Reschedule IPI (vetor 49) caso haja tarefas prontas para execução paralela.
 pub fn wake_one_parked_ap() {
     let online = crate::smp::online_cpus().min(crate::gdt::MAX_CPUS);
+    let cur_cpu = crate::smp::current_cpu_id();
     for cpu in 1..online {
         if AP_PARKED[cpu].swap(false, Ordering::AcqRel) {
             if let Some(lapic_id) = crate::smp::cpu_lapic_id(cpu) {
-                crate::interrupts::apic::send_ipi(lapic_id, 32);
+                crate::interrupts::apic::send_ipi(lapic_id, crate::interrupts::apic::RESCHEDULE_IPI_VECTOR);
             }
-            break;
+            return;
+        }
+    }
+    if cur_cpu != 0 && AP_PARKED[0].swap(false, Ordering::AcqRel) {
+        if let Some(bsp_lapic) = crate::smp::cpu_lapic_id(0) {
+            crate::interrupts::apic::send_ipi(bsp_lapic, crate::interrupts::apic::RESCHEDULE_IPI_VECTOR);
         }
     }
 }
 
-/// Atualiza estado de contabilização e mascara/desmascara o LAPIC Timer de APs conforme idle.
-#[inline]
-fn sync_cpu_timer_and_acct(cpu_id: usize, is_idle: bool) {
+/// Calcula o próximo deadline de `TaskState::Sleeping` pendente e programa o LAPIC One-Shot do núcleo (ou mascara se ocioso sem pendências).
+fn arm_cpu_deadline_locked(sched: &Scheduler, cpu_id: usize, is_idle: bool, slice_ticks: u64) {
     crate::smp::set_cpu_on_idle(cpu_id, is_idle);
-    if cpu_id > 0 && cpu_id < crate::gdt::MAX_CPUS {
-        if is_idle {
-            AP_PARKED[cpu_id].store(true, Ordering::Release);
-            if !AP_TIMER_HW_MASKED[cpu_id].swap(true, Ordering::AcqRel) {
-                crate::interrupts::apic::mask_timer();
-            }
-        } else {
-            AP_PARKED[cpu_id].store(false, Ordering::Release);
-            if AP_TIMER_HW_MASKED[cpu_id].swap(false, Ordering::AcqRel) {
-                crate::interrupts::apic::unmask_timer(32, 625_000);
-            }
+    if cpu_id >= crate::gdt::MAX_CPUS {
+        return;
+    }
+
+    let mut earliest_sleep: Option<u64> = None;
+    for slot in sched.tasks.iter().flatten() {
+        if let TaskState::Sleeping(wake_tick) = slot.state {
+            earliest_sleep = Some(match earliest_sleep {
+                Some(prev) => prev.min(wake_tick),
+                None => wake_tick,
+            });
         }
     }
+
+    if cpu_id == 0 {
+        AP_PARKED[0].store(is_idle, Ordering::Release);
+        let now = crate::timer::ticks();
+        let mut target: Option<u64> = if !is_idle {
+            Some(now.saturating_add(slice_ticks.max(1)))
+        } else {
+            None
+        };
+        if let Some(st) = earliest_sleep {
+            target = Some(match target {
+                Some(cur) => cur.min(st),
+                None => st,
+            });
+        }
+        if let Some(nt) = crate::net::next_net_deadline_tick() {
+            target = Some(match target {
+                Some(cur) => cur.min(nt),
+                None => nt,
+            });
+        }
+        if let Some(t) = target {
+            BSP_ARMED_DEADLINE_TICK.store(t, Ordering::Release);
+            let delta_ticks = t.saturating_sub(now);
+            let delay_us = if delta_ticks == 0 {
+                1_000
+            } else {
+                delta_ticks.saturating_mul(10_000).min(60_000_000)
+            };
+            crate::interrupts::apic::arm_lapic_oneshot_deadline(
+                crate::interrupts::apic::LAPIC_TIMER_VECTOR,
+                Some(delay_us),
+            );
+        } else {
+            BSP_ARMED_DEADLINE_TICK.store(u64::MAX, Ordering::Release);
+            crate::interrupts::apic::arm_lapic_oneshot_deadline(
+                crate::interrupts::apic::LAPIC_TIMER_VECTOR,
+                None,
+            );
+        }
+        return;
+    }
+
+    if is_idle {
+        AP_PARKED[cpu_id].store(true, Ordering::Release);
+        if !AP_TIMER_HW_MASKED[cpu_id].swap(true, Ordering::AcqRel) {
+            crate::interrupts::apic::mask_timer();
+        }
+        if let Some(st) = earliest_sleep {
+            if st < BSP_ARMED_DEADLINE_TICK.load(Ordering::Acquire) {
+                if let Some(bsp_lapic) = crate::smp::cpu_lapic_id(0) {
+                    crate::interrupts::apic::send_ipi(bsp_lapic, crate::interrupts::apic::RESCHEDULE_IPI_VECTOR);
+                }
+            }
+        }
+    } else {
+        AP_PARKED[cpu_id].store(false, Ordering::Release);
+        AP_TIMER_HW_MASKED[cpu_id].store(false, Ordering::Release);
+        let delay_us = slice_ticks.max(1).saturating_mul(10_000).min(60_000_000);
+        crate::interrupts::apic::arm_lapic_oneshot_deadline(
+            crate::interrupts::apic::LAPIC_TIMER_VECTOR,
+            Some(delay_us),
+        );
+    }
+}
+
+#[inline]
+pub fn check_ap_idle_before_hlt(cpu_id: usize) -> bool {
+    let sched = get();
+    sched.prepare_core_idle_or_wake(cpu_id)
 }
 
 /// Tarefa de saída aguardando troca efetiva de RSP/CR3 em `stubs.s` antes de liberar pilha/PML4.
@@ -155,7 +222,7 @@ pub fn switch_to_idle_fallback(cpu_id: usize, outgoing_pid: usize) -> usize {
         OUTGOING_PID_PER_CPU[cpu_id].store(outgoing_pid as i32, Ordering::Release);
     }
     unsafe { paging::load_cr3(idle_pml4); }
-    sync_cpu_timer_and_acct(cpu_id, true);
+    arm_cpu_deadline_locked(sched, cpu_id, true, 0);
     idle_rsp
 }
 
@@ -340,8 +407,8 @@ pub fn yield_now() {
     if cpu_id < crate::gdt::MAX_CPUS {
         YIELDED[cpu_id].store(true, Ordering::SeqCst);
     }
-    // Dispara o vetor 32 (APIC Timer) manualmente para forçar preempção.
-    unsafe { core::arch::asm!("int 32"); }
+    // Dispara o vetor dedicado de reescalonamento (49) sem tocar nos contadores IRQ0 do PIC legado.
+    unsafe { core::arch::asm!("int 49"); }
 }
 
 #[allow(dead_code)]
@@ -1614,17 +1681,27 @@ impl Scheduler {
         result
     }
 
-    /// Chamado pelo handler do APIC Timer (vetor 32) para fazer preempção no núcleo especificado.
+    /// Chamado para fazer preempção/reescalonamento no núcleo especificado.
     pub fn preempt_core(&mut self, cpu_id: usize, curr_frame_ptr: usize) -> usize {
+        self.preempt_core_with_source(cpu_id, curr_frame_ptr, false)
+    }
+
+    /// Preempção por núcleo diferenciando interrupção de timer LAPIC vs IPI/yield.
+    pub fn preempt_core_with_source(
+        &mut self,
+        cpu_id: usize,
+        curr_frame_ptr: usize,
+        from_timer_irq: bool,
+    ) -> usize {
         let _guard = SCHED_LOCK.lock();
 
         // Incrementa contadores de preempção global e por núcleo
         SCHED_TICKS.fetch_add(1, Ordering::Relaxed);
         crate::smp::record_tick(cpu_id);
 
-        // Acorda tarefas cujo tempo de sleep expirou (apenas o BSP precisa fazer essa varredura)
+        // Acorda tarefas cujo tempo de sleep expirou
         let mut woke_sleepers = 0usize;
-        if cpu_id == 0 {
+        if cpu_id == 0 || from_timer_irq {
             let current_ticks = crate::timer::ticks();
             for slot in self.tasks.iter_mut() {
                 if let Some(task) = slot {
@@ -1649,7 +1726,7 @@ impl Scheduler {
 
         // Localiza a tarefa atual que executava neste núcleo
         let cur_id_opt = self.core_current[cpu_id].or(if cpu_id == 0 { self.current } else { None });
-        if cpu_id == 0 && (woke_sleepers > 1 || (woke_sleepers == 1 && cur_id_opt != Some(core_idle_id))) {
+        if woke_sleepers > 1 || (woke_sleepers == 1 && cur_id_opt != Some(core_idle_id)) {
             wake_one_parked_ap();
         }
         let mut force_switch = false;
@@ -1660,19 +1737,32 @@ impl Scheduler {
         };
         let mut quota_violation = false;
 
+        let has_ready_other = self.tasks.iter().flatten().any(|t| {
+            Some(t.id) != cur_id_opt
+                && t.id != core_idle_id
+                && t.state == TaskState::Ready
+                && t.priority != TaskPriority::Idle
+                && t.running_on_cpu.is_none()
+        });
+
         if let Some(cur) = cur_id_opt {
             if let Some(task) = &mut self.tasks[cur] {
-                task.cpu_ticks = task.cpu_ticks.saturating_add(1);
-
-                if task.quantum_remaining > 0 {
-                    task.quantum_remaining -= 1;
+                if from_timer_irq {
+                    task.cpu_ticks = task.cpu_ticks.saturating_add(1);
+                    if task.quantum_remaining > 0 {
+                        task.quantum_remaining -= 1;
+                    }
+                } else if cur != core_idle_id && has_ready_other && is_yield {
+                    force_switch = true;
                 }
 
                 // Verificação de cota de CPU: se excedeu max_cpu_ticks (>0), encerra a tarefa
                 if task.limits.max_cpu_ticks > 0 && task.cpu_ticks >= task.limits.max_cpu_ticks {
                     quota_violation = true;
                     force_switch = true;
-                } else if task.state != TaskState::Running || is_yield || task.quantum_remaining == 0 {
+                } else if task.state != TaskState::Running || is_yield || (from_timer_irq && task.quantum_remaining == 0) {
+                    force_switch = true;
+                } else if cur == core_idle_id && has_ready_other {
                     force_switch = true;
                 }
             } else {
@@ -1696,7 +1786,7 @@ impl Scheduler {
 
         if !force_switch {
             let staying_idle = cur_id_opt == Some(core_idle_id);
-            sync_cpu_timer_and_acct(cpu_id, staying_idle);
+            arm_cpu_deadline_locked(self, cpu_id, staying_idle, 1);
             return curr_frame_ptr;
         }
 
@@ -1824,7 +1914,7 @@ impl Scheduler {
                                 wake_one_parked_ap();
                             }
                         }
-                        sync_cpu_timer_and_acct(cpu_id, picked_idle);
+                        arm_cpu_deadline_locked(self, cpu_id, picked_idle, 1);
                         return saved_rsp;
                     }
                 }
@@ -1835,6 +1925,8 @@ impl Scheduler {
         if let Some(idle) = &mut self.tasks[core_idle_id] {
             idle.state = TaskState::Running;
             idle.running_on_cpu = Some(cpu_id);
+            let idle_pml4 = idle.pml4_phys;
+            let idle_rsp = idle.saved_rsp;
             self.core_current[cpu_id] = Some(core_idle_id);
             if cpu_id == 0 {
                 self.current = Some(core_idle_id);
@@ -1842,41 +1934,44 @@ impl Scheduler {
             }
             crate::smp::set_current_pid(cpu_id, Some(core_idle_id));
             let current_cr3 = paging::current_cr3();
-            if current_cr3 != idle.pml4_phys || is_current_dead {
-                unsafe { paging::load_cr3(idle.pml4_phys); }
+            if current_cr3 != idle_pml4 || is_current_dead {
+                unsafe { paging::load_cr3(idle_pml4); }
             }
             if let Some(out_pid) = cur_id_opt {
                 if out_pid != core_idle_id && cpu_id < crate::gdt::MAX_CPUS {
                     OUTGOING_PID_PER_CPU[cpu_id].store(out_pid as i32, Ordering::Release);
                 }
             }
-            sync_cpu_timer_and_acct(cpu_id, true);
-            return idle.saved_rsp;
+            arm_cpu_deadline_locked(self, cpu_id, true, 0);
+            return idle_rsp;
         }
 
         // Se o fallback do núcleo falhou, procura por qualquer Idle task disponível
-        for &cand_id in self.core_idle.iter() {
+        for idx in 0..crate::gdt::MAX_CPUS {
+            let cand_id = self.core_idle[idx];
             if let Some(idle) = &mut self.tasks[cand_id] {
-                    idle.state = TaskState::Running;
-                    idle.running_on_cpu = Some(cpu_id);
-                    self.core_current[cpu_id] = Some(cand_id);
-                    if cpu_id == 0 {
-                        self.current = Some(cand_id);
-                        CURRENT_TASK.store(cand_id as i32, Ordering::SeqCst);
-                    }
-                    crate::smp::set_current_pid(cpu_id, Some(cand_id));
-                    let current_cr3 = paging::current_cr3();
-                    if current_cr3 != idle.pml4_phys || is_current_dead {
-                        unsafe { paging::load_cr3(idle.pml4_phys); }
-                    }
-                    if let Some(out_pid) = cur_id_opt {
-                        if out_pid != cand_id && cpu_id < crate::gdt::MAX_CPUS {
-                            OUTGOING_PID_PER_CPU[cpu_id].store(out_pid as i32, Ordering::Release);
-                        }
-                    }
-                    sync_cpu_timer_and_acct(cpu_id, true);
-                    return idle.saved_rsp;
+                idle.state = TaskState::Running;
+                idle.running_on_cpu = Some(cpu_id);
+                let idle_pml4 = idle.pml4_phys;
+                let idle_rsp = idle.saved_rsp;
+                self.core_current[cpu_id] = Some(cand_id);
+                if cpu_id == 0 {
+                    self.current = Some(cand_id);
+                    CURRENT_TASK.store(cand_id as i32, Ordering::SeqCst);
                 }
+                crate::smp::set_current_pid(cpu_id, Some(cand_id));
+                let current_cr3 = paging::current_cr3();
+                if current_cr3 != idle_pml4 || is_current_dead {
+                    unsafe { paging::load_cr3(idle_pml4); }
+                }
+                if let Some(out_pid) = cur_id_opt {
+                    if out_pid != cand_id && cpu_id < crate::gdt::MAX_CPUS {
+                        OUTGOING_PID_PER_CPU[cpu_id].store(out_pid as i32, Ordering::Release);
+                    }
+                }
+                arm_cpu_deadline_locked(self, cpu_id, true, 0);
+                return idle_rsp;
+            }
         }
 
         // Se a tarefa atual estiver morta (Zombie, Completed ou None), ela NUNCA pode retornar
@@ -1886,25 +1981,54 @@ impl Scheduler {
             if let Some(idle) = &mut self.tasks[core_idle_id] {
                 idle.state = TaskState::Running;
                 idle.running_on_cpu = Some(cpu_id);
+                let idle_pml4 = idle.pml4_phys;
+                let idle_rsp = idle.saved_rsp;
                 self.core_current[cpu_id] = Some(core_idle_id);
                 if cpu_id == 0 {
                     self.current = Some(core_idle_id);
                     CURRENT_TASK.store(core_idle_id as i32, Ordering::SeqCst);
                 }
                 crate::smp::set_current_pid(cpu_id, Some(core_idle_id));
-                unsafe { paging::load_cr3(idle.pml4_phys); }
+                unsafe { paging::load_cr3(idle_pml4); }
                 if let Some(out_pid) = cur_id_opt {
                     if out_pid != core_idle_id && cpu_id < crate::gdt::MAX_CPUS {
                         OUTGOING_PID_PER_CPU[cpu_id].store(out_pid as i32, Ordering::Release);
                     }
                 }
-                sync_cpu_timer_and_acct(cpu_id, true);
-                return idle.saved_rsp;
+                arm_cpu_deadline_locked(self, cpu_id, true, 0);
+                return idle_rsp;
             }
         }
 
-        sync_cpu_timer_and_acct(cpu_id, cur_id_opt == Some(core_idle_id));
+        arm_cpu_deadline_locked(self, cpu_id, cur_id_opt == Some(core_idle_id), 1);
         curr_frame_ptr
+    }
+
+    /// Verifica sob `SCHED_LOCK` (com `IF=0`) se há tarefa Ready ou sleeper expirado; caso contrário arma/mascara o One-Shot antes de `HLT`.
+    pub fn prepare_core_idle_or_wake(&mut self, cpu_id: usize) -> bool {
+        let _guard = SCHED_LOCK.lock();
+        if cpu_id == 0 {
+            let now = crate::timer::ticks();
+            for slot in self.tasks.iter_mut() {
+                if let Some(t) = slot {
+                    if let TaskState::Sleeping(wake_tick) = t.state {
+                        if now >= wake_tick {
+                            t.state = TaskState::Ready;
+                        }
+                    }
+                }
+            }
+        }
+        let has_ready = self.tasks.iter().flatten().any(|t| {
+            t.state == TaskState::Ready
+                && t.priority != TaskPriority::Idle
+                && t.running_on_cpu.is_none()
+        });
+        if has_ready {
+            return true;
+        }
+        arm_cpu_deadline_locked(self, cpu_id, true, 0);
+        false
     }
 
     /// Preempção na CPU atual (chama preempt_core com o ID do núcleo chamador).
@@ -2034,6 +2158,15 @@ fn idle_task_entry() {
             crate::net::poll_if_needed();
         }
         unsafe { core::arch::asm!("cli", options(nomem, nostack)); }
+        let has_ready = {
+            let sched = get();
+            sched.prepare_core_idle_or_wake(cpu_id)
+        };
+        if has_ready {
+            unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+            yield_now();
+            continue;
+        }
         if cpu_id == 0 && crate::net::has_pending_work() {
             unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
             continue;

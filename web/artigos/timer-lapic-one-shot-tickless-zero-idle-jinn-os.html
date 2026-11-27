@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Timer LAPIC One-Shot Tickless no Jinn OS: Queda de 99,8% nos Ticks em Repouso e Relógio TSC — Jinn OS</title>
+  <meta name="description"
+    content="Etapa 3 do Jinn Microkernel: calibração BSP via PIT Canal 2, mascaramento do PIT IRQ0 de 100 Hz, deadlines dinâmicos LAPIC One-Shot (vetores 48/49), relógio diferencial via TSC e auditoria Zero-Idle SMP com apenas 1 interrupção de timer em 5,10 s ociosos no QEMU.">
+  <link rel="canonical"
+    href="https://jinn-os.dev.br/artigos/timer-lapic-one-shot-tickless-zero-idle-jinn-os.html">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — Devlog &amp; Releases"
+    href="https://jinn-os.dev.br/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="Jinn OS — RSS Feed" href="https://jinn-os.dev.br/rss.xml">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article">
+  <meta property="og:url"
+    content="https://jinn-os.dev.br/artigos/timer-lapic-one-shot-tickless-zero-idle-jinn-os.html">
+  <meta property="og:title"
+    content="Timer LAPIC One-Shot Tickless e Auditoria Zero-Idle SMP no Jinn OS">
+  <meta property="og:description"
+    content="Como o Jinn OS substituiu o tick fixo de 100 Hz por deadlines dinâmicos LAPIC One-Shot em Ring 0, alcançando 1 IRQ de timer em 5,10 s e 99,82%–100,00% HLT nos 4 núcleos.">
+  <meta property="og:image" content="https://jinn-os.dev.br/assets/lapic-tickless-zero-idle.png">
+
+  <!-- Artigo Meta (Indexação Google News / RSS / Feed) -->
+  <meta name="article:tag" content="MICROKERNEL, LAPIC ONE-SHOT, TICKLESS, ZERO-IDLE, SMP">
+  <meta name="article:published_time" content="2026-11-26T23:32:00-03:00">
+
+  <!-- Google tag (gtag.js) - Google Ads -->
+  <script async src="https://www.googletagmanager.com/gtm.js?id=AW-884426711"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-884426711');
+  </script>
+
+  <!-- Google News Reader Revenue Manager (Subscribe with Google) -->
+  <script async type="application/javascript" src="https://news.google.com/swg/js/v1/swg-basic.js"></script>
+  <script>
+    (self.SWG_BASIC = self.SWG_BASIC || []).push(basicSubscriptions => {
+      basicSubscriptions.init({
+        type: "NewsArticle",
+        isPartOfType: ["Product"],
+        isPartOfProductId: "CAowhb3iCw:openaccess",
+        autoPromptType: "none",
+        clientOptions: { theme: "light", lang: "pt-BR" },
+      });
+    });
+  </script>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Jinn Engineering Observatory: Schema.org TechArticle (Auto-Generated) -->
+  <script type="application/ld+json" id="jinn-techarticle-jsonld">
+{
+  "@context": "https://schema.org",
+  "@type": [
+    "TechArticle",
+    "NewsArticle"
+  ],
+  "headline": "Timer LAPIC One-Shot Tickless no Jinn OS: Queda de 99,8% nos Ticks em Repouso e Relógio TSC",
+  "description": "Etapa 3 do Jinn Microkernel: calibração BSP via PIT Canal 2, mascaramento do PIT IRQ0 de 100 Hz, deadlines dinâmicos LAPIC One-Shot (vetores 48/49), relógio diferencial via TSC e auditoria Zero-Idle SMP com apenas 1 interrupção de timer em 5,10 s ociosos no QEMU.",
+  "image": [
+    "https://jinn-os.dev.br/assets/lapic-tickless-zero-idle.png"
+  ],
+  "datePublished": "2026-11-26T23:32:00-03:00",
+  "dateModified": "2026-11-26T23:32:00-03:00",
+  "inLanguage": "pt-BR",
+  "articleSection": [
+    "Efficiency Lab",
+    "Post-Mortems & Failure Logs"
+  ],
+  "author": {
+    "@type": "Person",
+    "name": "Geovane da Conceição Estanislau",
+    "url": "https://github.com/GeovaneEstanislau"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Jinn Engineering Observatory",
+    "url": "https://jinn-os.dev.br/",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://jinn-os.dev.br/assets/wallpaper.jpg"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://jinn-os.dev.br/artigos/timer-lapic-one-shot-tickless-zero-idle-jinn-os.html"
+  },
+  "about": [
+    {
+      "@type": "Thing",
+      "name": "Microkernel Architecture"
+    },
+    {
+      "@type": "Thing",
+      "name": "SIMD Vectorization"
+    },
+    {
+      "@type": "Thing",
+      "name": "Deterministic Scheduling"
+    },
+    {
+      "@type": "Thing",
+      "name": "Zero-GPU 2D Compositing"
+    },
+    {
+      "@type": "Thing",
+      "name": "Energy-Proportional Computing"
+    },
+    {
+      "@type": "Thing",
+      "name": "SMP Per-CPU Accounting"
+    },
+    {
+      "@type": "Thing",
+      "name": "Lazy TTL Cache Evaluation"
+    },
+    {
+      "@type": "Thing",
+      "name": "W^X Memory Enforcement"
+    }
+  ],
+  "mentions": [
+    {
+      "@type": "Thing",
+      "name": "Academic Systems Research Labs"
+    },
+    {
+      "@type": "Organization",
+      "name": "Intel"
+    },
+    {
+      "@type": "Organization",
+      "name": "Red Hat"
+    },
+    {
+      "@type": "Organization",
+      "name": "Arm"
+    },
+    {
+      "@type": "Organization",
+      "name": "Qualcomm"
+    },
+    {
+      "@type": "Organization",
+      "name": "AMD"
+    },
+    {
+      "@type": "Organization",
+      "name": "Bosch"
+    },
+    {
+      "@type": "Organization",
+      "name": "RISC-V International"
+    },
+    {
+      "@type": "Organization",
+      "name": "LF Edge"
+    },
+    {
+      "@type": "Organization",
+      "name": "Huawei"
+    },
+    {
+      "@type": "Organization",
+      "name": "Siemens"
+    },
+    {
+      "@type": "Organization",
+      "name": "STMicroelectronics"
+    }
+  ],
+  "keywords": "Jinn OS, Microkernel, Rust no_std, x86_64, LAPIC ONE-SHOT, TICKLESS, ZERO-IDLE, SMP, Microkernel Architecture, SIMD Vectorization, Deterministic Scheduling, Zero-GPU 2D Compositing, Energy-Proportional Computing, HLT, APIC Timer Gating, Per-CPU Accounting, Lazy TTL, Preemptive Scheduler"
+}
+  </script>
+  <!-- /Jinn Engineering Observatory: Schema.org TechArticle -->
+</head>
+
+<body class="bg-slate-950 text-slate-200 min-h-screen antialiased selection:bg-cyan-500/30">
+  <header class="border-b border-slate-800 bg-slate-900/70 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-4xl mx-auto px-6 h-14 flex items-center justify-between">
+      <a href="/artigos/?lab=kernel-zero-idle" class="flex items-center gap-2 hover:text-cyan-400 transition-colors text-xs font-mono">
+        <i data-lucide="arrow-left" class="w-4 h-4 text-cyan-400"></i>
+        <span>Observatory • Kernel &amp; Zero-Idle</span>
+      </a>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <a href="/feed.xml" target="_blank" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>RSS</span>
+        </a>
+        <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="text-cyan-300 hover:text-white">GitHub: Jinn_Project</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-6 py-10 space-y-8">
+    <article class="prose prose-invert prose-slate max-w-none space-y-6">
+      <div class="space-y-3 border-b border-slate-800 pb-6">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-cyan-400">
+          <span class="bg-amber-950 border border-amber-800 text-amber-300 px-2.5 py-0.5 rounded-full">MICROKERNEL</span>
+          <span class="bg-emerald-950 border border-emerald-800 text-emerald-300 px-2.5 py-0.5 rounded-full">LAPIC ONE-SHOT • TICKLESS • ZERO-IDLE SMP</span>
+          <span class="text-slate-500">•</span>
+          <time datetime="2026-11-26">26 Nov 2026</time>
+          <span class="text-slate-500">•</span>
+          <span class="text-slate-400">Etapa 3 do Kernel</span>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white leading-tight">
+          Timer LAPIC <em>One-Shot</em> Tickless e Deadlines Dinâmicos no Jinn OS: De 100 Hz Periódico para 1 Interrupção em 5,10 s Ociosos
+        </h1>
+        <p class="text-base sm:text-lg text-slate-300 leading-relaxed">
+          Mesmo após consolidar o escalonador em modo <code>HLT</code> com contabilidade por ciclos de TSC (Etapas 1 e 2), um timer periódico fixo de <code>100 Hz</code> ainda forçava acordares artificiais a cada <code>10 ms</code> em núcleos ativos e dependia de base temporal acoplada a ticks fixos. Na Etapa 3, o <strong>Jinn Microkernel</strong> passa a calibrar o <strong>Local APIC Timer</strong> e o <strong>TSC</strong> no boot via <strong>PIT Canal 2</strong>, mascara o PIT <code>IRQ0</code> (<code>pic::mask_irq(0)</code>), opera com <em>deadlines</em> dinâmicos em modo <strong>LAPIC One-Shot</strong> (<code>0b00 &lt;&lt; 17</code>, vetor <code>48</code>) e mantém relógio monotônico diferencial de alta resolução sem depender de interrupções periódicas — alcançando <code>d_lapic_timer_irqs=1</code> e <code>d_pit_irq0=0</code> durante <code>5,10 s</code> em repouso SMP sob QEMU.
+        </p>
+      </div>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">1. Diagnóstico Detalhado do que foi Levantado</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          A auditoria arquitetural conjunta do Ring 0 (<code>src/interrupts/apic.rs</code>, <code>src/scheduler.rs</code>, <code>src/smp.rs</code>, <code>src/timer.rs</code>) e do servidor gráfico Ring 3 (<strong>Aladdin</strong>, <code>src/desktop/session.rs</code>) revelou três gargalos que impediam silêncio real de interrupções em janelas ociosas:
+        </p>
+        <ul class="list-disc list-inside space-y-2 text-sm text-slate-300 leading-relaxed">
+          <li>
+            <strong>Timer periódico fixo e perda da base temporal sem tick:</strong> o <code>apic::unmask_timer</code> rearmava uma contagem estática periódica ao sair do repouso, enquanto <code>timer::ticks()</code> e <code>rtc::monotonic_time()</code> dependiam de incrementos discretos por IRQ de timer, impedindo desligar o disparo de <code>100 Hz</code> sem congelar timeouts e <code>sleep(ms)</code>.
+          </li>
+          <li>
+            <strong>Falta de IPI dedicada de reescalonamento e EOI assimétrico:</strong> o rendimento voluntário (<code>yield_now</code>) ainda usava um disparo de retorno legado, sem separar formalmente o vetor exclusivo de timer LAPIC (<code>LAPIC_TIMER_VECTOR = 48</code>) do vetor de IPI SMP (<code>RESCHEDULE_IPI_VECTOR = 49</code>), e exigia preservação rigorosa de EOI incondicional no PIC 8259A (<code>32..=47</code>) e locks <code>IrqSafeSpinLock</code>.
+          </li>
+          <li>
+            <strong>Redesenho periódico do compositor em janela ociosa:</strong> em nosso primeiro ensaio E2E em QEMU, o kernel já operava sem PIT <code>IRQ0</code> (<code>d_pit_irq0=0</code>, <code>cpu2/cpu3=100,00%</code>), mas o <code>AladdinSession::run()</code> executava redesenhos de tela inteira (<code>fb.swap_full</code>) a cada <code>1 s</code> durante os primeiros <code>15 s</code> após qualquer entrada de teclado — gerando <code>~350–740 ms</code> de renderização SW por ciclo em QEMU TCG e elevando artificialmente as interrupções de fatia ativa para <code>114</code> em <code>5,88 s</code>. Antecipar a transição ociosa do compositor para <code>idle_elapsed &gt; 300</code> ticks (<code>3 s</code>) com bloqueio indefinido (<code>u16::MAX</code>) eliminou os acordares gráficos redundantes.
+          </li>
+        </ul>
+      </section>
+
+      <section class="space-y-5">
+        <h2 class="text-2xl font-bold text-white">2. Arquitetura e Melhorias Implementadas</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-slate-300">
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-cyan-300">Calibração PIT Canal 2 &amp; LAPIC One-Shot (<code>apic.rs</code>)</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li>Estrutura estática <code>LapicCalibrationData</code> alinhada a 64 bytes em <code>.bss</code> armazena <code>lapic_ticks_per_ms</code>, <code>tsc_ticks_per_ms</code> e <code>tsc_ticks_per_10ms</code> calibrados no BSP durante <code>smp::init()</code> em janela determinística de <code>20 ms</code> no PIT Canal 2 (divisor 16).</li>
+              <li><code>arm_lapic_oneshot_deadline(vector, delay_us)</code> programa LVT em <em>One-Shot</em> (<code>0b00 &lt;&lt; 17</code>), limita <code>MAX_LAPIC_ONESHOT_CNT = 0x7FFF_FFFF</code> contra <em>rollover</em> de 32 bits e chama <code>mask_timer()</code> quando <code>None</code>.</li>
+              <li>No boot validado: <code>[APIC-CAL] one_shot=1 pit_irq0_masked=1 cal=PIT_CH2 lapic_ticks_ms=62471 tsc_ticks_ms=3599662</code>.</li>
+            </ul>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-emerald-300">Relógio Diferencial TSC &amp; Vetores 48/49 (<code>timer.rs</code>, <code>idt.rs</code>)</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li><code>timer::ticks()</code> e <code>rtc::monotonic_time()</code> passam a derivar o tempo decorrido sem bloqueios via leitura diferencial de <code>_rdtsc()</code> escalonada por <code>tsc_ticks_per_10ms</code> / <code>tsc_ticks_per_ms</code> após <code>enable_tickless_tsc_clock()</code>.</li>
+              <li>Stubs de interrupção dedicados <code>irq48_stub</code> (LAPIC One-Shot Timer) e <code>irq49_stub</code> (Reschedule IPI) adicionados em <code>stubs.s</code>, <code>idt.rs</code> e roteados em <code>irq_dispatch</code> com <code>apic::send_eoi()</code>.</li>
+              <li>Vetor <code>32</code> e linhas PIC <code>33..=47</code> preservam EOI incondicional ao PIC 8259A, protegendo o barramento contra travamentos legados.</li>
+            </ul>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-purple-300">Deadlines Reais no Escalonador &amp; Rede (<code>scheduler.rs</code>, <code>net/mod.rs</code>)</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li><code>arm_cpu_deadline_locked()</code> inspeciona tarefas em <code>TaskState::Sleeping(wake_tick)</code>, a próxima necessidade de polling de rede via <code>net::next_net_deadline_tick()</code> (retorna <code>None</code> com DHCP bound e zero waiters com IRQ verificada) e quanta ativos de <code>10 ms</code>.</li>
+              <li>Quando um pacote ou tarefa acorda o sistema antes do vencimento, <code>unblock_task</code> e o caminho de sono ajustam <code>BSP_ARMED_DEADLINE_TICK</code> e disparam IPI no vetor <code>49</code> se o deadline encurtar.</li>
+              <li>Núcleos AP ociosos (<code>check_ap_idle_before_hlt</code>) mascaram o LAPIC Timer antes de entrar em <code>HLT</code>, eliminando qualquer despertar periódico.</li>
+            </ul>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-amber-300">Telemetria Syscall 92, Aladdin &amp; Sonda F12</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li><code>PerCpuStatsUser</code> (Syscall 92) estendido com <code>lapic_timer_irqs</code>, <code>oneshot_arms</code>, <code>pit_irq0_count</code> e <code>tickless_active</code> em <code>src/syscall.rs</code> e <code>sdk/aladdin-sdk</code>.</li>
+              <li><strong>Monitor JAHA</strong> e <strong>Conky</strong> atualizados em <code>Aladdin</code> para exibir contadores <code>OneShot</code> em tempo real; compositor entra em <code>wait_ticks = u16::MAX</code> após <code>300</code> ticks (<code>3 s</code>) sem entrada ou animação.</li>
+              <li>Terminal <code>stats</code> exibe resumo gráfico <code>LAPIC OneShot=1 | TimerIRQs=... | Arms=... | PIT0=...</code> e atalho diagnóstico <code>F12</code> realiza snapshot para serial sem contaminar o framebuffer durante o ensaio ocioso.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-5">
+        <h2 class="text-2xl font-bold text-white">3. Benchmarks Comparativos (Antes vs. Depois) &amp; Evidência Visual</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          A suíte automatizada <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/scripts/test_lapic_tickless_e2e.py" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:underline"><code>scripts/test_lapic_tickless_e2e.py</code></a> (QEMU com <code>-device e1000 -smp 4 -m 512M</code>) comparou uma janela pura de repouso de <code>5,10 s</code> contra o regime anterior de timer periódico de <code>100 Hz</code>, além de validar precisão temporal via <code>jhcs-test</code> e acordar imediato por pacote HTTP na interface de rede:
+        </p>
+
+        <div class="overflow-x-auto not-prose rounded-xl border border-slate-800 bg-slate-900/70">
+          <table class="w-full text-left border-collapse text-xs sm:text-sm">
+            <thead>
+              <tr class="border-b border-slate-800 bg-slate-900 text-slate-300 font-mono">
+                <th class="p-3">Métrica Auditada (Janela 5,10 s / 4 vCPUs)</th>
+                <th class="p-3">Antes (Periódico 100 Hz Fixo)</th>
+                <th class="p-3 text-emerald-300">Depois (LAPIC One-Shot Tickless)</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/80 font-mono text-xs">
+              <tr>
+                <td class="p-3 text-slate-300 font-sans">Disparos PIT Canal 0 (<code>IRQ0</code>) em repouso</td>
+                <td class="p-3 text-rose-300">~500 ticks (100 Hz contínuo)</td>
+                <td class="p-3 text-emerald-300 font-bold">0 (<code>pit_irq0_masked=1</code>)</td>
+              </tr>
+              <tr>
+                <td class="p-3 text-slate-300 font-sans">Interrupções de Timer LAPIC (SMP 4 núcleos)</td>
+                <td class="p-3 text-rose-300">~500 BSP / ~2.000 acumulados</td>
+                <td class="p-3 text-emerald-300 font-bold">1 (<code>d_oneshot_arms=2</code>)</td>
+              </tr>
+              <tr>
+                <td class="p-3 text-slate-300 font-sans">Permanência em <code>HLT</code> — BSP (<code>cpu0</code>)</td>
+                <td class="p-3 text-slate-400">Acordado a cada 10 ms</td>
+                <td class="p-3 text-emerald-300 font-bold">99,98% (<code>d_task=0</code>, <code>d_wake=2</code>)</td>
+              </tr>
+              <tr>
+                <td class="p-3 text-slate-300 font-sans">Permanência em <code>HLT</code> — AP <code>cpu1</code></td>
+                <td class="p-3 text-slate-400">Acordares periódicos de tick</td>
+                <td class="p-3 text-emerald-300 font-bold">99,82% (<code>d_wake=1</code>, ~8,7 ms)</td>
+              </tr>
+              <tr>
+                <td class="p-3 text-slate-300 font-sans">Permanência em <code>HLT</code> — APs <code>cpu2</code> e <code>cpu3</code></td>
+                <td class="p-3 text-slate-400">500 interrupções/núcleo nominais</td>
+                <td class="p-3 text-emerald-300 font-bold">100,00% (<code>d_task=0</code>, <code>d_irq=0</code>, <code>d_wake=0</code>)</td>
+              </tr>
+              <tr>
+                <td class="p-3 text-slate-300 font-sans">Precisão <code>sleep(1000 ms)</code> via TSC (<code>Test 8c</code>)</td>
+                <td class="p-3 text-slate-400">Granularidade discreta 10 ms</td>
+                <td class="p-3 text-emerald-300 font-bold">1000,07 ms (3,5999B / 3,599662M/ms)</td>
+              </tr>
+              <tr>
+                <td class="p-3 text-slate-300 font-sans">Wakeup por IRQ NIC externa (<code>e1000</code> HTTP GET)</td>
+                <td class="p-3 text-slate-400">Dependente de tick ou IRQ</td>
+                <td class="p-3 text-emerald-300 font-bold">2454,6 ms fim-a-fim (<code>hits=1</code>)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <figure class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900/80 not-prose">
+          <img src="../assets/lapic-tickless-zero-idle.png" alt="Captura real do Aladdin Desktop no QEMU mostrando Terminal com LAPIC OneShot=1, TimerIRQs=774, Arms=823 e Monitor de Recursos JAHA exibindo OneShot:840 irq e CPU Zero-Idle" class="w-full h-auto" />
+          <figcaption class="p-3 text-xs text-slate-400 font-mono">
+            Figura 1 (<code>lapic-tickless-zero-idle.png</code>): Execução real no QEMU (<code>-device e1000 -smp 4 -m 512M</code>) após o término da bateria <code>test_lapic_tickless_e2e.py</code>. O Terminal exibe <code>LAPIC OneShot=1 | TimerIRQs=774 | Arms=823</code> logo antes do quadro ser recomposto no Monitor JAHA (<code>Tempo Ativo : 24s | OneShot:840 irq</code>), refletindo somente o custo das renderizações ativas do desktop e da suíte HTTP/<code>jhcs-test</code>.
+          </figcaption>
+        </figure>
+
+        <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2 text-xs font-mono text-slate-300">
+          <div class="text-cyan-300 font-bold">Suítes de Regressão Executadas Após os Ajustes Finais:</div>
+          <ul class="list-disc list-inside space-y-1">
+            <li><code>test_hot_routes_e2e.py</code>: PASS — Fast-Path com <code>ARP=0 DNS=0 TCP_SYN=1</code> em cold reboot e <code>cpu0=99,96%</code>, <code>cpu2=100,00%</code>, <code>cpu3=100,00%</code> em repouso.</li>
+            <li><code>test_dns_cache_e2e.py</code>: PASS — <code>15/15</code> testes unitários RFC 1035/Cache e persistência <code>/disk/dns_cache.db</code>.</li>
+            <li><code>test_dns_cross_pcap.py</code>: PASS — Validação cruzada em PCAP para <code>Intel e1000</code> e <code>VirtIO-Net</code>.</li>
+            <li><code>test_jaha_12_integrity.py</code>: PASS — <code>[JAHA-AUDIT-MEM] Status: INVARIANT PASSED (0 bytes discrepancy)</code>.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-white">4. Aplicabilidade Prática (Indústria, Uso Doméstico e Servidores)</h2>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-emerald-300 mb-1">Usos Industriais (Gateways Fanless, PLCs &amp; Telemetria Remota)</h3>
+            <p>Controladores de borda e concentradores SCADA frequentemente operam com sensores em rajadas esporádicas ou links intermitentes alimentados por bateria/painel solar. Remover interrupções periódicas de <code>100 Hz</code> permite que os núcleos permaneçam estritamente em <code>HLT</code> entre eventos reais da NIC ou de barramento até a chegada do próximo pacote ou prazo de aquisição.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-cyan-300 mb-1">Usos Domésticos (Notebooks, Estações Compactas &amp; Silêncio Acústico)</h3>
+            <p>Associado ao bloqueio <em>Zero-Idle</em> de <code>3 s</code> no compositor gráfico <strong>Aladdin</strong>, o agendamento dinâmico por <em>deadlines</em> evita que o sistema acorde centenas de vezes por segundo para atualizar apenas a passagem de ticks vazios — reduzindo aquecimento em notebooks e mini-PCs domésticos durante leitura estática ou navegação pausada.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+            <h3 class="font-bold text-purple-300 mb-1">Usos em Servidores (Densidade de Micro-VMs &amp; Infraestrutura Orientada a Eventos)</h3>
+            <p>Em servidores consolidados com dezenas de instâncias convidadas, timers periódicos de <code>100 Hz</code> multiplicam desperdiçadoramente saídas de virtualização (<em>VM-exits</em>) mesmo quando o serviço está ocioso aguardando requisições TCP/TLS. Um kernel convidado que permanece com <code>d_lapic_timer_irqs=1</code> em <code>5,10 s</code> libera núcleos físicos do <em>hypervisor</em> para instâncias efetivamente sob carga.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-3 border-t border-slate-800 pt-6">
+        <h2 class="text-xl font-bold text-white">5. Fronteira Honesta &amp; Limitações Conhecidas</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          Em conformidade com a matriz auditada em <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/ENGINEERING_STATUS_AND_LIMITATIONS.md" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:underline"><code>docs/ENGINEERING_STATUS_AND_LIMITATIONS.md</code></a> (Tabela A vs. Tabela B): enquanto a calibração PIT Canal 2, a redução para <code>1</code> interrupção LAPIC em <code>5,10 s</code>, a precisão de <code>1000,07 ms</code> via TSC diferencial e os percentuais de <code>HLT</code> (<code>99,82%–100,00%</code>) foram diretamente comprovados em QEMU TCG (<code>e1000</code> e <code>VirtIO-Net</code>, <code>-smp 4</code>), a medição física em <strong>Watts/Joules</strong>, a transição profunda em C-states de silício (<code>MWAIT</code> C3/C6/C10) e o desvio de cristal APIC em placas-mãe físicas reais permanecem pendentes de homologação em <em>bare-metal</em> (Tabela B). Durante períodos com movimentação contínua do usuário ou animações ativas, o compositor Aladdin continua disparando fatias ativas normais proporcionais à carga gráfica.
+        </p>
+      </section>
+
+            <!-- Jinn Ecosystem & Open Collaboration Block (Auto-Generated) -->
+      <section aria-labelledby="ecosystems-collaboration-heading" class="not-prose my-10 p-6 rounded-xl bg-slate-900/75 border border-slate-800 space-y-5">
+        <div class="space-y-2">
+          <p class="text-[11px] font-mono uppercase tracking-wider text-cyan-400">Jinn Engineering Observatory • Semântica &amp; Colaboração Aberta</p>
+          <h3 id="ecosystems-collaboration-heading" class="text-lg sm:text-xl font-bold text-white">
+            Domínios Técnicos &amp; Ecossistemas Relacionados
+          </h3>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Badges clicáveis indexados por bancada, domínio de engenharia e organizações/padrões do Radar Expandido (Nível B contextual, sem endosso implícito):
+          </p>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <a href="/artigos/?lab=efficiency-lab" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400"><span>Efficiency Lab</span></a>
+          <a href="/artigos/?lab=post-mortems" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-rose-950/80 border-rose-700/70 text-rose-300 hover:border-rose-400"><span>Post-Mortems &amp; Failure Logs</span></a>
+          <a href="/artigos/?eco=zero-idle-efficiency" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400"><span>Zero-Idle &amp; SMP</span><span class="opacity-70">&bull; Energy-Proportional Runtime, SMP Accounting &amp; Low-Overhead Scheduling</span></a>
+          <a href="/artigos/?eco=microkernel-security" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400"><span>Microkernel &amp; Segurança</span><span class="opacity-70">&bull; Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity</span></a>
+        </div>
+
+        <div class="pt-1">
+          <div class="text-[11px] font-mono text-slate-400 mb-2">Ecossistemas, Padrões &amp; Radar Expandido (clique para filtrar o acervo):</div>
+          <div class="flex flex-wrap gap-1.5">
+            <a href="/artigos/?q=Academic+Systems+Research+Labs" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-emerald-950/60 border-emerald-700/70 text-emerald-200 hover:border-emerald-400">Academic Systems Research Labs</a>
+          <a href="/artigos/?q=Intel" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Intel</a>
+          <a href="/artigos/?q=Red+Hat" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Red Hat</a>
+          <a href="/artigos/?q=Arm" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Arm</a>
+          <a href="/artigos/?q=Qualcomm" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Qualcomm</a>
+          <a href="/artigos/?q=AMD" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">AMD</a>
+          <a href="/artigos/?q=Bosch" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Bosch</a>
+          <a href="/artigos/?q=RISC-V+International" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">RISC-V International</a>
+          <a href="/artigos/?q=LF+Edge" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">LF Edge</a>
+          <a href="/artigos/?q=Huawei" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Huawei</a>
+          <a href="/artigos/?q=Siemens" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">Siemens</a>
+          <a href="/artigos/?q=STMicroelectronics" class="px-2.5 py-0.5 rounded border text-[11px] font-mono transition-colors bg-slate-900 border-slate-700/80 text-slate-300 hover:border-cyan-400 hover:text-cyan-200">STMicroelectronics</a>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-cyan-300 font-mono">
+            Aplicabilidade: Indústria, Uso Doméstico e Servidores
+          </h4>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-emerald-300">Indústria &amp; Edge</div>
+              <p class="text-slate-400 leading-relaxed">Controladores fanless, subestações e telemetria off-grid com APs em HLT e contabilidade SMP por núcleo em QEMU (validação térmica/watts física via Tabela B).</p>
+            </div>
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-cyan-300">Uso Doméstico &amp; Educação</div>
+              <p class="text-slate-400 leading-relaxed">Notebooks antigos, mini-PCs domésticos e estações silenciosas sem polling contínuo em repouso.</p>
+            </div>
+            <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+              <div class="font-mono font-semibold text-purple-300">Servidores &amp; HPC</div>
+              <p class="text-slate-400 leading-relaxed">Consolidação de micro-instâncias, gateways de borda e redução de wake-ups espúrios de timer APIC.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <h4 class="text-sm font-bold text-emerald-300 font-mono">
+            Chamada Aberta para Pilotos (Indústria Local, Universidades &amp; Setor Público Ético)
+          </h4>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Convidamos <strong>integradores de automação industrial</strong>, <strong>laboratórios universitários de arquitetura/SO</strong> e <strong>instituições públicas eticamente responsáveis</strong> a reproduzirem estes experimentos em silício real (fechando lacunas emulador vs. hardware da Tabela B) ou propor estudos-piloto com <strong>Jinn OS</strong>, <strong>Aladdin</strong> e <strong>JHCS</strong>.
+          </p>
+          <div class="flex flex-wrap gap-2.5 text-xs font-mono pt-1">
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-cyan-400 text-slate-200 hover:text-cyan-300 transition-colors">
+              GitHub: Jinn_Project
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/jhcs-rs" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-purple-400 text-slate-200 hover:text-purple-300 transition-colors">
+              GitHub: jhcs-rs
+            </a>
+            <a href="https://github.com/GeovaneEstanislau/Jinn_Project/blob/main/docs/ENGINEERING_STATUS_AND_LIMITATIONS.md" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-amber-400 text-slate-200 hover:text-amber-300 transition-colors">
+              Fronteira Honesta &amp; Tabela B
+            </a>
+            <a href="/solucoes/edge-industrial-zero-idle.html" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-emerald-400 text-slate-200 hover:text-emerald-300 transition-colors">
+              Soluções &amp; Benchmarks
+            </a>
+            <a href="/#win-contact" class="px-3 py-1.5 rounded-lg bg-cyan-950/90 border border-cyan-600/70 hover:bg-cyan-900 text-cyan-200 transition-colors">
+              Contato Técnico &amp; Pilotos
+            </a>
+          </div>
+        </div>
+      </section>
+      <!-- /Jinn Ecosystem & Open Collaboration Block -->
+
+      <!-- Google News Reader Revenue Manager (CTA Inline Final) -->
+      <div class="my-8 not-prose">
+        <div rrm-inline-cta="ebff73fc-a104-4f02-ba1c-c82621940c9f"></div>
+      </div>
+    </article>
+
+    <div
+      class="border-t border-slate-800 mt-16 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span>Jinn Engineering Observatory • Kernel &amp; Zero-Idle Architecture • 2026</span>
+        <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml"><img
+            src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="/artigos/" class="text-cyan-400 hover:underline">Central de Artigos</a>
+        <a href="/feed.xml" class="text-amber-400 hover:underline flex items-center gap-1">
+          <i data-lucide="rss" class="w-3.5 h-3.5"></i>
+          <span>Assinar Feed</span>
+        </a>
+        <a href="/" class="text-slate-300 hover:text-white">Portal Principal</a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+
+</html>

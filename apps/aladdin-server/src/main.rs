@@ -1085,62 +1085,38 @@ impl ProcessHost for UserProcess {
                 Err(()) => output("Erro ao iniciar processo.", 0x00EF_4444),
             }
         } else if trimmed.eq_ignore_ascii_case("stats") || trimmed.eq_ignore_ascii_case("jhcs") {
-            let mut st = aladdin_sdk::syscall::SystemStatsUser::default();
-            let _ = unsafe {
-                aladdin_sdk::syscall::syscall1(
-                    aladdin_sdk::syscall::SYS_GET_SYSTEM_STATS,
-                    &mut st as *mut _ as u64,
-                )
-            };
-            aladdin_sdk::console::print("[aladdin-server] [STATS] active_cycles=");
-            aladdin_sdk::console::print_num(st.cpu_active_cycles);
-            aladdin_sdk::console::print(" idle_cycles=");
-            aladdin_sdk::console::print_num(st.cpu_idle_cycles);
-            aladdin_sdk::console::print(" syscalls=");
-            aladdin_sdk::console::print_num(st.syscalls_total);
-            aladdin_sdk::console::print(" used_ram_mb=");
-            aladdin_sdk::console::print_num(st.used_ram_mb);
-            aladdin_sdk::console::print(" ring_rx=");
-            aladdin_sdk::console::print_num(st.ring_events_processed);
-            aladdin_sdk::console::print(" ring_tx=");
-            aladdin_sdk::console::print_num(st.ring_cmds_flushed);
-            aladdin_sdk::console::println("");
-            let mut pc = aladdin_sdk::syscall::PerCpuStatsUser::default();
-            let pc_ret = unsafe {
-                aladdin_sdk::syscall::syscall1(
-                    aladdin_sdk::syscall::SYS_GET_PERCPU_STATS,
-                    &mut pc as *mut _ as u64,
-                )
-            };
-            if pc_ret == 0 {
-                aladdin_sdk::console::print("[aladdin-server] [PERCPU] cpus=");
-                aladdin_sdk::console::print_num(pc.cpu_count);
-                aladdin_sdk::console::print(" net_irqs=");
-                aladdin_sdk::console::print_num(pc.net_irq_count);
-                aladdin_sdk::console::print(" net_verified=");
-                aladdin_sdk::console::print_num(pc.net_irq_verified);
-                aladdin_sdk::console::println("");
-                let n = (pc.cpu_count as usize).min(8);
-                for idx in 0..n {
-                    let c = pc.cores[idx];
-                    aladdin_sdk::console::print("  cpu");
-                    aladdin_sdk::console::print_num(c.cpu_id as u64);
-                    aladdin_sdk::console::print(": total=");
-                    aladdin_sdk::console::print_num(c.total_cycles);
-                    aladdin_sdk::console::print(" hlt=");
-                    aladdin_sdk::console::print_num(c.hlt_cycles);
-                    aladdin_sdk::console::print(" task=");
-                    aladdin_sdk::console::print_num(c.task_cycles);
-                    aladdin_sdk::console::print(" irq=");
-                    aladdin_sdk::console::print_num(c.irq_cycles);
-                    aladdin_sdk::console::print(" trans=");
-                    aladdin_sdk::console::print_num(c.idle_transitions);
-                    aladdin_sdk::console::print(" wake=");
-                    aladdin_sdk::console::print_num(c.wakeups);
-                    aladdin_sdk::console::println("");
+            if let Some(pc) = dump_stats_telemetry() {
+                let mut ui_buf = [0u8; 96];
+                let mut ui_pos = 0usize;
+                let push_s = |dst: &mut [u8], pos: &mut usize, s: &[u8]| {
+                    let take = s.len().min(dst.len().saturating_sub(*pos));
+                    dst[*pos..*pos + take].copy_from_slice(&s[..take]);
+                    *pos += take;
+                };
+                let push_num = |dst: &mut [u8], pos: &mut usize, mut v: u64| {
+                    if v == 0 {
+                        if *pos < dst.len() { dst[*pos] = b'0'; *pos += 1; }
+                        return;
+                    }
+                    let mut tmp = [0u8; 20];
+                    let mut k = 0usize;
+                    while v > 0 { tmp[k] = b'0' + (v % 10) as u8; v /= 10; k += 1; }
+                    while k > 0 { k -= 1; if *pos < dst.len() { dst[*pos] = tmp[k]; *pos += 1; } }
+                };
+                push_s(&mut ui_buf, &mut ui_pos, b"LAPIC OneShot=");
+                push_num(&mut ui_buf, &mut ui_pos, pc.tickless_active);
+                push_s(&mut ui_buf, &mut ui_pos, b" | TimerIRQs=");
+                push_num(&mut ui_buf, &mut ui_pos, pc.lapic_timer_irqs);
+                push_s(&mut ui_buf, &mut ui_pos, b" | Arms=");
+                push_num(&mut ui_buf, &mut ui_pos, pc.oneshot_arms);
+                push_s(&mut ui_buf, &mut ui_pos, b" | PIT0=");
+                push_num(&mut ui_buf, &mut ui_pos, pc.pit_irq0_count);
+                if let Ok(line) = core::str::from_utf8(&ui_buf[..ui_pos]) {
+                    output(line, 0x0022_C55E);
                 }
+            } else {
+                output("Telemetria Zero-Idle & Syscall 88/92 registrada na serial.", 0x0022_C55E);
             }
-            output("Telemetria Zero-Idle & Syscall 88/92 registrada na serial.", 0x0022_C55E);
         } else if trimmed.eq_ignore_ascii_case("hotroutes") {
             let sys_h = UserSystem { start_tick: core::sync::atomic::AtomicU64::new(0) };
             static mut CLI_HOT_LIST: [aladdin::contracts::system::HotRouteTableEntry; 32] =
@@ -1469,6 +1445,77 @@ impl ProcessHost for UserProcess {
 
 // ── Ponto de Entrada Principal (Ring 3) ───────────────────────────────────────
 
+/// Consulta Syscalls 88/92 e registra snapshot Tickless/Per-CPU na saída serial.
+fn dump_stats_telemetry() -> Option<aladdin_sdk::syscall::PerCpuStatsUser> {
+    let mut st = aladdin_sdk::syscall::SystemStatsUser::default();
+    let _ = unsafe {
+        aladdin_sdk::syscall::syscall1(
+            aladdin_sdk::syscall::SYS_GET_SYSTEM_STATS,
+            &mut st as *mut _ as u64,
+        )
+    };
+    aladdin_sdk::console::print("[aladdin-server] [STATS] active_cycles=");
+    aladdin_sdk::console::print_num(st.cpu_active_cycles);
+    aladdin_sdk::console::print(" idle_cycles=");
+    aladdin_sdk::console::print_num(st.cpu_idle_cycles);
+    aladdin_sdk::console::print(" syscalls=");
+    aladdin_sdk::console::print_num(st.syscalls_total);
+    aladdin_sdk::console::print(" used_ram_mb=");
+    aladdin_sdk::console::print_num(st.used_ram_mb);
+    aladdin_sdk::console::print(" ring_rx=");
+    aladdin_sdk::console::print_num(st.ring_events_processed);
+    aladdin_sdk::console::print(" ring_tx=");
+    aladdin_sdk::console::print_num(st.ring_cmds_flushed);
+    aladdin_sdk::console::println("");
+    let mut pc = aladdin_sdk::syscall::PerCpuStatsUser::default();
+    let pc_ret = unsafe {
+        aladdin_sdk::syscall::syscall1(
+            aladdin_sdk::syscall::SYS_GET_PERCPU_STATS,
+            &mut pc as *mut _ as u64,
+        )
+    };
+    if pc_ret == 0 {
+        aladdin_sdk::console::print("[aladdin-server] [PERCPU] cpus=");
+        aladdin_sdk::console::print_num(pc.cpu_count);
+        aladdin_sdk::console::print(" net_irqs=");
+        aladdin_sdk::console::print_num(pc.net_irq_count);
+        aladdin_sdk::console::print(" net_verified=");
+        aladdin_sdk::console::print_num(pc.net_irq_verified);
+        aladdin_sdk::console::println("");
+        aladdin_sdk::console::print("[aladdin-server] [TICKLESS] active=");
+        aladdin_sdk::console::print_num(pc.tickless_active);
+        aladdin_sdk::console::print(" lapic_timer_irqs=");
+        aladdin_sdk::console::print_num(pc.lapic_timer_irqs);
+        aladdin_sdk::console::print(" oneshot_arms=");
+        aladdin_sdk::console::print_num(pc.oneshot_arms);
+        aladdin_sdk::console::print(" pit_irq0=");
+        aladdin_sdk::console::print_num(pc.pit_irq0_count);
+        aladdin_sdk::console::println("");
+        let n = (pc.cpu_count as usize).min(8);
+        for idx in 0..n {
+            let c = pc.cores[idx];
+            aladdin_sdk::console::print("  cpu");
+            aladdin_sdk::console::print_num(c.cpu_id as u64);
+            aladdin_sdk::console::print(": total=");
+            aladdin_sdk::console::print_num(c.total_cycles);
+            aladdin_sdk::console::print(" hlt=");
+            aladdin_sdk::console::print_num(c.hlt_cycles);
+            aladdin_sdk::console::print(" task=");
+            aladdin_sdk::console::print_num(c.task_cycles);
+            aladdin_sdk::console::print(" irq=");
+            aladdin_sdk::console::print_num(c.irq_cycles);
+            aladdin_sdk::console::print(" trans=");
+            aladdin_sdk::console::print_num(c.idle_transitions);
+            aladdin_sdk::console::print(" wake=");
+            aladdin_sdk::console::print_num(c.wakeups);
+            aladdin_sdk::console::println("");
+        }
+        Some(pc)
+    } else {
+        None
+    }
+}
+
 static mut GLOBAL_SESSION: *mut AladdinSession = core::ptr::null_mut();
 
 #[no_mangle]
@@ -1640,13 +1687,21 @@ pub extern "C" fn _start() -> ! {
     let fb_w = user_fb.width;
     let fb_h = user_fb.height;
 
+    let dispatch_key = |ch: u8| {
+        if ch == 0x8C {
+            // F12: snapshot tickless não intrusivo direto para serial (sem redraw do Terminal)
+            let _ = dump_stats_telemetry();
+        } else {
+            enqueue_key(ch);
+        }
+    };
+
     let drain_hardware_events = || {
         if unsafe { SHARED_RINGS_ACTIVE } {
             let rings = unsafe { &*core::ptr::addr_of_mut!(SHARED_RINGS) };
             while let Some(ev) = rings.pop_rx_event() {
                 if ev.kind == INPUT_KIND_KEY_DOWN {
-                    let ch = ev.code as u8;
-                    enqueue_key(ch);
+                    dispatch_key(ev.code as u8);
                 } else if ev.kind == INPUT_KIND_MOUSE_MOVE || ev.kind == INPUT_KIND_MOUSE_BTN {
                     let mx = (ev.x.max(0) as usize).min(fb_w.saturating_sub(1));
                     let my = (ev.y.max(0) as usize).min(fb_h.saturating_sub(1));
@@ -1665,8 +1720,7 @@ pub extern "C" fn _start() -> ! {
                     break;
                 }
                 if ev.kind == 1 {
-                    let ch = ev.code as u8;
-                    enqueue_key(ch);
+                    dispatch_key(ev.code as u8);
                 } else if ev.kind == 3 || ev.kind == 4 || ev.kind == 5 {
                     let mx = (ev.x.max(0) as usize).min(fb_w.saturating_sub(1));
                     let my = (ev.y.max(0) as usize).min(fb_h.saturating_sub(1));

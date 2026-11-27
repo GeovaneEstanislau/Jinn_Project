@@ -422,7 +422,7 @@ pub fn init() {
         0x0000,
         0x0000,
         "apic_timer0",
-        "Local APIC / PIT (100 Hz)",
+        "Local APIC One-Shot Tickless",
         0x0001,
     )).ok();
 }

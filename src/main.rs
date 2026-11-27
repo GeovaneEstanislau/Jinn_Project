@@ -769,7 +769,7 @@ pub extern "C" fn _start() -> ! {
     w.write_line("[SUCCESS] Jinn OS pronto - entregando controle ao Escalonador.");
     w.set_color(Color::LightGray, Color::Black);
 
-    // Habilita interrupções. O APIC Timer a 100 Hz e o PIT garantem preempção contínua.
+    // Habilita interrupções. O LAPIC Timer One-Shot tickless garante preempção sob demanda e repouso Zero-Idle.
     unsafe { core::arch::asm!("sti") };
 
     // Cede voluntariamente a CPU de boot imediatamente para despachar a primeira tarefa pronta (Task 1: Desktop/Shell)

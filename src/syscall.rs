@@ -3412,6 +3412,10 @@ pub struct PerCpuStatsUser {
     pub net_irq_count: u64,
     pub net_irq_verified: u64,
     pub cores: [PerCpuCoreStat; 8],
+    pub lapic_timer_irqs: u64,
+    pub oneshot_arms: u64,
+    pub pit_irq0_count: u64,
+    pub tickless_active: u64,
 }
 
 /// `sys_get_percpu_stats(out_ptr)` — Retorna contadores reais por CPU (total, hlt, task, irq, transições, wakeups) (Syscall 92).
@@ -3430,6 +3434,11 @@ fn sys_get_percpu_stats(out_ptr: *mut PerCpuStatsUser) -> isize {
     let (net_irqs, net_verified) = crate::drivers::net::net_irq_stats();
     out.net_irq_count = net_irqs;
     out.net_irq_verified = if net_verified { 1 } else { 0 };
+    let (lapic_irqs, oneshot_arms) = crate::interrupts::apic::timer_irq_totals();
+    out.lapic_timer_irqs = lapic_irqs;
+    out.oneshot_arms = oneshot_arms;
+    out.pit_irq0_count = crate::timer::pit_irq0_count();
+    out.tickless_active = if crate::timer::is_tickless_active() { 1 } else { 0 };
     for i in 0..8 {
         let s = crate::smp::snapshot_percpu_core(i);
         out.cores[i] = PerCpuCoreStat {

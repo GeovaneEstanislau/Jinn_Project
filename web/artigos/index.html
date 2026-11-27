@@ -59,7 +59,7 @@
         <span class="text-xs font-mono bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded border border-cyan-800">Artigos</span>
       </a>
       <div class="flex items-center gap-3 sm:gap-4 text-xs font-mono overflow-x-auto">
-        <span id="articles-counter" class="hidden sm:inline-block text-slate-400">30 publicações</span>
+        <span id="articles-counter" class="hidden sm:inline-block text-slate-400">31 publicações</span>
         <a href="http://validator.w3.org/feed/check.cgi?url=https%3A//jinn-os.dev.br/rss.xml" class="hidden md:inline-block shrink-0"><img src="/valid-rss-rogers.png" alt="[Valid RSS]" title="Validate my RSS feed" style="height: 15px;" /></a>
         <a href="/feed.xml" target="_blank" class="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors shrink-0">
           <i data-lucide="rss" class="w-3.5 h-3.5"></i>
@@ -116,12 +116,45 @@
         </p>
       </div>
       <div class="text-xs font-mono text-slate-400 shrink-0">
-        Mostrando <span id="visible-count" class="text-cyan-400 font-bold">30</span> de 30 artigos
+        Mostrando <span id="visible-count" class="text-cyan-400 font-bold">31</span> de 31 artigos
       </div>
     </div>
 
     <!-- Container Escalável de Artigos -->
     <div id="articles-grid" class="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
+      <!-- Card: timer-lapic-one-shot-tickless-zero-idle-jinn-os -->
+      <article data-article-card data-labs="efficiency-lab post-mortems" data-categories="zero-idle-efficiency microkernel-security" data-search="timer lapic one-shot tickless no jinn os: queda de 99,8% nos ticks em repouso e relógio tsc etapa 3 do jinn microkernel: calibração bsp via pit canal 2, mascaramento do pit irq0 de 100 hz, deadlines dinâmicos lapic one-shot (vetores 48/49), relógio diferencial via tsc e auditoria zero-idle smp com apenas 1 interrupção de timer em 5,10 s ociosos no qemu. microkernel lapic one-shot tickless zero-idle smp efficiency lab zero-idle hlt, smp per-cpu accounting, lazy ttl &amp; 64m ram post-mortems &amp; failure logs análises de causa raiz, pcap traces &amp; hardware/irq incidents energy-proportional runtime, smp accounting &amp; low-overhead scheduling intel amd arm qualcomm siemens bosch stmicroelectronics lf edge industrial automation integrators academic systems research labs zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens bosch stmicroelectronics industrial automation integrators sovereign public infrastructure microkernel architecture simd vectorization deterministic scheduling zero-gpu 2d compositing energy-proportional computing smp per-cpu accounting lazy ttl cache evaluation w^x memory enforcement academic systems research labs intel red hat arm qualcomm amd bosch risc-v international lf edge huawei siemens stmicroelectronics jinn os microkernel rust no_std x86_64 lapic one-shot tickless zero-idle smp microkernel architecture simd vectorization deterministic scheduling zero-gpu 2d compositing energy-proportional computing hlt apic timer gating per-cpu accounting lazy ttl preemptive scheduler" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-amber-400 mb-3">
+            <span class="bg-amber-950 border border-amber-800 px-2.5 py-0.5 rounded-full font-semibold">MICROKERNEL</span>
+            <div class="flex items-center gap-2 text-slate-400">
+              <time datetime="2026-11-26">26 Nov 2026</time>
+              <span>•</span>
+              <span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i>8 min</span>
+            </div>
+          </div>
+          <h2 class="text-lg sm:text-xl font-bold text-white group-hover:text-amber-300 transition-colors leading-snug">
+            <a href="/artigos/timer-lapic-one-shot-tickless-zero-idle-jinn-os.html" class="hover:underline decoration-cyan-500/60 underline-offset-4">Timer LAPIC One-Shot Tickless no Jinn OS: Queda de 99,8% nos Ticks em Repouso e Relógio TSC</a>
+          </h2>
+          <p class="text-slate-400 text-sm mt-3 line-clamp-3 leading-relaxed">
+            Etapa 3 do Jinn Microkernel: calibração BSP via PIT Canal 2, mascaramento do PIT IRQ0 de 100 Hz, deadlines dinâmicos LAPIC One-Shot (vetores 48/49), relógio diferencial via TSC e auditoria Zero-Idle SMP com apenas 1 interrupção de timer em 5,10 s ociosos no QEMU.
+          </p>
+          <p class="text-[11px] font-mono text-emerald-300/90 mt-2.5 truncate" title="Indicadores citados no relatório: 100 Hz, 10 ms, 100,00%">
+            Indicadores citados no relatório: 100 Hz, 10 ms, 100,00%
+          </p>
+          <div class="flex flex-wrap items-center gap-1 mt-2" title="Ecossistemas relacionados: Academic Systems Research Labs, Intel, Red Hat, Arm, Qualcomm, AMD">
+            <span class="text-[10px] font-mono text-slate-500 mr-0.5">Ecossistemas:</span><button type="button" data-q-badge="Academic Systems Research Labs" title="Filtrar artigos relacionados a Academic Systems Research Labs" class="px-1.5 py-0.5 rounded border text-[10px] font-mono transition-colors border-emerald-800/80 text-emerald-300 bg-emerald-950/40 hover:border-emerald-400">Academic Systems Research Labs</button><button type="button" data-q-badge="Intel" title="Filtrar artigos relacionados a Intel" class="px-1.5 py-0.5 rounded border text-[10px] font-mono transition-colors border-slate-700/80 text-slate-300 bg-slate-950/80 hover:border-cyan-400 hover:text-cyan-200">Intel</button><button type="button" data-q-badge="Red Hat" title="Filtrar artigos relacionados a Red Hat" class="px-1.5 py-0.5 rounded border text-[10px] font-mono transition-colors border-slate-700/80 text-slate-300 bg-slate-950/80 hover:border-cyan-400 hover:text-cyan-200">Red Hat</button><button type="button" data-q-badge="Arm" title="Filtrar artigos relacionados a Arm" class="px-1.5 py-0.5 rounded border text-[10px] font-mono transition-colors border-slate-700/80 text-slate-300 bg-slate-950/80 hover:border-cyan-400 hover:text-cyan-200">Arm</button><button type="button" data-q-badge="Qualcomm" title="Filtrar artigos relacionados a Qualcomm" class="px-1.5 py-0.5 rounded border text-[10px] font-mono transition-colors border-slate-700/80 text-slate-300 bg-slate-950/80 hover:border-cyan-400 hover:text-cyan-200">Qualcomm</button>
+          </div>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5"><button type="button" data-lab-badge="efficiency-lab" title="Filtrar por Efficiency Lab" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400">Efficiency Lab</button><button type="button" data-lab-badge="post-mortems" title="Filtrar por Post-Mortems &amp; Failure Logs" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-rose-950/80 border-rose-700/70 text-rose-300 hover:border-rose-400">Post-Mortems &amp; Failure Logs</button><button type="button" data-eco-badge="zero-idle-efficiency" title="Filtrar por Energy-Proportional Runtime, SMP Accounting &amp; Low-Overhead Scheduling" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-emerald-950/80 border-emerald-700/70 text-emerald-300 hover:border-emerald-400">Zero-Idle &amp; SMP</button><button type="button" data-eco-badge="microkernel-security" title="Filtrar por Zero-Trust Isolation, W^X Enforcement &amp; Supply-Chain Integrity" class="px-2 py-0.5 rounded-full border text-[10px] font-mono transition-colors bg-amber-950/80 border-amber-700/70 text-amber-300 hover:border-amber-400">Microkernel &amp; Segurança</button></div>
+          <a href="/artigos/timer-lapic-one-shot-tickless-zero-idle-jinn-os.html" class="flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 ml-auto shrink-0">
+            <span>Ler artigo</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform"></i>
+          </a>
+        </div>
+      </article>
+
       <!-- Card: network-failure-observability-x509-downgrade-protection-jinn -->
       <article data-article-card data-labs="security-lab architecture-rfcs" data-categories="fastpath-ipc-net zero-idle-efficiency microkernel-security" data-search="x.509/san, anti-downgrade https e custo das syscalls 88 e 97 no jinn os hardening criptográfico #![no_std] no jinn browser (ring 3): validação asn.1 der x.509, san/cn rfc 6125, assinatura certificateverify (ecdsa p-256, rsa-pss e pkcs#1 v1.5), bloqueio de downgrade https para http, selo http (sem tls) e medição real rdtsc/µs da fronteira ring 3 &lt;-&gt; ring 0 das syscalls 88 e 97 em qemu (-device e1000, -smp 4). security tls 1.3 x.509 jinn browser observability syscall 88 syscall 97 security lab ring 3 driver isolation, w^x pml4, tls 1.3 no_std &amp; jinnwall architecture &amp; rfcs especificações de microkernel, vfs fat32/ext2, .jpkg &amp; profiles zero-copy ring buffers &amp; l2/l3 fast-path networking cloudflare akamai google huawei risc-v international lf edge industrial automation integrators sovereign public infrastructure energy-proportional runtime, smp accounting &amp; low-overhead scheduling intel amd arm qualcomm siemens bosch stmicroelectronics lf edge industrial automation integrators academic systems research labs zero-trust isolation, w^x enforcement &amp; supply-chain integrity red hat canonical google siemens bosch stmicroelectronics industrial automation integrators sovereign public infrastructure microkernel architecture tls 1.3 cryptography deterministic scheduling l2/l3 fast-path networking three-tier dns resolution zero-copy ipc bare-metal tcp/ip stack energy-proportional computing cloudflare red hat academic systems research labs sovereign public infrastructure intel arm bosch risc-v international lf edge qualcomm akamai google jinn os microkernel rust no_std x86_64 security tls 1.3 x.509 jinn browser observability syscall 88 syscall 97 microkernel architecture tls 1.3 cryptography deterministic scheduling l2/l3 fast-path networking three-tier dns resolution spsc ring buffer zero-copy ipc" class="group flex flex-col justify-between p-6 rounded-xl bg-slate-900/65 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-900/95 transition-all duration-200 shadow-sm hover:shadow-cyan-950/30">
         <div>
