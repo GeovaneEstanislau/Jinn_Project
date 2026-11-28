@@ -2858,65 +2858,74 @@ unsafe fn prefetch_page_stylesheets(
     base_url: &[u8],
     scratch_buf: &mut [u8],
 ) {
-    let mut scan_pos = 0usize;
-    let mut fetched = 0usize;
-    while fetched < 4 {
-        let Some(raw_href) = browser::extract_next_stylesheet_href(html, &mut scan_pos) else {
-            break;
-        };
-        if raw_href.starts_with(b"/disk/") || raw_href.starts_with(b"/ext2/") || raw_href.starts_with(b"data:") {
-            continue;
-        }
-        let mut resolved_buf = [0u8; 128];
-        let res_len = browser::resolve_relative_url(base_url, raw_href, &mut resolved_buf);
-        let css_url = &resolved_buf[..res_len];
-        if !css_url.starts_with(b"http://") && !css_url.starts_with(b"https://") {
-            continue;
-        }
-        if base_url.starts_with(b"https://") && css_url.starts_with(b"http://") {
-            print_str(b"[BROWSER-SEC] BLOQUEADO downgrade HTTPS -> HTTP em subrecurso <link>: ");
-            print_str(css_url);
-            print_str(b"\n");
-            session.record_downgrade_blocked();
-            continue;
-        }
-        if browser::cache_lookup_remote_css(css_url).is_some() {
-            continue;
-        }
-        if let Some(cached_len) = browser::storage::BrowserCacheStore::retrieve(css_url, scratch_buf) {
-            if cached_len > 0 && cached_len <= 32768 {
-                let _ = browser::cache_store_remote_css(raw_href, css_url, &scratch_buf[..cached_len]);
-                print_str(b"[BROWSER-CSS] Stylesheet em cache disco: ");
-                print_str(css_url);
-                print_str(b"\n");
+    // 1. Primeira passagem prioriza <link rel="stylesheet"> do mesmo dominio dentro do buffer reutilizavel de 24 KiB;
+    // se nao houver mesmo dominio, usa a primeira folha HTTP/HTTPS elegivel.
+    for same_host_only in [true, false] {
+        let mut scan_pos = 0usize;
+        while let Some(raw_href) = browser::extract_next_stylesheet_href(html, &mut scan_pos) {
+            if raw_href.starts_with(b"/disk/") || raw_href.starts_with(b"/ext2/") || raw_href.starts_with(b"data:") {
                 continue;
             }
-        }
-        print_str(b"[BROWSER-CSS] Baixando stylesheet remota: ");
-        print_str(css_url);
-        print_str(b"\n");
-        let mut css_final_url = [0u8; 128];
-        let mut css_final_len = 0usize;
-        match fetch_http_document_inner(css_url, scratch_buf, false, &mut css_final_url, &mut css_final_len) {
-            Ok(css_bytes) => {
-                if css_bytes > 0 && css_bytes <= 32768 {
-                    let store_url = if css_final_len > 0 { &css_final_url[..css_final_len] } else { css_url };
-                    let _ = browser::cache_store_remote_css(raw_href, store_url, &scratch_buf[..css_bytes]);
-                    if store_url != css_url {
-                        let _ = browser::cache_store_remote_css(css_url, css_url, &scratch_buf[..css_bytes]);
+            let mut resolved_buf = [0u8; 128];
+            let res_len = browser::resolve_relative_url(base_url, raw_href, &mut resolved_buf);
+            let css_url = &resolved_buf[..res_len];
+            if !css_url.starts_with(b"http://") && !css_url.starts_with(b"https://") {
+                continue;
+            }
+            if base_url.starts_with(b"https://") && css_url.starts_with(b"http://") {
+                if same_host_only {
+                    print_str(b"[BROWSER-SEC] BLOQUEADO downgrade HTTPS -> HTTP em subrecurso <link>: ");
+                    print_str(css_url);
+                    print_str(b"\n");
+                    session.record_downgrade_blocked();
+                }
+                continue;
+            }
+            if same_host_only && !browser::urls_same_host(base_url, css_url) {
+                continue;
+            }
+            if browser::css_scratch_lookup(css_url).is_some() {
+                return;
+            }
+            if let Some(cached_len) = browser::storage::BrowserCacheStore::retrieve(css_url, scratch_buf) {
+                if cached_len > 0 {
+                    let stored = browser::css_scratch_store(raw_href, css_url, &scratch_buf[..cached_len]);
+                    if stored > 0 {
+                        print_str(b"[BROWSER-CSS] Stylesheet em cache disco no buffer 24 KiB: ");
+                        print_str(css_url);
+                        print_str(b"\n");
+                        return;
                     }
-                    browser::storage::BrowserCacheStore::store(css_url, &scratch_buf[..css_bytes]);
-                    print_str(b"[BROWSER-CSS] Stylesheet aplicada (");
-                    print_u64(css_bytes as u64);
-                    print_str(b" bytes)\n");
                 }
             }
-            Err(FetchError::HttpsDowngradeBlocked) => {
-                session.record_downgrade_blocked();
+            print_str(b"[BROWSER-CSS] Baixando stylesheet remota: ");
+            print_str(css_url);
+            print_str(b"\n");
+            let mut css_final_url = [0u8; 128];
+            let mut css_final_len = 0usize;
+            match fetch_http_document_inner(css_url, scratch_buf, false, &mut css_final_url, &mut css_final_len) {
+                Ok(css_bytes) => {
+                    if css_bytes > 0 {
+                        let store_url = if css_final_len > 0 { &css_final_url[..css_final_len] } else { css_url };
+                        let loaded = browser::css_scratch_store(raw_href, store_url, &scratch_buf[..css_bytes]);
+                        if store_url != css_url {
+                            browser::css_scratch_update_alt_key(css_url);
+                        }
+                        if loaded > 0 && loaded <= browser::CSS_SCRATCH_SIZE {
+                            browser::storage::BrowserCacheStore::store(css_url, &scratch_buf[..loaded]);
+                        }
+                        print_str(b"[BROWSER-CSS] Stylesheet aplicada via buffer 24 KiB (");
+                        print_u64(loaded as u64);
+                        print_str(b" bytes)\n");
+                        return;
+                    }
+                }
+                Err(FetchError::HttpsDowngradeBlocked) => {
+                    session.record_downgrade_blocked();
+                }
+                Err(_) => {}
             }
-            Err(_) => {}
         }
-        fetched += 1;
     }
 }
 
@@ -2934,11 +2943,12 @@ unsafe fn prefetch_page_images(
             break;
         }
         let node = &session.dom.nodes[idx];
-        if node.tag_len != 3 || &node.tag[..3] != b"img" || node.src_len == 0 {
+        let slen = (node.src_len as usize).min(node.src_attr.len());
+        if node.tag_slice() != b"img" || slen == 0 {
             continue;
         }
         let mut raw_src_buf = [0u8; 128];
-        let slen = node.src_len.min(127);
+        let slen = slen.min(127);
         raw_src_buf[..slen].copy_from_slice(&node.src_attr[..slen]);
         let raw_src = &raw_src_buf[..slen];
 
@@ -3690,11 +3700,9 @@ unsafe fn run_gui_demo() {
     print_str(b"[BROWSER] 2. Testando interatividade de links e resolucao de URL relativa...\n");
     if session.layout.click_count > 0 {
         let link_reg = session.layout.click_regions[0];
+        let tgt = session.click_region_target(&link_reg);
         print_str(b"  Link alvo identificado: target='");
-        for &ch in &link_reg.target[..link_reg.target_len] {
-            let s = [ch];
-            print_str(&s);
-        }
+        print_str(tgt);
         print_str(b"' em (");
         print_u64(link_reg.x as u64);
         print_str(b", ");
@@ -3702,8 +3710,8 @@ unsafe fn run_gui_demo() {
         print_str(b")\n");
 
         // Simula clique dentro da bounding box do link
-        let click_x = link_reg.x + 4;
-        let click_y = browser::CLIP_TOP + link_reg.y + 2;
+        let click_x = link_reg.x as usize + 4;
+        let click_y = browser::CLIP_TOP + link_reg.y as usize + 2;
         let act = session.handle_click(click_x, click_y);
         if let browser::BrowserAction::NavigateTarget(target, len) = act {
             print_str(b"  Hit-test positivo! Carregando documento alvo (/disk/ABOUT.HTM)...\n");

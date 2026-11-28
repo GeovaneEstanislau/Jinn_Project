@@ -39,7 +39,7 @@ pub const COLOR_SCROLL_THUMB_BORDER: u32 = 0x0089_DCEB;
 
 // ── Pipeline Completo: Flat Vector DOM, Mini-CSS e Mini-JS (no_std) ──────────
 
-pub const MAX_DOM_NODES: usize = 1152;
+pub const MAX_DOM_NODES: usize = 768;
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -150,34 +150,38 @@ pub fn compute_stage_geometry(w: usize, h: usize) -> StageGeometry {
     }
 }
 
+const STYLE_FLAG_HAS_BG: u16 = 1 << 0;
+const STYLE_FLAG_HAS_BORDER_COL: u16 = 1 << 1;
+const STYLE_FLAG_EXPLICIT_COL: u16 = 1 << 2;
+const STYLE_FLAG_BOLD: u16 = 1 << 3;
+const STYLE_FLAG_DISPLAY_BLOCK: u16 = 1 << 4;
+const STYLE_FLAG_FLEX_WRAP: u16 = 1 << 5;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ComputedStyle {
     pub color: u32,
-    pub bg_color: Option<u32>,
-    pub border_color: Option<u32>,
-    pub border_width: usize,
-    pub border_radius: usize,
+    pub bg_color: u32,
+    pub border_color: u32,
+    pub width: u16,      // u16::MAX == None
+    pub height: u16,     // u16::MAX == None
+    pub max_width: u16,  // u16::MAX == None
+    pub flags: u16,
+    pub border_width: u8,
+    pub border_radius: u8,
     pub border_sides: u8,
-    pub font_size: usize,
-    pub width: Option<usize>,
-    pub height: Option<usize>,
-    pub max_width: Option<usize>,
-    pub margin_top: usize,
-    pub margin_bottom: usize,
-    pub margin_left: usize,
-    pub margin_right: usize,
-    pub padding_top: usize,
-    pub padding_bottom: usize,
-    pub padding_left: usize,
-    pub padding_right: usize,
-    pub gap: usize,
-    pub is_bold: bool,
-    pub display_block: bool,
+    pub font_size: u8,
+    pub margin_top: u8,
+    pub margin_bottom: u8,
+    pub margin_left: u8,
+    pub margin_right: u8,
+    pub padding_top: u8,
+    pub padding_bottom: u8,
+    pub padding_left: u8,
+    pub padding_right: u8,
+    pub gap: u8,
+    pub grid_cols: u8,
     pub display: DisplayMode,
     pub flex_direction: FlexDirection,
-    pub flex_wrap: bool,
-    pub grid_cols: usize,
-    pub has_explicit_color: bool,
     pub justify_content: JustifyContent,
     pub align_items: AlignItems,
     pub text_align: TextAlign,
@@ -187,15 +191,16 @@ impl ComputedStyle {
     pub const fn default() -> Self {
         Self {
             color: COLOR_TEXT,
-            bg_color: None,
-            border_color: None,
+            bg_color: 0,
+            border_color: 0,
+            width: u16::MAX,
+            height: u16::MAX,
+            max_width: u16::MAX,
+            flags: STYLE_FLAG_DISPLAY_BLOCK,
             border_width: 1,
             border_radius: 0,
             border_sides: 15,
             font_size: 12,
-            width: None,
-            height: None,
-            max_width: None,
             margin_top: 2,
             margin_bottom: 4,
             margin_left: 0,
@@ -205,88 +210,221 @@ impl ComputedStyle {
             padding_left: 0,
             padding_right: 0,
             gap: 4,
-            is_bold: false,
-            display_block: true,
+            grid_cols: 0,
             display: DisplayMode::Block,
             flex_direction: FlexDirection::Row,
-            flex_wrap: false,
-            grid_cols: 0,
-            has_explicit_color: false,
             justify_content: JustifyContent::FlexStart,
             align_items: AlignItems::FlexStart,
             text_align: TextAlign::Left,
         }
     }
+
+    #[inline(always)] pub fn has_bg(&self) -> bool { (self.flags & STYLE_FLAG_HAS_BG) != 0 }
+    #[inline(always)] pub fn has_border_color(&self) -> bool { (self.flags & STYLE_FLAG_HAS_BORDER_COL) != 0 }
+    #[inline(always)] pub fn has_box(&self) -> bool { (self.flags & (STYLE_FLAG_HAS_BG | STYLE_FLAG_HAS_BORDER_COL)) != 0 }
+    #[inline(always)] pub fn has_explicit_color(&self) -> bool { (self.flags & STYLE_FLAG_EXPLICIT_COL) != 0 }
+    #[inline(always)] pub fn is_bold(&self) -> bool { (self.flags & STYLE_FLAG_BOLD) != 0 }
+    #[inline(always)] pub fn display_block(&self) -> bool { (self.flags & STYLE_FLAG_DISPLAY_BLOCK) != 0 }
+    #[inline(always)] pub fn flex_wrap(&self) -> bool { (self.flags & STYLE_FLAG_FLEX_WRAP) != 0 }
+
+    #[inline(always)]
+    pub fn set_flag(&mut self, bit: u16, val: bool) {
+        if val { self.flags |= bit; } else { self.flags &= !bit; }
+    }
+    #[inline(always)] pub fn set_explicit_color(&mut self, v: bool) { self.set_flag(STYLE_FLAG_EXPLICIT_COL, v); }
+    #[inline(always)] pub fn set_bold(&mut self, v: bool) { self.set_flag(STYLE_FLAG_BOLD, v); }
+    #[inline(always)] pub fn set_display_block(&mut self, v: bool) { self.set_flag(STYLE_FLAG_DISPLAY_BLOCK, v); }
+    #[inline(always)] pub fn set_flex_wrap(&mut self, v: bool) { self.set_flag(STYLE_FLAG_FLEX_WRAP, v); }
+
+    #[inline(always)]
+    pub fn bg_color_opt(&self) -> Option<u32> {
+        if self.has_bg() { Some(self.bg_color) } else { None }
+    }
+    #[inline(always)]
+    pub fn set_bg_color(&mut self, c: Option<u32>) {
+        match c {
+            Some(col) => { self.bg_color = col; self.flags |= STYLE_FLAG_HAS_BG; }
+            None => { self.bg_color = 0; self.flags &= !STYLE_FLAG_HAS_BG; }
+        }
+    }
+    #[inline(always)]
+    pub fn border_color_opt(&self) -> Option<u32> {
+        if self.has_border_color() { Some(self.border_color) } else { None }
+    }
+    #[inline(always)]
+    pub fn set_border_color(&mut self, c: Option<u32>) {
+        match c {
+            Some(col) => { self.border_color = col; self.flags |= STYLE_FLAG_HAS_BORDER_COL; }
+            None => { self.border_color = 0; self.flags &= !STYLE_FLAG_HAS_BORDER_COL; }
+        }
+    }
+    #[inline(always)]
+    pub fn width_opt(&self) -> Option<usize> {
+        if self.width == u16::MAX { None } else { Some(self.width as usize) }
+    }
+    #[inline(always)]
+    pub fn set_width(&mut self, w: Option<usize>) {
+        self.width = w.map_or(u16::MAX, |v| v.min((u16::MAX - 1) as usize) as u16);
+    }
+    #[inline(always)]
+    pub fn height_opt(&self) -> Option<usize> {
+        if self.height == u16::MAX { None } else { Some(self.height as usize) }
+    }
+    #[inline(always)]
+    pub fn set_height(&mut self, h: Option<usize>) {
+        self.height = h.map_or(u16::MAX, |v| v.min((u16::MAX - 1) as usize) as u16);
+    }
+    #[inline(always)]
+    pub fn max_width_opt(&self) -> Option<usize> {
+        if self.max_width == u16::MAX { None } else { Some(self.max_width as usize) }
+    }
+    #[inline(always)]
+    pub fn set_max_width(&mut self, w: Option<usize>) {
+        self.max_width = w.map_or(u16::MAX, |v| v.min((u16::MAX - 1) as usize) as u16);
+    }
 }
 
-pub const MAX_DOM_CHILDREN: usize = 24;
+pub const MAX_DOM_CHILDREN: usize = 16;
 
 #[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub struct DomNode {
-    pub id: usize,
-    pub node_type: DomNodeType,
-    pub tag: [u8; 16],
-    pub tag_len: usize,
+    pub tag: [u8; 12],
     pub id_attr: [u8; 32],
-    pub id_len: usize,
-    pub class_attr: [u8; 256],
-    pub class_len: usize,
-    pub style_attr: [u8; 128],
-    pub style_len: usize,
+    pub class_attr: [u8; 136],
+    pub style_attr: [u8; 96],
     pub href_attr: [u8; 128],
-    pub href_len: usize,
     pub src_attr: [u8; 128],
-    pub src_len: usize,
+    pub alt_attr: [u8; 32],
+    pub data_open_window: [u8; 32],
+    pub onclick_attr: [u8; 96],
+    pub text: [u8; 192],
+    pub children: [u16; MAX_DOM_CHILDREN],
+    pub parent: u16, // u16::MAX == None
+    pub id: u16,
     pub width_attr: u16,
     pub height_attr: u16,
-    pub alt_attr: [u8; 32],
-    pub alt_len: usize,
-    pub data_open_window: [u8; 32],
-    pub data_open_window_len: usize,
-    pub onclick_attr: [u8; 256],
-    pub onclick_len: usize,
-    pub text: [u8; 256],
-    pub text_len: usize,
-    pub parent: Option<usize>,
-    pub children: [usize; MAX_DOM_CHILDREN],
-    pub child_count: usize,
+    pub box_x: u16,
+    pub box_y: u16,
+    pub box_w: u16,
+    pub box_h: u16,
+    pub tag_len: u8,
+    pub id_len: u8,
+    pub class_len: u8,
+    pub style_len: u8,
+    pub href_len: u8,
+    pub src_len: u8,
+    pub alt_len: u8,
+    pub data_open_window_len: u8,
+    pub onclick_len: u8,
+    pub text_len: u8,
+    pub child_count: u8,
+    pub box_bg_fallback: u8,
+    pub node_type: DomNodeType,
     pub computed_style: ComputedStyle,
 }
 
 impl DomNode {
     pub const fn empty() -> Self {
         Self {
-            id: 0,
-            node_type: DomNodeType::Element,
-            tag: [0; 16],
-            tag_len: 0,
+            tag: [0; 12],
             id_attr: [0; 32],
-            id_len: 0,
-            class_attr: [0; 256],
-            class_len: 0,
-            style_attr: [0; 128],
-            style_len: 0,
+            class_attr: [0; 136],
+            style_attr: [0; 96],
             href_attr: [0; 128],
-            href_len: 0,
             src_attr: [0; 128],
-            src_len: 0,
+            alt_attr: [0; 32],
+            data_open_window: [0; 32],
+            onclick_attr: [0; 96],
+            text: [0; 192],
+            children: [0; MAX_DOM_CHILDREN],
+            parent: u16::MAX,
+            id: 0,
             width_attr: 0,
             height_attr: 0,
-            alt_attr: [0; 32],
+            box_x: 0,
+            box_y: 0,
+            box_w: 0,
+            box_h: 0,
+            tag_len: 0,
+            id_len: 0,
+            class_len: 0,
+            style_len: 0,
+            href_len: 0,
+            src_len: 0,
             alt_len: 0,
-            data_open_window: [0; 32],
             data_open_window_len: 0,
-            onclick_attr: [0; 256],
             onclick_len: 0,
-            text: [0; 256],
             text_len: 0,
-            parent: None,
-            children: [0; MAX_DOM_CHILDREN],
             child_count: 0,
+            box_bg_fallback: 0,
+            node_type: DomNodeType::Element,
             computed_style: ComputedStyle::default(),
         }
     }
+
+    #[inline(always)] pub fn parent_idx(&self) -> Option<usize> {
+        if self.parent == u16::MAX { None } else { Some(self.parent as usize) }
+    }
+    #[inline(always)] pub fn set_parent(&mut self, p: Option<usize>) {
+        self.parent = p.map_or(u16::MAX, |v| v.min((u16::MAX - 1) as usize) as u16);
+    }
+    #[inline(always)] pub fn child_id(&self, c: usize) -> usize { self.children[c] as usize }
+    #[inline(always)] pub fn tag_slice(&self) -> &[u8] { &self.tag[..self.tag_len as usize] }
+    #[inline(always)] pub fn id_slice(&self) -> &[u8] { &self.id_attr[..self.id_len as usize] }
+    #[inline(always)] pub fn class_slice(&self) -> &[u8] { &self.class_attr[..self.class_len as usize] }
+    #[inline(always)] pub fn style_slice(&self) -> &[u8] { &self.style_attr[..self.style_len as usize] }
+    #[inline(always)] pub fn href_slice(&self) -> &[u8] { &self.href_attr[..self.href_len as usize] }
+    #[inline(always)] pub fn src_slice(&self) -> &[u8] { &self.src_attr[..self.src_len as usize] }
+    #[inline(always)] pub fn alt_slice(&self) -> &[u8] { &self.alt_attr[..self.alt_len as usize] }
+    #[inline(always)] pub fn text_slice(&self) -> &[u8] { &self.text[..self.text_len as usize] }
+    #[inline(always)] pub fn onclick_slice(&self) -> &[u8] { &self.onclick_attr[..self.onclick_len as usize] }
+    #[inline(always)] pub fn data_open_window_slice(&self) -> &[u8] { &self.data_open_window[..self.data_open_window_len as usize] }
+}
+
+fn copy_trunc_u8(dst: &mut [u8], src: &[u8]) -> u8 {
+    let n = src.len().min(dst.len());
+    dst[..n].copy_from_slice(&src[..n]);
+    n as u8
+}
+
+fn filter_visual_classes(src: &[u8], dst: &mut [u8]) -> u8 {
+    if src.len() <= dst.len() {
+        return copy_trunc_u8(dst, src);
+    }
+    let mut out_len = 0usize;
+    for tok in src.split(|&b| b == b' ' || b == b'\t' || b == b'\r' || b == b'\n') {
+        if tok.is_empty() { continue; }
+        if tok.starts_with(b"hover:")
+            || tok.starts_with(b"focus:")
+            || tok.starts_with(b"active:")
+            || tok.starts_with(b"group")
+            || tok.starts_with(b"transition")
+            || tok.starts_with(b"duration-")
+            || tok.starts_with(b"ease-")
+            || tok.starts_with(b"animate-")
+            || tok.starts_with(b"shadow")
+            || tok.starts_with(b"outline-")
+            || tok.starts_with(b"tracking-")
+            || tok.starts_with(b"cursor-")
+            || tok.starts_with(b"select-")
+            || tok.starts_with(b"resize-")
+            || tok.starts_with(b"shrink")
+        {
+            continue;
+        }
+        let need_space = if out_len > 0 { 1 } else { 0 };
+        if out_len + need_space + tok.len() > dst.len() {
+            continue;
+        }
+        if need_space == 1 {
+            dst[out_len] = b' ';
+            out_len += 1;
+        }
+        dst[out_len..out_len + tok.len()].copy_from_slice(tok);
+        out_len += tok.len();
+    }
+    out_len as u8
 }
 
 pub struct DomArena {
@@ -316,7 +454,7 @@ impl DomArena {
         if self.node_count < MAX_DOM_NODES {
             let id = self.node_count;
             let mut node = DomNode::empty();
-            node.id = id;
+            node.id = id as u16;
             node.node_type = node_type;
             self.nodes[id] = node;
             self.node_count += 1;
@@ -330,8 +468,8 @@ impl DomArena {
         let clean = id_bytes.trim_ascii();
         let target = if !clean.is_empty() && clean[0] == b'#' { &clean[1..] } else { clean };
         for i in 0..self.node_count {
-            let node = &self.nodes[i];
-            if node.id_len == target.len() && &node.id_attr[..node.id_len] == target {
+            let id_s = self.nodes[i].id_slice();
+            if id_s.len() == target.len() && id_s == target {
                 return Some(i);
             }
         }
@@ -352,8 +490,8 @@ impl DomArena {
     pub fn find_by_tag(&self, tag_bytes: &[u8]) -> Option<usize> {
         let clean = tag_bytes.trim_ascii();
         for i in 0..self.node_count {
-            let node = &self.nodes[i];
-            if node.tag_len == clean.len() && node.tag[..node.tag_len].eq_ignore_ascii_case(clean) {
+            let t_s = self.nodes[i].tag_slice();
+            if t_s.len() == clean.len() && t_s.eq_ignore_ascii_case(clean) {
                 return Some(i);
             }
         }
@@ -374,9 +512,20 @@ impl DomArena {
 
     pub fn has_class(&self, idx: usize, class_name: &[u8]) -> bool {
         if idx >= self.node_count { return false; }
-        let c_attr = &self.nodes[idx].class_attr[..self.nodes[idx].class_len];
+        let c_attr = self.nodes[idx].class_slice();
         for word in c_attr.split(|&b| b == b' ' || b == b'\t' || b == b'\r' || b == b'\n') {
             if !word.is_empty() && word.eq_ignore_ascii_case(class_name) {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn has_class_hash(&self, idx: usize, class_hash: u32) -> bool {
+        if idx >= self.node_count { return false; }
+        let c_attr = self.nodes[idx].class_slice();
+        for word in c_attr.split(|&b| b == b' ' || b == b'\t' || b == b'\r' || b == b'\n') {
+            if !word.is_empty() && fnv1a_32_ci(word) == class_hash {
                 return true;
             }
         }
@@ -386,23 +535,25 @@ impl DomArena {
     pub fn add_class(&mut self, idx: usize, class_name: &[u8]) {
         if idx >= self.node_count || self.has_class(idx, class_name) { return; }
         let node = &mut self.nodes[idx];
-        if node.class_len + 1 + class_name.len() <= node.class_attr.len() {
-            if node.class_len > 0 {
-                node.class_attr[node.class_len] = b' ';
+        let clen = node.class_len as usize;
+        if clen + 1 + class_name.len() <= node.class_attr.len() {
+            if clen > 0 {
+                node.class_attr[clen] = b' ';
                 node.class_len += 1;
             }
-            node.class_attr[node.class_len..node.class_len + class_name.len()].copy_from_slice(class_name);
-            node.class_len += class_name.len();
+            let pos = node.class_len as usize;
+            node.class_attr[pos..pos + class_name.len()].copy_from_slice(class_name);
+            node.class_len = (pos + class_name.len()) as u8;
         }
     }
 
     pub fn remove_class(&mut self, idx: usize, class_name: &[u8]) {
         if idx >= self.node_count { return; }
         let node = &mut self.nodes[idx];
-        let mut new_buf = [0u8; 256];
-        let mut new_len = 0;
+        let mut new_buf = [0u8; 136];
+        let mut new_len = 0usize;
         let max_len = node.class_attr.len();
-        let c_attr = &node.class_attr[..node.class_len];
+        let c_attr = &node.class_attr[..node.class_len as usize];
         for word in c_attr.split(|&b| b == b' ' || b == b'\t' || b == b'\r' || b == b'\n') {
             if word.is_empty() || word.eq_ignore_ascii_case(class_name) {
                 continue;
@@ -416,7 +567,7 @@ impl DomArena {
             new_len += cpy;
         }
         node.class_attr = new_buf;
-        node.class_len = new_len;
+        node.class_len = new_len as u8;
     }
 
     pub fn toggle_class(&mut self, idx: usize, class_name: &[u8]) -> bool {
@@ -431,52 +582,78 @@ impl DomArena {
 
     pub fn set_text_content(&mut self, idx: usize, new_text: &[u8]) {
         if idx < self.node_count {
-            let len = new_text.len().min(255);
+            let max_c = self.nodes[idx].text.len().saturating_sub(1);
+            let len = new_text.len().min(max_c);
             self.nodes[idx].text[..len].copy_from_slice(&new_text[..len]);
-            self.nodes[idx].text_len = len;
+            self.nodes[idx].text_len = len as u8;
         }
     }
 
     pub fn set_style_color(&mut self, idx: usize, col: u32) {
         if idx < self.node_count {
             self.nodes[idx].computed_style.color = col;
+            self.nodes[idx].computed_style.set_explicit_color(true);
         }
     }
 
     #[allow(dead_code)]
     pub fn set_style_bg(&mut self, idx: usize, col: u32) {
         if idx < self.node_count {
-            self.nodes[idx].computed_style.bg_color = Some(col);
+            self.nodes[idx].computed_style.set_bg_color(Some(col));
         }
     }
 
     pub fn set_style_display(&mut self, idx: usize, mode: DisplayMode) {
         if idx < self.node_count {
             self.nodes[idx].computed_style.display = mode;
-            self.nodes[idx].computed_style.display_block = mode == DisplayMode::Block;
+            self.nodes[idx].computed_style.set_display_block(mode == DisplayMode::Block);
         }
     }
 }
 
 // ── Mini-CSS e Resolução de Estilos ──────────────────────────────────────────
 
-pub const MAX_CSS_RULES: usize = 256;
+pub const MAX_CSS_RULES: usize = 128;
 pub const MAX_CSS_VARS: usize = 32;
+
+const SEL_ATOM_NONE: u8 = 0;
+const SEL_ATOM_TAG: u8 = 1;
+const SEL_ATOM_CLASS: u8 = 2;
+const SEL_ATOM_ID: u8 = 3;
+const SEL_ATOM_WILDCARD: u8 = 4;
+
+#[inline]
+pub fn fnv1a_32_ci(s: &[u8]) -> u32 {
+    let mut h: u32 = 0x811c_9dc5;
+    for &b in s {
+        h ^= b.to_ascii_lowercase() as u32;
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    h
+}
+
+#[inline]
+pub fn fnv1a_32(s: &[u8]) -> u32 {
+    let mut h: u32 = 0x811c_9dc5;
+    for &b in s {
+        h ^= b as u32;
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    h
+}
 
 #[derive(Clone, Copy)]
 pub struct CssVar {
-    pub name: [u8; 32],
-    pub name_len: usize,
-    pub val: [u8; 64],
-    pub val_len: usize,
+    pub name_hash: u32,
+    pub val: [u8; 31],
+    pub val_len: u8,
 }
 
 impl CssVar {
     pub const fn empty() -> Self {
         Self {
-            name: [0; 32],
-            name_len: 0,
-            val: [0; 64],
+            name_hash: 0,
+            val: [0; 31],
             val_len: 0,
         }
     }
@@ -490,157 +667,199 @@ fn strip_css_important(val: &[u8]) -> &[u8] {
     s
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SelectorKind {
-    Tag,
-    Class,
-    Id,
-    Descendant,
-}
+const RULE_HAS_COLOR: u32 = 1 << 0;
+const RULE_HAS_BG: u32 = 1 << 1;
+const RULE_HAS_BORDER_COLOR: u32 = 1 << 2;
+const RULE_HAS_BORDER_WIDTH: u32 = 1 << 3;
+const RULE_HAS_BORDER_RADIUS: u32 = 1 << 4;
+const RULE_HAS_BORDER_SIDES: u32 = 1 << 5;
+const RULE_HAS_FONT_SIZE: u32 = 1 << 6;
+const RULE_HAS_WIDTH: u32 = 1 << 7;
+const RULE_HAS_HEIGHT: u32 = 1 << 8;
+const RULE_HAS_MAX_WIDTH: u32 = 1 << 9;
+const RULE_HAS_MT: u32 = 1 << 10;
+const RULE_HAS_MB: u32 = 1 << 11;
+const RULE_HAS_ML: u32 = 1 << 12;
+const RULE_HAS_MR: u32 = 1 << 13;
+const RULE_HAS_PT: u32 = 1 << 14;
+const RULE_HAS_PB: u32 = 1 << 15;
+const RULE_HAS_PL: u32 = 1 << 16;
+const RULE_HAS_PR: u32 = 1 << 17;
+const RULE_HAS_GAP: u32 = 1 << 18;
+const RULE_HAS_BOLD: u32 = 1 << 19;
+const RULE_HAS_DISPLAY: u32 = 1 << 20;
+const RULE_HAS_FLEX_DIR: u32 = 1 << 21;
+const RULE_HAS_FLEX_WRAP: u32 = 1 << 22;
+const RULE_HAS_GRID_COLS: u32 = 1 << 23;
+const RULE_HAS_JUSTIFY: u32 = 1 << 24;
+const RULE_HAS_ALIGN: u32 = 1 << 25;
+const RULE_HAS_TEXT_ALIGN: u32 = 1 << 26;
+const RULE_IS_BOLD_VAL: u32 = 1 << 27;
+const RULE_FLEX_WRAP_VAL: u32 = 1 << 28;
+const RULE_IS_BODY_TAG: u32 = 1 << 29;
 
 #[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub struct CssRule {
-    pub kind: SelectorKind,
-    pub selector: [u8; 64],
-    pub selector_len: usize,
-    pub parent_selector: [u8; 64],
-    pub parent_selector_len: usize,
-    pub specificity: u16,
-    pub color: Option<u32>,
-    pub bg_color: Option<u32>,
-    pub border_color: Option<u32>,
-    pub border_width: Option<usize>,
-    pub border_radius: Option<usize>,
-    pub border_sides: Option<u8>,
-    pub font_size: Option<usize>,
-    pub width: Option<usize>,
-    pub height: Option<usize>,
-    pub max_width: Option<usize>,
-    pub margin_top: Option<usize>,
-    pub margin_bottom: Option<usize>,
-    pub margin_left: Option<usize>,
-    pub margin_right: Option<usize>,
-    pub padding_top: Option<usize>,
-    pub padding_bottom: Option<usize>,
-    pub padding_left: Option<usize>,
-    pub padding_right: Option<usize>,
-    pub gap: Option<usize>,
-    pub is_bold: Option<bool>,
-    pub display: Option<DisplayMode>,
-    pub flex_direction: Option<FlexDirection>,
-    pub flex_wrap: Option<bool>,
-    pub grid_cols: Option<usize>,
-    pub justify_content: Option<JustifyContent>,
-    pub align_items: Option<AlignItems>,
-    pub text_align: Option<TextAlign>,
+    pub sel_hashes: [u32; 2],
+    pub parent_hash: u32,
+    pub present_mask: u32,
+    pub color: u32,
+    pub bg_color: u32,
+    pub border_color: u32,
+    pub width: u16,
+    pub height: u16,
+    pub max_width: u16,
+    pub specificity: u8,
+    pub sel_atoms: u8,   // bits 0..3: atom0 kind, bits 3..6: atom1 kind
+    pub parent_kind: u8, // SEL_ATOM_*
+    pub border_width: u8,
+    pub border_radius: u8,
+    pub border_sides: u8,
+    pub font_size: u8,
+    pub margin_top: u8,
+    pub margin_bottom: u8,
+    pub margin_left: u8,
+    pub margin_right: u8,
+    pub padding_top: u8,
+    pub padding_bottom: u8,
+    pub padding_left: u8,
+    pub padding_right: u8,
+    pub gap: u8,
+    pub grid_cols: u8,
+    pub packed_enums: u8, // bits 0..3: DisplayMode, bit 3: FlexDir, bits 4..6: Justify, bits 6..8: Align
+    pub text_align_bits: u8,
 }
 
 impl CssRule {
     pub const fn empty() -> Self {
         Self {
-            kind: SelectorKind::Tag,
-            selector: [0; 64],
-            selector_len: 0,
-            parent_selector: [0; 64],
-            parent_selector_len: 0,
+            sel_hashes: [0; 2],
+            parent_hash: 0,
+            present_mask: 0,
+            color: 0,
+            bg_color: 0,
+            border_color: 0,
+            width: 0,
+            height: 0,
+            max_width: 0,
             specificity: 1,
-            color: None,
-            bg_color: None,
-            border_color: None,
-            border_width: None,
-            border_radius: None,
-            border_sides: None,
-            font_size: None,
-            width: None,
-            height: None,
-            max_width: None,
-            margin_top: None,
-            margin_bottom: None,
-            margin_left: None,
-            margin_right: None,
-            padding_top: None,
-            padding_bottom: None,
-            padding_left: None,
-            padding_right: None,
-            gap: None,
-            is_bold: None,
-            display: None,
-            flex_direction: None,
-            flex_wrap: None,
-            grid_cols: None,
-            justify_content: None,
-            align_items: None,
-            text_align: None,
+            sel_atoms: 0,
+            parent_kind: SEL_ATOM_NONE,
+            border_width: 0,
+            border_radius: 0,
+            border_sides: 0,
+            font_size: 0,
+            margin_top: 0,
+            margin_bottom: 0,
+            margin_left: 0,
+            margin_right: 0,
+            padding_top: 0,
+            padding_bottom: 0,
+            padding_left: 0,
+            padding_right: 0,
+            gap: 0,
+            grid_cols: 0,
+            packed_enums: 0,
+            text_align_bits: 0,
         }
+    }
+
+    #[inline(always)] pub fn atom0_kind(&self) -> u8 { self.sel_atoms & 0x07 }
+    #[inline(always)] pub fn atom1_kind(&self) -> u8 { (self.sel_atoms >> 3) & 0x07 }
+    #[inline(always)] pub fn set_atom_kinds(&mut self, k0: u8, k1: u8) {
+        self.sel_atoms = (k0 & 0x07) | ((k1 & 0x07) << 3);
+    }
+    #[inline(always)] pub fn is_descendant(&self) -> bool { self.parent_kind != SEL_ATOM_NONE }
+    #[inline(always)] pub fn is_tag_only(&self) -> bool {
+        !self.is_descendant() && self.atom0_kind() == SEL_ATOM_TAG && self.atom1_kind() == SEL_ATOM_NONE
     }
 }
 
-fn selector_part_specificity(sel: &[u8]) -> u16 {
+fn encode_selector_part(sel: &[u8]) -> Option<([u32; 2], u8, u8, u8)> {
+    let s = sel.trim_ascii();
+    if s.is_empty() {
+        return None;
+    }
+    let mut hashes = [0u32; 2];
+    let mut kinds = [SEL_ATOM_NONE; 2];
+    let mut count = 0usize;
     let mut spec = 0u16;
     let mut i = 0usize;
-    while i < sel.len() {
-        let b = sel[i];
-        if b == b'.' {
-            spec = spec.saturating_add(10);
+
+    while i < s.len() {
+        let (kind, start) = if s[i] == b'.' {
             i += 1;
-            while i < sel.len() && sel[i] != b'.' && sel[i] != b'#' { i += 1; }
-        } else if b == b'#' {
-            spec = spec.saturating_add(100);
+            (SEL_ATOM_CLASS, i)
+        } else if s[i] == b'#' {
             i += 1;
-            while i < sel.len() && sel[i] != b'.' && sel[i] != b'#' { i += 1; }
+            (SEL_ATOM_ID, i)
         } else {
-            if i == 0 && b != b'*' {
-                spec = spec.saturating_add(1);
+            (SEL_ATOM_TAG, i)
+        };
+        while i < s.len() && s[i] != b'.' && s[i] != b'#' {
+            i += 1;
+        }
+        let tok = &s[start..i];
+        if tok.is_empty() {
+            return None;
+        }
+        let (final_kind, h, add_spec) = match kind {
+            SEL_ATOM_CLASS => (SEL_ATOM_CLASS, fnv1a_32_ci(tok), 10),
+            SEL_ATOM_ID => (SEL_ATOM_ID, fnv1a_32(tok), 100),
+            _ => {
+                if tok == b"*" {
+                    (SEL_ATOM_WILDCARD, 0, 0)
+                } else {
+                    (SEL_ATOM_TAG, fnv1a_32_ci(tok), 1)
+                }
             }
-            while i < sel.len() && sel[i] != b'.' && sel[i] != b'#' { i += 1; }
+        };
+        spec = spec.saturating_add(add_spec);
+        if count < 2 {
+            kinds[count] = final_kind;
+            hashes[count] = h;
+            count += 1;
+        } else {
+            return None;
         }
     }
-    spec.max(1)
+
+    if count == 0 {
+        None
+    } else {
+        Some((hashes, kinds[0], kinds[1], spec.max(1).min(255) as u8))
+    }
 }
 
-fn selector_matches_node(dom: &DomArena, node_idx: usize, sel: &[u8]) -> bool {
-    let s = sel.trim_ascii();
-    if s.is_empty() || node_idx >= dom.node_count {
+#[inline]
+fn node_matches_atom(dom: &DomArena, node_idx: usize, kind: u8, hash: u32) -> bool {
+    if node_idx >= dom.node_count {
         return false;
     }
     let node = &dom.nodes[node_idx];
     if node.node_type != DomNodeType::Element {
         return false;
     }
-    let tag_bytes = &node.tag[..node.tag_len];
-    let mut i = 0usize;
-    let mut matched_any = false;
-    while i < s.len() {
-        if s[i] == b'.' {
-            i += 1;
-            let start = i;
-            while i < s.len() && s[i] != b'.' && s[i] != b'#' { i += 1; }
-            let cls = &s[start..i];
-            if cls.is_empty() || !dom.has_class(node_idx, cls) {
-                return false;
-            }
-            matched_any = true;
-        } else if s[i] == b'#' {
-            i += 1;
-            let start = i;
-            while i < s.len() && s[i] != b'.' && s[i] != b'#' { i += 1; }
-            let id_target = &s[start..i];
-            if id_target.is_empty() || node.id_len != id_target.len() || &node.id_attr[..node.id_len] != id_target {
-                return false;
-            }
-            matched_any = true;
-        } else {
-            let start = i;
-            while i < s.len() && s[i] != b'.' && s[i] != b'#' { i += 1; }
-            let tag_target = &s[start..i];
-            if tag_target != b"*" && (tag_bytes.len() != tag_target.len() || !tag_bytes.eq_ignore_ascii_case(tag_target)) {
-                return false;
-            }
-            matched_any = true;
-        }
+    match kind {
+        SEL_ATOM_WILDCARD => true,
+        SEL_ATOM_TAG => node.tag_len > 0 && fnv1a_32_ci(node.tag_slice()) == hash,
+        SEL_ATOM_CLASS => dom.has_class_hash(node_idx, hash),
+        SEL_ATOM_ID => node.id_len > 0 && fnv1a_32(node.id_slice()) == hash,
+        _ => false,
     }
-    matched_any
+}
+
+fn rule_matches_simple(dom: &DomArena, node_idx: usize, r: &CssRule) -> bool {
+    let k0 = r.atom0_kind();
+    if k0 == SEL_ATOM_NONE || !node_matches_atom(dom, node_idx, k0, r.sel_hashes[0]) {
+        return false;
+    }
+    let k1 = r.atom1_kind();
+    if k1 != SEL_ATOM_NONE && !node_matches_atom(dom, node_idx, k1, r.sel_hashes[1]) {
+        return false;
+    }
+    true
 }
 
 fn parse_tw_spacing(raw: &[u8]) -> Option<usize> {
@@ -762,6 +981,86 @@ pub struct MiniCss {
     pub body_bg_color: Option<u32>,
 }
 
+#[inline(always)]
+fn display_to_bits(d: DisplayMode) -> u8 {
+    match d {
+        DisplayMode::Block => 0,
+        DisplayMode::Inline => 1,
+        DisplayMode::InlineBlock => 2,
+        DisplayMode::Flex => 3,
+        DisplayMode::None => 4,
+    }
+}
+
+#[inline(always)]
+fn bits_to_display(b: u8) -> DisplayMode {
+    match b & 0x07 {
+        1 => DisplayMode::Inline,
+        2 => DisplayMode::InlineBlock,
+        3 => DisplayMode::Flex,
+        4 => DisplayMode::None,
+        _ => DisplayMode::Block,
+    }
+}
+
+#[inline(always)]
+fn justify_to_bits(j: JustifyContent) -> u8 {
+    match j {
+        JustifyContent::FlexStart => 0,
+        JustifyContent::Center => 1,
+        JustifyContent::FlexEnd => 2,
+        JustifyContent::SpaceBetween => 3,
+    }
+}
+
+#[inline(always)]
+fn bits_to_justify(b: u8) -> JustifyContent {
+    match b & 0x03 {
+        1 => JustifyContent::Center,
+        2 => JustifyContent::FlexEnd,
+        3 => JustifyContent::SpaceBetween,
+        _ => JustifyContent::FlexStart,
+    }
+}
+
+#[inline(always)]
+fn align_to_bits(a: AlignItems) -> u8 {
+    match a {
+        AlignItems::FlexStart => 0,
+        AlignItems::Center => 1,
+        AlignItems::FlexEnd => 2,
+        AlignItems::Stretch => 3,
+    }
+}
+
+#[inline(always)]
+fn bits_to_align(b: u8) -> AlignItems {
+    match b & 0x03 {
+        1 => AlignItems::Center,
+        2 => AlignItems::FlexEnd,
+        3 => AlignItems::Stretch,
+        _ => AlignItems::FlexStart,
+    }
+}
+
+#[inline(always)]
+fn text_align_to_bits(t: TextAlign) -> u8 {
+    match t {
+        TextAlign::Left => 0,
+        TextAlign::Center => 1,
+        TextAlign::Right => 2,
+    }
+}
+
+#[inline(always)]
+fn bits_to_text_align(b: u8) -> TextAlign {
+    match b & 0x03 {
+        1 => TextAlign::Center,
+        2 => TextAlign::Right,
+        _ => TextAlign::Left,
+    }
+}
+
 impl MiniCss {
     pub const fn new() -> Self {
         Self {
@@ -782,24 +1081,27 @@ impl MiniCss {
 
     fn set_var(&mut self, name: &[u8], val: &[u8]) {
         let clean_val = strip_css_important(val);
+        let h = fnv1a_32_ci(name);
         for i in 0..self.var_count {
-            if self.vars[i].name_len == name.len() && &self.vars[i].name[..self.vars[i].name_len] == name {
-                self.vars[i].val_len = copy_trunc_bytes(&mut self.vars[i].val, clean_val);
+            if self.vars[i].name_hash == h {
+                self.vars[i].val_len = copy_trunc_u8(&mut self.vars[i].val, clean_val);
                 return;
             }
         }
         if self.var_count < MAX_CSS_VARS {
             let slot = &mut self.vars[self.var_count];
-            slot.name_len = copy_trunc_bytes(&mut slot.name, name);
-            slot.val_len = copy_trunc_bytes(&mut slot.val, clean_val);
+            slot.name_hash = h;
+            slot.val_len = copy_trunc_u8(&mut slot.val, clean_val);
             self.var_count += 1;
         }
     }
 
     fn lookup_var<'a>(&'a self, name: &[u8]) -> Option<&'a [u8]> {
+        let h = fnv1a_32_ci(name);
         for i in 0..self.var_count {
-            if self.vars[i].name_len == name.len() && &self.vars[i].name[..self.vars[i].name_len] == name {
-                return Some(&self.vars[i].val[..self.vars[i].val_len]);
+            if self.vars[i].name_hash == h {
+                let len = (self.vars[i].val_len as usize).min(self.vars[i].val.len());
+                return Some(&self.vars[i].val[..len]);
             }
         }
         None
@@ -848,100 +1150,175 @@ impl MiniCss {
         if val.is_empty() { return; }
 
         if prop.eq_ignore_ascii_case(b"color") {
-            rule.color = parse_color(val);
+            if let Some(c) = parse_color(val) {
+                rule.color = c;
+                rule.present_mask |= RULE_HAS_COLOR;
+            }
         } else if prop.eq_ignore_ascii_case(b"background-color") || prop.eq_ignore_ascii_case(b"background") {
             if let Some(bg) = parse_color(val) {
-                rule.bg_color = Some(bg);
+                rule.bg_color = bg;
+                rule.present_mask |= RULE_HAS_BG;
             }
         } else if prop.eq_ignore_ascii_case(b"border") {
             let (bw, bc) = parse_border(val);
-            if bw.is_some() { rule.border_width = bw; }
-            if bc.is_some() { rule.border_color = bc; }
-            rule.border_sides = Some(15);
+            if let Some(w) = bw {
+                rule.border_width = w.min(255) as u8;
+                rule.present_mask |= RULE_HAS_BORDER_WIDTH;
+            }
+            if let Some(c) = bc {
+                rule.border_color = c;
+                rule.present_mask |= RULE_HAS_BORDER_COLOR;
+            }
+            rule.border_sides = 15;
+            rule.present_mask |= RULE_HAS_BORDER_SIDES;
         } else if prop.eq_ignore_ascii_case(b"border-bottom")
             || prop.eq_ignore_ascii_case(b"border-top")
             || prop.eq_ignore_ascii_case(b"border-left")
             || prop.eq_ignore_ascii_case(b"border-right")
         {
             let (bw, bc) = parse_border(val);
-            if bw.is_some() { rule.border_width = bw; }
-            if bc.is_some() { rule.border_color = bc; }
+            if let Some(w) = bw {
+                rule.border_width = w.min(255) as u8;
+                rule.present_mask |= RULE_HAS_BORDER_WIDTH;
+            }
+            if let Some(c) = bc {
+                rule.border_color = c;
+                rule.present_mask |= RULE_HAS_BORDER_COLOR;
+            }
             let bit = if prop.eq_ignore_ascii_case(b"border-top") { 1 }
                 else if prop.eq_ignore_ascii_case(b"border-right") { 2 }
                 else if prop.eq_ignore_ascii_case(b"border-bottom") { 4 }
                 else { 8 };
-            rule.border_sides = Some(rule.border_sides.unwrap_or(0) | bit);
+            let prev = if (rule.present_mask & RULE_HAS_BORDER_SIDES) != 0 { rule.border_sides } else { 0 };
+            rule.border_sides = prev | bit;
+            rule.present_mask |= RULE_HAS_BORDER_SIDES;
         } else if prop.eq_ignore_ascii_case(b"-webkit-mask-image") || prop.eq_ignore_ascii_case(b"mask-image") {
-            rule.display = Some(DisplayMode::None);
+            rule.packed_enums = (rule.packed_enums & !0x07) | display_to_bits(DisplayMode::None);
+            rule.present_mask |= RULE_HAS_DISPLAY;
         } else if prop.eq_ignore_ascii_case(b"border-color") {
-            rule.border_color = parse_color(val);
+            if let Some(bc) = parse_color(val) {
+                rule.border_color = bc;
+                rule.present_mask |= RULE_HAS_BORDER_COLOR;
+            }
         } else if prop.eq_ignore_ascii_case(b"border-width") {
-            rule.border_width = parse_px(val);
+            if let Some(w) = parse_px(val) {
+                rule.border_width = w.min(255) as u8;
+                rule.present_mask |= RULE_HAS_BORDER_WIDTH;
+            }
         } else if prop.eq_ignore_ascii_case(b"border-radius") {
-            rule.border_radius = parse_px(val);
+            if let Some(r) = parse_px(val) {
+                rule.border_radius = r.min(255) as u8;
+                rule.present_mask |= RULE_HAS_BORDER_RADIUS;
+            }
         } else if prop.eq_ignore_ascii_case(b"font-size") {
-            rule.font_size = parse_px(val);
+            if let Some(fs) = parse_px(val) {
+                rule.font_size = fs.min(255) as u8;
+                rule.present_mask |= RULE_HAS_FONT_SIZE;
+            }
         } else if prop.eq_ignore_ascii_case(b"width") {
-            rule.width = parse_px(val);
+            if let Some(w) = parse_px(val) {
+                rule.width = w.min(u16::MAX as usize) as u16;
+                rule.present_mask |= RULE_HAS_WIDTH;
+            }
         } else if prop.eq_ignore_ascii_case(b"height") {
-            rule.height = parse_px(val);
+            if let Some(h) = parse_px(val) {
+                rule.height = h.min(u16::MAX as usize) as u16;
+                rule.present_mask |= RULE_HAS_HEIGHT;
+            }
         } else if prop.eq_ignore_ascii_case(b"max-width") {
-            rule.max_width = parse_px(val);
+            if let Some(mw) = parse_px(val) {
+                rule.max_width = mw.min(u16::MAX as usize) as u16;
+                rule.present_mask |= RULE_HAS_MAX_WIDTH;
+            }
         } else if prop.eq_ignore_ascii_case(b"margin") {
             if let Some((v, h)) = parse_one_or_two_px(val) {
-                rule.margin_top = Some(v);
-                rule.margin_bottom = Some(v);
-                rule.margin_left = Some(h);
-                rule.margin_right = Some(h);
+                let vb = v.min(255) as u8;
+                let hb = h.min(255) as u8;
+                rule.margin_top = vb;
+                rule.margin_bottom = vb;
+                rule.margin_left = hb;
+                rule.margin_right = hb;
+                rule.present_mask |= RULE_HAS_MT | RULE_HAS_MB | RULE_HAS_ML | RULE_HAS_MR;
             }
         } else if prop.eq_ignore_ascii_case(b"margin-top") {
-            rule.margin_top = parse_px(val);
+            if let Some(v) = parse_px(val) { rule.margin_top = v.min(255) as u8; rule.present_mask |= RULE_HAS_MT; }
         } else if prop.eq_ignore_ascii_case(b"margin-bottom") {
-            rule.margin_bottom = parse_px(val);
+            if let Some(v) = parse_px(val) { rule.margin_bottom = v.min(255) as u8; rule.present_mask |= RULE_HAS_MB; }
         } else if prop.eq_ignore_ascii_case(b"margin-left") {
-            rule.margin_left = parse_px(val);
+            if let Some(v) = parse_px(val) { rule.margin_left = v.min(255) as u8; rule.present_mask |= RULE_HAS_ML; }
         } else if prop.eq_ignore_ascii_case(b"margin-right") {
-            rule.margin_right = parse_px(val);
+            if let Some(v) = parse_px(val) { rule.margin_right = v.min(255) as u8; rule.present_mask |= RULE_HAS_MR; }
         } else if prop.eq_ignore_ascii_case(b"padding") {
             if let Some((v, h)) = parse_one_or_two_px(val) {
-                rule.padding_top = Some(v);
-                rule.padding_bottom = Some(v);
-                rule.padding_left = Some(h);
-                rule.padding_right = Some(h);
+                let vb = v.min(255) as u8;
+                let hb = h.min(255) as u8;
+                rule.padding_top = vb;
+                rule.padding_bottom = vb;
+                rule.padding_left = hb;
+                rule.padding_right = hb;
+                rule.present_mask |= RULE_HAS_PT | RULE_HAS_PB | RULE_HAS_PL | RULE_HAS_PR;
             }
         } else if prop.eq_ignore_ascii_case(b"padding-top") {
-            rule.padding_top = parse_px(val);
+            if let Some(v) = parse_px(val) { rule.padding_top = v.min(255) as u8; rule.present_mask |= RULE_HAS_PT; }
         } else if prop.eq_ignore_ascii_case(b"padding-bottom") {
-            rule.padding_bottom = parse_px(val);
+            if let Some(v) = parse_px(val) { rule.padding_bottom = v.min(255) as u8; rule.present_mask |= RULE_HAS_PB; }
         } else if prop.eq_ignore_ascii_case(b"padding-left") {
-            rule.padding_left = parse_px(val);
+            if let Some(v) = parse_px(val) { rule.padding_left = v.min(255) as u8; rule.present_mask |= RULE_HAS_PL; }
         } else if prop.eq_ignore_ascii_case(b"padding-right") {
-            rule.padding_right = parse_px(val);
+            if let Some(v) = parse_px(val) { rule.padding_right = v.min(255) as u8; rule.present_mask |= RULE_HAS_PR; }
         } else if prop.eq_ignore_ascii_case(b"gap")
             || prop.eq_ignore_ascii_case(b"column-gap")
             || prop.eq_ignore_ascii_case(b"row-gap")
         {
-            rule.gap = parse_px(val);
+            if let Some(g) = parse_px(val) {
+                rule.gap = g.min(255) as u8;
+                rule.present_mask |= RULE_HAS_GAP;
+            }
         } else if prop.eq_ignore_ascii_case(b"font-weight") {
             if val.eq_ignore_ascii_case(b"bold") || val.eq_ignore_ascii_case(b"600") || val.eq_ignore_ascii_case(b"700") || val.eq_ignore_ascii_case(b"800") {
-                rule.is_bold = Some(true);
+                rule.present_mask |= RULE_HAS_BOLD | RULE_IS_BOLD_VAL;
             } else if val.eq_ignore_ascii_case(b"normal") || val.eq_ignore_ascii_case(b"400") {
-                rule.is_bold = Some(false);
+                rule.present_mask = (rule.present_mask | RULE_HAS_BOLD) & !RULE_IS_BOLD_VAL;
             }
         } else if prop.eq_ignore_ascii_case(b"display") {
-            rule.display = parse_display(val);
+            if let Some(d) = parse_display(val) {
+                rule.packed_enums = (rule.packed_enums & !0x07) | display_to_bits(d);
+                rule.present_mask |= RULE_HAS_DISPLAY;
+            }
         } else if prop.eq_ignore_ascii_case(b"flex-direction") {
-            rule.flex_direction = parse_flex_direction(val);
+            if let Some(fd) = parse_flex_direction(val) {
+                if fd == FlexDirection::Column {
+                    rule.packed_enums |= 0x08;
+                } else {
+                    rule.packed_enums &= !0x08;
+                }
+                rule.present_mask |= RULE_HAS_FLEX_DIR;
+            }
         } else if prop.eq_ignore_ascii_case(b"flex-wrap") {
-            rule.flex_wrap = parse_flex_wrap(val);
+            if let Some(fw) = parse_flex_wrap(val) {
+                rule.present_mask |= RULE_HAS_FLEX_WRAP;
+                if fw { rule.present_mask |= RULE_FLEX_WRAP_VAL; } else { rule.present_mask &= !RULE_FLEX_WRAP_VAL; }
+            }
         } else if prop.eq_ignore_ascii_case(b"justify-content") {
-            rule.justify_content = parse_justify_content(val);
+            if let Some(jc) = parse_justify_content(val) {
+                rule.packed_enums = (rule.packed_enums & !(0x03 << 4)) | (justify_to_bits(jc) << 4);
+                rule.present_mask |= RULE_HAS_JUSTIFY;
+            }
         } else if prop.eq_ignore_ascii_case(b"align-items") {
-            rule.align_items = parse_align_items(val);
+            if let Some(ai) = parse_align_items(val) {
+                rule.packed_enums = (rule.packed_enums & !(0x03 << 6)) | (align_to_bits(ai) << 6);
+                rule.present_mask |= RULE_HAS_ALIGN;
+            }
         } else if prop.eq_ignore_ascii_case(b"text-align") {
-            rule.text_align = parse_text_align(val);
+            if let Some(ta) = parse_text_align(val) {
+                rule.text_align_bits = text_align_to_bits(ta);
+                rule.present_mask |= RULE_HAS_TEXT_ALIGN;
+            }
         } else if prop.eq_ignore_ascii_case(b"grid-template-columns") {
-            rule.grid_cols = parse_grid_template_columns(val);
+            if let Some(gc) = parse_grid_template_columns(val) {
+                rule.grid_cols = gc.min(255) as u8;
+                rule.present_mask |= RULE_HAS_GRID_COLS;
+            }
         }
     }
 
@@ -1001,7 +1378,7 @@ impl MiniCss {
 
             if sel_raw.is_empty() { continue; }
 
-            // Processa blocos `:root` extraindo `--var: val` antes das regras visuais
+            // Processa blocos `:root` extraindo `--var: val` com nome indexado por FNV-1a
             if sel_raw.eq_ignore_ascii_case(b":root") {
                 for decl in body.split(|&b| b == b';') {
                     let decl_clean = decl.trim_ascii();
@@ -1023,38 +1400,44 @@ impl MiniCss {
             for sub_sel in sel_raw.split(|&b| b == b',') {
                 let s_clean = sub_sel.trim_ascii();
                 if s_clean.is_empty() || self.rule_count >= MAX_CSS_RULES { continue; }
-                // Ignora pseudo-classes / pseudo-elementos (:hover, :focus, ::after, ::-webkit-*)
                 if s_clean.contains(&b':') {
                     continue;
                 }
 
                 let mut rule = CssRule::empty();
                 let last_ws = s_clean.iter().rposition(|&b| b == b' ' || b == b'\t' || b == b'>');
-                if let Some(pos) = last_ws {
+                let is_body_sel = if let Some(pos) = last_ws {
                     let mut p_part = s_clean[..pos].trim_ascii();
                     while let Some(prev_ws) = p_part.iter().rposition(|&b| b == b' ' || b == b'\t' || b == b'>') {
                         p_part = p_part[prev_ws + 1..].trim_ascii();
                     }
                     let c_part = s_clean[pos + 1..].trim_ascii();
-                    if p_part.is_empty() || c_part.is_empty() {
+                    let Some((p_hashes, p_k0, _, p_spec)) = encode_selector_part(p_part) else {
                         continue;
-                    }
-                    rule.kind = SelectorKind::Descendant;
-                    rule.parent_selector_len = copy_trunc_bytes(&mut rule.parent_selector, p_part);
-                    rule.selector_len = copy_trunc_bytes(&mut rule.selector, c_part);
-                    rule.specificity = selector_part_specificity(p_part).saturating_add(selector_part_specificity(c_part));
-                } else if s_clean[0] == b'.' {
-                    rule.kind = SelectorKind::Class;
-                    rule.selector_len = copy_trunc_bytes(&mut rule.selector, s_clean);
-                    rule.specificity = selector_part_specificity(s_clean);
-                } else if s_clean[0] == b'#' {
-                    rule.kind = SelectorKind::Id;
-                    rule.selector_len = copy_trunc_bytes(&mut rule.selector, s_clean);
-                    rule.specificity = selector_part_specificity(s_clean);
+                    };
+                    let Some((c_hashes, c_k0, c_k1, c_spec)) = encode_selector_part(c_part) else {
+                        continue;
+                    };
+                    rule.parent_kind = p_k0;
+                    rule.parent_hash = p_hashes[0];
+                    rule.sel_hashes = c_hashes;
+                    rule.set_atom_kinds(c_k0, c_k1);
+                    rule.specificity = p_spec.saturating_add(c_spec);
+                    false
                 } else {
-                    rule.kind = SelectorKind::Tag;
-                    rule.selector_len = copy_trunc_bytes(&mut rule.selector, s_clean);
-                    rule.specificity = selector_part_specificity(s_clean);
+                    let Some((hashes, k0, k1, spec)) = encode_selector_part(s_clean) else {
+                        continue;
+                    };
+                    rule.parent_kind = SEL_ATOM_NONE;
+                    rule.parent_hash = 0;
+                    rule.sel_hashes = hashes;
+                    rule.set_atom_kinds(k0, k1);
+                    rule.specificity = spec;
+                    s_clean.eq_ignore_ascii_case(b"body")
+                };
+
+                if is_body_sel {
+                    rule.present_mask |= RULE_IS_BODY_TAG;
                 }
 
                 for decl in body.split(|&b| b == b';') {
@@ -1067,10 +1450,8 @@ impl MiniCss {
                     }
                 }
 
-                if rule.kind == SelectorKind::Tag && s_clean.eq_ignore_ascii_case(b"body") {
-                    if let Some(bg) = rule.bg_color {
-                        self.body_bg_color = Some(bg);
-                    }
+                if is_body_sel && (rule.present_mask & RULE_HAS_BG) != 0 {
+                    self.body_bg_color = Some(rule.bg_color);
                 }
 
                 self.rules[self.rule_count] = rule;
@@ -1088,23 +1469,23 @@ impl MiniCss {
     fn apply_tailwind_token(style: &mut ComputedStyle, token: &[u8], tag_bytes: &[u8]) {
         if token == b"hidden" {
             style.display = DisplayMode::None;
-            style.display_block = false;
+            style.set_display_block(false);
         } else if token == b"block" {
             style.display = DisplayMode::Block;
-            style.display_block = true;
+            style.set_display_block(true);
         } else if token == b"inline" {
             style.display = DisplayMode::Inline;
-            style.display_block = false;
+            style.set_display_block(false);
         } else if token == b"inline-block" || token == b"inline-flex" {
             style.display = DisplayMode::InlineBlock;
-            style.display_block = false;
+            style.set_display_block(false);
         } else if token == b"flex" {
             style.display = DisplayMode::Flex;
-            style.display_block = false;
+            style.set_display_block(false);
         } else if token == b"grid" {
             style.display = DisplayMode::Flex;
-            style.display_block = false;
-            style.flex_wrap = true;
+            style.set_display_block(false);
+            style.set_flex_wrap(true);
             if style.grid_cols == 0 {
                 style.grid_cols = 1;
             }
@@ -1113,10 +1494,10 @@ impl MiniCss {
         } else if token == b"flex-row" {
             style.flex_direction = FlexDirection::Row;
         } else if token == b"flex-wrap" {
-            style.flex_wrap = true;
+            style.set_flex_wrap(true);
         } else if token.starts_with(b"grid-cols-") {
             if let Some(cols) = parse_px(&token[10..]) {
-                style.grid_cols = cols.clamp(1, 6);
+                style.grid_cols = cols.clamp(1, 6) as u8;
             }
         } else if token == b"items-center" {
             style.align_items = AlignItems::Center;
@@ -1127,26 +1508,26 @@ impl MiniCss {
         } else if token == b"text-center" {
             style.text_align = TextAlign::Center;
         } else if token == b"font-bold" || token == b"font-semibold" || token == b"font-medium" || token == b"font-black" {
-            style.is_bold = true;
+            style.set_bold(true);
         } else if token == b"w-full" {
-            style.width = None;
+            style.set_width(None);
         } else if token == b"border" {
             style.border_width = 1;
             style.border_sides = 15;
-            if style.border_color.is_none() {
-                style.border_color = Some(0x0033_4155);
+            if !style.has_border_color() {
+                style.set_border_color(Some(0x0033_4155));
             }
         } else if token == b"border-2" {
             style.border_width = 2;
             style.border_sides = 15;
-            if style.border_color.is_none() {
-                style.border_color = Some(0x0033_4155);
+            if !style.has_border_color() {
+                style.set_border_color(Some(0x0033_4155));
             }
         } else if token == b"border-b" || token == b"border-t" || token == b"border-l" || token == b"border-l-4" {
             style.border_width = if token == b"border-l-4" { 3 } else { 1 };
             style.border_sides = if token == b"border-t" { 1 } else if token == b"border-b" { 4 } else { 8 };
-            if style.border_color.is_none() {
-                style.border_color = Some(0x0033_4155);
+            if !style.has_border_color() {
+                style.set_border_color(Some(0x0033_4155));
             }
         } else if token == b"rounded" {
             style.border_radius = 4;
@@ -1157,58 +1538,62 @@ impl MiniCss {
         } else if token == b"rounded-full" {
             style.border_radius = 12;
         } else if token.starts_with(b"gap-") {
-            if let Some(g) = parse_tw_spacing(&token[4..]) { style.gap = g; }
+            if let Some(g) = parse_tw_spacing(&token[4..]) { style.gap = g.min(255) as u8; }
         } else if token.starts_with(b"space-y-") {
-            if let Some(g) = parse_tw_spacing(&token[8..]) { style.gap = g; }
+            if let Some(g) = parse_tw_spacing(&token[8..]) { style.gap = g.min(255) as u8; }
         } else if token.starts_with(b"p-") {
             if let Some(p) = parse_tw_spacing(&token[2..]) {
-                style.padding_top = p; style.padding_bottom = p;
-                style.padding_left = p; style.padding_right = p;
+                let pb = p.min(255) as u8;
+                style.padding_top = pb; style.padding_bottom = pb;
+                style.padding_left = pb; style.padding_right = pb;
             }
         } else if token.starts_with(b"px-") {
             if let Some(p) = parse_tw_spacing(&token[3..]) {
-                style.padding_left = p; style.padding_right = p;
+                let pb = p.min(255) as u8;
+                style.padding_left = pb; style.padding_right = pb;
             }
         } else if token.starts_with(b"py-") {
             if let Some(p) = parse_tw_spacing(&token[3..]) {
-                style.padding_top = p; style.padding_bottom = p;
+                let pb = p.min(255) as u8;
+                style.padding_top = pb; style.padding_bottom = pb;
             }
         } else if token.starts_with(b"pt-") {
-            if let Some(p) = parse_tw_spacing(&token[3..]) { style.padding_top = p; }
+            if let Some(p) = parse_tw_spacing(&token[3..]) { style.padding_top = p.min(255) as u8; }
         } else if token.starts_with(b"pb-") {
-            if let Some(p) = parse_tw_spacing(&token[3..]) { style.padding_bottom = p; }
+            if let Some(p) = parse_tw_spacing(&token[3..]) { style.padding_bottom = p.min(255) as u8; }
         } else if token.starts_with(b"pl-") {
-            if let Some(p) = parse_tw_spacing(&token[3..]) { style.padding_left = p; }
+            if let Some(p) = parse_tw_spacing(&token[3..]) { style.padding_left = p.min(255) as u8; }
         } else if token.starts_with(b"mt-") {
-            if let Some(m) = parse_tw_spacing(&token[3..]) { style.margin_top = m; }
+            if let Some(m) = parse_tw_spacing(&token[3..]) { style.margin_top = m.min(255) as u8; }
         } else if token.starts_with(b"mb-") {
-            if let Some(m) = parse_tw_spacing(&token[3..]) { style.margin_bottom = m; }
+            if let Some(m) = parse_tw_spacing(&token[3..]) { style.margin_bottom = m.min(255) as u8; }
         } else if token.starts_with(b"my-") {
-            if let Some(m) = parse_tw_spacing(&token[3..]) { style.margin_top = m; style.margin_bottom = m; }
+            if let Some(m) = parse_tw_spacing(&token[3..]) {
+                let mb = m.min(255) as u8;
+                style.margin_top = mb; style.margin_bottom = mb;
+            }
         } else if token.starts_with(b"w-") {
-            if let Some(w_px) = parse_tw_spacing(&token[2..]) { style.width = Some(w_px.max(6)); }
+            if let Some(w_px) = parse_tw_spacing(&token[2..]) { style.set_width(Some(w_px.max(6))); }
         } else if token.starts_with(b"h-") {
-            if let Some(h_px) = parse_tw_spacing(&token[2..]) { style.height = Some(h_px.max(6)); }
+            if let Some(h_px) = parse_tw_spacing(&token[2..]) { style.set_height(Some(h_px.max(6))); }
         } else if token.starts_with(b"bg-") && !token.starts_with(b"bg-gradient") {
             if let Some(c) = parse_tw_color_token(&token[3..]) {
-                style.bg_color = Some(c);
+                style.set_bg_color(Some(c));
             }
         } else if token.starts_with(b"from-") {
-            if style.bg_color.is_none() {
+            if !style.has_bg() {
                 if let Some(c) = parse_tw_color_token(&token[5..]) {
-                    style.bg_color = Some(c);
+                    style.set_bg_color(Some(c));
                 }
             }
         } else if token.starts_with(b"to-") {
             if let Some(c_to) = parse_tw_color_token(&token[3..]) {
-                style.bg_color = Some(match style.bg_color {
-                    Some(c_from) => blend_over_rgb(c_from, c_to, 128),
-                    None => c_to,
-                });
+                let blended = if style.has_bg() { blend_over_rgb(style.bg_color, c_to, 128) } else { c_to };
+                style.set_bg_color(Some(blended));
             }
         } else if token.starts_with(b"border-") {
             if let Some(c) = parse_tw_color_token(&token[7..]) {
-                style.border_color = Some(c);
+                style.set_border_color(Some(c));
             }
         } else if token.starts_with(b"text-") {
             if token == b"text-xs" { style.font_size = 11; }
@@ -1217,9 +1602,9 @@ impl MiniCss {
             else if token == b"text-xl" || token == b"text-2xl" || token == b"text-3xl" { style.font_size = 16; }
             else if let Some(c) = parse_tw_color_token(&token[5..]) {
                 style.color = c;
-                style.has_explicit_color = true;
+                style.set_explicit_color(true);
             }
-        } else if token == b"font-mono" && tag_bytes != b"a" && !style.has_explicit_color {
+        } else if token == b"font-mono" && tag_bytes != b"a" && !style.has_explicit_color() {
             style.color = 0x00CB_D5E1;
         }
     }
@@ -1228,62 +1613,62 @@ impl MiniCss {
         if node_idx >= dom.node_count { return; }
 
         let tag = dom.nodes[node_idx].tag;
-        let tag_len = dom.nodes[node_idx].tag_len;
-        let tag_bytes = &tag[..tag_len];
-        let parent_idx = dom.nodes[node_idx].parent;
+        let tag_len = dom.nodes[node_idx].tag_len as usize;
+        let tag_bytes = &tag[..tag_len.min(tag.len())];
+        let parent_idx = dom.nodes[node_idx].parent_idx();
 
         // 1. Estilos Padrão do User-Agent baseados na Tag
         let mut style = ComputedStyle::default();
         if tag_bytes == b"h1" {
             style.color = COLOR_H1;
-            style.has_explicit_color = true;
+            style.set_explicit_color(true);
             style.font_size = 16;
             style.margin_top = 8;
             style.margin_bottom = 6;
-            style.is_bold = true;
+            style.set_bold(true);
             style.display = DisplayMode::Block;
-            style.display_block = true;
+            style.set_display_block(true);
         } else if tag_bytes == b"h2" {
             style.color = 0x00F3_8BA8;
-            style.has_explicit_color = true;
+            style.set_explicit_color(true);
             style.font_size = 14;
             style.margin_top = 6;
             style.margin_bottom = 4;
-            style.is_bold = true;
+            style.set_bold(true);
             style.display = DisplayMode::Block;
-            style.display_block = true;
+            style.set_display_block(true);
         } else if tag_bytes == b"h3" {
             style.color = 0x00A6_E3A1;
-            style.has_explicit_color = true;
+            style.set_explicit_color(true);
             style.font_size = 13;
             style.margin_top = 4;
             style.margin_bottom = 4;
-            style.is_bold = true;
+            style.set_bold(true);
             style.display = DisplayMode::Block;
-            style.display_block = true;
+            style.set_display_block(true);
         } else if tag_bytes == b"h4" || tag_bytes == b"h5" || tag_bytes == b"h6" {
             style.color = 0x00F9_E2AF;
-            style.has_explicit_color = true;
+            style.set_explicit_color(true);
             style.margin_top = 3;
             style.margin_bottom = 3;
-            style.is_bold = true;
+            style.set_bold(true);
             style.display = DisplayMode::Block;
-            style.display_block = true;
+            style.set_display_block(true);
         } else if tag_bytes == b"p" {
             style.color = COLOR_TEXT;
             style.margin_top = 2;
             style.margin_bottom = 4;
             style.display = DisplayMode::Block;
-            style.display_block = true;
+            style.set_display_block(true);
         } else if tag_bytes == b"a" {
             style.color = COLOR_LINK;
             style.display = DisplayMode::Inline;
-            style.display_block = false;
+            style.set_display_block(false);
         } else if tag_bytes == b"button" {
             style.color = COLOR_BTN_TEXT;
-            style.has_explicit_color = true;
-            style.bg_color = Some(0x0031_3244);
-            style.border_color = Some(0x0045_475A);
+            style.set_explicit_color(true);
+            style.set_bg_color(Some(0x0031_3244));
+            style.set_border_color(Some(0x0045_475A));
             style.border_width = 1;
             style.border_radius = 3;
             style.margin_top = 3;
@@ -1295,17 +1680,18 @@ impl MiniCss {
             style.padding_left = 6;
             style.padding_right = 6;
             style.display = DisplayMode::InlineBlock;
-            style.display_block = false;
+            style.set_display_block(false);
         } else if tag_bytes == b"div" || tag_bytes == b"nav" || tag_bytes == b"header" || tag_bytes == b"section" || tag_bytes == b"main" || tag_bytes == b"article" || tag_bytes == b"footer" || tag_bytes == b"aside" || tag_bytes == b"picture" || tag_bytes == b"figure" || tag_bytes == b"figcaption" || tag_bytes == b"form" {
             style.display = DisplayMode::Block;
-            style.display_block = true;
-            style.margin_top = if tag_bytes == b"section" || tag_bytes == b"article" || tag_bytes == b"header" || tag_bytes == b"footer" { 4 } else { 0 };
-            style.margin_bottom = if tag_bytes == b"section" || tag_bytes == b"article" || tag_bytes == b"header" || tag_bytes == b"footer" { 4 } else { 0 };
+            style.set_display_block(true);
+            let is_semantic_box = tag_bytes == b"section" || tag_bytes == b"article" || tag_bytes == b"header" || tag_bytes == b"footer" || tag_bytes == b"nav";
+            style.margin_top = if is_semantic_box { 4 } else { 0 };
+            style.margin_bottom = if is_semantic_box { 4 } else { 0 };
         } else if tag_bytes == b"blockquote" || tag_bytes == b"pre" {
             style.display = DisplayMode::Block;
-            style.display_block = true;
-            style.bg_color = Some(0x001E_1E2E);
-            style.border_color = Some(0x0045_475A);
+            style.set_display_block(true);
+            style.set_bg_color(Some(0x001E_1E2E));
+            style.set_border_color(Some(0x0045_475A));
             style.border_width = 1;
             style.border_radius = 4;
             style.margin_top = 4;
@@ -1316,49 +1702,62 @@ impl MiniCss {
             style.padding_right = 6;
             if tag_bytes == b"pre" {
                 style.color = 0x00A6_E3A1;
-                style.has_explicit_color = true;
+                style.set_explicit_color(true);
             }
         } else if tag_bytes == b"table" || tag_bytes == b"tr" {
             style.display = DisplayMode::Block;
-            style.display_block = true;
+            style.set_display_block(true);
             style.margin_top = if tag_bytes == b"table" { 4 } else { 1 };
             style.margin_bottom = if tag_bytes == b"table" { 4 } else { 2 };
         } else if tag_bytes == b"td" || tag_bytes == b"th" {
             style.display = DisplayMode::InlineBlock;
-            style.display_block = false;
+            style.set_display_block(false);
             style.padding_left = 4;
             style.padding_right = 6;
             if tag_bytes == b"th" {
-                style.is_bold = true;
+                style.set_bold(true);
                 style.color = 0x0089_DCEB;
-                style.has_explicit_color = true;
+                style.set_explicit_color(true);
             }
         } else if tag_bytes == b"hr" {
             style.display = DisplayMode::Block;
-            style.display_block = true;
+            style.set_display_block(true);
             style.margin_top = 6;
             style.margin_bottom = 6;
         } else if tag_bytes == b"b" || tag_bytes == b"strong" {
-            style.is_bold = true;
+            style.set_bold(true);
             style.display = DisplayMode::Inline;
-            style.display_block = false;
+            style.set_display_block(false);
         } else if tag_bytes == b"ul" || tag_bytes == b"ol" {
             style.display = DisplayMode::Block;
-            style.display_block = true;
+            style.set_display_block(true);
             style.margin_top = 4;
             style.margin_bottom = 4;
             style.padding_left = 8;
         } else if tag_bytes == b"li" {
             style.display = DisplayMode::Block;
-            style.display_block = true;
+            style.set_display_block(true);
             style.margin_top = 2;
             style.margin_bottom = 2;
         } else if tag_bytes == b"img" {
             style.display = DisplayMode::InlineBlock;
-            style.display_block = false;
-        } else if tag_bytes == b"span" || tag_bytes == b"#text" || tag_bytes == b"i" || tag_bytes == b"em" || tag_bytes == b"code" || tag_bytes == b"small" || tag_bytes == b"time" || tag_bytes == b"label" {
+            style.set_display_block(false);
+        } else if tag_bytes == b"code" {
             style.display = DisplayMode::Inline;
-            style.display_block = false;
+            style.set_display_block(false);
+            style.color = 0x00A6_E3A1;
+            style.set_explicit_color(true);
+            style.set_bg_color(Some(0x001E_293B));
+            style.set_border_color(Some(0x0033_4155));
+            style.border_width = 1;
+            style.border_radius = 3;
+            style.padding_top = 1;
+            style.padding_bottom = 1;
+            style.padding_left = 3;
+            style.padding_right = 3;
+        } else if tag_bytes == b"span" || tag_bytes == b"#text" || tag_bytes == b"i" || tag_bytes == b"em" || tag_bytes == b"small" || tag_bytes == b"time" || tag_bytes == b"label" {
+            style.display = DisplayMode::Inline;
+            style.set_display_block(false);
             if tag_bytes == b"#text" {
                 style.margin_top = 0;
                 style.margin_bottom = 0;
@@ -1367,12 +1766,12 @@ impl MiniCss {
             let sentinel = dom.nodes[node_idx].alt_len;
             if sentinel == 2 {
                 style.display = DisplayMode::None;
-                style.display_block = false;
+                style.set_display_block(false);
             } else if sentinel == 3 {
                 style.color = 0x00E0_F2FE;
-                style.has_explicit_color = true;
-                style.bg_color = Some(0x001E_3A5F);
-                style.border_color = Some(0x0038_BDF8);
+                style.set_explicit_color(true);
+                style.set_bg_color(Some(0x001E_3A5F));
+                style.set_border_color(Some(0x0038_BDF8));
                 style.border_width = 1;
                 style.border_radius = 4;
                 style.padding_top = 4;
@@ -1382,12 +1781,12 @@ impl MiniCss {
                 style.margin_top = 3;
                 style.margin_bottom = 3;
                 style.display = DisplayMode::InlineBlock;
-                style.display_block = false;
+                style.set_display_block(false);
             } else {
                 style.color = if sentinel == 1 { 0x0094_A3B8 } else { COLOR_TEXT };
-                style.has_explicit_color = true;
-                style.bg_color = Some(0x000F_172A);
-                style.border_color = Some(0x0047_5569);
+                style.set_explicit_color(true);
+                style.set_bg_color(Some(0x000F_172A));
+                style.set_border_color(Some(0x0047_5569));
                 style.border_width = 1;
                 style.border_radius = 4;
                 style.margin_top = 3;
@@ -1397,12 +1796,12 @@ impl MiniCss {
                 style.padding_left = 8;
                 style.padding_right = 8;
                 style.display = DisplayMode::Block;
-                style.display_block = true;
+                style.set_display_block(true);
             }
         }
 
         // Herança CSS de cor do elemento pai quando não há cor explícita no elemento
-        if !style.has_explicit_color && tag_bytes != b"a" {
+        if !style.has_explicit_color() && tag_bytes != b"a" {
             if let Some(pid) = parent_idx {
                 if pid < dom.node_count {
                     style.color = dom.nodes[pid].computed_style.color;
@@ -1410,35 +1809,29 @@ impl MiniCss {
             }
         }
 
-        // 2. Cascata CSS ordenada por faixas de especificidade: Tag/Desc(1..9) -> Classe(10..19) -> Composta(20..99) -> ID(100+)
-        const TIERS: [(u16, u16); 4] = [(0, 10), (10, 20), (20, 100), (100, u16::MAX)];
+        // 2. Cascata CSS indexada por FNV-1a (faixas de especificidade: Tag/Desc -> Classe -> Composta -> ID)
+        const TIERS: [(u8, u8); 4] = [(0, 10), (10, 20), (20, 100), (100, u8::MAX)];
         for &(min_s, max_s) in &TIERS {
             for i in 0..self.rule_count {
                 let r = &self.rules[i];
                 if r.specificity < min_s || r.specificity >= max_s {
                     continue;
                 }
-                let matched = match r.kind {
-                    SelectorKind::Tag | SelectorKind::Class | SelectorKind::Id => {
-                        selector_matches_node(dom, node_idx, &r.selector[..r.selector_len])
-                    }
-                    SelectorKind::Descendant => {
-                        if selector_matches_node(dom, node_idx, &r.selector[..r.selector_len]) {
-                            let p_sel = &r.parent_selector[..r.parent_selector_len];
-                            let mut matched_ancestor = false;
-                            let mut cur_parent = dom.nodes[node_idx].parent;
-                            while let Some(pid) = cur_parent {
-                                if selector_matches_node(dom, pid, p_sel) {
-                                    matched_ancestor = true;
-                                    break;
-                                }
-                                cur_parent = dom.nodes[pid].parent;
-                            }
-                            matched_ancestor
-                        } else {
-                            false
+                let matched = if !r.is_descendant() {
+                    rule_matches_simple(dom, node_idx, r)
+                } else if rule_matches_simple(dom, node_idx, r) {
+                    let mut matched_ancestor = false;
+                    let mut cur_parent = dom.nodes[node_idx].parent_idx();
+                    while let Some(pid) = cur_parent {
+                        if node_matches_atom(dom, pid, r.parent_kind, r.parent_hash) {
+                            matched_ancestor = true;
+                            break;
                         }
+                        cur_parent = dom.nodes[pid].parent_idx();
                     }
+                    matched_ancestor
+                } else {
+                    false
                 };
                 if matched {
                     apply_rule_to_style(&mut style, r);
@@ -1449,7 +1842,7 @@ impl MiniCss {
         // 3. Utilitários Tailwind CSS Nativos (Base + Breakpoints Desktop sm:/md:/lg:)
         if dom.nodes[node_idx].class_len > 0 {
             let class_copy = dom.nodes[node_idx].class_attr;
-            let class_len = dom.nodes[node_idx].class_len;
+            let class_len = (dom.nodes[node_idx].class_len as usize).min(class_copy.len());
             let class_slice = &class_copy[..class_len];
 
             for tok in class_slice.split(|&b| b == b' ' || b == b'\t' || b == b'\r' || b == b'\n') {
@@ -1474,7 +1867,7 @@ impl MiniCss {
         // 4. Estilos Inline (style="...") — especificidade máxima
         if dom.nodes[node_idx].style_len > 0 {
             let inline = dom.nodes[node_idx].style_attr;
-            let inline_len = dom.nodes[node_idx].style_len;
+            let inline_len = (dom.nodes[node_idx].style_len as usize).min(inline.len());
             let inline_slice = &inline[..inline_len];
             for decl in inline_slice.split(|&b| b == b';') {
                 let decl_clean = decl.trim_ascii();
@@ -1486,73 +1879,73 @@ impl MiniCss {
                     if prop.eq_ignore_ascii_case(b"color") {
                         if let Some(c) = parse_color(val) {
                             style.color = c;
-                            style.has_explicit_color = true;
+                            style.set_explicit_color(true);
                         }
                     } else if prop.eq_ignore_ascii_case(b"background-color") || prop.eq_ignore_ascii_case(b"background") {
-                        if let Some(bg) = parse_color(val) { style.bg_color = Some(bg); }
+                        if let Some(bg) = parse_color(val) { style.set_bg_color(Some(bg)); }
                     } else if prop.eq_ignore_ascii_case(b"border") {
                         let (bw, bc) = parse_border(val);
-                        if let Some(w) = bw { style.border_width = w; }
-                        if let Some(c) = bc { style.border_color = Some(c); }
+                        if let Some(w) = bw { style.border_width = w.min(255) as u8; }
+                        if let Some(c) = bc { style.set_border_color(Some(c)); }
                     } else if prop.eq_ignore_ascii_case(b"border-color") {
-                        if let Some(bc) = parse_color(val) { style.border_color = Some(bc); }
+                        if let Some(bc) = parse_color(val) { style.set_border_color(Some(bc)); }
                     } else if prop.eq_ignore_ascii_case(b"border-width") {
-                        if let Some(w) = parse_px(val) { style.border_width = w; }
+                        if let Some(w) = parse_px(val) { style.border_width = w.min(255) as u8; }
                     } else if prop.eq_ignore_ascii_case(b"border-radius") {
-                        if let Some(r) = parse_px(val) { style.border_radius = r; }
+                        if let Some(r) = parse_px(val) { style.border_radius = r.min(255) as u8; }
                     } else if prop.eq_ignore_ascii_case(b"font-size") {
-                        if let Some(fs) = parse_px(val) { style.font_size = fs; }
+                        if let Some(fs) = parse_px(val) { style.font_size = fs.min(255) as u8; }
                     } else if prop.eq_ignore_ascii_case(b"width") {
-                        if let Some(w) = parse_px(val) { style.width = Some(w); }
+                        if let Some(w) = parse_px(val) { style.set_width(Some(w)); }
                     } else if prop.eq_ignore_ascii_case(b"height") {
-                        if let Some(h) = parse_px(val) { style.height = Some(h); }
+                        if let Some(h) = parse_px(val) { style.set_height(Some(h)); }
                     } else if prop.eq_ignore_ascii_case(b"max-width") {
-                        if let Some(mw) = parse_px(val) { style.max_width = Some(mw); }
+                        if let Some(mw) = parse_px(val) { style.set_max_width(Some(mw)); }
                     } else if prop.eq_ignore_ascii_case(b"margin") {
                         if let Some((v, h)) = parse_one_or_two_px(val) {
-                            style.margin_top = v;
-                            style.margin_bottom = v;
-                            style.margin_left = h;
-                            style.margin_right = h;
+                            let vb = v.min(255) as u8;
+                            let hb = h.min(255) as u8;
+                            style.margin_top = vb; style.margin_bottom = vb;
+                            style.margin_left = hb; style.margin_right = hb;
                         }
                     } else if prop.eq_ignore_ascii_case(b"margin-top") {
-                        if let Some(m) = parse_px(val) { style.margin_top = m; }
+                        if let Some(m) = parse_px(val) { style.margin_top = m.min(255) as u8; }
                     } else if prop.eq_ignore_ascii_case(b"margin-bottom") {
-                        if let Some(m) = parse_px(val) { style.margin_bottom = m; }
+                        if let Some(m) = parse_px(val) { style.margin_bottom = m.min(255) as u8; }
                     } else if prop.eq_ignore_ascii_case(b"margin-left") {
-                        if let Some(m) = parse_px(val) { style.margin_left = m; }
+                        if let Some(m) = parse_px(val) { style.margin_left = m.min(255) as u8; }
                     } else if prop.eq_ignore_ascii_case(b"margin-right") {
-                        if let Some(m) = parse_px(val) { style.margin_right = m; }
+                        if let Some(m) = parse_px(val) { style.margin_right = m.min(255) as u8; }
                     } else if prop.eq_ignore_ascii_case(b"padding") {
                         if let Some((v, h)) = parse_one_or_two_px(val) {
-                            style.padding_top = v;
-                            style.padding_bottom = v;
-                            style.padding_left = h;
-                            style.padding_right = h;
+                            let vb = v.min(255) as u8;
+                            let hb = h.min(255) as u8;
+                            style.padding_top = vb; style.padding_bottom = vb;
+                            style.padding_left = hb; style.padding_right = hb;
                         }
                     } else if prop.eq_ignore_ascii_case(b"padding-top") {
-                        if let Some(p) = parse_px(val) { style.padding_top = p; }
+                        if let Some(p) = parse_px(val) { style.padding_top = p.min(255) as u8; }
                     } else if prop.eq_ignore_ascii_case(b"padding-bottom") {
-                        if let Some(p) = parse_px(val) { style.padding_bottom = p; }
+                        if let Some(p) = parse_px(val) { style.padding_bottom = p.min(255) as u8; }
                     } else if prop.eq_ignore_ascii_case(b"padding-left") {
-                        if let Some(p) = parse_px(val) { style.padding_left = p; }
+                        if let Some(p) = parse_px(val) { style.padding_left = p.min(255) as u8; }
                     } else if prop.eq_ignore_ascii_case(b"padding-right") {
-                        if let Some(p) = parse_px(val) { style.padding_right = p; }
+                        if let Some(p) = parse_px(val) { style.padding_right = p.min(255) as u8; }
                     } else if prop.eq_ignore_ascii_case(b"font-weight") {
                         if val.eq_ignore_ascii_case(b"bold") {
-                            style.is_bold = true;
+                            style.set_bold(true);
                         } else if val.eq_ignore_ascii_case(b"normal") {
-                            style.is_bold = false;
+                            style.set_bold(false);
                         }
                     } else if prop.eq_ignore_ascii_case(b"display") {
                         if let Some(d) = parse_display(val) {
                             style.display = d;
-                            style.display_block = d == DisplayMode::Block;
+                            style.set_display_block(d == DisplayMode::Block);
                         }
                     } else if prop.eq_ignore_ascii_case(b"flex-direction") {
                         if let Some(fd) = parse_flex_direction(val) { style.flex_direction = fd; }
                     } else if prop.eq_ignore_ascii_case(b"flex-wrap") {
-                        if let Some(fw) = parse_flex_wrap(val) { style.flex_wrap = fw; }
+                        if let Some(fw) = parse_flex_wrap(val) { style.set_flex_wrap(fw); }
                     } else if prop.eq_ignore_ascii_case(b"justify-content") {
                         if let Some(jc) = parse_justify_content(val) { style.justify_content = jc; }
                     } else if prop.eq_ignore_ascii_case(b"align-items") {
@@ -1563,18 +1956,18 @@ impl MiniCss {
                         || prop.eq_ignore_ascii_case(b"column-gap")
                         || prop.eq_ignore_ascii_case(b"row-gap")
                     {
-                        if let Some(px) = parse_px(val) { style.gap = px.min(64); }
+                        if let Some(px) = parse_px(val) { style.gap = px.min(64) as u8; }
                     } else if prop.eq_ignore_ascii_case(b"grid-template-columns") {
                         if let Some(gc) = parse_grid_template_columns(val) {
-                            style.grid_cols = gc;
+                            style.grid_cols = gc.min(6) as u8;
                         }
                     }
                 }
             }
         }
 
-        // Fallback visual discreto para cartões/painéis/badges sem CSS explícito carregado
-        if style.bg_color.is_none() && style.border_color.is_none() {
+        // Fallback visual discreto para cartões/painéis/badges e blocos semânticos HTML5 sem CSS explícito carregado
+        if !style.has_box() {
             let is_dark_shell = dom.has_class(node_idx, b"hero")
                 || dom.has_class(node_idx, b"terminal")
                 || dom.has_class(node_idx, b"window");
@@ -1582,11 +1975,16 @@ impl MiniCss {
                 || dom.has_class(node_idx, b"card")
                 || dom.has_class(node_idx, b"panel")
                 || dom.has_class(node_idx, b"lab-card");
-            if is_card_panel {
-                style.bg_color = Some(if is_dark_shell { 0x000F_172A } else { 0x001E_293B });
-                style.border_color = Some(0x0033_4155);
+            let is_semantic_box = tag_bytes == b"article"
+                || tag_bytes == b"nav"
+                || tag_bytes == b"header"
+                || tag_bytes == b"footer"
+                || (tag_bytes == b"section" && dom.nodes[node_idx].child_count > 0);
+            if is_card_panel || is_semantic_box {
+                style.set_bg_color(Some(if is_dark_shell || is_semantic_box { 0x000F_172A } else { 0x001E_293B }));
+                style.set_border_color(Some(0x0033_4155));
                 style.border_width = 1;
-                style.border_radius = 6;
+                style.border_radius = if is_semantic_box { 5 } else { 6 };
                 style.padding_top = style.padding_top.max(6);
                 style.padding_bottom = style.padding_bottom.max(6);
                 style.padding_left = style.padding_left.max(8);
@@ -1594,8 +1992,8 @@ impl MiniCss {
                 style.margin_top = style.margin_top.max(4);
                 style.margin_bottom = style.margin_bottom.max(4);
             } else if dom.has_class(node_idx, b"badge") || dom.has_class(node_idx, b"pill") {
-                style.bg_color = Some(0x001E_3A5F);
-                style.border_color = Some(0x0038_BDF8);
+                style.set_bg_color(Some(0x001E_3A5F));
+                style.set_border_color(Some(0x0038_BDF8));
                 style.border_width = 1;
                 style.border_radius = 4;
                 style.padding_top = style.padding_top.max(2);
@@ -1603,7 +2001,7 @@ impl MiniCss {
                 style.padding_left = style.padding_left.max(6);
                 style.padding_right = style.padding_right.max(6);
                 style.display = DisplayMode::InlineBlock;
-                style.display_block = false;
+                style.set_display_block(false);
             }
         }
 
@@ -1612,23 +2010,23 @@ impl MiniCss {
             style.grid_cols = 1;
         }
 
-        // Preserva o posicionamento em fluxo de .os-window / .top-panel / .cairo-dock / .conky-hud sem cortar altura de 100vh/28px
+        // Preserva o posicionamento em fluxo de .os-window / .top-panel / .cairo-dock / .conky-hud
         if dom.has_class(node_idx, b"top-panel") {
             style.display = DisplayMode::Flex;
             style.flex_direction = FlexDirection::Row;
-            style.flex_wrap = true;
+            style.set_flex_wrap(true);
             style.margin_bottom = style.margin_bottom.max(6);
         } else if dom.has_class(node_idx, b"desktop-shortcuts") {
             style.display = DisplayMode::Flex;
             style.flex_direction = FlexDirection::Row;
-            style.flex_wrap = true;
-            style.width = None;
+            style.set_flex_wrap(true);
+            style.set_width(None);
             style.padding_top = style.padding_top.max(6);
             style.padding_bottom = style.padding_bottom.max(6);
         } else if dom.has_class(node_idx, b"cairo-dock-container") {
             style.display = DisplayMode::Flex;
             style.flex_direction = FlexDirection::Row;
-            style.flex_wrap = true;
+            style.set_flex_wrap(true);
             style.margin_top = style.margin_top.max(8);
         }
 
@@ -1636,46 +2034,45 @@ impl MiniCss {
     }
 
     pub fn resolve(&self, node: &mut DomNode) {
-        // Compatibilidade com nós isolados
-        let tag = &node.tag[..node.tag_len];
+        let tag = &node.tag[..(node.tag_len as usize).min(node.tag.len())];
         if tag == b"h1" {
             node.computed_style.color = COLOR_H1;
             node.computed_style.font_size = 16;
             node.computed_style.margin_top = 8;
             node.computed_style.margin_bottom = 6;
-            node.computed_style.is_bold = true;
+            node.computed_style.set_bold(true);
             node.computed_style.display = DisplayMode::Block;
-            node.computed_style.display_block = true;
+            node.computed_style.set_display_block(true);
         } else if tag == b"h2" {
             node.computed_style.color = 0x00F3_8BA8;
             node.computed_style.font_size = 14;
             node.computed_style.margin_top = 6;
             node.computed_style.margin_bottom = 4;
-            node.computed_style.is_bold = true;
+            node.computed_style.set_bold(true);
             node.computed_style.display = DisplayMode::Block;
-            node.computed_style.display_block = true;
+            node.computed_style.set_display_block(true);
         } else if tag == b"h3" {
             node.computed_style.color = 0x00A6_E3A1;
             node.computed_style.font_size = 13;
             node.computed_style.margin_top = 4;
             node.computed_style.margin_bottom = 4;
-            node.computed_style.is_bold = true;
+            node.computed_style.set_bold(true);
             node.computed_style.display = DisplayMode::Block;
-            node.computed_style.display_block = true;
+            node.computed_style.set_display_block(true);
         } else if tag == b"p" {
             node.computed_style.color = COLOR_TEXT;
             node.computed_style.margin_top = 2;
             node.computed_style.margin_bottom = 4;
             node.computed_style.display = DisplayMode::Block;
-            node.computed_style.display_block = true;
+            node.computed_style.set_display_block(true);
         } else if tag == b"a" {
             node.computed_style.color = COLOR_LINK;
             node.computed_style.display = DisplayMode::Inline;
-            node.computed_style.display_block = false;
+            node.computed_style.set_display_block(false);
         } else if tag == b"button" {
             node.computed_style.color = COLOR_BTN_TEXT;
-            node.computed_style.bg_color = Some(0x0031_3244);
-            node.computed_style.border_color = Some(0x0045_475A);
+            node.computed_style.set_bg_color(Some(0x0031_3244));
+            node.computed_style.set_border_color(Some(0x0045_475A));
             node.computed_style.border_width = 1;
             node.computed_style.border_radius = 3;
             node.computed_style.margin_top = 3;
@@ -1687,44 +2084,45 @@ impl MiniCss {
             node.computed_style.padding_left = 6;
             node.computed_style.padding_right = 6;
             node.computed_style.display = DisplayMode::InlineBlock;
-            node.computed_style.display_block = false;
+            node.computed_style.set_display_block(false);
         } else if tag == b"div" || tag == b"nav" || tag == b"header" || tag == b"section" {
             node.computed_style.display = DisplayMode::Block;
-            node.computed_style.display_block = true;
+            node.computed_style.set_display_block(true);
             node.computed_style.margin_top = 0;
             node.computed_style.margin_bottom = 0;
         } else if tag == b"hr" {
             node.computed_style.display = DisplayMode::Block;
-            node.computed_style.display_block = true;
+            node.computed_style.set_display_block(true);
             node.computed_style.margin_top = 6;
             node.computed_style.margin_bottom = 6;
         } else if tag == b"b" || tag == b"strong" {
-            node.computed_style.is_bold = true;
+            node.computed_style.set_bold(true);
             node.computed_style.display = DisplayMode::Inline;
-            node.computed_style.display_block = false;
+            node.computed_style.set_display_block(false);
         } else if tag == b"ul" {
             node.computed_style.display = DisplayMode::Block;
-            node.computed_style.display_block = true;
+            node.computed_style.set_display_block(true);
             node.computed_style.margin_top = 4;
             node.computed_style.margin_bottom = 4;
             node.computed_style.padding_left = 8;
         } else if tag == b"li" {
             node.computed_style.display = DisplayMode::Block;
-            node.computed_style.display_block = true;
+            node.computed_style.set_display_block(true);
             node.computed_style.margin_top = 2;
             node.computed_style.margin_bottom = 2;
         } else if tag == b"span" || tag == b"#text" || tag == b"i" || tag == b"em" || tag == b"code" || tag == b"small" {
             node.computed_style.display = DisplayMode::Inline;
-            node.computed_style.display_block = false;
+            node.computed_style.set_display_block(false);
             if tag == b"#text" {
                 node.computed_style.margin_top = 0;
                 node.computed_style.margin_bottom = 0;
             }
         }
 
+        let tag_hash = if node.tag_len > 0 { fnv1a_32_ci(tag) } else { 0 };
         for i in 0..self.rule_count {
             let r = &self.rules[i];
-            if r.kind == SelectorKind::Tag && node.tag_len == r.selector_len && node.tag[..node.tag_len].eq_ignore_ascii_case(&r.selector[..r.selector_len]) {
+            if r.is_tag_only() && node.tag_len > 0 && r.sel_hashes[0] == tag_hash {
                 apply_rule_to_style(&mut node.computed_style, r);
             }
         }
@@ -1732,39 +2130,43 @@ impl MiniCss {
 }
 
 fn apply_rule_to_style(style: &mut ComputedStyle, r: &CssRule) {
-    if let Some(c) = r.color {
-        style.color = c;
-        style.has_explicit_color = true;
+    let m = r.present_mask;
+    if (m & RULE_HAS_COLOR) != 0 {
+        style.color = r.color;
+        style.set_explicit_color(true);
     }
-    if let Some(bg) = r.bg_color { style.bg_color = Some(bg); }
-    if let Some(bc) = r.border_color { style.border_color = Some(bc); }
-    if let Some(bw) = r.border_width { style.border_width = bw; }
-    if let Some(br) = r.border_radius { style.border_radius = br; }
-    if let Some(bs) = r.border_sides { style.border_sides = bs; }
-    if let Some(fs) = r.font_size { style.font_size = fs; }
-    if let Some(w) = r.width { style.width = Some(w); }
-    if let Some(h) = r.height { style.height = Some(h); }
-    if let Some(mw) = r.max_width { style.max_width = Some(mw); }
-    if let Some(mt) = r.margin_top { style.margin_top = mt; }
-    if let Some(mb) = r.margin_bottom { style.margin_bottom = mb; }
-    if let Some(ml) = r.margin_left { style.margin_left = ml; }
-    if let Some(mr) = r.margin_right { style.margin_right = mr; }
-    if let Some(pt) = r.padding_top { style.padding_top = pt; }
-    if let Some(pb) = r.padding_bottom { style.padding_bottom = pb; }
-    if let Some(pl) = r.padding_left { style.padding_left = pl; }
-    if let Some(pr) = r.padding_right { style.padding_right = pr; }
-    if let Some(b) = r.is_bold { style.is_bold = b; }
-    if let Some(d) = r.display {
+    if (m & RULE_HAS_BG) != 0 { style.set_bg_color(Some(r.bg_color)); }
+    if (m & RULE_HAS_BORDER_COLOR) != 0 { style.set_border_color(Some(r.border_color)); }
+    if (m & RULE_HAS_BORDER_WIDTH) != 0 { style.border_width = r.border_width; }
+    if (m & RULE_HAS_BORDER_RADIUS) != 0 { style.border_radius = r.border_radius; }
+    if (m & RULE_HAS_BORDER_SIDES) != 0 { style.border_sides = r.border_sides; }
+    if (m & RULE_HAS_FONT_SIZE) != 0 { style.font_size = r.font_size; }
+    if (m & RULE_HAS_WIDTH) != 0 { style.set_width(Some(r.width as usize)); }
+    if (m & RULE_HAS_HEIGHT) != 0 { style.set_height(Some(r.height as usize)); }
+    if (m & RULE_HAS_MAX_WIDTH) != 0 { style.set_max_width(Some(r.max_width as usize)); }
+    if (m & RULE_HAS_MT) != 0 { style.margin_top = r.margin_top; }
+    if (m & RULE_HAS_MB) != 0 { style.margin_bottom = r.margin_bottom; }
+    if (m & RULE_HAS_ML) != 0 { style.margin_left = r.margin_left; }
+    if (m & RULE_HAS_MR) != 0 { style.margin_right = r.margin_right; }
+    if (m & RULE_HAS_PT) != 0 { style.padding_top = r.padding_top; }
+    if (m & RULE_HAS_PB) != 0 { style.padding_bottom = r.padding_bottom; }
+    if (m & RULE_HAS_PL) != 0 { style.padding_left = r.padding_left; }
+    if (m & RULE_HAS_PR) != 0 { style.padding_right = r.padding_right; }
+    if (m & RULE_HAS_BOLD) != 0 { style.set_bold((m & RULE_IS_BOLD_VAL) != 0); }
+    if (m & RULE_HAS_DISPLAY) != 0 {
+        let d = bits_to_display(r.packed_enums);
         style.display = d;
-        style.display_block = d == DisplayMode::Block;
+        style.set_display_block(d == DisplayMode::Block);
     }
-    if let Some(fd) = r.flex_direction { style.flex_direction = fd; }
-    if let Some(fw) = r.flex_wrap { style.flex_wrap = fw; }
-    if let Some(gc) = r.grid_cols { style.grid_cols = gc; }
-    if let Some(jc) = r.justify_content { style.justify_content = jc; }
-    if let Some(ai) = r.align_items { style.align_items = ai; }
-    if let Some(ta) = r.text_align { style.text_align = ta; }
-    if let Some(g) = r.gap { style.gap = g; }
+    if (m & RULE_HAS_FLEX_DIR) != 0 {
+        style.flex_direction = if (r.packed_enums & 0x08) != 0 { FlexDirection::Column } else { FlexDirection::Row };
+    }
+    if (m & RULE_HAS_FLEX_WRAP) != 0 { style.set_flex_wrap((m & RULE_FLEX_WRAP_VAL) != 0); }
+    if (m & RULE_HAS_GRID_COLS) != 0 { style.grid_cols = r.grid_cols; }
+    if (m & RULE_HAS_JUSTIFY) != 0 { style.justify_content = bits_to_justify(r.packed_enums >> 4); }
+    if (m & RULE_HAS_ALIGN) != 0 { style.align_items = bits_to_align(r.packed_enums >> 6); }
+    if (m & RULE_HAS_TEXT_ALIGN) != 0 { style.text_align = bits_to_text_align(r.text_align_bits); }
+    if (m & RULE_HAS_GAP) != 0 { style.gap = r.gap; }
 }
 
 // ── Mini-JS Runtime para Ring 3 (no_std) ──────────────────────────────────────
@@ -2148,9 +2550,9 @@ impl MiniJsRuntime {
                                 handler_raw
                             };
 
-                            let cpy = handler_clean.len().min(255);
+                            let cpy = handler_clean.len().min(dom.nodes[target_idx].onclick_attr.len().saturating_sub(1));
                             dom.nodes[target_idx].onclick_attr[..cpy].copy_from_slice(&handler_clean[..cpy]);
-                            dom.nodes[target_idx].onclick_len = cpy;
+                            dom.nodes[target_idx].onclick_len = cpy as u8;
                             continue;
                         }
                     }
@@ -2212,22 +2614,22 @@ impl MiniJsRuntime {
                             }
                         } else if prop.eq_ignore_ascii_case(b"borderColor") || prop.eq_ignore_ascii_case(b"border_color") {
                             if let Some(col) = parse_color(quote_val) {
-                                dom.nodes[elem_idx].computed_style.border_color = Some(col);
+                                dom.nodes[elem_idx].computed_style.set_border_color(Some(col));
                                 self.dom_dirty = true;
                             }
                         } else if prop.eq_ignore_ascii_case(b"border") {
                             let (bw, bc) = parse_border(quote_val);
-                            if let Some(w) = bw { dom.nodes[elem_idx].computed_style.border_width = w; }
-                            if let Some(c) = bc { dom.nodes[elem_idx].computed_style.border_color = Some(c); }
+                            if let Some(w) = bw { dom.nodes[elem_idx].computed_style.border_width = w.min(255) as u8; }
+                            if let Some(c) = bc { dom.nodes[elem_idx].computed_style.set_border_color(Some(c)); }
                             self.dom_dirty = true;
                         } else if prop.eq_ignore_ascii_case(b"width") {
                             if let Some(w) = parse_px(quote_val) {
-                                dom.nodes[elem_idx].computed_style.width = Some(w);
+                                dom.nodes[elem_idx].computed_style.set_width(Some(w));
                                 self.dom_dirty = true;
                             }
                         } else if prop.eq_ignore_ascii_case(b"height") {
                             if let Some(h) = parse_px(quote_val) {
-                                dom.nodes[elem_idx].computed_style.height = Some(h);
+                                dom.nodes[elem_idx].computed_style.set_height(Some(h));
                                 self.dom_dirty = true;
                             }
                         }
@@ -2285,7 +2687,7 @@ impl MiniJsRuntime {
             } else if let Some(val_pos) = find_subslice(p, b".value") {
                 let elem_part = p[..val_pos].trim_ascii();
                 if let Some(idx) = self.resolve_elem_target(dom, elem_part) {
-                    let t = &dom.nodes[idx].text[..dom.nodes[idx].text_len];
+                    let t = dom.nodes[idx].text_slice();
                     let cpy = t.len().min(out.len() - out_len);
                     out[out_len..out_len + cpy].copy_from_slice(&t[..cpy]);
                     out_len += cpy;
@@ -3276,8 +3678,7 @@ pub fn parse_html_into_dom_with_base(
                     let mut match_idx = None;
                     for s in (0..stack_depth).rev() {
                         let pid = parent_stack[s];
-                        let ptag = &dom.nodes[pid].tag[..dom.nodes[pid].tag_len];
-                        if ptag == ctag_name {
+                        if dom.nodes[pid].tag_slice() == ctag_name {
                             match_idx = Some(s);
                             break;
                         }
@@ -3296,9 +3697,9 @@ pub fn parse_html_into_dom_with_base(
             while i < len && html[i] != b' ' && html[i] != b'>' && html[i] != b'/' && html[i] != b'\t' && html[i] != b'\r' && html[i] != b'\n' {
                 i += 1;
             }
-            let mut tag_buf = [0u8; 16];
+            let mut tag_buf = [0u8; 12];
             let raw_tag = &html[tag_start..i];
-            let tag_len = raw_tag.len().min(15);
+            let tag_len = raw_tag.len().min(11);
             for t_idx in 0..tag_len {
                 let mut c = raw_tag[t_idx];
                 if c >= b'A' && c <= b'Z' { c += 32; }
@@ -3376,7 +3777,7 @@ pub fn parse_html_into_dom_with_base(
                 continue;
             }
 
-            // Trata <link rel="stylesheet" href="...">
+            // Trata <link rel="stylesheet" href="..."> usando buffer reutilizavel unico de 24 KiB
             if tag_name == b"link" {
                 let link_tag_start = i;
                 while i < len && html[i] != b'>' { i += 1; }
@@ -3395,24 +3796,19 @@ pub fn parse_html_into_dom_with_base(
                         if !base_url.is_empty() {
                             let mut resolved_css = [0u8; 128];
                             let rlen = resolve_relative_url(base_url, href_val, &mut resolved_css);
-                            if let Some(cached) = unsafe { cache_lookup_remote_css(&resolved_css[..rlen]) } {
+                            if let Some(cached) = unsafe { css_scratch_lookup(&resolved_css[..rlen]) } {
                                 css.parse_stylesheet_append(cached);
                                 loaded = true;
                             }
                         }
                         if !loaded {
-                            if let Some(cached) = unsafe { cache_lookup_remote_css(href_val) } {
+                            if let Some(cached) = unsafe { css_scratch_lookup(href_val) } {
                                 css.parse_stylesheet_append(cached);
                                 loaded = true;
                             }
                         }
                         if !loaded {
-                            let vfs_buf = unsafe {
-                                core::slice::from_raw_parts_mut(
-                                    core::ptr::addr_of_mut!(VFS_CSS_SCRATCH) as *mut u8,
-                                    32768,
-                                )
-                            };
+                            let vfs_buf = unsafe { css_scratch_slice_mut() };
                             if let Some(n) = read_css_file_from_vfs(href_val, vfs_buf) {
                                 css.parse_stylesheet_append(&vfs_buf[..n]);
                             }
@@ -3485,19 +3881,17 @@ pub fn parse_html_into_dom_with_base(
             // Elemento normal do DOM
             let node_id_opt = dom.alloc_node(DomNodeType::Element);
             if node_id_opt.is_none() {
-                // Ao invés de abortar o documento, pula este elemento e continua o parsing
                 while i < len && html[i] != b'>' { i += 1; }
                 if i < len { i += 1; }
                 continue;
             }
             let node_id = node_id_opt.unwrap();
             dom.nodes[node_id].tag = tag_buf;
-            dom.nodes[node_id].tag_len = tag_len;
+            dom.nodes[node_id].tag_len = tag_len as u8;
             if tag_name == b"picture" {
                 pending_picture_src_len = 0;
             }
 
-            // Lê atributos com guarda de borda (evita colisão data-src vs src): id, class, style, href, srcset, src, alt, width, height, onclick, value, placeholder, type
             let mut is_self_closing = false;
             let mut input_val_buf = [0u8; 64];
             let mut input_val_len = 0usize;
@@ -3513,30 +3907,30 @@ pub fn parse_html_into_dom_with_base(
                 }
                 if is_attr_match(html, i, b"id=") {
                     let a_val = read_html_attr_val(html, &mut i, 3);
-                    dom.nodes[node_id].id_len = copy_trunc_bytes(&mut dom.nodes[node_id].id_attr, a_val);
+                    dom.nodes[node_id].id_len = copy_trunc_u8(&mut dom.nodes[node_id].id_attr, a_val);
                 } else if is_attr_match(html, i, b"class=") {
                     let a_val = read_html_attr_val(html, &mut i, 6);
-                    dom.nodes[node_id].class_len = copy_trunc_bytes(&mut dom.nodes[node_id].class_attr, a_val);
+                    dom.nodes[node_id].class_len = filter_visual_classes(a_val, &mut dom.nodes[node_id].class_attr);
                 } else if is_attr_match(html, i, b"style=") {
                     let a_val = read_html_attr_val(html, &mut i, 6);
-                    dom.nodes[node_id].style_len = copy_trunc_bytes(&mut dom.nodes[node_id].style_attr, a_val);
+                    dom.nodes[node_id].style_len = copy_trunc_u8(&mut dom.nodes[node_id].style_attr, a_val);
                 } else if is_attr_match(html, i, b"href=") {
                     let a_val = read_html_attr_val(html, &mut i, 5);
-                    dom.nodes[node_id].href_len = copy_trunc_bytes(&mut dom.nodes[node_id].href_attr, a_val);
+                    dom.nodes[node_id].href_len = copy_trunc_u8(&mut dom.nodes[node_id].href_attr, a_val);
                 } else if is_attr_match(html, i, b"srcset=") {
                     let a_val = read_html_attr_val(html, &mut i, 7);
                     if dom.nodes[node_id].src_len == 0 {
                         let first_u = extract_first_srcset_url(a_val);
                         if !first_u.is_empty() {
-                            dom.nodes[node_id].src_len = copy_trunc_bytes(&mut dom.nodes[node_id].src_attr, first_u);
+                            dom.nodes[node_id].src_len = copy_trunc_u8(&mut dom.nodes[node_id].src_attr, first_u);
                         }
                     }
                 } else if is_attr_match(html, i, b"src=") {
                     let a_val = read_html_attr_val(html, &mut i, 4);
-                    dom.nodes[node_id].src_len = copy_trunc_bytes(&mut dom.nodes[node_id].src_attr, a_val);
+                    dom.nodes[node_id].src_len = copy_trunc_u8(&mut dom.nodes[node_id].src_attr, a_val);
                 } else if is_attr_match(html, i, b"alt=") {
                     let a_val = read_html_attr_val(html, &mut i, 4);
-                    dom.nodes[node_id].alt_len = copy_trunc_bytes(&mut dom.nodes[node_id].alt_attr, a_val);
+                    dom.nodes[node_id].alt_len = copy_trunc_u8(&mut dom.nodes[node_id].alt_attr, a_val);
                 } else if is_attr_match(html, i, b"width=") {
                     let a_val = read_html_attr_val(html, &mut i, 6);
                     if let Some(w_num) = parse_px(a_val) {
@@ -3549,10 +3943,10 @@ pub fn parse_html_into_dom_with_base(
                     }
                 } else if is_attr_match(html, i, b"data-open-window=") {
                     let a_val = read_html_attr_val(html, &mut i, 17);
-                    dom.nodes[node_id].data_open_window_len = copy_trunc_bytes(&mut dom.nodes[node_id].data_open_window, a_val);
+                    dom.nodes[node_id].data_open_window_len = copy_trunc_u8(&mut dom.nodes[node_id].data_open_window, a_val);
                 } else if is_attr_match(html, i, b"onclick=") {
                     let a_val = read_html_attr_val(html, &mut i, 8);
-                    dom.nodes[node_id].onclick_len = copy_trunc_bytes(&mut dom.nodes[node_id].onclick_attr, a_val);
+                    dom.nodes[node_id].onclick_len = copy_trunc_u8(&mut dom.nodes[node_id].onclick_attr, a_val);
                 } else if is_attr_match(html, i, b"value=") {
                     let a_val = read_html_attr_val(html, &mut i, 6);
                     input_val_len = copy_trunc_bytes(&mut input_val_buf, a_val);
@@ -3577,12 +3971,12 @@ pub fn parse_html_into_dom_with_base(
                 } else if input_val_len > 0 {
                     let cpy = input_val_len.min(dom.nodes[node_id].text.len());
                     dom.nodes[node_id].text[..cpy].copy_from_slice(&input_val_buf[..cpy]);
-                    dom.nodes[node_id].text_len = cpy;
+                    dom.nodes[node_id].text_len = cpy as u8;
                     dom.nodes[node_id].alt_len = if is_input_submit { 3 } else { 0 };
                 } else if input_ph_len > 0 {
                     let cpy = input_ph_len.min(dom.nodes[node_id].text.len());
                     dom.nodes[node_id].text[..cpy].copy_from_slice(&input_ph_buf[..cpy]);
-                    dom.nodes[node_id].text_len = cpy;
+                    dom.nodes[node_id].text_len = cpy as u8;
                     dom.nodes[node_id].alt_len = 1;
                 }
             }
@@ -3590,7 +3984,7 @@ pub fn parse_html_into_dom_with_base(
             if tag_name == b"img" && dom.nodes[node_id].src_len == 0 && pending_picture_src_len > 0 {
                 let cpy = pending_picture_src_len.min(dom.nodes[node_id].src_attr.len().saturating_sub(1));
                 dom.nodes[node_id].src_attr[..cpy].copy_from_slice(&pending_picture_src[..cpy]);
-                dom.nodes[node_id].src_len = cpy;
+                dom.nodes[node_id].src_len = cpy as u8;
                 pending_picture_src_len = 0;
             }
 
@@ -3601,10 +3995,10 @@ pub fn parse_html_into_dom_with_base(
             // Link parent-child hierarchy
             if stack_depth > 0 {
                 let pid = parent_stack[stack_depth - 1];
-                dom.nodes[node_id].parent = Some(pid);
-                if dom.nodes[pid].child_count < MAX_DOM_CHILDREN {
-                    let c = dom.nodes[pid].child_count;
-                    dom.nodes[pid].children[c] = node_id;
+                dom.nodes[node_id].set_parent(Some(pid));
+                if (dom.nodes[pid].child_count as usize) < MAX_DOM_CHILDREN {
+                    let c = dom.nodes[pid].child_count as usize;
+                    dom.nodes[pid].children[c] = node_id as u16;
                     dom.nodes[pid].child_count += 1;
                 }
             }
@@ -3617,10 +4011,10 @@ pub fn parse_html_into_dom_with_base(
             }
 
             // Lê texto até próximo '<'
-            let mut text_buf = [0u8; 256];
+            let mut text_buf = [0u8; 192];
             let mut t_idx = 0usize;
             while i < len && html[i] != b'<' {
-                if t_idx < 255 {
+                if t_idx < 191 {
                     text_buf[t_idx] = html[i];
                     t_idx += 1;
                 }
@@ -3628,40 +4022,40 @@ pub fn parse_html_into_dom_with_base(
             }
 
             if t_idx > 0 {
-                let mut norm_buf = [0u8; 256];
-                let norm_len = normalize_html_text(&text_buf[..t_idx], &mut norm_buf);
+                let mut norm_buf = [0u8; 192];
+                let norm_len = normalize_html_text(&text_buf[..t_idx], &mut norm_buf).min(191);
                 if norm_len > 0 {
                     dom.nodes[node_id].text[..norm_len].copy_from_slice(&norm_buf[..norm_len]);
-                    dom.nodes[node_id].text_len = norm_len;
+                    dom.nodes[node_id].text_len = norm_len as u8;
                 }
             }
 
             css.resolve(&mut dom.nodes[node_id]);
         } else {
             // Captura texto após tags de fechamento (ex.: "<p><b>Label: </b>Valor</p>") como nó DomNodeType::Text
-            let mut text_buf = [0u8; 256];
+            let mut text_buf = [0u8; 192];
             let mut t_idx = 0usize;
             while i < len && html[i] != b'<' {
-                if t_idx < 255 {
+                if t_idx < 191 {
                     text_buf[t_idx] = html[i];
                     t_idx += 1;
                 }
                 i += 1;
             }
             if t_idx > 0 && stack_depth > 0 {
-                let mut norm_buf = [0u8; 256];
-                let norm_len = normalize_html_text(&text_buf[..t_idx], &mut norm_buf);
+                let mut norm_buf = [0u8; 192];
+                let norm_len = normalize_html_text(&text_buf[..t_idx], &mut norm_buf).min(191);
                 if norm_len > 0 {
                     if let Some(text_id) = dom.alloc_node(DomNodeType::Text) {
                         dom.nodes[text_id].tag[..5].copy_from_slice(b"#text");
                         dom.nodes[text_id].tag_len = 5;
                         dom.nodes[text_id].text[..norm_len].copy_from_slice(&norm_buf[..norm_len]);
-                        dom.nodes[text_id].text_len = norm_len;
+                        dom.nodes[text_id].text_len = norm_len as u8;
                         let pid = parent_stack[stack_depth - 1];
-                        dom.nodes[text_id].parent = Some(pid);
-                        if dom.nodes[pid].child_count < MAX_DOM_CHILDREN {
-                            let c = dom.nodes[pid].child_count;
-                            dom.nodes[pid].children[c] = text_id;
+                        dom.nodes[text_id].set_parent(Some(pid));
+                        if (dom.nodes[pid].child_count as usize) < MAX_DOM_CHILDREN {
+                            let c = dom.nodes[pid].child_count as usize;
+                            dom.nodes[pid].children[c] = text_id as u16;
                             dom.nodes[pid].child_count += 1;
                         }
                         css.resolve(&mut dom.nodes[text_id]);
@@ -3758,16 +4152,17 @@ impl ParsedPage {
 
 // ── Regiões Clicáveis e Linhas de Layout ───────────────────────────────────────
 
+pub const CLICK_FLAG_JS: u8 = 1 << 0;
+pub const CLICK_FLAG_PAGE_BLOCK: u8 = 1 << 1;
+
 #[derive(Clone, Copy)]
 pub struct ClickRegion {
-    pub x: usize,
-    pub y: usize,
-    pub w: usize,
-    pub h: usize,
-    pub target: [u8; 128],
-    pub target_len: usize,
-    pub is_js: bool,
-    pub node_idx: usize,
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+    pub h: u16,
+    pub node_idx: u16,
+    pub flags: u8,
 }
 
 impl ClickRegion {
@@ -3777,36 +4172,61 @@ impl ClickRegion {
             y: 0,
             w: 0,
             h: 0,
-            target: [0; 128],
-            target_len: 0,
-            is_js: false,
             node_idx: 0,
+            flags: 0,
         }
+    }
+
+    #[inline(always)]
+    pub fn is_js(&self) -> bool {
+        (self.flags & CLICK_FLAG_JS) != 0
+    }
+
+    #[inline(always)]
+    pub fn is_page_block(&self) -> bool {
+        (self.flags & CLICK_FLAG_PAGE_BLOCK) != 0
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct BoxRect {
-    pub x: usize,
-    pub y: usize,
-    pub w: usize,
-    pub h: usize,
-    pub bg_color: u32,
-    pub border_color: Option<u32>,
-    pub border_width: usize,
-    pub border_radius: usize,
-    pub border_sides: u8,
-}
+pub const LINE_FLAG_LINK: u8 = 1 << 0;
+pub const LINE_FLAG_HR: u8 = 1 << 1;
 
 #[derive(Clone, Copy)]
 pub struct RenderLine {
     pub text: [u8; 96],
-    pub text_len: usize,
-    pub x: usize,
-    pub y: usize,
     pub color: u32,
-    pub is_link: bool,
-    pub is_hr: bool,
+    pub x: u16,
+    pub y: u16,
+    pub text_len: u8,
+    pub flags: u8,
+}
+
+impl RenderLine {
+    pub const fn empty() -> Self {
+        Self {
+            text: [0; 96],
+            color: 0,
+            x: 0,
+            y: 0,
+            text_len: 0,
+            flags: 0,
+        }
+    }
+
+    #[inline(always)]
+    pub fn is_link(&self) -> bool {
+        (self.flags & LINE_FLAG_LINK) != 0
+    }
+
+    #[inline(always)]
+    pub fn is_hr(&self) -> bool {
+        (self.flags & LINE_FLAG_HR) != 0
+    }
+
+    #[inline(always)]
+    pub fn text_slice(&self) -> &[u8] {
+        &self.text[..(self.text_len as usize).min(self.text.len())]
+    }
 }
 
 // ── Máquina de Estados do Parser HTML ─────────────────────────────────────────
@@ -3995,30 +4415,34 @@ pub fn parse_html(html: &[u8], page: &mut ParsedPage) {
 
 // ── Motor de Layout e Quebra de Linhas ────────────────────────────────────────
 
-pub const MAX_RENDER_LINES: usize = 1024;
-pub const MAX_RENDER_BOXES: usize = 256;
+pub const MAX_RENDER_LINES: usize = 896;
 pub const MAX_RENDER_IMAGES: usize = 32;
-pub const MAX_CLICK_REGIONS: usize = 512;
+pub const MAX_CLICK_REGIONS: usize = 384;
 
 #[derive(Clone, Copy)]
 pub struct RenderImage {
-    pub x: usize,
-    pub y: usize,
-    pub w: usize,
-    pub h: usize,
-    pub src: [u8; 128],
-    pub src_len: usize,
-    pub alt: [u8; 32],
-    pub alt_len: usize,
-    #[allow(dead_code)]
-    pub node_idx: usize,
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+    pub h: u16,
+    pub node_idx: u16,
+}
+
+impl RenderImage {
+    pub const fn empty() -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+            node_idx: 0,
+        }
+    }
 }
 
 pub struct DocumentLayout {
     pub lines: [RenderLine; MAX_RENDER_LINES],
     pub line_count: usize,
-    pub boxes: [BoxRect; MAX_RENDER_BOXES],
-    pub box_count: usize,
     pub images: [RenderImage; MAX_RENDER_IMAGES],
     pub image_count: usize,
     pub click_regions: [ClickRegion; MAX_CLICK_REGIONS],
@@ -4041,50 +4465,11 @@ impl DocumentLayout {
 
     pub const fn new() -> Self {
         Self {
-            lines: [RenderLine {
-                text: [0; 96],
-                text_len: 0,
-                x: 0,
-                y: 0,
-                color: 0,
-                is_link: false,
-                is_hr: false,
-            }; MAX_RENDER_LINES],
+            lines: [RenderLine::empty(); MAX_RENDER_LINES],
             line_count: 0,
-            boxes: [BoxRect {
-                x: 0,
-                y: 0,
-                w: 0,
-                h: 0,
-                bg_color: 0,
-                border_color: None,
-                border_width: 1,
-                border_radius: 0,
-                border_sides: 15,
-            }; MAX_RENDER_BOXES],
-            box_count: 0,
-            images: [RenderImage {
-                x: 0,
-                y: 0,
-                w: 0,
-                h: 0,
-                src: [0; 128],
-                src_len: 0,
-                alt: [0; 32],
-                alt_len: 0,
-                node_idx: 0,
-            }; MAX_RENDER_IMAGES],
+            images: [RenderImage::empty(); MAX_RENDER_IMAGES],
             image_count: 0,
-            click_regions: [ClickRegion {
-                x: 0,
-                y: 0,
-                w: 0,
-                h: 0,
-                target: [0; 128],
-                target_len: 0,
-                is_js: false,
-                node_idx: 0,
-            }; MAX_CLICK_REGIONS],
+            click_regions: [ClickRegion::empty(); MAX_CLICK_REGIONS],
             click_count: 0,
             total_height: 0,
         }
@@ -4093,28 +4478,69 @@ impl DocumentLayout {
     #[inline(always)]
     pub fn reset(&mut self) {
         self.line_count = 0;
-        self.box_count = 0;
         self.image_count = 0;
         self.click_count = 0;
         self.total_height = 0;
     }
 
-    pub fn compute_from_dom(&mut self, dom: &DomArena, content_width: usize) {
+    #[inline]
+    fn push_click_region(&mut self, x: usize, y: usize, w: usize, h: usize, node_idx: usize, flags: u8) {
+        if w == 0 || h == 0 || self.click_count >= self.click_regions.len() {
+            return;
+        }
+        self.click_regions[self.click_count] = ClickRegion {
+            x: x.min(u16::MAX as usize) as u16,
+            y: y.min(u16::MAX as usize) as u16,
+            w: w.min(u16::MAX as usize) as u16,
+            h: h.min(u16::MAX as usize) as u16,
+            node_idx: node_idx.min(u16::MAX as usize) as u16,
+            flags,
+        };
+        self.click_count += 1;
+    }
+
+    #[inline]
+    fn record_dom_box(
+        dom: &mut DomArena,
+        node_idx: usize,
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+        fallback_bg: u8,
+    ) {
+        if node_idx < dom.node_count && w > 0 && h > 0 {
+            let n = &mut dom.nodes[node_idx];
+            n.box_x = x.min(u16::MAX as usize) as u16;
+            n.box_y = y.min(u16::MAX as usize) as u16;
+            n.box_w = w.min(u16::MAX as usize) as u16;
+            n.box_h = h.min(u16::MAX as usize) as u16;
+            n.box_bg_fallback = fallback_bg;
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn compute_from_dom(&mut self, dom: &mut DomArena, content_width: usize) {
         self.compute_from_dom_stage(dom, 4, content_width);
     }
 
-    pub fn compute_from_dom_stage(&mut self, dom: &DomArena, content_x: usize, content_width: usize) {
+    pub fn compute_from_dom_stage(&mut self, dom: &mut DomArena, content_x: usize, content_width: usize) {
         self.line_count = 0;
         self.click_count = 0;
-        self.box_count = 0;
         self.image_count = 0;
+
+        for i in 0..dom.node_count {
+            dom.nodes[i].box_w = 0;
+            dom.nodes[i].box_h = 0;
+            dom.nodes[i].box_bg_fallback = 0;
+        }
 
         let mut curr_y = 6usize;
         let mut laid_out = [false; MAX_DOM_NODES];
 
         // 1. Traverse all root-level nodes (nodes with parent == None)
         for i in 0..dom.node_count {
-            if dom.nodes[i].parent.is_none() {
+            if dom.nodes[i].parent_idx().is_none() {
                 self.layout_subtree(dom, i, content_x, &mut curr_y, content_width, &mut laid_out);
             }
         }
@@ -4132,18 +4558,19 @@ impl DocumentLayout {
     fn mark_subtree_laid_out(dom: &DomArena, node_idx: usize, laid_out: &mut [bool; MAX_DOM_NODES]) {
         if node_idx >= dom.node_count || laid_out[node_idx] { return; }
         laid_out[node_idx] = true;
-        for c in 0..dom.nodes[node_idx].child_count {
-            Self::mark_subtree_laid_out(dom, dom.nodes[node_idx].children[c], laid_out);
+        let cc = (dom.nodes[node_idx].child_count as usize).min(MAX_DOM_CHILDREN);
+        for c in 0..cc {
+            Self::mark_subtree_laid_out(dom, dom.nodes[node_idx].child_id(c), laid_out);
         }
     }
 
-    fn find_enclosing_link<'a>(dom: &'a DomArena, mut curr_idx: usize) -> Option<&'a [u8]> {
+    fn find_enclosing_link_idx(dom: &DomArena, mut curr_idx: usize) -> Option<usize> {
         loop {
             let n = &dom.nodes[curr_idx];
-            if n.tag_len == 1 && n.tag[0] == b'a' && n.href_len > 0 {
-                return Some(&n.href_attr[..n.href_len]);
+            if n.tag_slice() == b"a" && n.href_len > 0 {
+                return Some(curr_idx);
             }
-            if let Some(pid) = n.parent {
+            if let Some(pid) = n.parent_idx() {
                 if pid < dom.node_count && pid != curr_idx {
                     curr_idx = pid;
                 } else {
@@ -4177,15 +4604,16 @@ impl DocumentLayout {
             return false;
         }
         let n = &dom.nodes[node_idx];
-        let tag = &n.tag[..n.tag_len];
+        let tag = n.tag_slice();
         if n.node_type == DomNodeType::Element && tag == b"img" {
             return true;
         }
-        if n.node_type == DomNodeType::Element && (n.computed_style.display_block || (!Self::is_inline_flow_tag(tag) && tag != b"#text")) {
+        if n.node_type == DomNodeType::Element && (n.computed_style.display_block() || (!Self::is_inline_flow_tag(tag) && tag != b"#text")) {
             return true;
         }
-        for c in 0..n.child_count {
-            if Self::subtree_breaks_inline(dom, n.children[c], depth + 1) {
+        let cc = (n.child_count as usize).min(MAX_DOM_CHILDREN);
+        for c in 0..cc {
+            if Self::subtree_breaks_inline(dom, n.child_id(c), depth + 1) {
                 return true;
             }
         }
@@ -4203,8 +4631,8 @@ impl DocumentLayout {
         if n.node_type == DomNodeType::Text {
             return true;
         }
-        let tag = &n.tag[..n.tag_len];
-        if !n.computed_style.display_block && Self::is_inline_flow_tag(tag) {
+        let tag = n.tag_slice();
+        if !n.computed_style.display_block() && Self::is_inline_flow_tag(tag) {
             return !Self::subtree_breaks_inline(dom, node_idx, 0);
         }
         false
@@ -4228,7 +4656,7 @@ impl DocumentLayout {
             return;
         }
         laid_out[node_idx] = true;
-        let tag = &n.tag[..n.tag_len];
+        let tag = n.tag_slice();
         let next_link = if tag == b"a" && n.href_len > 0 {
             Some(node_idx)
         } else {
@@ -4247,19 +4675,19 @@ impl DocumentLayout {
         let is_btn_or_box = tag == b"button"
             || n.onclick_len > 0
             || n.data_open_window_len > 0
-            || n.computed_style.bg_color.is_some()
-            || n.computed_style.border_color.is_some();
+            || n.computed_style.has_box();
 
         if n.text_len > 0 || (is_btn_or_box && n.child_count == 0) {
             items[*count] = (node_idx, next_link, false, is_btn_or_box);
             *count += 1;
         }
 
-        for c in 0..n.child_count {
+        let cc = (n.child_count as usize).min(MAX_DOM_CHILDREN);
+        for c in 0..cc {
             if *count >= items.len() {
                 break;
             }
-            let cid = n.children[c];
+            let cid = n.child_id(c);
             Self::collect_inline_items(dom, cid, next_link, items, count, laid_out, depth + 1);
         }
     }
@@ -4282,38 +4710,27 @@ impl DocumentLayout {
         let is_link = link_node.is_some();
 
         if let Some(ln) = link_node {
-            if ln < dom.node_count && dom.nodes[ln].href_len > 0 && self.click_count < self.click_regions.len() {
-                let href = &dom.nodes[ln].href_attr[..dom.nodes[ln].href_len];
-                let mut reg = ClickRegion::empty();
-                reg.x = start_x;
-                reg.y = y;
-                reg.w = take * font::FONT_WIDTH;
-                reg.h = font::FONT_HEIGHT + 2;
-                let h_len = href.len().min(128);
-                reg.target[..h_len].copy_from_slice(&href[..h_len]);
-                reg.target_len = h_len;
-                self.click_regions[self.click_count] = reg;
-                self.click_count += 1;
+            if ln < dom.node_count && dom.nodes[ln].href_len > 0 {
+                self.push_click_region(start_x, y, take * font::FONT_WIDTH, font::FONT_HEIGHT + 2, ln, 0);
             }
         }
 
         self.lines[self.line_count] = RenderLine {
             text: line_buf,
-            text_len: take,
-            x: start_x,
-            y,
             color,
-            is_link,
-            is_hr: false,
+            x: start_x.min(u16::MAX as usize) as u16,
+            y: y.min(u16::MAX as usize) as u16,
+            text_len: take as u8,
+            flags: if is_link { LINE_FLAG_LINK } else { 0 },
         };
         self.line_count += 1;
     }
 
     fn layout_inline_run(
         &mut self,
-        dom: &DomArena,
+        dom: &mut DomArena,
         leading_text_node: Option<usize>,
-        children: &[usize],
+        children: &[u16],
         c_idx: &mut usize,
         base_x: usize,
         curr_y: &mut usize,
@@ -4326,22 +4743,14 @@ impl DocumentLayout {
 
         if let Some(lid) = leading_text_node {
             if lid < dom.node_count && dom.nodes[lid].text_len > 0 {
-                let enc_link = Self::find_enclosing_link(dom, lid).map(|_| lid);
-                // Guard: if parent itself is <a>, use `lid` as link_node so href resolves
-                let link_ref = if dom.nodes[lid].href_len > 0 {
-                    Some(lid)
-                } else if enc_link.is_some() {
-                    dom.nodes[lid].parent
-                } else {
-                    None
-                };
-                items[0] = (lid, link_ref, false, false);
+                let enc_link = Self::find_enclosing_link_idx(dom, lid);
+                items[0] = (lid, enc_link, false, false);
                 item_count = 1;
             }
         }
 
         while *c_idx < children.len() && item_count < 64 {
-            let cid = children[*c_idx];
+            let cid = children[*c_idx] as usize;
             if cid >= dom.node_count || laid_out[cid] {
                 *c_idx += 1;
                 continue;
@@ -4354,13 +4763,7 @@ impl DocumentLayout {
             if !Self::is_inline_run_candidate(dom, cid) {
                 break;
             }
-            let parent_link = dom.nodes[cid].parent.and_then(|p| {
-                if Self::find_enclosing_link(dom, p).is_some() {
-                    Some(p)
-                } else {
-                    None
-                }
-            });
+            let parent_link = dom.nodes[cid].parent_idx().and_then(|p| Self::find_enclosing_link_idx(dom, p));
             Self::collect_inline_items(dom, cid, parent_link, &mut items, &mut item_count, laid_out, 0);
             *c_idx += 1;
         }
@@ -4390,41 +4793,33 @@ impl DocumentLayout {
             if nid >= dom.node_count {
                 continue;
             }
-            let n = &dom.nodes[nid];
-            // Normalize link_node so click_regions always point to an actual <a href="..."> owner
             if let Some(ln) = link_node {
                 if ln >= dom.node_count || dom.nodes[ln].href_len == 0 {
-                    // Find nearest ancestor with href
-                    let mut scan = nid;
-                    let mut resolved = None;
-                    for _ in 0..8 {
-                        if dom.nodes[scan].href_len > 0 {
-                            resolved = Some(scan);
-                            break;
-                        }
-                        if let Some(p) = dom.nodes[scan].parent {
-                            if p < dom.node_count && p != scan { scan = p; } else { break; }
-                        } else {
-                            break;
-                        }
-                    }
-                    link_node = resolved;
+                    link_node = Self::find_enclosing_link_idx(dom, nid);
                 }
             }
 
-            let text = &n.text[..n.text_len];
-            let color = if n.computed_style.has_explicit_color {
-                n.computed_style.color
+            let n_style = dom.nodes[nid].computed_style;
+            let n_tag = dom.nodes[nid].tag;
+            let n_tag_len = (dom.nodes[nid].tag_len as usize).min(n_tag.len());
+            let is_btn_tag = &n_tag[..n_tag_len] == b"button";
+            let is_js = is_btn_tag || dom.nodes[nid].onclick_len > 0 || dom.nodes[nid].data_open_window_len > 0;
+            let text_buf = dom.nodes[nid].text;
+            let text_len = (dom.nodes[nid].text_len as usize).min(text_buf.len());
+            let text = &text_buf[..text_len];
+
+            let color = if n_style.has_explicit_color() {
+                n_style.color
             } else if link_node.is_some() {
                 COLOR_LINK
             } else {
-                n.computed_style.color
+                n_style.color
             };
 
             if is_box_btn && text.len() <= 40 {
                 if text.is_empty() {
-                    let dot_w = n.computed_style.width.unwrap_or(10).min(avail_width).max(4);
-                    let dot_h = n.computed_style.height.unwrap_or(10).clamp(4, 32);
+                    let dot_w = n_style.width_opt().unwrap_or(10).min(avail_width).max(4);
+                    let dot_h = n_style.height_opt().unwrap_or(10).clamp(4, 32);
                     if cursor_x > base_x {
                         cursor_x += 4;
                     }
@@ -4434,20 +4829,7 @@ impl DocumentLayout {
                         line_max_h = font::FONT_HEIGHT + 4;
                     }
                     let dot_y = line_y + (font::FONT_HEIGHT + 4).saturating_sub(dot_h) / 2;
-                    if self.box_count < self.boxes.len() {
-                        self.boxes[self.box_count] = BoxRect {
-                            x: cursor_x,
-                            y: dot_y,
-                            w: dot_w,
-                            h: dot_h,
-                            bg_color: n.computed_style.bg_color.unwrap_or(0x0031_3244),
-                            border_color: n.computed_style.border_color,
-                            border_width: n.computed_style.border_width,
-                            border_radius: n.computed_style.border_radius,
-                            border_sides: n.computed_style.border_sides,
-                        };
-                        self.box_count += 1;
-                    }
+                    Self::record_dom_box(dom, nid, cursor_x, dot_y, dot_w, dot_h, 1);
                     cursor_x += dot_w + 4;
                     line_max_h = line_max_h.max(dot_h + 2);
                     prev_ended_sep = false;
@@ -4455,10 +4837,10 @@ impl DocumentLayout {
                     continue;
                 }
 
-                let pad_l = n.computed_style.padding_left.max(4);
-                let pad_r = n.computed_style.padding_right.max(4);
-                let pad_t = n.computed_style.padding_top.max(2);
-                let pad_b = n.computed_style.padding_bottom.max(2);
+                let pad_l = (n_style.padding_left as usize).max(4);
+                let pad_r = (n_style.padding_right as usize).max(4);
+                let pad_t = (n_style.padding_top as usize).max(2);
+                let pad_b = (n_style.padding_bottom as usize).max(2);
                 let btn_w = (text.len() * font::FONT_WIDTH + pad_l + pad_r + 8).min(avail_width);
                 let btn_h = font::FONT_HEIGHT + pad_t + pad_b + 4;
 
@@ -4471,51 +4853,19 @@ impl DocumentLayout {
                     line_max_h = font::FONT_HEIGHT + 4;
                 }
 
-                if self.box_count < self.boxes.len() {
-                    self.boxes[self.box_count] = BoxRect {
-                        x: cursor_x,
-                        y: line_y,
-                        w: btn_w,
-                        h: btn_h,
-                        bg_color: n.computed_style.bg_color.unwrap_or(0x0031_3244),
-                        border_color: n.computed_style.border_color,
-                        border_width: n.computed_style.border_width,
-                        border_radius: n.computed_style.border_radius,
-                        border_sides: n.computed_style.border_sides,
-                    };
-                    self.box_count += 1;
-                }
+                Self::record_dom_box(dom, nid, cursor_x, line_y, btn_w, btn_h, 1);
 
                 let text_x = cursor_x + pad_l + 3;
                 let text_y = line_y + pad_t + 2;
-                let is_js = (&n.tag[..n.tag_len] == b"button") || n.onclick_len > 0 || n.data_open_window_len > 0;
-                if is_js && self.click_count < self.click_regions.len() {
-                    let mut reg = ClickRegion::empty();
-                    reg.x = cursor_x;
-                    reg.y = line_y;
-                    reg.w = btn_w;
-                    reg.h = btn_h;
-                    reg.is_js = true;
-                    reg.node_idx = n.id;
-                    self.click_regions[self.click_count] = reg;
-                    self.click_count += 1;
+                if is_js {
+                    self.push_click_region(cursor_x, line_y, btn_w, btn_h, nid, CLICK_FLAG_JS);
                 }
-                let suppress_underline = n.computed_style.bg_color.is_some();
+                let suppress_underline = n_style.has_bg();
                 self.flush_inline_segment(dom, text, text_x, text_y, color, if is_js || suppress_underline { None } else { link_node });
                 if suppress_underline && !is_js {
                     if let Some(ln) = link_node {
-                        if ln < dom.node_count && dom.nodes[ln].href_len > 0 && self.click_count < self.click_regions.len() {
-                            let href = &dom.nodes[ln].href_attr[..dom.nodes[ln].href_len];
-                            let mut reg = ClickRegion::empty();
-                            reg.x = cursor_x;
-                            reg.y = line_y;
-                            reg.w = btn_w;
-                            reg.h = btn_h;
-                            let h_len = href.len().min(128);
-                            reg.target[..h_len].copy_from_slice(&href[..h_len]);
-                            reg.target_len = h_len;
-                            self.click_regions[self.click_count] = reg;
-                            self.click_count += 1;
+                        if ln < dom.node_count && dom.nodes[ln].href_len > 0 {
+                            self.push_click_region(cursor_x, line_y, btn_w, btn_h, ln, 0);
                         }
                     }
                 }
@@ -4558,7 +4908,6 @@ impl DocumentLayout {
 
                 let is_rule_run = Self::is_ascii_rule_run(word);
                 if is_rule_run {
-                    // Trunca linhas decorativas repetitivas (====, ----) ao restante da linha sem vazar nem quebrar
                     if seg_len > 0 {
                         self.flush_inline_segment(dom, &seg_buf[..seg_len], seg_start_x, line_y, color, link_node);
                         seg_len = 0;
@@ -4652,9 +5001,9 @@ impl DocumentLayout {
             while l < self.line_count {
                 let row_y = self.lines[l].y;
                 let mut r = l + 1;
-                let mut max_end = self.lines[l].x + self.lines[l].text_len * font::FONT_WIDTH;
+                let mut max_end = self.lines[l].x as usize + (self.lines[l].text_len as usize) * font::FONT_WIDTH;
                 while r < self.line_count && self.lines[r].y == row_y {
-                    let end = self.lines[r].x + self.lines[r].text_len * font::FONT_WIDTH;
+                    let end = self.lines[r].x as usize + (self.lines[r].text_len as usize) * font::FONT_WIDTH;
                     if end > max_end { max_end = end; }
                     r += 1;
                 }
@@ -4670,7 +5019,7 @@ impl DocumentLayout {
                 };
                 if shift > 0 {
                     for k in l..r {
-                        self.lines[k].x += shift;
+                        self.lines[k].x = (self.lines[k].x as usize + shift).min(u16::MAX as usize) as u16;
                     }
                 }
                 l = r;
@@ -4690,20 +5039,21 @@ impl DocumentLayout {
         if n.computed_style.display == DisplayMode::None {
             return 0;
         }
-        let pad_lr = n.computed_style.padding_left + n.computed_style.padding_right;
-        let mar_lr = n.computed_style.margin_left + n.computed_style.margin_right;
-        if let Some(w) = n.computed_style.width {
+        let pad_lr = n.computed_style.padding_left as usize + n.computed_style.padding_right as usize;
+        let mar_lr = n.computed_style.margin_left as usize + n.computed_style.margin_right as usize;
+        if let Some(w) = n.computed_style.width_opt() {
             return w + pad_lr + mar_lr;
         }
         let own_text_w = if n.text_len > 0 {
-            n.text_len.min(48) * font::FONT_WIDTH + 14
+            (n.text_len as usize).min(48) * font::FONT_WIDTH + 14
         } else {
             0
         };
-        if n.child_count == 0 {
+        let cc = (n.child_count as usize).min(MAX_DOM_CHILDREN);
+        if cc == 0 {
             let base = if own_text_w > 0 {
                 own_text_w
-            } else if n.computed_style.bg_color.is_some() || n.computed_style.border_color.is_some() {
+            } else if n.computed_style.has_box() {
                 36
             } else {
                 0
@@ -4717,8 +5067,8 @@ impl DocumentLayout {
                 && n.computed_style.grid_cols <= 1);
         let mut content_w = own_text_w;
         let mut vis = 0usize;
-        for c in 0..n.child_count {
-            let cw = Self::estimate_subtree_width(dom, n.children[c], depth + 1);
+        for c in 0..cc {
+            let cw = Self::estimate_subtree_width(dom, n.child_id(c), depth + 1);
             if cw > 0 {
                 vis += 1;
                 if is_row {
@@ -4729,7 +5079,7 @@ impl DocumentLayout {
             }
         }
         if is_row && vis > 1 {
-            content_w = content_w.saturating_add(n.computed_style.gap.min(24) * (vis - 1));
+            content_w = content_w.saturating_add((n.computed_style.gap as usize).min(24) * (vis - 1));
         }
         content_w + pad_lr + mar_lr + 10
     }
@@ -4741,32 +5091,15 @@ impl DocumentLayout {
         let node = &dom.nodes[node_idx];
         let is_close_btn = dom.has_class(node_idx, b"win-btn") && dom.has_class(node_idx, b"close");
         if node.data_open_window_len > 0 || node.onclick_len > 0 || is_close_btn {
-            let mut reg = ClickRegion::empty();
-            reg.x = x;
-            reg.y = y;
-            reg.w = w;
-            reg.h = h;
-            reg.is_js = true;
-            reg.node_idx = node_idx;
-            self.click_regions[self.click_count] = reg;
-            self.click_count += 1;
+            self.push_click_region(x, y, w, h, node_idx, CLICK_FLAG_JS);
         } else if node.href_len > 0 {
-            let mut reg = ClickRegion::empty();
-            reg.x = x;
-            reg.y = y;
-            reg.w = w;
-            reg.h = h;
-            let cpy = node.href_len.min(128);
-            reg.target[..cpy].copy_from_slice(&node.href_attr[..cpy]);
-            reg.target_len = cpy;
-            self.click_regions[self.click_count] = reg;
-            self.click_count += 1;
+            self.push_click_region(x, y, w, h, node_idx, 0);
         }
     }
 
     fn layout_subtree(
         &mut self,
-        dom: &DomArena,
+        dom: &mut DomArena,
         node_idx: usize,
         base_x: usize,
         curr_y: &mut usize,
@@ -4777,30 +5110,33 @@ impl DocumentLayout {
             return;
         }
 
-        let node = &dom.nodes[node_idx];
+        let style = dom.nodes[node_idx].computed_style;
+        let tag_buf = dom.nodes[node_idx].tag;
+        let tag_len = (dom.nodes[node_idx].tag_len as usize).min(tag_buf.len());
+        let tag = &tag_buf[..tag_len];
+        let child_count = (dom.nodes[node_idx].child_count as usize).min(MAX_DOM_CHILDREN);
+        let children = dom.nodes[node_idx].children;
 
         // Se display == none, ignora o elemento e toda sua sub-árvore
-        if node.computed_style.display == DisplayMode::None {
+        if style.display == DisplayMode::None {
             laid_out[node_idx] = true;
-            for c in 0..node.child_count {
-                Self::mark_subtree_laid_out(dom, node.children[c], laid_out);
+            for c in 0..child_count {
+                Self::mark_subtree_laid_out(dom, children[c] as usize, laid_out);
             }
             return;
         }
 
         laid_out[node_idx] = true;
-        let tag = &node.tag[..node.tag_len];
 
         if tag == b"hr" {
             if self.line_count < self.lines.len() {
                 self.lines[self.line_count] = RenderLine {
                     text: [0; 96],
-                    text_len: 0,
-                    x: base_x + 8,
-                    y: *curr_y + 4,
                     color: COLOR_HR,
-                    is_link: false,
-                    is_hr: true,
+                    x: (base_x + 8).min(u16::MAX as usize) as u16,
+                    y: (*curr_y + 4).min(u16::MAX as usize) as u16,
+                    text_len: 0,
+                    flags: LINE_FLAG_HR,
                 };
                 self.line_count += 1;
             }
@@ -4813,7 +5149,7 @@ impl DocumentLayout {
             return;
         }
 
-        let width_limit = match (node.computed_style.width, node.computed_style.max_width) {
+        let width_limit = match (style.width_opt(), style.max_width_opt()) {
             (Some(w), Some(mw)) => Some(w.min(mw)),
             (Some(w), None) => Some(w),
             (None, Some(mw)) => Some(mw),
@@ -4824,11 +5160,11 @@ impl DocumentLayout {
         } else {
             avail_width
         };
-        let auto_center_off = if node.computed_style.max_width.is_some()
-            && node.computed_style.width.is_none()
+        let auto_center_off = if style.max_width_opt().is_some()
+            && style.width_opt().is_none()
             && avail_width > eff_avail_w
-            && node.computed_style.margin_left == 0
-            && node.computed_style.margin_right == 0
+            && style.margin_left == 0
+            && style.margin_right == 0
             && !Self::is_inline_flow_tag(tag)
         {
             (avail_width - eff_avail_w) / 2
@@ -4838,23 +5174,25 @@ impl DocumentLayout {
         let eff_base_x = base_x + auto_center_off;
 
         if tag == b"img" {
-            if node.computed_style.display_block {
-                *curr_y += node.computed_style.margin_top;
+            if style.display_block() {
+                *curr_y += style.margin_top as usize;
             }
-            let mar_left = node.computed_style.margin_left;
-            let mar_right = node.computed_style.margin_right;
-            let pad_left = node.computed_style.padding_left;
-            let pad_top = node.computed_style.padding_top;
-            let pad_bottom = node.computed_style.padding_bottom;
+            let mar_left = style.margin_left as usize;
+            let mar_right = style.margin_right as usize;
+            let pad_left = style.padding_left as usize;
+            let pad_top = style.padding_top as usize;
+            let pad_bottom = style.padding_bottom as usize;
 
             let max_img_w = eff_avail_w.saturating_sub(mar_left + mar_right + pad_left).max(16);
-            let probed_dims = if (node.width_attr == 0 || node.height_attr == 0) && node.src_len > 0 {
-                unsafe { lookup_image_dimensions(&node.src_attr[..node.src_len]) }
+            let width_attr = dom.nodes[node_idx].width_attr as usize;
+            let height_attr = dom.nodes[node_idx].height_attr as usize;
+            let probed_dims = if (width_attr == 0 || height_attr == 0) && dom.nodes[node_idx].src_len > 0 {
+                unsafe { lookup_image_dimensions(dom.nodes[node_idx].src_slice()) }
             } else {
                 None
             };
 
-            let (img_w, img_h) = match (node.width_attr as usize, node.height_attr as usize, probed_dims) {
+            let (img_w, img_h) = match (width_attr, height_attr, probed_dims) {
                 (w_attr, h_attr, _) if w_attr > 0 && h_attr > 0 => {
                     let clamped_w = w_attr.min(max_img_w);
                     let clamped_h = if clamped_w < w_attr {
@@ -4896,104 +5234,71 @@ impl DocumentLayout {
 
             if self.image_count < MAX_RENDER_IMAGES {
                 let slot = self.image_count;
+                let ix = eff_base_x + mar_left + pad_left;
+                let iy = *curr_y + pad_top;
                 self.images[slot] = RenderImage {
-                    x: eff_base_x + mar_left + pad_left,
-                    y: *curr_y + pad_top,
-                    w: img_w,
-                    h: img_h,
-                    src: node.src_attr,
-                    src_len: node.src_len,
-                    alt: node.alt_attr,
-                    alt_len: node.alt_len,
-                    node_idx,
+                    x: ix.min(u16::MAX as usize) as u16,
+                    y: iy.min(u16::MAX as usize) as u16,
+                    w: img_w.min(u16::MAX as usize) as u16,
+                    h: img_h.min(u16::MAX as usize) as u16,
+                    node_idx: node_idx as u16,
                 };
                 self.image_count += 1;
 
-                let href_opt = if node.href_len > 0 {
-                    Some(&node.href_attr[..node.href_len])
-                } else if let Some(pid) = node.parent {
-                    if dom.nodes[pid].href_len > 0 {
-                        Some(&dom.nodes[pid].href_attr[..dom.nodes[pid].href_len])
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                if let Some(href) = href_opt {
-                    if self.click_count < self.click_regions.len() {
-                        let mut reg = ClickRegion::empty();
-                        reg.x = eff_base_x + mar_left + pad_left;
-                        reg.y = *curr_y + pad_top;
-                        reg.w = img_w;
-                        reg.h = img_h;
-                        let cpy_h = href.len().min(127);
-                        reg.target[..cpy_h].copy_from_slice(&href[..cpy_h]);
-                        reg.target_len = cpy_h;
-                        self.click_regions[self.click_count] = reg;
-                        self.click_count += 1;
-                    }
+                if let Some(link_owner) = Self::find_enclosing_link_idx(dom, node_idx) {
+                    self.push_click_region(ix, iy, img_w, img_h, link_owner, 0);
                 }
             }
 
             *curr_y += img_h + pad_top + pad_bottom;
-            if node.computed_style.display_block {
-                *curr_y += node.computed_style.margin_bottom;
+            if style.display_block() {
+                *curr_y += style.margin_bottom as usize;
             }
             return;
         }
 
         // Layout Flexbox / Grid Linha (display: flex && flex-direction: row) ou linha de tabela <tr>
-        let is_table_row = tag == b"tr" && node.child_count > 1 && node.child_count <= 5;
-        let is_grid_row = node.child_count > 0 && node.computed_style.grid_cols > 1;
-        let is_flex_row = node.child_count > 0
-            && node.computed_style.display == DisplayMode::Flex
-            && node.computed_style.flex_direction == FlexDirection::Row;
+        let is_table_row = tag == b"tr" && child_count > 1 && child_count <= 5;
+        let is_grid_row = child_count > 0 && style.grid_cols > 1;
+        let is_flex_row = child_count > 0
+            && style.display == DisplayMode::Flex
+            && style.flex_direction == FlexDirection::Row;
         if is_flex_row || is_table_row || is_grid_row {
-            if node.computed_style.display_block {
-                *curr_y += node.computed_style.margin_top;
+            if style.display_block() {
+                *curr_y += style.margin_top as usize;
             }
             let box_start_y = *curr_y;
-            let pad_left = node.computed_style.padding_left;
-            let pad_right = node.computed_style.padding_right;
-            let pad_top = if node.computed_style.bg_color.is_some() || node.computed_style.border_color.is_some() {
-                node.computed_style.padding_top.max(4)
+            let pad_left = style.padding_left as usize;
+            let pad_right = style.padding_right as usize;
+            let has_box = style.has_box();
+            let pad_top = if has_box {
+                (style.padding_top as usize).max(4)
             } else {
-                node.computed_style.padding_top
+                style.padding_top as usize
             };
-            let pad_bottom = if node.computed_style.bg_color.is_some() || node.computed_style.border_color.is_some() {
-                node.computed_style.padding_bottom.max(4)
+            let pad_bottom = if has_box {
+                (style.padding_bottom as usize).max(4)
             } else {
-                node.computed_style.padding_bottom
+                style.padding_bottom as usize
             };
-            let mar_left = node.computed_style.margin_left;
-            let mar_right = node.computed_style.margin_right;
-
-            let has_box = node.computed_style.bg_color.is_some() || node.computed_style.border_color.is_some();
-            let box_slot = if has_box && self.box_count < self.boxes.len() {
-                let slot = self.box_count;
-                self.box_count += 1;
-                Some(slot)
-            } else {
-                None
-            };
+            let mar_left = style.margin_left as usize;
+            let mar_right = style.margin_right as usize;
 
             *curr_y += pad_top;
 
             let inner_w = eff_avail_w.saturating_sub(mar_left + mar_right + pad_left + pad_right);
             let mut visible_children = 0usize;
-            for c in 0..node.child_count {
-                let cid = node.children[c];
+            for c in 0..child_count {
+                let cid = children[c] as usize;
                 if cid < dom.node_count && dom.nodes[cid].computed_style.display != DisplayMode::None {
                     visible_children += 1;
                 }
             }
 
             let gap = if is_table_row {
-                node.computed_style.gap.max(8).min(32)
+                (style.gap as usize).max(8).min(32)
             } else {
-                node.computed_style.gap.min(32)
+                (style.gap as usize).min(32)
             };
             let start_x = eff_base_x + mar_left + pad_left;
             let max_flex_right = start_x + inner_w;
@@ -5001,13 +5306,13 @@ impl DocumentLayout {
 
             if is_grid_row {
                 let max_sane_cols = (inner_w / 140).max(1);
-                let cols = node.computed_style.grid_cols.min(max_sane_cols).min(visible_children.max(1)).max(1);
+                let cols = (style.grid_cols as usize).min(max_sane_cols).min(visible_children.max(1)).max(1);
                 let col_w = inner_w.saturating_sub(gap.saturating_mul(cols - 1)) / cols;
                 let mut col_idx = 0usize;
                 let mut row_y = *curr_y;
                 let mut row_max_y = row_y;
-                for c in 0..node.child_count {
-                    let cid = node.children[c];
+                for c in 0..child_count {
+                    let cid = children[c] as usize;
                     if cid < dom.node_count && dom.nodes[cid].computed_style.display != DisplayMode::None {
                         if col_idx >= cols {
                             col_idx = 0;
@@ -5016,21 +5321,21 @@ impl DocumentLayout {
                         }
                         let cx = start_x + col_idx * (col_w + gap);
                         let mut cy = row_y;
-                        let target_w = dom.nodes[cid].computed_style.width.unwrap_or(col_w).min(col_w);
+                        let target_w = dom.nodes[cid].computed_style.width_opt().unwrap_or(col_w).min(col_w);
                         self.layout_subtree(dom, cid, cx, &mut cy, target_w, laid_out);
                         if cy > row_max_y { row_max_y = cy; }
                         col_idx += 1;
                     }
                 }
                 max_y = row_max_y;
-            } else if is_flex_row && (node.computed_style.flex_wrap || visible_children >= 2) {
+            } else if is_flex_row && (style.flex_wrap() || visible_children >= 2) {
                 let mut child_x = start_x;
                 let mut row_y = *curr_y;
                 let mut row_max_y = row_y;
-                for c in 0..node.child_count {
-                    let cid = node.children[c];
+                for c in 0..child_count {
+                    let cid = children[c] as usize;
                     if cid < dom.node_count && dom.nodes[cid].computed_style.display != DisplayMode::None {
-                        let est_w = dom.nodes[cid].computed_style.width
+                        let est_w = dom.nodes[cid].computed_style.width_opt()
                             .unwrap_or_else(|| Self::estimate_subtree_width(dom, cid, 0))
                             .max(12)
                             .min(inner_w);
@@ -5054,8 +5359,8 @@ impl DocumentLayout {
                 let child_w = if visible_children > 0 { avail_children_w / visible_children } else { avail_children_w };
                 let mut child_x = start_x;
 
-                for c in 0..node.child_count {
-                    let cid = node.children[c];
+                for c in 0..child_count {
+                    let cid = children[c] as usize;
                     if cid < dom.node_count && dom.nodes[cid].computed_style.display != DisplayMode::None {
                         let rem_w = max_flex_right.saturating_sub(child_x);
                         if rem_w < font::FONT_WIDTH {
@@ -5063,7 +5368,7 @@ impl DocumentLayout {
                             continue;
                         }
                         let mut child_y = *curr_y;
-                        let target_w = dom.nodes[cid].computed_style.width.unwrap_or(child_w).min(rem_w);
+                        let target_w = dom.nodes[cid].computed_style.width_opt().unwrap_or(child_w).min(rem_w);
                         self.layout_subtree(dom, cid, child_x, &mut child_y, target_w, laid_out);
                         child_x += target_w + gap;
                         if child_y > max_y {
@@ -5074,86 +5379,65 @@ impl DocumentLayout {
             }
             *curr_y = max_y + pad_bottom;
 
-            let card_w = node
-                .computed_style
-                .width
+            let card_w = style
+                .width_opt()
                 .unwrap_or(eff_avail_w.saturating_sub(mar_left + mar_right))
                 .min(eff_avail_w.saturating_sub(mar_left + mar_right));
             let content_h = curr_y.saturating_sub(box_start_y).max(font::FONT_HEIGHT + pad_top + pad_bottom);
-            let box_h = content_h.max(node.computed_style.height.unwrap_or(0));
+            let box_h = content_h.max(style.height_opt().unwrap_or(0));
             if box_h > content_h {
                 *curr_y = box_start_y + box_h;
             }
-            if let Some(slot) = box_slot {
-                self.boxes[slot] = BoxRect {
-                    x: eff_base_x + mar_left,
-                    y: box_start_y,
-                    w: card_w,
-                    h: box_h,
-                    bg_color: node.computed_style.bg_color.unwrap_or(0),
-                    border_color: node.computed_style.border_color,
-                    border_width: node.computed_style.border_width,
-                    border_radius: node.computed_style.border_radius,
-                    border_sides: node.computed_style.border_sides,
-                };
+            if has_box {
+                Self::record_dom_box(dom, node_idx, eff_base_x + mar_left, box_start_y, card_w, box_h, 0);
             }
             self.record_interactive_box_region(dom, node_idx, eff_base_x + mar_left, box_start_y, card_w, box_h);
 
-            if node.computed_style.display_block {
-                *curr_y += node.computed_style.margin_bottom;
+            if style.display_block() {
+                *curr_y += style.margin_bottom as usize;
             }
             return;
         }
 
         // Container element with children
-        if node.child_count > 0 {
-            if node.computed_style.display_block {
-                *curr_y += node.computed_style.margin_top;
+        if child_count > 0 {
+            if style.display_block() {
+                *curr_y += style.margin_top as usize;
             }
             let box_start_y = *curr_y;
-            let pad_left = node.computed_style.padding_left;
-            let pad_right = node.computed_style.padding_right;
-            let pad_top = if node.computed_style.bg_color.is_some() || node.computed_style.border_color.is_some() {
-                node.computed_style.padding_top.max(4)
+            let pad_left = style.padding_left as usize;
+            let pad_right = style.padding_right as usize;
+            let has_box = style.has_box();
+            let pad_top = if has_box {
+                (style.padding_top as usize).max(4)
             } else {
-                node.computed_style.padding_top
+                style.padding_top as usize
             };
-            let pad_bottom = if node.computed_style.bg_color.is_some() || node.computed_style.border_color.is_some() {
-                node.computed_style.padding_bottom.max(4)
+            let pad_bottom = if has_box {
+                (style.padding_bottom as usize).max(4)
             } else {
-                node.computed_style.padding_bottom
+                style.padding_bottom as usize
             };
-            let mar_left = node.computed_style.margin_left;
-            let mar_right = node.computed_style.margin_right;
-
-            let has_box = node.computed_style.bg_color.is_some() || node.computed_style.border_color.is_some();
-            let box_slot = if has_box && self.box_count < self.boxes.len() {
-                let slot = self.box_count;
-                self.box_count += 1;
-                Some(slot)
-            } else {
-                None
-            };
+            let mar_left = style.margin_left as usize;
+            let mar_right = style.margin_right as usize;
 
             *curr_y += pad_top;
 
-            // Direct text of container if any, or coalescing of simple non-interactive inline children
             let mut all_inline_text = true;
-            for c in 0..node.child_count {
-                let child_id = node.children[c];
+            for c in 0..child_count {
+                let child_id = children[c] as usize;
                 if child_id >= dom.node_count {
                     all_inline_text = false;
                     break;
                 }
                 let child = &dom.nodes[child_id];
-                let ctag = &child.tag[..child.tag_len];
+                let ctag = child.tag_slice();
                 let is_simple_inline = child.node_type == DomNodeType::Text
                     || ((ctag == b"b" || ctag == b"strong" || ctag == b"i" || ctag == b"em" || ctag == b"code" || ctag == b"small" || ctag == b"span")
                         && child.child_count == 0
                         && child.href_len == 0
                         && child.onclick_len == 0
-                        && child.computed_style.bg_color.is_none()
-                        && child.computed_style.border_color.is_none());
+                        && !child.computed_style.has_box());
                 if !is_simple_inline {
                     all_inline_text = false;
                     break;
@@ -5181,66 +5465,66 @@ impl DocumentLayout {
                     *dst_len += take;
                 };
 
-                if node.text_len > 0 {
-                    append_chunk(&mut combined, &mut c_len, &node.text[..node.text_len]);
+                if dom.nodes[node_idx].text_len > 0 {
+                    append_chunk(&mut combined, &mut c_len, dom.nodes[node_idx].text_slice());
                 }
-                for c in 0..node.child_count {
-                    let child_id = node.children[c];
+                for c in 0..child_count {
+                    let child_id = children[c] as usize;
                     laid_out[child_id] = true;
                     let child = &dom.nodes[child_id];
                     if child.computed_style.display != DisplayMode::None && child.text_len > 0 {
-                        append_chunk(&mut combined, &mut c_len, &child.text[..child.text_len]);
+                        append_chunk(&mut combined, &mut c_len, child.text_slice());
                     }
                 }
                 if c_len > 0 {
                     let max_chars = (inner_avail / font::FONT_WIDTH).max(1);
                     let text_x = eff_base_x + mar_left + pad_left + 4;
-                    let enclosing_link = Self::find_enclosing_link(dom, node_idx);
-                    let is_link = enclosing_link.is_some();
-                    let color = if is_link { COLOR_LINK } else { node.computed_style.color };
-                    self.add_wrapped_text_aligned(&combined[..c_len], text_x, inner_avail, curr_y, max_chars, color, is_link, enclosing_link, node.computed_style.text_align);
+                    let link_ref = Self::find_enclosing_link_idx(dom, node_idx).map(|id| (id, 0u8));
+                    let color = if link_ref.is_some() { COLOR_LINK } else { style.color };
+                    self.add_wrapped_text_aligned(&combined[..c_len], text_x, inner_avail, curr_y, max_chars, color, link_ref.is_some(), link_ref, style.text_align);
                 }
             } else {
                 let child_base_x = eff_base_x + mar_left + pad_left;
                 let child_width = inner_avail;
                 let mut c = 0usize;
 
-                if node.text_len > 0 {
-                    if c < node.child_count && Self::is_inline_run_candidate(dom, node.children[c]) {
+                if dom.nodes[node_idx].text_len > 0 {
+                    if c < child_count && Self::is_inline_run_candidate(dom, children[c] as usize) {
                         self.layout_inline_run(
                             dom,
                             Some(node_idx),
-                            &node.children[..node.child_count],
+                            &children[..child_count],
                             &mut c,
                             child_base_x,
                             curr_y,
                             child_width,
-                            node.computed_style.text_align,
+                            style.text_align,
                             laid_out,
                         );
                     } else {
                         let max_chars = (child_width / font::FONT_WIDTH).max(1);
                         let text_x = child_base_x + 4;
-                        let enclosing_link = Self::find_enclosing_link(dom, node_idx);
-                        let is_link = enclosing_link.is_some();
-                        let color = if is_link { COLOR_LINK } else { node.computed_style.color };
-                        self.add_wrapped_text_aligned(&node.text[..node.text_len], text_x, child_width, curr_y, max_chars, color, is_link, enclosing_link, node.computed_style.text_align);
+                        let link_ref = Self::find_enclosing_link_idx(dom, node_idx).map(|id| (id, 0u8));
+                        let color = if link_ref.is_some() { COLOR_LINK } else { style.color };
+                        let t_buf = dom.nodes[node_idx].text;
+                        let t_len = (dom.nodes[node_idx].text_len as usize).min(t_buf.len());
+                        self.add_wrapped_text_aligned(&t_buf[..t_len], text_x, child_width, curr_y, max_chars, color, link_ref.is_some(), link_ref, style.text_align);
                     }
                 }
 
                 // Agrupa filhos inline consecutivos (<a>, <span>, <b>, #text, <button>) na mesma linha horizontal
-                while c < node.child_count {
-                    let child_id = node.children[c];
+                while c < child_count {
+                    let child_id = children[c] as usize;
                     if Self::is_inline_run_candidate(dom, child_id) {
                         self.layout_inline_run(
                             dom,
                             None,
-                            &node.children[..node.child_count],
+                            &children[..child_count],
                             &mut c,
                             child_base_x,
                             curr_y,
                             child_width,
-                            node.computed_style.text_align,
+                            style.text_align,
                             laid_out,
                         );
                     } else {
@@ -5252,71 +5536,60 @@ impl DocumentLayout {
 
             *curr_y += pad_bottom;
 
-            let card_w = node
-                .computed_style
-                .width
+            let card_w = style
+                .width_opt()
                 .unwrap_or(eff_avail_w.saturating_sub(mar_left + mar_right))
                 .min(eff_avail_w.saturating_sub(mar_left + mar_right));
             let content_h = curr_y.saturating_sub(box_start_y).max(font::FONT_HEIGHT + pad_top + pad_bottom);
-            let box_h = content_h.max(node.computed_style.height.unwrap_or(0));
+            let box_h = content_h.max(style.height_opt().unwrap_or(0));
             if box_h > content_h {
                 *curr_y = box_start_y + box_h;
             }
-            if let Some(slot) = box_slot {
-                self.boxes[slot] = BoxRect {
-                    x: eff_base_x + mar_left,
-                    y: box_start_y,
-                    w: card_w,
-                    h: box_h,
-                    bg_color: node.computed_style.bg_color.unwrap_or(0),
-                    border_color: node.computed_style.border_color,
-                    border_width: node.computed_style.border_width,
-                    border_radius: node.computed_style.border_radius,
-                    border_sides: node.computed_style.border_sides,
-                };
+            if has_box {
+                Self::record_dom_box(dom, node_idx, eff_base_x + mar_left, box_start_y, card_w, box_h, 0);
             }
             self.record_interactive_box_region(dom, node_idx, eff_base_x + mar_left, box_start_y, card_w, box_h);
 
-            if node.computed_style.display_block {
-                *curr_y += node.computed_style.margin_bottom;
+            if style.display_block() {
+                *curr_y += style.margin_bottom as usize;
             }
             return;
         }
 
         // Leaf element (child_count == 0)
-        if node.text_len == 0 && node.computed_style.bg_color.is_none() && node.computed_style.border_color.is_none() {
+        let own_text_len = dom.nodes[node_idx].text_len as usize;
+        if own_text_len == 0 && !style.has_box() {
             return;
         }
 
-        if node.computed_style.display_block {
-            *curr_y += node.computed_style.margin_top;
+        if style.display_block() {
+            *curr_y += style.margin_top as usize;
         }
 
         let is_form_input = tag == b"input" || tag == b"textarea";
-        let is_input_submit = is_form_input && node.alt_len == 3;
+        let is_input_submit = is_form_input && dom.nodes[node_idx].alt_len == 3;
         let is_interactive = tag == b"button"
             || is_input_submit
-            || node.onclick_len > 0
-            || node.data_open_window_len > 0
+            || dom.nodes[node_idx].onclick_len > 0
+            || dom.nodes[node_idx].data_open_window_len > 0
             || (dom.has_class(node_idx, b"win-btn") && dom.has_class(node_idx, b"close"));
-        let enclosing_link = Self::find_enclosing_link(dom, node_idx);
+        let enclosing_link = Self::find_enclosing_link_idx(dom, node_idx).map(|id| (id, 0u8));
         let is_link = enclosing_link.is_some();
-        let target_href = enclosing_link;
-        let color = if node.computed_style.has_explicit_color {
-            node.computed_style.color
+        let color = if style.has_explicit_color() {
+            style.color
         } else if is_link {
             COLOR_LINK
         } else {
-            node.computed_style.color
+            style.color
         };
-        let has_box = node.computed_style.bg_color.is_some() || node.computed_style.border_color.is_some();
+        let has_box = style.has_box();
 
-        let pad_left = node.computed_style.padding_left;
-        let pad_right = node.computed_style.padding_right;
-        let pad_top = node.computed_style.padding_top;
-        let pad_bottom = node.computed_style.padding_bottom;
-        let mar_left = node.computed_style.margin_left;
-        let mar_right = node.computed_style.margin_right;
+        let pad_left = style.padding_left as usize;
+        let pad_right = style.padding_right as usize;
+        let pad_top = style.padding_top as usize;
+        let pad_bottom = style.padding_bottom as usize;
+        let mar_left = style.margin_left as usize;
+        let mar_right = style.margin_right as usize;
 
         let elem_x = eff_base_x + mar_left + pad_left + if is_interactive || has_box { 3 } else { 0 };
         let avail_for_text = eff_avail_w.saturating_sub(mar_left + mar_right + pad_left + pad_right + if is_interactive || has_box { 6 } else { 0 });
@@ -5325,18 +5598,20 @@ impl DocumentLayout {
         let box_start_y = *curr_y;
         *curr_y += pad_top;
 
-        let text = &node.text[..node.text_len];
-        if node.text_len == 0 && has_box {
+        let t_buf = dom.nodes[node_idx].text;
+        let t_len = own_text_len.min(t_buf.len());
+        let text = &t_buf[..t_len];
+        if t_len == 0 && has_box {
             let default_empty_h = if tag == b"textarea" { 44 } else if tag == b"input" { font::FONT_HEIGHT + 4 } else { 14 };
-            let empty_h = node.computed_style.height.unwrap_or(default_empty_h).clamp(6, 64);
+            let empty_h = style.height_opt().unwrap_or(default_empty_h).clamp(6, 64);
             *curr_y += empty_h;
         } else if is_interactive {
-            self.add_wrapped_text_interactive(text, elem_x, curr_y, max_chars, color, true, node.id);
+            self.add_wrapped_text_interactive(text, elem_x, curr_y, max_chars, color, true, node_idx);
         } else if is_link {
             let show_underline = !has_box;
-            self.add_wrapped_text_aligned(text, elem_x, avail_for_text, curr_y, max_chars, color, show_underline, target_href, node.computed_style.text_align);
-        } else if node.text_len > 0 {
-            self.add_wrapped_text_aligned(text, elem_x, avail_for_text, curr_y, max_chars, color, false, None, node.computed_style.text_align);
+            self.add_wrapped_text_aligned(text, elem_x, avail_for_text, curr_y, max_chars, color, show_underline, enclosing_link, style.text_align);
+        } else if t_len > 0 {
+            self.add_wrapped_text_aligned(text, elem_x, avail_for_text, curr_y, max_chars, color, false, None, style.text_align);
         }
 
         *curr_y += pad_bottom;
@@ -5344,47 +5619,34 @@ impl DocumentLayout {
         if has_box {
             let content_h = curr_y.saturating_sub(box_start_y);
             let min_field_h = if tag == b"textarea" { 44 + pad_top + pad_bottom } else { font::FONT_HEIGHT + pad_top + pad_bottom + 2 };
-            let box_h = if node.text_len == 0 {
-                content_h.max(node.computed_style.height.unwrap_or(if is_form_input { min_field_h } else { 14 })).max(6)
+            let box_h = if t_len == 0 {
+                content_h.max(style.height_opt().unwrap_or(if is_form_input { min_field_h } else { 14 })).max(6)
             } else {
-                content_h.max(node.computed_style.height.unwrap_or(0)).max(min_field_h)
+                content_h.max(style.height_opt().unwrap_or(0)).max(min_field_h)
             };
             if box_h > content_h {
                 *curr_y = box_start_y + box_h;
             }
             let max_box_w = eff_avail_w.saturating_sub(mar_left + mar_right);
-            let box_w = if let Some(w) = node.computed_style.width {
+            let box_w = if let Some(w) = style.width_opt() {
                 w.min(max_box_w)
             } else if is_form_input && !is_input_submit {
                 max_box_w.min(260).max(180).min(max_box_w)
-            } else if node.computed_style.display_block && node.text_len > 0 {
+            } else if style.display_block() && t_len > 0 {
                 max_box_w
-            } else if node.text_len == 0 {
-                node.computed_style.width.unwrap_or(32).min(max_box_w)
+            } else if t_len == 0 {
+                32.min(max_box_w)
             } else {
-                (node.text_len * font::FONT_WIDTH + pad_left + pad_right + 12).min(max_box_w)
+                (t_len * font::FONT_WIDTH + pad_left + pad_right + 12).min(max_box_w)
             };
-            if self.box_count < self.boxes.len() {
-                self.boxes[self.box_count] = BoxRect {
-                    x: (eff_base_x + mar_left).max(2),
-                    y: box_start_y,
-                    w: box_w,
-                    h: box_h,
-                    bg_color: node.computed_style.bg_color.unwrap_or(0x0031_3244),
-                    border_color: node.computed_style.border_color,
-                    border_width: node.computed_style.border_width,
-                    border_radius: node.computed_style.border_radius,
-                    border_sides: node.computed_style.border_sides,
-                };
-                self.box_count += 1;
-            }
+            Self::record_dom_box(dom, node_idx, (eff_base_x + mar_left).max(2), box_start_y, box_w, box_h, 1);
             self.record_interactive_box_region(dom, node_idx, (eff_base_x + mar_left).max(2), box_start_y, box_w, box_h);
         } else {
             self.record_interactive_box_region(dom, node_idx, elem_x, box_start_y, avail_for_text, curr_y.saturating_sub(box_start_y).max(font::FONT_HEIGHT));
         }
 
-        if node.computed_style.display_block {
-            *curr_y += node.computed_style.margin_bottom;
+        if style.display_block() {
+            *curr_y += style.margin_bottom as usize;
         }
     }
 
@@ -5428,12 +5690,11 @@ impl DocumentLayout {
                     if self.line_count < self.lines.len() {
                         self.lines[self.line_count] = RenderLine {
                             text: [0; 96],
-                            text_len: 0,
-                            x: 8,
-                            y: curr_y + 4,
                             color: COLOR_HR,
-                            is_link: false,
-                            is_hr: true,
+                            x: 8,
+                            y: (curr_y + 4).min(u16::MAX as usize) as u16,
+                            text_len: 0,
+                            flags: LINE_FLAG_HR,
                         };
                         self.line_count += 1;
                     }
@@ -5476,8 +5737,8 @@ impl DocumentLayout {
                 BlockKind::Link => {
                     curr_y += 3;
                     let text = &blk.text[..blk.text_len];
-                    let href = &blk.link_target[..blk.link_target_len];
-                    self.add_wrapped_text(text, 8, &mut curr_y, max_chars_per_line, COLOR_LINK, true, Some(href));
+                    let link_ref = if blk.link_target_len > 0 { Some((b_idx, CLICK_FLAG_PAGE_BLOCK)) } else { None };
+                    self.add_wrapped_text(text, 8, &mut curr_y, max_chars_per_line, COLOR_LINK, true, link_ref);
                     curr_y += 4;
                 }
                 BlockKind::AudioPlayer => {
@@ -5515,7 +5776,6 @@ impl DocumentLayout {
         let len = html.len();
 
         while i < len && self.line_count < self.lines.len() {
-            // Pula scripts, styles, svgs
             if html[i] == b'<' {
                 i += 1;
                 if i + 6 < len && html[i..i + 6].eq_ignore_ascii_case(b"script") {
@@ -5530,7 +5790,6 @@ impl DocumentLayout {
                 continue;
             }
 
-            // Coleta texto visível
             let mut text_buf = [0u8; 128];
             let mut t_len = 0;
             while i < len && html[i] != b'<' && t_len < 127 {
@@ -5564,7 +5823,7 @@ impl DocumentLayout {
         max_chars: usize,
         color: u32,
         is_link: bool,
-        target_href: Option<&[u8]>,
+        link_ref: Option<(usize, u8)>,
     ) {
         self.add_wrapped_text_aligned(
             text,
@@ -5574,7 +5833,7 @@ impl DocumentLayout {
             max_chars,
             color,
             is_link,
-            target_href,
+            link_ref,
             TextAlign::Left,
         );
     }
@@ -5588,7 +5847,7 @@ impl DocumentLayout {
         max_chars: usize,
         color: u32,
         is_link: bool,
-        target_href: Option<&[u8]>,
+        link_ref: Option<(usize, u8)>,
         text_align: TextAlign,
     ) {
         self.push_wrapped_text(
@@ -5599,7 +5858,7 @@ impl DocumentLayout {
             max_chars,
             color,
             is_link,
-            target_href,
+            link_ref,
             text_align,
             false,
             0,
@@ -5615,7 +5874,7 @@ impl DocumentLayout {
         max_chars: usize,
         color: u32,
         is_link: bool,
-        target_href: Option<&[u8]>,
+        link_ref: Option<(usize, u8)>,
         text_align: TextAlign,
         is_interactive: bool,
         node_idx: usize,
@@ -5632,7 +5891,6 @@ impl DocumentLayout {
             let take = if is_rule || remaining <= safe_max {
                 remaining.min(safe_max)
             } else {
-                // Tenta quebrar em espaço evitando separadores repetidos vazarem
                 let mut break_idx = safe_max;
                 while break_idx > 0 && text[offset + break_idx] != b' ' {
                     break_idx -= 1;
@@ -5651,41 +5909,28 @@ impl DocumentLayout {
                 _ => start_x,
             };
 
-            if is_interactive && self.click_count < self.click_regions.len() {
-                let mut reg = ClickRegion::empty();
-                reg.x = line_x.saturating_sub(2);
-                reg.y = *curr_y;
-                reg.w = line_px_w + 8;
-                reg.h = font::FONT_HEIGHT + 4;
-                reg.is_js = true;
-                reg.node_idx = node_idx;
-                self.click_regions[self.click_count] = reg;
-                self.click_count += 1;
+            if is_interactive {
+                self.push_click_region(
+                    line_x.saturating_sub(2),
+                    *curr_y,
+                    line_px_w + 8,
+                    font::FONT_HEIGHT + 4,
+                    node_idx,
+                    CLICK_FLAG_JS,
+                );
             } else if is_link {
-                if let Some(href) = target_href {
-                    if self.click_count < self.click_regions.len() {
-                        let mut reg = ClickRegion::empty();
-                        reg.x = line_x;
-                        reg.y = *curr_y;
-                        reg.w = line_px_w;
-                        reg.h = font::FONT_HEIGHT + 2;
-                        let h_len = href.len().min(128);
-                        reg.target[..h_len].copy_from_slice(&href[..h_len]);
-                        reg.target_len = h_len;
-                        self.click_regions[self.click_count] = reg;
-                        self.click_count += 1;
-                    }
+                if let Some((ln, lflags)) = link_ref {
+                    self.push_click_region(line_x, *curr_y, line_px_w, font::FONT_HEIGHT + 2, ln, lflags);
                 }
             }
 
             self.lines[self.line_count] = RenderLine {
                 text: line_buf,
-                text_len: actual_take,
-                x: line_x,
-                y: *curr_y,
                 color,
-                is_link,
-                is_hr: false,
+                x: line_x.min(u16::MAX as usize) as u16,
+                y: (*curr_y).min(u16::MAX as usize) as u16,
+                text_len: actual_take as u8,
+                flags: if is_link { LINE_FLAG_LINK } else { 0 },
             };
             self.line_count += 1;
 
@@ -5928,10 +6173,28 @@ impl BrowserSession {
         let _ = self.history_store.save();
     }
 
+    pub fn click_region_target(&self, r: &ClickRegion) -> &[u8] {
+        let idx = r.node_idx as usize;
+        if r.is_js() {
+            b"js:action"
+        } else if r.is_page_block() {
+            if idx < self.page.block_count {
+                let b = &self.page.blocks[idx];
+                &b.link_target[..b.link_target_len.min(b.link_target.len())]
+            } else {
+                b""
+            }
+        } else if idx < self.dom.node_count {
+            self.dom.nodes[idx].href_slice()
+        } else {
+            b""
+        }
+    }
+
     pub fn dispatch_js_click(&mut self, node_idx: usize) -> bool {
         if node_idx < self.dom.node_count {
             if self.dom.has_class(node_idx, b"win-btn") && self.dom.has_class(node_idx, b"close") {
-                let mut cur = self.dom.nodes[node_idx].parent;
+                let mut cur = self.dom.nodes[node_idx].parent_idx();
                 while let Some(pid) = cur {
                     if self.dom.has_class(pid, b"os-window") {
                         self.dom.add_class(pid, b"hidden");
@@ -5939,14 +6202,14 @@ impl BrowserSession {
                         self.recompute_layout();
                         return true;
                     }
-                    cur = self.dom.nodes[pid].parent;
+                    cur = self.dom.nodes[pid].parent_idx();
                 }
             }
 
-            let open_len = self.dom.nodes[node_idx].data_open_window_len;
+            let open_len = self.dom.nodes[node_idx].data_open_window_len as usize;
             if open_len > 0 {
                 let open_id = self.dom.nodes[node_idx].data_open_window;
-                let target_id = &open_id[..open_len];
+                let target_id = &open_id[..open_len.min(open_id.len())];
                 if let Some(target_idx) = self.dom.find_by_id(target_id) {
                     let was_hidden = self.dom.has_class(target_idx, b"hidden");
                     for idx in 0..self.dom.node_count {
@@ -5963,10 +6226,10 @@ impl BrowserSession {
                 }
             }
 
-            let onclick_len = self.dom.nodes[node_idx].onclick_len;
+            let onclick_len = self.dom.nodes[node_idx].onclick_len as usize;
             if onclick_len > 0 {
-                let mut script_buf = [0u8; 256];
-                let cpy = onclick_len.min(255);
+                let mut script_buf = [0u8; 96];
+                let cpy = onclick_len.min(script_buf.len());
                 script_buf[..cpy].copy_from_slice(&self.dom.nodes[node_idx].onclick_attr[..cpy]);
                 self.js_runtime.eval_script(&script_buf[..cpy], &mut self.dom);
                 self.css.resolve_all(&mut self.dom, self.viewport_w);
@@ -5991,7 +6254,7 @@ impl BrowserSession {
     pub fn recompute_layout(&mut self) {
         let stage = compute_stage_geometry(self.viewport_w, self.viewport_h);
         if self.dom.node_count > 0 {
-            self.layout.compute_from_dom_stage(&self.dom, stage.content_rect.x, stage.content_rect.w);
+            self.layout.compute_from_dom_stage(&mut self.dom, stage.content_rect.x, stage.content_rect.w);
         } else {
             self.layout.compute(&self.page, stage.content_rect.w);
         }
@@ -6241,7 +6504,7 @@ impl BrowserSession {
                 crate::print_str(b" h=");
                 crate::print_u64(r.h as u64);
                 crate::print_str(b" target=");
-                crate::print_str(&r.target[..r.target_len]);
+                crate::print_str(self.click_region_target(r));
                 crate::print_str(b"\n");
             }
         }
@@ -6351,15 +6614,15 @@ impl BrowserSession {
             for i in 0..self.layout.click_count {
                 let r = &self.layout.click_regions[i];
                 let pad = 2usize;
-                let rx_start = r.x.saturating_sub(pad);
-                let rx_end = r.x + r.w + pad;
-                let ry_start = r.y.saturating_sub(pad);
-                let ry_end = r.y + r.h + pad;
+                let rx_start = (r.x as usize).saturating_sub(pad);
+                let rx_end = r.x as usize + r.w as usize + pad;
+                let ry_start = (r.y as usize).saturating_sub(pad);
+                let ry_end = r.y as usize + r.h as usize + pad;
                 if click_x >= rx_start && click_x <= rx_end && doc_y >= ry_start && doc_y <= ry_end {
-                    if r.is_js {
-                        return BrowserAction::JsAction(r.node_idx);
+                    if r.is_js() {
+                        return BrowserAction::JsAction(r.node_idx as usize);
                     } else {
-                        let target_slice = &r.target[..r.target_len];
+                        let target_slice = self.click_region_target(r);
                         if target_slice.starts_with(b"set_wallpaper:") {
                             let mut target = [0u8; 128];
                             let param = &target_slice[b"set_wallpaper:".len()..];
@@ -6374,8 +6637,9 @@ impl BrowserSession {
                             return BrowserAction::SaveWallpaper(target, plen);
                         }
                         let mut target = [0u8; 128];
-                        target[..r.target_len].copy_from_slice(&r.target[..r.target_len]);
-                        return BrowserAction::NavigateTarget(target, r.target_len);
+                        let tlen = target_slice.len().min(128);
+                        target[..tlen].copy_from_slice(&target_slice[..tlen]);
+                        return BrowserAction::NavigateTarget(target, tlen);
                     }
                 }
             }
@@ -6383,11 +6647,17 @@ impl BrowserSession {
             // Hit-test em imagens: clicar sobre imagem define como papel de parede
             for i in 0..self.layout.image_count {
                 let img = &self.layout.images[i];
-                if click_x >= img.x && click_x <= img.x + img.w && doc_y >= img.y && doc_y <= img.y + img.h {
-                    if img.src_len > 0 {
+                let ix = img.x as usize;
+                let iy = img.y as usize;
+                let iw = img.w as usize;
+                let ih = img.h as usize;
+                if click_x >= ix && click_x <= ix + iw && doc_y >= iy && doc_y <= iy + ih {
+                    let nid = img.node_idx as usize;
+                    if nid < self.dom.node_count && self.dom.nodes[nid].src_len > 0 {
+                        let src_s = self.dom.nodes[nid].src_slice();
                         let mut target = [0u8; 128];
-                        let slen = img.src_len.min(128);
-                        target[..slen].copy_from_slice(&img.src[..slen]);
+                        let slen = src_s.len().min(128);
+                        target[..slen].copy_from_slice(&src_s[..slen]);
                         return BrowserAction::SetWallpaper(target, slen);
                     }
                 }
@@ -6478,58 +6748,77 @@ impl BrowserSession {
             font::draw_text_clipped_rect(buf, w, h, url_x + 8, 9, url_slice, 0x00CD_D6F4, None, url_max_x, 3, 23);
         }
 
-        // 2.5. Renderiza caixas estilizadas (backgrounds de .card, buttons, etc.) limitadas ao viewport horizontal
-        for i in 0..self.layout.box_count {
-            let bx = &self.layout.boxes[i];
-            if bx.x >= max_content_x {
+        // 2.5. Pintura immediate-mode de cartões, painéis, inputs e blocos semânticos direto do DomArena (zero array extra de caixas)
+        for idx in 0..self.dom.node_count {
+            let node = &self.dom.nodes[idx];
+            let bx_x = node.box_x as usize;
+            let bx_y = node.box_y as usize;
+            let bx_w_raw = node.box_w as usize;
+            let bx_h = node.box_h as usize;
+            if bx_w_raw == 0 || bx_h == 0 || bx_x >= max_content_x {
                 continue;
             }
-            let bx_w = bx.w.min(max_content_x.saturating_sub(bx.x));
+            let bx_w = bx_w_raw.min(max_content_x.saturating_sub(bx_x));
             if bx_w == 0 {
                 continue;
             }
-            if bx.y + bx.h > self.scroll_y {
-                let box_top = if bx.y >= self.scroll_y {
-                    (bx.y - self.scroll_y) + clip_top
+            let style = &node.computed_style;
+            let bg_color = if style.has_bg() {
+                style.bg_color
+            } else if node.box_bg_fallback != 0 {
+                0x0031_3244
+            } else {
+                0
+            };
+            let border_color = style.border_color_opt();
+            if bg_color == 0 && border_color.is_none() {
+                continue;
+            }
+            let br = style.border_radius as usize;
+            let bw = style.border_width as usize;
+            let bs = style.border_sides;
+            if bx_y + bx_h > self.scroll_y {
+                let box_top = if bx_y >= self.scroll_y {
+                    (bx_y - self.scroll_y) + clip_top
                 } else {
                     clip_top
                 };
-                let box_bottom = ((bx.y + bx.h).saturating_sub(self.scroll_y)) + clip_top;
+                let box_bottom = ((bx_y + bx_h).saturating_sub(self.scroll_y)) + clip_top;
                 if box_top < clip_bottom && box_bottom > clip_top {
                     let draw_y = box_top.max(clip_top);
                     let draw_h = box_bottom.min(clip_bottom).saturating_sub(draw_y);
                     if draw_h > 0 {
-                        if bx.border_radius > 0 && bx.border_sides == 15 {
-                            if bx.bg_color != 0 {
-                                fill_rounded_rect(buf, w, h, bx.x, draw_y, bx_w, draw_h, bx.border_radius, bx.bg_color);
+                        if br > 0 && bs == 15 {
+                            if bg_color != 0 {
+                                fill_rounded_rect(buf, w, h, bx_x, draw_y, bx_w, draw_h, br, bg_color);
                             }
-                            if let Some(bc) = bx.border_color {
-                                draw_rounded_border(buf, w, h, bx.x, draw_y, bx_w, draw_h, bx.border_radius, bx.border_width, bc);
+                            if let Some(bc) = border_color {
+                                draw_rounded_border(buf, w, h, bx_x, draw_y, bx_w, draw_h, br, bw, bc);
                             }
                         } else {
-                            if bx.bg_color != 0 {
-                                if bx.border_radius > 0 {
-                                    fill_rounded_rect(buf, w, h, bx.x, draw_y, bx_w, draw_h, bx.border_radius, bx.bg_color);
+                            if bg_color != 0 {
+                                if br > 0 {
+                                    fill_rounded_rect(buf, w, h, bx_x, draw_y, bx_w, draw_h, br, bg_color);
                                 } else {
-                                    fill_rect(buf, w, h, bx.x, draw_y, bx_w, draw_h, bx.bg_color);
+                                    fill_rect(buf, w, h, bx_x, draw_y, bx_w, draw_h, bg_color);
                                 }
                             }
-                            if let Some(bc) = bx.border_color {
-                                if bx.border_sides == 15 {
-                                    draw_rect_border(buf, w, h, bx.x, draw_y, bx_w, draw_h, bc);
+                            if let Some(bc) = border_color {
+                                if bs == 15 {
+                                    draw_rect_border(buf, w, h, bx_x, draw_y, bx_w, draw_h, bc);
                                 } else {
-                                    let bw = bx.border_width.clamp(1, 3);
-                                    if (bx.border_sides & 1) != 0 {
-                                        fill_rect(buf, w, h, bx.x, draw_y, bx_w, bw, bc);
+                                    let eb = bw.clamp(1, 3);
+                                    if (bs & 1) != 0 {
+                                        fill_rect(buf, w, h, bx_x, draw_y, bx_w, eb, bc);
                                     }
-                                    if (bx.border_sides & 4) != 0 && draw_h >= bw {
-                                        fill_rect(buf, w, h, bx.x, draw_y + draw_h - bw, bx_w, bw, bc);
+                                    if (bs & 4) != 0 && draw_h >= eb {
+                                        fill_rect(buf, w, h, bx_x, draw_y + draw_h - eb, bx_w, eb, bc);
                                     }
-                                    if (bx.border_sides & 8) != 0 {
-                                        fill_rect(buf, w, h, bx.x, draw_y, bw, draw_h, bc);
+                                    if (bs & 8) != 0 {
+                                        fill_rect(buf, w, h, bx_x, draw_y, eb, draw_h, bc);
                                     }
-                                    if (bx.border_sides & 2) != 0 && bx_w >= bw {
-                                        fill_rect(buf, w, h, bx.x + bx_w - bw, draw_y, bw, draw_h, bc);
+                                    if (bs & 2) != 0 && bx_w >= eb {
+                                        fill_rect(buf, w, h, bx_x + bx_w - eb, draw_y, eb, draw_h, bc);
                                     }
                                 }
                             }
@@ -6542,22 +6831,31 @@ impl BrowserSession {
         // 2.7. Renderiza imagens (<img>) com clipping e scroll
         for i in 0..self.layout.image_count {
             let img = &self.layout.images[i];
-            if img.x >= max_content_x {
+            let ix = img.x as usize;
+            let iy = img.y as usize;
+            let ih = img.h as usize;
+            if ix >= max_content_x {
                 continue;
             }
-            if img.y + img.h > self.scroll_y {
-                let img_top = if img.y >= self.scroll_y {
-                    (img.y - self.scroll_y) + clip_top
+            if iy + ih > self.scroll_y {
+                let img_top = if iy >= self.scroll_y {
+                    (iy - self.scroll_y) + clip_top
                 } else {
                     clip_top
                 };
-                let img_bottom = ((img.y + img.h).saturating_sub(self.scroll_y)) + clip_top;
+                let img_bottom = ((iy + ih).saturating_sub(self.scroll_y)) + clip_top;
                 if img_top < clip_bottom && img_bottom > clip_top {
                     let draw_y = img_top.max(clip_top);
                     let draw_h = img_bottom.min(clip_bottom).saturating_sub(draw_y);
                     if draw_h > 0 {
-                        let src_y_off = self.scroll_y.saturating_sub(img.y);
-                        render_image_element(buf, w, h, img, draw_y, draw_h, src_y_off, clip_top, clip_bottom);
+                        let src_y_off = self.scroll_y.saturating_sub(iy);
+                        let nid = img.node_idx as usize;
+                        let (src_s, alt_s): (&[u8], &[u8]) = if nid < self.dom.node_count {
+                            (self.dom.nodes[nid].src_slice(), self.dom.nodes[nid].alt_slice())
+                        } else {
+                            (b"", b"")
+                        };
+                        render_image_element(buf, w, h, img, src_s, alt_s, draw_y, draw_h, src_y_off, clip_top, clip_bottom);
                     }
                 }
             }
@@ -6566,43 +6864,43 @@ impl BrowserSession {
         // 3. Documento no Viewport (com scroll_y aplicado e clipping horizontal/vertical)
         for i in 0..self.layout.line_count {
             let line = &self.layout.lines[i];
-            if line.x >= max_content_x {
+            let lx = line.x as usize;
+            let ly = line.y as usize;
+            if lx >= max_content_x {
                 continue;
             }
 
-            if line.is_hr {
-                if line.y >= self.scroll_y {
-                    let actual_y = (line.y - self.scroll_y) + clip_top;
+            if line.is_hr() {
+                if ly >= self.scroll_y {
+                    let actual_y = (ly - self.scroll_y) + clip_top;
                     if actual_y >= clip_top && actual_y <= clip_bottom {
-                        let hr_w = max_content_x.saturating_sub(line.x).min(w.saturating_sub(24));
-                        fill_rect(buf, w, h, line.x, actual_y, hr_w, 1, COLOR_HR);
+                        let hr_w = max_content_x.saturating_sub(lx).min(w.saturating_sub(24));
+                        fill_rect(buf, w, h, lx, actual_y, hr_w, 1, COLOR_HR);
                     }
                 }
-            } else {
-                if line.y >= self.scroll_y {
-                    let actual_y = (line.y - self.scroll_y) + clip_top;
-                    if actual_y + font::FONT_HEIGHT <= clip_bottom {
-                        let text_slice = &line.text[..line.text_len];
-                        font::draw_text_clipped_rect(
-                            buf,
-                            w,
-                            h,
-                            line.x,
-                            actual_y,
-                            text_slice,
-                            line.color,
-                            None,
-                            max_content_x,
-                            clip_top,
-                            clip_bottom,
-                        );
+            } else if ly >= self.scroll_y {
+                let actual_y = (ly - self.scroll_y) + clip_top;
+                if actual_y + font::FONT_HEIGHT <= clip_bottom {
+                    let text_slice = line.text_slice();
+                    font::draw_text_clipped_rect(
+                        buf,
+                        w,
+                        h,
+                        lx,
+                        actual_y,
+                        text_slice,
+                        line.color,
+                        None,
+                        max_content_x,
+                        clip_top,
+                        clip_bottom,
+                    );
 
-                        if line.is_link {
-                            let underline_y = actual_y + font::FONT_HEIGHT;
-                            if underline_y < clip_bottom {
-                                let link_w = (line.text_len * font::FONT_WIDTH).min(max_content_x.saturating_sub(line.x));
-                                fill_rect(buf, w, h, line.x, underline_y, link_w, 1, line.color);
-                            }
+                    if line.is_link() {
+                        let underline_y = actual_y + font::FONT_HEIGHT;
+                        if underline_y < clip_bottom {
+                            let link_w = (text_slice.len() * font::FONT_WIDTH).min(max_content_x.saturating_sub(lx));
+                            fill_rect(buf, w, h, lx, underline_y, link_w, 1, line.color);
                         }
                     }
                 }
@@ -6829,73 +7127,59 @@ static mut IMG_PNG_IDAT_BUF: [u8; 65536] = [0u8; 65536];
 static mut IMG_PNG_ZLIB_OUT: [u8; 524288] = [0u8; 524288];
 
 const MAX_REMOTE_IMG_SLOTS: usize = 8;
-const MAX_REMOTE_CSS_SLOTS: usize = 4;
+pub const CSS_SCRATCH_SIZE: usize = 24576;
 
-static mut VFS_CSS_SCRATCH: [u8; 32768] = [0u8; 32768];
+// Buffer único reutilizável de 24 KiB para carregamento e parsing de CSS (zero cache redundante em RAM)
+static mut CSS_SCRATCH_BUF: [u8; CSS_SCRATCH_SIZE] = [0u8; CSS_SCRATCH_SIZE];
+static mut CSS_SCRATCH_KEY_A: u64 = 0;
+static mut CSS_SCRATCH_KEY_B: u64 = 0;
+static mut CSS_SCRATCH_ALT_KEY: u64 = 0;
+static mut CSS_SCRATCH_LEN: usize = 0;
 
-#[derive(Clone, Copy)]
-struct RemoteCssEntry {
-    hash_a: u64,
-    hash_b: u64,
-    len: usize,
-    valid: bool,
-    data: [u8; 32768],
+pub fn urls_same_host(a: &[u8], b: &[u8]) -> bool {
+    let Some(pa) = parse_http_url(a) else { return false; };
+    let Some(pb) = parse_http_url(b) else { return false; };
+    pa.host_len == pb.host_len && pa.host[..pa.host_len].eq_ignore_ascii_case(&pb.host[..pb.host_len])
 }
 
-impl RemoteCssEntry {
-    const fn empty() -> Self {
-        Self {
-            hash_a: 0,
-            hash_b: 0,
-            len: 0,
-            valid: false,
-            data: [0; 32768],
-        }
-    }
+pub unsafe fn css_scratch_slice_mut() -> &'static mut [u8] {
+    CSS_SCRATCH_KEY_A = 0;
+    CSS_SCRATCH_KEY_B = 0;
+    CSS_SCRATCH_ALT_KEY = 0;
+    CSS_SCRATCH_LEN = 0;
+    core::slice::from_raw_parts_mut(core::ptr::addr_of_mut!(CSS_SCRATCH_BUF) as *mut u8, CSS_SCRATCH_SIZE)
 }
 
-static mut REMOTE_CSS_CACHE: [RemoteCssEntry; MAX_REMOTE_CSS_SLOTS] = [RemoteCssEntry::empty(); MAX_REMOTE_CSS_SLOTS];
-static mut REMOTE_CSS_NEXT_SLOT: usize = 0;
-
-pub unsafe fn cache_store_remote_css(key_a: &[u8], key_b: &[u8], raw: &[u8]) -> bool {
-    if raw.is_empty() || raw.len() > 32768 {
-        return false;
+pub unsafe fn css_scratch_store(key_a: &[u8], key_b: &[u8], raw: &[u8]) -> usize {
+    if raw.is_empty() {
+        CSS_SCRATCH_LEN = 0;
+        return 0;
     }
-    let ha = img_fnv1a_hash(key_a);
-    let hb = img_fnv1a_hash(key_b);
-    let mut target_slot = None;
-    for idx in 0..MAX_REMOTE_CSS_SLOTS {
-        if REMOTE_CSS_CACHE[idx].valid && REMOTE_CSS_CACHE[idx].hash_b == hb {
-            target_slot = Some(idx);
-            break;
+    let mut copy_len = raw.len().min(CSS_SCRATCH_SIZE);
+    if raw.len() > CSS_SCRATCH_SIZE {
+        if let Some(last_brace) = raw[..CSS_SCRATCH_SIZE].iter().rposition(|&b| b == b'}') {
+            copy_len = last_brace + 1;
         }
     }
-    let slot = match target_slot {
-        Some(s) => s,
-        None => {
-            let s = REMOTE_CSS_NEXT_SLOT % MAX_REMOTE_CSS_SLOTS;
-            REMOTE_CSS_NEXT_SLOT = (REMOTE_CSS_NEXT_SLOT + 1) % MAX_REMOTE_CSS_SLOTS;
-            s
-        }
-    };
-    REMOTE_CSS_CACHE[slot].hash_a = ha;
-    REMOTE_CSS_CACHE[slot].hash_b = hb;
-    REMOTE_CSS_CACHE[slot].data[..raw.len()].copy_from_slice(raw);
-    REMOTE_CSS_CACHE[slot].len = raw.len();
-    REMOTE_CSS_CACHE[slot].valid = true;
-    true
+    CSS_SCRATCH_KEY_A = img_fnv1a_hash(key_a);
+    CSS_SCRATCH_KEY_B = img_fnv1a_hash(key_b);
+    CSS_SCRATCH_ALT_KEY = 0;
+    CSS_SCRATCH_BUF[..copy_len].copy_from_slice(&raw[..copy_len]);
+    CSS_SCRATCH_LEN = copy_len;
+    copy_len
 }
 
-pub unsafe fn cache_lookup_remote_css(key: &[u8]) -> Option<&'static [u8]> {
-    if key.is_empty() {
+pub unsafe fn css_scratch_update_alt_key(alt: &[u8]) {
+    CSS_SCRATCH_ALT_KEY = img_fnv1a_hash(alt);
+}
+
+pub unsafe fn css_scratch_lookup(key: &[u8]) -> Option<&'static [u8]> {
+    if key.is_empty() || CSS_SCRATCH_LEN == 0 || CSS_SCRATCH_LEN > CSS_SCRATCH_SIZE {
         return None;
     }
     let h = img_fnv1a_hash(key);
-    for idx in 0..MAX_REMOTE_CSS_SLOTS {
-        let e = &REMOTE_CSS_CACHE[idx];
-        if e.valid && (e.hash_b == h || e.hash_a == h) {
-            return Some(&e.data[..e.len]);
-        }
+    if CSS_SCRATCH_KEY_B == h || CSS_SCRATCH_KEY_A == h || (CSS_SCRATCH_ALT_KEY != 0 && CSS_SCRATCH_ALT_KEY == h) {
+        return Some(&CSS_SCRATCH_BUF[..CSS_SCRATCH_LEN]);
     }
     None
 }
@@ -7597,6 +7881,8 @@ pub fn render_image_element(
     w: usize,
     h: usize,
     img: &RenderImage,
+    src_slice: &[u8],
+    alt_slice: &[u8],
     draw_y: usize,
     draw_h: usize,
     src_y_off: usize,
@@ -7604,19 +7890,21 @@ pub fn render_image_element(
     clip_bottom: usize,
 ) {
     let max_x = w.saturating_sub(16);
-    if img.w == 0 || draw_h == 0 || img.x >= max_x { return; }
-    let vis_img_w = img.w.min(max_x.saturating_sub(img.x));
+    let ix = img.x as usize;
+    let iw = img.w as usize;
+    let ih = img.h as usize;
+    if iw == 0 || draw_h == 0 || ix >= max_x { return; }
+    let vis_img_w = iw.min(max_x.saturating_sub(ix));
     if vis_img_w == 0 { return; }
 
     // Fundo padrão da imagem (Catppuccin Surface)
-    fill_rect(buf, w, h, img.x, draw_y, vis_img_w, draw_h, 0x0031_3244);
-    draw_rect_border(buf, w, h, img.x, draw_y, vis_img_w, draw_h, 0x0045_475A);
+    fill_rect(buf, w, h, ix, draw_y, vis_img_w, draw_h, 0x0031_3244);
+    draw_rect_border(buf, w, h, ix, draw_y, vis_img_w, draw_h, 0x0045_475A);
 
     let mut decoded_ok = false;
     let mut probe_res: Option<ImageProbeInfo> = None;
 
-    if img.src_len > 0 {
-        let src_slice = &img.src[..img.src_len];
+    if !src_slice.is_empty() {
         unsafe {
             let remote_raw = cache_lookup_remote_image(src_slice);
             let raw_opt: Option<&[u8]> = if let Some(cached) = remote_raw {
@@ -7672,8 +7960,8 @@ pub fn render_image_element(
                 };
 
                 if let Some((dec_w, dec_h)) = dec_res {
-                    let target_w = img.w.min(MAX_IMAGE_SCRATCH_W);
-                    let target_h = img.h.min(MAX_IMAGE_SCRATCH_H);
+                    let target_w = iw.min(MAX_IMAGE_SCRATCH_W);
+                    let target_h = ih.min(MAX_IMAGE_SCRATCH_H);
 
                     scale_image_rgba_simd(
                         &IMG_DECODED_PIXELS[..dec_w * dec_h],
@@ -7692,7 +7980,7 @@ pub fn render_image_element(
                             let dst_row = screen_y * w;
 
                             for x in 0..target_w.min(vis_img_w) {
-                                let screen_x = img.x + x;
+                                let screen_x = ix + x;
                                 if screen_x < max_x && screen_x < w {
                                     let p = IMG_SCALED_PIXELS[src_row + x];
                                     let alpha = (p >> 24) & 0xFF;
@@ -7711,7 +7999,7 @@ pub fn render_image_element(
                         }
                     }
 
-                    draw_rect_border(buf, w, h, img.x, draw_y, vis_img_w, draw_h, COLOR_BORDER);
+                    draw_rect_border(buf, w, h, ix, draw_y, vis_img_w, draw_h, COLOR_BORDER);
                     decoded_ok = true;
                 }
             }
@@ -7721,7 +8009,7 @@ pub fn render_image_element(
     if !decoded_ok {
         if draw_h >= 14 && vis_img_w >= 28 {
             let text_y = draw_y + 2;
-            let text_max_x = img.x + vis_img_w.saturating_sub(2);
+            let text_max_x = ix + vis_img_w.saturating_sub(2);
             if text_y + font::FONT_HEIGHT <= clip_bottom {
                 let (tag, tag_color) = if let Some(probe) = probe_res {
                     match probe.format {
@@ -7735,15 +8023,13 @@ pub fn render_image_element(
                     (b"[IMG]" as &[u8], COLOR_H1)
                 };
 
-                font::draw_text_clipped_rect(buf, w, h, img.x + 3, text_y, tag, tag_color, None, text_max_x, clip_top, clip_bottom);
+                font::draw_text_clipped_rect(buf, w, h, ix + 3, text_y, tag, tag_color, None, text_max_x, clip_top, clip_bottom);
 
-                let alt_x = img.x + 3 + tag.len() * font::FONT_WIDTH + 4;
+                let alt_x = ix + 3 + tag.len() * font::FONT_WIDTH + 4;
                 if alt_x + font::FONT_WIDTH <= text_max_x {
-                    if img.alt_len > 0 {
-                        let alt_slice = &img.alt[..img.alt_len];
+                    if !alt_slice.is_empty() {
                         font::draw_text_clipped_rect(buf, w, h, alt_x, text_y, alt_slice, COLOR_TEXT, None, text_max_x, clip_top, clip_bottom);
-                    } else if img.src_len > 0 {
-                        let src_slice = &img.src[..img.src_len];
+                    } else if !src_slice.is_empty() {
                         font::draw_text_clipped_rect(buf, w, h, alt_x, text_y, src_slice, 0x00A6_ADC8, None, text_max_x, clip_top, clip_bottom);
                     }
                 }

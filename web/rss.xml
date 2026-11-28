@@ -27,7 +27,7 @@
       <title>VFS Resiliente: Coexistência FAT32 e Ext2 no Jinn OS</title>
       <link>https://jinn-os.dev.br/artigos/resiliencia-vfs-multiparticao-fat32-ext2.html</link>
       <guid isPermaLink="false">jinn-os-artigo-resiliencia-vfs-multiparticao-fat32-ext2</guid>
-      <pubDate>Fri, 27 Nov 2026 12:57:23 -0300</pubDate>
+      <pubDate>Fri, 27 Nov 2026 12:58:46 -0300</pubDate>
       <description>Como o microkernel Jinn OS implementa um sistema de arquivos virtual (VFS) com suporte simultâneo a partições FAT32 e Ext2 com cache de blocos LRU. [Ganho técnico: Evidência empírica reproduzível via QEMU/PCAP e código-fonte auditável] [Ecossistemas &amp; Menções: Red Hat, AMD, Intel, Arm, RISC-V International, Tenstorrent, Qualcomm, Canonical] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, ARMAZENAMENTO &amp; KERNEL, Microkernel Architecture, Heterogeneous Compute Scheduling, Zero-GPU 2D Compositing, L2/L3 Fast-Path Networking, Three-Tier DNS Resolution] [Evidências visuais: VFS Resiliente: Coexistência FAT32 e Ext2 no Jinn OS (https://jinn-os.dev.br/assets/wallpaper.jpg)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
       <category>microkernel-security</category>
       <category>architecture-rfcs</category>
@@ -41,7 +41,7 @@
       <title>Post-Mortem: EOI Incondicional no PIC 8259A e Zero-GPU SIMD</title>
       <link>https://jinn-os.dev.br/artigos/post-mortem-pic-eoi-zero-gpu.html</link>
       <guid isPermaLink="false">jinn-os-artigo-post-mortem-pic-eoi-zero-gpu</guid>
-      <pubDate>Fri, 27 Nov 2026 12:57:23 -0300</pubDate>
+      <pubDate>Fri, 27 Nov 2026 12:58:46 -0300</pubDate>
       <description>Como resolvemos travamentos de interrupção e atingimos 0.00% de CPU em repouso no microkernel Rust Jinn OS através de EOI incondicional no PIC 8259A e kernels AVX2 no JHCS. [Ganho técnico: Indicadores citados no relatório: 0.00%, 64 bytes, 4 vCPUs] [Ecossistemas &amp; Menções: Intel, Red Hat, AMD, Arm, RISC-V International, Qualcomm, Industrial Automation Integrators, Academic Systems Research Labs] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, POST-MORTEM, Microkernel Architecture, SIMD Vectorization, Deterministic Scheduling, Zero-GPU 2D Compositing, Heterogeneous Compute Scheduling] [Evidências visuais: Post-Mortem: EOI Incondicional no PIC 8259A e Zero-GPU SIMD (https://jinn-os.dev.br/assets/wallpaper.jpg)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
       <category>compute-simd</category>
       <category>zero-idle-efficiency</category>
@@ -57,7 +57,7 @@
       <title>Navegador Web Nativo no Microkernel Jinn OS — Jinn Browser</title>
       <link>https://jinn-os.dev.br/artigos/navegador-web-nativo-microkernel-jinn.html</link>
       <guid isPermaLink="false">jinn-os-artigo-navegador-web-nativo-microkernel-jinn</guid>
-      <pubDate>Fri, 27 Nov 2026 12:57:23 -0300</pubDate>
+      <pubDate>Fri, 27 Nov 2026 12:58:46 -0300</pubDate>
       <description>Como construímos o Jinn Browser: um navegador web completo em Rust no_std executando em Ring 3 com suporte a HTTP/1.1, motor CSS em cascata, layout flexbox e runtime JS reativo. [Ganho técnico: Indicadores citados no relatório: 370 KiB, 3 us] [Ecossistemas &amp; Menções: Cloudflare, Red Hat, RISC-V International, Google, Huawei, Academic Systems Research Labs, Sovereign Public Infrastructure, Akamai] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, JINN BROWSER, Microkernel Architecture, W^X Memory Enforcement, Zero-GPU 2D Compositing, L2/L3 Fast-Path Networking, Three-Tier DNS Resolution] [Evidências visuais: Navegador Web Nativo no Microkernel Jinn OS — Jinn Browser (https://jinn-os.dev.br/assets/wallpaper.jpg)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
       <category>fastpath-ipc-net</category>
       <category>microkernel-security</category>
@@ -71,7 +71,7 @@
       <title>Isolamento de Drivers e Supervisor JAHA 1.2</title>
       <link>https://jinn-os.dev.br/artigos/isolamento-drivers-ring3-supervisor-jaha.html</link>
       <guid isPermaLink="false">jinn-os-artigo-isolamento-drivers-ring3-supervisor-jaha</guid>
-      <pubDate>Fri, 27 Nov 2026 12:57:23 -0300</pubDate>
+      <pubDate>Fri, 27 Nov 2026 12:58:46 -0300</pubDate>
       <description>Como o microkernel Jinn OS isola drivers de dispositivos em Ring 3 e utiliza a máquina de estados JAHA 1.2 com circuit-breaker para tolerância extrema a falhas. [Ganho técnico: Indicadores citados no relatório: 100%, 70%] [Ecossistemas &amp; Menções: Red Hat, Intel, STMicroelectronics, RISC-V International, Qualcomm, Canonical, Huawei, Industrial Automation Integrators] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, Microkernel Architecture, Zero-Copy IPC, Deterministic Scheduling, W^X Memory Enforcement, Ring 3 Driver Isolation, Ring 3 Drivers] [Evidências visuais: Isolamento de Drivers e Supervisor JAHA 1.2 (https://jinn-os.dev.br/assets/wallpaper.jpg)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
       <category>microkernel-security</category>
       <category>security-lab</category>
@@ -85,7 +85,7 @@
       <title>Glassmorphism Sem GPU no Aladdin e Hardening de Rede e1000 no VirtualBox</title>
       <link>https://jinn-os.dev.br/artigos/glassmorphism-simd-e1000-virtualbox.html</link>
       <guid isPermaLink="false">jinn-os-artigo-glassmorphism-simd-e1000-virtualbox</guid>
-      <pubDate>Fri, 27 Nov 2026 12:57:23 -0300</pubDate>
+      <pubDate>Fri, 27 Nov 2026 12:58:46 -0300</pubDate>
       <description>Engenharia de sistemas operacionais: como implementamos Glassmorphism e desfoque real em Ring 3 no_std sem aceleração por GPU, e eliminamos o timeout de DNS no VirtualBox através do anel MMIO do Intel e1000. [Ganho técnico: Indicadores citados no relatório: 0.00%] [Ecossistemas &amp; Menções: Academic Systems Research Labs, Intel, RISC-V International, AMD, Arm, NVIDIA, Cloudflare, Red Hat] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, COMPUTAÇÃO GRÁFICA &amp; UI, Microkernel Architecture, SIMD Vectorization, Heterogeneous Compute Scheduling, Zero-GPU 2D Compositing, L2/L3 Fast-Path Networking] [Evidências visuais: Glassmorphism Sem GPU no Aladdin e Hardening de Rede e1000 no VirtualBox (https://jinn-os.dev.br/assets/wallpaper.jpg)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
       <category>compute-simd</category>
       <category>fastpath-ipc-net</category>
@@ -101,7 +101,7 @@
       <title>Ecossistema de Pacotes .jpkg e Atualização Offline-on-Shutdown</title>
       <link>https://jinn-os.dev.br/artigos/ecossistema-pacotes-jpkg-offline-shutdown.html</link>
       <guid isPermaLink="false">jinn-os-artigo-ecossistema-pacotes-jpkg-offline-shutdown</guid>
-      <pubDate>Fri, 27 Nov 2026 12:57:23 -0300</pubDate>
+      <pubDate>Fri, 27 Nov 2026 12:58:46 -0300</pubDate>
       <description>Como implementamos contêineres de pacotes .jpkg com hash SHA-256, ciclo de atualização Offline-on-Shutdown com tela apagada e desfoque SIMD Zero-Copy no microkernel Jinn OS. [Ganho técnico: Indicadores citados no relatório: 128 bytes, 0%, 4 bytes, 32 bytes] [Ecossistemas &amp; Menções: AMD, Arm, NVIDIA, Red Hat, RISC-V International, LF Edge, Tenstorrent, SiFive] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, PACOTES &amp; ATUALIZAÇÃO, Microkernel Architecture, SIMD Vectorization, Zero-Copy IPC, Heterogeneous Compute Scheduling, Zero-GPU 2D Compositing] [Evidências visuais: Ecossistema de Pacotes .jpkg e Atualização Offline-on-Shutdown (https://jinn-os.dev.br/assets/wallpaper.jpg)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
       <category>microkernel-security</category>
       <category>compute-simd</category>
@@ -115,7 +115,7 @@
       <title>Compositor Aladdin: Frosted Glass e Zero-GPU em Rust</title>
       <link>https://jinn-os.dev.br/artigos/compositor-aladdin-zero-gpu-frosted-glass.html</link>
       <guid isPermaLink="false">jinn-os-artigo-compositor-aladdin-zero-gpu-frosted-glass</guid>
-      <pubDate>Fri, 27 Nov 2026 12:57:23 -0300</pubDate>
+      <pubDate>Fri, 27 Nov 2026 12:58:46 -0300</pubDate>
       <description>Como construímos o compositor gráfico Aladdin Desktop com efeitos visuais contemporâneos, sombras e frosted glass sem acelerador 3D e com zero alocações de heap por quadro. [Ganho técnico: Indicadores citados no relatório: 98%, 0.00%, 60 FPS] [Ecossistemas &amp; Menções: Intel, AMD, NVIDIA, Red Hat, SiFive, Canonical, Huawei, Industrial Automation Integrators] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, COMPUTAÇÃO GRÁFICA &amp; UI, SIMD Vectorization, Deterministic Scheduling, Zero-GPU 2D Compositing, Heterogeneous Compute Scheduling, Workload Efficiency] [Evidências visuais: Compositor Aladdin: Frosted Glass e Zero-GPU em Rust (https://jinn-os.dev.br/assets/wallpaper.jpg)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
       <category>compute-simd</category>
       <category>compute-lab</category>
@@ -129,7 +129,7 @@
       <title>Pilha Criptográfica Soberana: TLS 1.3 e ChaCha20-Poly1305 em Bare-Metal Rust</title>
       <link>https://jinn-os.dev.br/artigos/arquitetura-tls13-nostd-soberana.html</link>
       <guid isPermaLink="false">jinn-os-artigo-arquitetura-tls13-nostd-soberana</guid>
-      <pubDate>Fri, 27 Nov 2026 12:57:23 -0300</pubDate>
+      <pubDate>Fri, 27 Nov 2026 12:58:46 -0300</pubDate>
       <description>Como implementamos TLS 1.3 (RFC 8446), Key Schedule HKDF e ChaCha20-Poly1305 em Rust puro sem biblioteca padrão (#![no_std]) para o microkernel Jinn OS. [Ganho técnico: Indicadores citados no relatório: 100%] [Ecossistemas &amp; Menções: Sovereign Public Infrastructure, Intel, AMD, Cloudflare, RISC-V International, LF Edge, Huawei, Red Hat] [Palavras-chave: Jinn OS, Microkernel, Rust no_std, x86_64, CRIPTOGRAFIA, TLS 1.3 Cryptography, Microkernel Architecture, W^X Memory Enforcement, Ring 3 Driver Isolation, Supply-Chain Integrity] [Evidências visuais: Pilha Criptográfica Soberana: TLS 1.3 e ChaCha20-Poly1305 em Bare-Metal Rust (https://jinn-os.dev.br/assets/wallpaper.jpg)] [Aplicabilidade: Indústria, Uso Doméstico e Servidores | Chamada Aberta para Pilotos: https://jinn-os.dev.br/#win-contact | https://github.com/GeovaneEstanislau/Jinn_Project]</description>
       <category>microkernel-security</category>
       <category>fastpath-ipc-net</category>
@@ -169,7 +169,7 @@
       <category>TLS 1.3 Cryptography</category>
       <category>Deterministic Scheduling</category>
       <category>L2/L3 Fast-Path Networking</category>
-      <enclosure url="https://jinn-os.dev.br/assets/browser-multisan-google.png" length="63510" type="image/png" />
+      <enclosure url="https://jinn-os.dev.br/assets/browser-multisan-google.png" length="63223" type="image/png" />
     </item>
     <item>
       <title>Timer LAPIC One-Shot Tickless no Jinn OS: Queda de 99,8% nos Ticks em Repouso e Relógio TSC</title>
@@ -200,7 +200,7 @@
       <category>Microkernel Architecture</category>
       <category>TLS 1.3 Cryptography</category>
       <category>Deterministic Scheduling</category>
-      <enclosure url="https://jinn-os.dev.br/assets/browser-ciclo1-x509-san-blocked.png" length="10392" type="image/png" />
+      <enclosure url="https://jinn-os.dev.br/assets/browser-ciclo1-x509-san-blocked.png" length="10386" type="image/png" />
     </item>
     <item>
       <title>Jinn Browser: Viewport Scissor, Redirecionamentos 301–308, PNG #![no_std] e Carry Poly1305 em TLS 1.3</title>

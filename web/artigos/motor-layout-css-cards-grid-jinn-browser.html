@@ -323,8 +323,52 @@
         </ul>
       </section>
 
+      <section class="space-y-5">
+        <h2 class="text-2xl font-bold text-white">5. Refatoração Zero-Bloat: Compactação de Structs e Renderização Immediate-Mode</h2>
+        <p class="text-sm text-slate-300 leading-relaxed">
+          Após a consolidação funcional do motor visual, a passagem <strong>Zero-Bloat</strong> eliminou estruturas redundantes e compactou campos de layout para reduzir <code>.data</code>+<code>.bss</code> em <strong>21,25 KiB</strong> (<code>3.530,02 KiB → 3.508,77 KiB</code>) sem perda visual ou funcional.
+        </p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-slate-300">
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-rose-300">Eliminação de <code>BoxRect</code> (Immediate-Mode)</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li>Removida a estrutura <code>BoxRect</code> e o array estático <code>boxes: [BoxRect; MAX_RENDER_BOXES]</code> do <code>DocumentLayout</code>.</li>
+              <li>Geometria de caixas (<code>box_x/y/w/h: u16</code>, <code>box_bg_fallback: u8</code>) integrada diretamente ao <code>DomNode</code>, escrita durante o <code>layout_subtree</code> e lida na passada de pintura sem buffer intermediário.</li>
+              <li>Renderização <strong>immediate-mode</strong>: o loop de <code>render()</code> itera <code>dom.nodes[0..node_count]</code> com <code>box_w > 0 &amp;&amp; box_h > 0</code>, pintando fundo e bordas diretamente no framebuffer.</li>
+            </ul>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-cyan-300">Compactação de <code>ClickRegion</code> e <code>RenderLine</code></h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li><code>ClickRegion</code>: removidos <code>target: [u8; 128]</code> e <code>target_len</code>; coordenadas <code>x/y/w/h</code> de <code>usize</code> → <code>u16</code>; <code>is_js: bool</code> → <code>flags: u8</code> com bitfield (<code>CLICK_FLAG_JS</code>, <code>CLICK_FLAG_PAGE_BLOCK</code>). Alvo de navegação resolvido em tempo de clique via <code>DomNode.href_slice()</code>.</li>
+              <li><code>RenderLine</code>: campos <code>x/y</code> de <code>usize</code> → <code>u16</code>; <code>text_len</code> de <code>usize</code> → <code>u8</code>; <code>is_link/is_hr: bool</code> → <code>flags: u8</code> com bitfield.</li>
+              <li><code>RenderImage</code>: removidos <code>src: [u8; 128]</code>, <code>alt: [u8; 32]</code>; resolvidos via <code>dom.nodes[node_idx]</code> na pintura.</li>
+              <li>Capacidades ajustadas: <code>MAX_RENDER_LINES 1024→896</code>, <code>MAX_CLICK_REGIONS 512→384</code>.</li>
+            </ul>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-emerald-300">Cache CSS Scratch FNV-1a (131 KiB → 24 KiB)</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li>Substituído o array de 4 slots <code>RemoteCssEntry</code> (4×32 KiB = 131 KiB) por um único buffer <code>CSS_SCRATCH_BUF: [u8; 24576]</code> indexado por hash <strong>FNV-1a 32-bit</strong> do seletor.</li>
+              <li>API <code>css_scratch_store()</code> / <code>css_scratch_lookup()</code> com suporte a <code>alt_key</code> para resolução de variáveis <code>:root { --var: ... }</code>.</li>
+              <li>Reutilização do buffer temporário após o parse, sem ocupar espaço permanente em <code>.bss</code>.</li>
+            </ul>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+            <h3 class="font-bold text-amber-300">Medição de Footprint ELF</h3>
+            <ul class="list-disc list-inside space-y-1 text-xs leading-relaxed">
+              <li><code>.text</code>: 232.543 B (227,09 KiB) — motor de layout, TLS 1.3, PNG, x509.</li>
+              <li><code>.rodata</code>: 50.576 B (49,39 KiB) — tabelas de constantes e strings.</li>
+              <li><code>.data</code>: 905.928 B (884,70 KiB) — <code>BROWSER_SESSION</code> (880,70 KiB).</li>
+              <li><code>.bss</code>: 2.687.056 B (2.624,08 KiB) — buffers HTTP, PNG, CSS scratch, imagens.</li>
+              <li><strong>DATA+BSS total: 3.508,77 KiB</strong> — 21,25 KiB menor que o baseline pré-refatoração.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
       <section class="space-y-3 border-t border-slate-800 pt-6">
-        <h2 class="text-xl font-bold text-white">5. Limitações Conhecidas</h2>
+        <h2 class="text-xl font-bold text-white">6. Limitações Conhecidas</h2>
         <p class="text-sm text-slate-300 leading-relaxed">
           O motor gráfico Ring 3 ainda não rasteriza primitivas vetoriais <code>&lt;svg&gt;</code> nem posicionamento CSS absoluto flutuante com arraste (<code>position: fixed</code> sobreposto via JavaScript completo); por isso, ícones em SVG exibem suas caixas coloridas estilizadas e janelas do portal abrem em fluxo estruturado sem sobrepor a grade anterior. Além disso, os ensaios completos pós-patch foram executados sob emulação QEMU (<code>e1000</code> e 4 vCPUs); a reprodução em VirtualBox e hardware bare-metal físico permanece aberta para verificação com parceiros.
         </p>
